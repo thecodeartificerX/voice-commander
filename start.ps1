@@ -205,6 +205,7 @@ function Get-VoiceInputDevice {
                 Name              = [string]$d.name
                 HostApi           = [string]$d.hostapi
                 MaxInputChannels  = [int]$d.max_input_channels
+                DefaultSampleRate = [int]$d.default_samplerate
             }
         }
 
@@ -248,14 +249,14 @@ function Show-VoiceDeviceTable {
         [int]$CurrentIndex = -1
     )
 
-    $header = '{0,4}  {1,-40} {2,-20} {3,4}' -f 'Idx', 'Name', 'HostAPI', 'Ch'
-    $divider = '{0,4}  {1,-40} {2,-20} {3,4}' -f '----', '----------------------------------------', '--------------------', '----'
+    $header = '{0,4}  {1,-40} {2,-20} {3,6} {4,4}' -f 'Idx', 'Name', 'HostAPI', 'SR', 'Ch'
+    $divider = '{0,4}  {1,-40} {2,-20} {3,6} {4,4}' -f '----', '----------------------------------------', '--------------------', '------', '----'
 
     Write-VoiceHeader $header
     Write-VoiceHeader $divider
 
     foreach ($d in $DeviceList) {
-        $row = '{0,4}  {1,-40} {2,-20} {3,4}' -f $d.Index, $d.Name, $d.HostApi, $d.MaxInputChannels
+        $row = '{0,4}  {1,-40} {2,-20} {3,6} {4,4}' -f $d.Index, $d.Name, $d.HostApi, $d.DefaultSampleRate, $d.MaxInputChannels
         if ($d.Index -eq $CurrentIndex) {
             Write-Host $row -ForegroundColor Green
         }

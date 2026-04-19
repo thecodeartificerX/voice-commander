@@ -96,7 +96,6 @@ class Recorder:
     def __init__(
         self,
         output_dir: Path,
-        sample_rate: int = 16000,
         channels: int = 1,
         device: int | None = None,
     ) -> None: ...
@@ -105,9 +104,15 @@ class Recorder:
     def stop(self) -> Path: ...
     @property
     def is_recording(self) -> bool: ...
+    @property
+    def actual_sample_rate(self) -> int | None: ...
 ```
 
-**What it does:** Opens a `sounddevice.InputStream` on `start()`, accumulates PCM frames into an in-memory list via the stream callback, then on `stop()` writes the accumulated frames to a single fixed WAV file `outputs/recorded.wav` and returns the `Path`. Each call to `stop()` overwrites the same file — no timestamps, no UUIDs, no retention policy. Format is always mono, 16 kHz, 16-bit PCM — exactly what `faster-whisper` expects, so no resampling is ever needed. Raises `RuntimeError` if `stop()` is called while `is_recording` is `False`.
+**What it does:** Opens a `sounddevice.InputStream` on `start()`, accumulates PCM frames into an in-memory list via the stream callback, then on `stop()` writes the accumulated frames to a single fixed WAV file `outputs/recorded.wav` and returns the `Path`. Each call to `stop()` overwrites the same file — no timestamps, no UUIDs, no retention policy.
+
+The sample rate is **not configured** — it is determined each time `start()` is called by querying the chosen device's `default_samplerate` via `sounddevice.query_devices()`. This ensures WASAPI devices (which only accept their native rate, e.g. 48 kHz) work correctly. The WAV is written at the device-native rate and `actual_sample_rate` exposes it as a read-only property. Phase-2's `faster-whisper` resamples the audio to 16 kHz internally on ingest, so no resampling is required at the capture layer.
+
+Raises `RuntimeError` if `stop()` is called while `is_recording` is `False`.
 
 **Who calls it:** `Daemon` (via the `on_toggle` closure on the hotkey-listener thread). `stop()` returns a `Path` that `Daemon` immediately enqueues on the worker queue.
 

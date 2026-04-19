@@ -2,9 +2,8 @@
 key = "scroll_lock"
 
 [audio]
-sample_rate = 16000
 channels = 1
-device = -1
+device = 25
 output_dir = "outputs"
 
 [transcription]

@@ -4,7 +4,8 @@ Usage:
     uv run python scripts/list-input-devices.py
 
 Prints a JSON array to stdout.  Each element:
-    {"index": int, "name": str, "hostapi": str, "max_input_channels": int}
+    {"index": int, "name": str, "hostapi": str, "max_input_channels": int,
+     "default_samplerate": int}
 Only devices with max_input_channels > 0 are included.
 
 On any error prints {"error": "..."} and exits with code 1.
@@ -41,6 +42,7 @@ def main() -> int:
                     "name": dev["name"],
                     "hostapi": hostapi_name,
                     "max_input_channels": dev["max_input_channels"],
+                    "default_samplerate": int(round(dev.get("default_samplerate", 0))),
                 }
             )
 

@@ -79,7 +79,6 @@ class Phase1Daemon:
 def build_phase1(cfg: Config) -> Phase1Daemon:
     recorder = Recorder(
         output_dir=Path(cfg.audio.output_dir),
-        sample_rate=cfg.audio.sample_rate,
         channels=cfg.audio.channels,
         device=cfg.audio.device if cfg.audio.device >= 0 else None,
     )

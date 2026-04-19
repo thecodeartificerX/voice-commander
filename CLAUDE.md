@@ -38,7 +38,7 @@ Tools live in `src/voice_commander/tools/*.py` and register themselves via a `@t
 | Package manager | `uv` | Fast, reproducible, pyproject.toml-native |
 | Hotkey | Scroll Lock, single-tap toggle | Non-printable, won't conflict with typing |
 | Hotkey listener | `pynput` (primary) / `keyboard` (fallback) | Supports Scroll Lock, cross-platform path |
-| Audio capture | `sounddevice` @ 16 kHz mono WAV | Matches whisper's expected input, cleaner API than PyAudio |
+| Audio capture | `sounddevice`, device-native rate, mono WAV | Opens stream at device's `default_samplerate` (e.g. 48 kHz for WASAPI); Phase-2 transcription resamples to 16 kHz internally |
 | Transcription | `faster-whisper` `small.en` on **CUDA** | Sub-second latency on NVIDIA GPU |
 | Fuzzy match | `rapidfuzz`, threshold ~85 | Fast, no ML deps, good-enough for Phase 1 |
 | Tool registry | `@tool` decorator + auto-discovery | Phrases live next to code; zero boilerplate to add tools |
@@ -112,7 +112,7 @@ voice-commander/
 ## Subsystem contracts (summary — full details in `docs/architecture.md`)
 
 - `HotkeyController(key, on_toggle)` — pynput listener, fires callback on toggle.
-- `Recorder(sample_rate, device)` — `start()` / `stop() -> Path`, writes WAV.
+- `Recorder(output_dir, channels, device)` — `start()` queries device native rate, records; `stop() -> Path` writes WAV at that rate.
 - `Transcriber(model_size, device)` — `load()` once; `transcribe(wav) -> TranscriptionResult`.
 - `ToolRegistry` — `@tool(phrases=[...])` decorator; `discover(pkg)` auto-imports.
 - `Matcher(registry, threshold)` — rapidfuzz `match(utterance) -> MatchResult`.

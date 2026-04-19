@@ -15,7 +15,6 @@ class HotkeyConfig:
 
 @dataclass(frozen=True)
 class AudioConfig:
-    sample_rate: int = 16000
     channels: int = 1
     device: int = -1
     output_dir: str = "outputs"

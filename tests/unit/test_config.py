@@ -9,7 +9,7 @@ def test_load_defaults_when_file_has_no_overrides(tmp_path):
     cfg_file.write_text("")
     cfg = Config.load(cfg_file)
     assert cfg.hotkey.key == "scroll_lock"
-    assert cfg.audio.sample_rate == 16000
+    assert cfg.audio.channels == 1
     assert cfg.matching.threshold == 85.0
     assert cfg.feedback.toast_enabled is True
 
@@ -20,23 +20,25 @@ def test_load_applies_overrides(tmp_path):
         [matching]
         threshold = 70.0
         [audio]
-        sample_rate = 48000
+        channels = 2
     """))
     cfg = Config.load(cfg_file)
     assert cfg.matching.threshold == 70.0
-    assert cfg.audio.sample_rate == 48000
+    assert cfg.audio.channels == 2
     # untouched sections keep defaults
     assert cfg.hotkey.key == "scroll_lock"
 
 
 def test_load_missing_file_returns_all_defaults(tmp_path):
     cfg = Config.load(tmp_path / "nonexistent.toml")
-    assert cfg.audio.sample_rate == 16000
+    assert cfg.audio.channels == 1
+    assert cfg.audio.device == -1
+    assert cfg.audio.output_dir == "outputs"
 
 
 def test_invalid_type_raises(tmp_path):
     cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text('[audio]\nsample_rate = "not-an-int"\n')
+    cfg_file.write_text('[audio]\nchannels = "not-an-int"\n')
     with pytest.raises((TypeError, ValueError)):
         Config.load(cfg_file)
 
