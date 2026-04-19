@@ -176,12 +176,15 @@ function Get-VoiceConfigDevice {
 function Get-VoiceInputDevice {
     <#
     .SYNOPSIS
-        Returns all PortAudio input devices as typed PSCustomObject array.
+        Returns Windows DirectSound input devices as typed PSCustomObject array.
 
     .DESCRIPTION
         Calls list-input-devices.py and returns [PSCustomObject[]] with PSTypeName
         'VoiceCommander.AudioDevice' and properties: Index, Name, HostApi,
-        MaxInputChannels. Returns $null on error.
+        MaxInputChannels, DefaultSampleRate. The list is filtered to Windows
+        DirectSound entries only (DirectSound resamples internally so any rate
+        works hassle-free; MME duplicates add noise; WASAPI is rate-strict).
+        Original PortAudio indices are preserved. Returns $null on error.
     #>
     Write-Verbose 'Querying PortAudio input devices via list-input-devices.py'
     try {
@@ -199,6 +202,7 @@ function Get-VoiceInputDevice {
         }
 
         $typed = foreach ($d in $parsed) {
+            if ($d.hostapi -ne 'Windows DirectSound') { continue }
             [PSCustomObject]@{
                 PSTypeName        = 'VoiceCommander.AudioDevice'
                 Index             = [int]$d.index
@@ -209,7 +213,7 @@ function Get-VoiceInputDevice {
             }
         }
 
-        Write-Verbose "Device list contained $(@($typed).Count) entries"
+        Write-Verbose "Device list contained $(@($typed).Count) DirectSound entries"
         return @($typed)
     }
     catch [System.Management.Automation.RuntimeException] {
