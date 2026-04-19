@@ -35,8 +35,13 @@ class HotkeyController:
 
     def stop(self) -> None:
         if self._listener is not None:
-            self._listener.stop()
+            listener = self._listener
             self._listener = None
+            listener.stop()
+            # join() with a short timeout to ensure the listener thread has
+            # fully exited before we return.  pynput's stop() posts a stop
+            # event asynchronously; the join makes teardown deterministic.
+            listener.join(timeout=1.0)
             logger.info("HotkeyController stopped")
 
     def _on_release(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:

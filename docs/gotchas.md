@@ -102,6 +102,23 @@ def on_press(key):
 
 ---
 
+## 9. Windows: Ctrl+C and `threading.Event.wait()`
+
+**Problem:** Pressing Ctrl+C while the daemon is running in a console has no effect — the process only dies when the terminal is force-killed.
+
+**Explanation:** On Windows, `threading.Event.wait()` with no timeout (or a very large timeout) blocks the calling thread inside a kernel `WaitForSingleObject` call. The Python interpreter services SIGINT handlers only between bytecodes on the main thread, but that thread is permanently parked inside the kernel wait and never returns to the interpreter loop. The registered `signal.signal(SIGINT, ...)` handler therefore never fires.
+
+**Mitigation:** Replace the bare `self._shutdown.wait()` with a polled loop:
+
+```python
+while not self._shutdown.wait(0.5):
+    pass
+```
+
+Each 0.5 s the interpreter wakes, checks the event (still clear → loop again), and also services any pending SIGINT. When Ctrl+C arrives, the next 0.5 s wakeup raises `KeyboardInterrupt` in the main thread, which the surrounding `try/except KeyboardInterrupt` catches to call `shutdown()` cleanly. See `src/voice_commander/daemon.py` `Phase1Daemon.run()` for the full implementation.
+
+---
+
 ## 8. `pyautogui` Failsafe Corner
 
 **Problem:** While voice-dispatched automation is running, if the mouse cursor passes through the top-left corner of the screen (coordinate `(0, 0)`), `pyautogui` raises `FailSafeException` and the tool execution aborts mid-flight.

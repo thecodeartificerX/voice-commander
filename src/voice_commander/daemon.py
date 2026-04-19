@@ -44,19 +44,36 @@ class Phase1Daemon:
     def run(self, hotkey_key: str) -> None:
         self._hotkey = HotkeyController(hotkey_key, self.on_toggle)
         self._hotkey.start()
+        # Belt-and-braces SIGINT handler — useful on POSIX or if another thread
+        # handles the signal.  On Windows the polled wait below is the primary
+        # Ctrl+C mechanism because kernel WaitForSingleObject (used by a bare
+        # threading.Event.wait()) never yields back to the Python interpreter to
+        # service SIGINT, so the lambda below would never fire without the poll.
         signal.signal(signal.SIGINT, lambda *_: self.shutdown())
         logger.info("Phase1Daemon running. Press Ctrl+C to exit.")
-        self._shutdown.wait()
+        try:
+            # Poll every 0.5 s so the Python interpreter can service SIGINT
+            # between iterations.  See docs/gotchas.md §9 for the full story.
+            while not self._shutdown.wait(0.5):
+                pass
+        except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt received, shutting down")
+        finally:
+            self.shutdown()
 
     def shutdown(self) -> None:
+        # Idempotent: if the event is already set we have already torn down.
+        if self._shutdown.is_set():
+            return
+        self._shutdown.set()
         if self._hotkey is not None:
             self._hotkey.stop()
+            self._hotkey = None
         if self._recorder.is_recording:
             try:
                 self._recorder.stop()
             except Exception:
                 pass
-        self._shutdown.set()
 
 
 def build_phase1(cfg: Config) -> Phase1Daemon:
