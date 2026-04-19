@@ -42,7 +42,10 @@ def main() -> int:
     if not CONFIG_PATH.exists():
         return fail(f"config.toml not found at {CONFIG_PATH}")
 
-    original_text = CONFIG_PATH.read_text(encoding="utf-8")
+    # newline="" preserves original line endings so we can round-trip without
+    # accidentally converting LF to CRLF on Windows (or vice versa).
+    with CONFIG_PATH.open("r", encoding="utf-8", newline="") as fh:
+        original_text = fh.read()
     lines = original_text.splitlines(keepends=True)
 
     # ------------------------------------------------------------------ edit
@@ -89,7 +92,7 @@ def main() -> int:
     config_dir = CONFIG_PATH.parent
     fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".toml.tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(new_text)
         os.replace(tmp_path, CONFIG_PATH)
     except Exception as exc:
