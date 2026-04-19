@@ -584,9 +584,8 @@ if ($null -eq $PickedIndex) {
     :DevicePicker while ($true) {
         Write-Host ''
         Write-VoiceHeader 'Available input devices:'
-        Show-VoiceDeviceTable -DeviceList $Devices -CurrentIndex (
-            if ($null -ne $CurrentDevice) { $CurrentDevice } else { -1 }
-        )
+        $highlight = if ($null -ne $CurrentDevice) { $CurrentDevice } else { -1 }
+        Show-VoiceDeviceTable -DeviceList $Devices -CurrentIndex $highlight
         Write-VoicePrompt '  Type the device index to select it.'
         Write-VoiceSecondary "  [B] Back  [Q] Quit"
         Write-Host ''
