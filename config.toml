@@ -1,0 +1,31 @@
+[hotkey]
+key = "scroll_lock"
+
+[audio]
+sample_rate = 16000
+channels = 1
+device = -1
+retention_count = 100
+output_dir = "outputs"
+
+[transcription]
+model_size = "small.en"
+device = "cuda"
+compute_type = "float16"
+min_confidence = 0.30
+
+[matching]
+threshold = 85.0
+scorer = "WRatio"
+
+[feedback]
+sounds_dir = "assets/sounds"
+start_sound = "start.wav"
+stop_sound = "stop.wav"
+miss_sound = "miss.wav"
+toast_enabled = true
+toast_show_transcript = true
+
+[logging]
+level = "INFO"
+file = "voice-commander.log"
