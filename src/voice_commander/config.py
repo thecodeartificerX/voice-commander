@@ -18,7 +18,6 @@ class AudioConfig:
     sample_rate: int = 16000
     channels: int = 1
     device: int = -1
-    retention_count: int = 100
     output_dir: str = "outputs"
 
 

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,18 +19,15 @@ class Recorder:
         sample_rate: int = 16000,
         channels: int = 1,
         device: int | None = None,
-        retention_count: int = 100,
     ) -> None:
         self._out_dir = Path(output_dir)
         self._out_dir.mkdir(parents=True, exist_ok=True)
         self._sr = sample_rate
         self._ch = channels
         self._device = device if device is not None and device >= 0 else None
-        self._retention = retention_count
         self._buffer: list[np.ndarray] = []
         self._lock = threading.Lock()
         self._stream: Any | None = None
-        self._last_path: Path | None = None
 
     @property
     def is_recording(self) -> bool:
@@ -60,20 +55,10 @@ class Recorder:
                 else np.zeros((0, self._ch), dtype=np.float32)
             )
             self._buffer.clear()
-        path = self._next_path()
+        path = self._out_dir / "recorded.wav"
         sf.write(path, frames, self._sr, subtype="PCM_16")
-        self._last_path = path
         logger.info("Recorder wrote %s (%d frames)", path, len(frames))
         return path
-
-    def enforce_retention(self) -> None:
-        files = sorted(self._out_dir.glob("rec-*.wav"), key=lambda p: p.stat().st_mtime)
-        while len(files) > self._retention:
-            victim = files.pop(0)
-            try:
-                victim.unlink()
-            except OSError:
-                logger.warning("Could not delete %s", victim, exc_info=True)
 
     def _open_stream(self) -> Any:
         return sd.InputStream(
@@ -89,8 +74,3 @@ class Recorder:
             logger.warning("sounddevice status: %s", status)
         with self._lock:
             self._buffer.append(indata.copy())
-
-    def _next_path(self) -> Path:
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        suffix = uuid.uuid4().hex[:8]
-        return self._out_dir / f"rec-{stamp}-{suffix}.wav"

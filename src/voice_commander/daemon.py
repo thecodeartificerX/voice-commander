@@ -82,8 +82,6 @@ def build_phase1(cfg: Config) -> Phase1Daemon:
         sample_rate=cfg.audio.sample_rate,
         channels=cfg.audio.channels,
         device=cfg.audio.device if cfg.audio.device >= 0 else None,
-        retention_count=cfg.audio.retention_count,
     )
-    recorder.enforce_retention()
     feedback = WindowsFeedbackSink(sounds_dir=Path(cfg.feedback.sounds_dir))
     return Phase1Daemon(feedback=feedback, recorder=recorder)

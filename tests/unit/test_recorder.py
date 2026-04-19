@@ -13,25 +13,25 @@ def test_start_then_stop_writes_wav(tmp_path, monkeypatch):
     frames = np.zeros((8000, 1), dtype=np.float32)
     rec._on_audio(frames, 8000, None, None)  # type: ignore[arg-type]
     out = rec.stop()
+    assert out == tmp_path / "recorded.wav"
     assert out.exists()
     data, sr = sf.read(out)
     assert sr == 16000
     assert data.shape[0] == 8000
+
+    # Second record/stop cycle: same path returned, still only one WAV file.
+    rec._open_stream = lambda: _FakeStream(rec)
+    rec.start()
+    rec._on_audio(frames, 8000, None, None)  # type: ignore[arg-type]
+    out2 = rec.stop()
+    assert out2 == tmp_path / "recorded.wav"
+    assert len(list(tmp_path.glob("*.wav"))) == 1
 
 
 def test_stop_without_start_raises(tmp_path):
     rec = Recorder(output_dir=tmp_path)
     with pytest.raises(RuntimeError):
         rec.stop()
-
-
-def test_retention_deletes_old_files(tmp_path):
-    for i in range(5):
-        (tmp_path / f"rec-{i:02d}.wav").write_bytes(b"x")
-    rec = Recorder(output_dir=tmp_path, retention_count=2)
-    rec.enforce_retention()
-    remaining = sorted(p.name for p in tmp_path.glob("rec-*.wav"))
-    assert len(remaining) == 2
 
 
 class _FakeStream:

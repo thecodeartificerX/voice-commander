@@ -73,7 +73,7 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 | Subsystem | Unit test file | What it covers | Test fixtures / fakes used |
 |---|---|---|---|
 | `HotkeyController` | `tests/unit/test_hotkey.py` | `KEY_ALIASES` resolution, unknown key raises `ValueError`, toggle callback invoked on release; `hardware` marker for real Scroll Lock tap | `pynput.keyboard.Controller` (real, hardware-marked); otherwise pure unit with lambda callbacks |
-| `Recorder` | `tests/unit/test_recorder.py` | WAV written with correct sample rate / channels / bit depth, `stop()` before `start()` raises `RuntimeError`, filename pattern matches `rec-YYYYMMDD-HHMMSS-{uuid8}.wav`, rolling retention deletes old files | `sounddevice` stream callback injected with synthetic PCM frames (`numpy.zeros`); `tmp_path` fixture for output dir |
+| `Recorder` | `tests/unit/test_recorder.py` | WAV written to fixed path `recorded.wav` with correct sample rate / channels / bit depth, second record/stop cycle overwrites the same file (only one WAV in output dir), `stop()` before `start()` raises `RuntimeError` | `sounddevice` stream callback injected with synthetic PCM frames (`numpy.zeros`); `tmp_path` fixture for output dir |
 | `Transcriber` | `tests/unit/test_transcriber.py` | `TranscriptionResult` fields populated, `language == "en"`, `confidence` clamped to `[0, 1]`, empty audio returns low confidence; `hardware` marker for real CUDA transcription | Fixture WAVs: `tests/fixtures/audio/hello_world.wav`, `tests/fixtures/audio/copy.wav`, `tests/fixtures/audio/silence.wav`; model mocked in non-hardware tests |
 | `ToolRegistry` | `tests/unit/test_registry.py` | `@tool` decorator registers entry, `by_name()` / `all()` / `flat_phrases()` return correct data, duplicate name raises `DuplicateToolError`, phrases normalized (lowercase, stripped punctuation, collapsed whitespace) | In-memory registry reset via `reset_global_registry()` in `setup_function()`; no external deps |
 | `Matcher` | `tests/unit/test_matcher.py` | Above-threshold utterance returns correct tool and score, below-threshold returns `tool=None`, candidates top-5 populated, ties broken alphabetically by tool name, utterance normalized before matching | Stub `ToolRegistry` with hard-coded phrase sets; no `rapidfuzz` mocking (real algorithm under test) |
@@ -126,9 +126,9 @@ uv run voice-commander
 - [ ] Press Scroll Lock. **Start chime** (rising tone) plays immediately.
 - [ ] Speak: "hello voice commander, this is a test" (approximately 3 s).
 - [ ] Press Scroll Lock. **Stop chime** (lower tone) plays.
-- [ ] A WAV file appears under `outputs/rec-<timestamp>-<hex>.wav` within 1 s of stopping.
+- [ ] A WAV file appears at `outputs/recorded.wav` within 1 s of stopping.
 - [ ] Open the WAV in any audio player — speech is clearly audible, sounds like 16 kHz mono (not stereo, not distorted).
-- [ ] Repeat the record-and-stop cycle 3 more times. Verify that `outputs/` does not grow unboundedly — retention trim logic exists (files may not be deleted yet, but the trim function is present and tested).
+- [ ] Repeat the record-and-stop cycle 3 more times. Verify that `outputs/` still contains exactly one file (`recorded.wav`) — each recording overwrites the previous one.
 - [ ] Ctrl+C exits the daemon cleanly (no traceback, process terminates within 3 s).
 - [ ] `uv run pytest -m "not hardware"` exits 0 — `HotkeyController`, `Recorder`, and `FeedbackSink` unit tests all pass.
 - [ ] Human marks Phase 1 complete in Kaizen OS (`VC-P1-GATE` subquest → done).

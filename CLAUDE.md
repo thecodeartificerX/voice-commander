@@ -43,7 +43,7 @@ Tools live in `src/voice_commander/tools/*.py` and register themselves via a `@t
 | Fuzzy match | `rapidfuzz`, threshold ~85 | Fast, no ML deps, good-enough for Phase 1 |
 | Tool registry | `@tool` decorator + auto-discovery | Phrases live next to code; zero boilerplate to add tools |
 | Feedback | Windows `.wav` chimes via `winsound` + native toast via `windows_toasts` | Fire-and-forget, no thread blocking |
-| Recording retention | Keep last 100 WAVs in `outputs/`, rolling cleanup | Debug bad transcriptions without eating disk |
+| Recording retention | Single overwriting file `outputs/recorded.wav` — newest only | Simpler; transcriber always reads one fixed path; no retention subsystem needed |
 | Config | `config.toml` at project root | Tweak threshold/hotkey/model without editing code |
 
 Every one of these has (or will have) a full ADR in `docs/decisions/`.

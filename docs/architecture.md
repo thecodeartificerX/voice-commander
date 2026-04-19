@@ -107,13 +107,13 @@ class Recorder:
     def is_recording(self) -> bool: ...
 ```
 
-**What it does:** Opens a `sounddevice.InputStream` on `start()`, accumulates PCM frames into an in-memory list via the stream callback, then on `stop()` writes the accumulated frames to a WAV file named `rec-YYYYMMDD-HHMMSS-{uuid8}.wav` in `output_dir` and returns the `Path`. Format is always mono, 16 kHz, 16-bit PCM — exactly what `faster-whisper` expects, so no resampling is ever needed. Raises `RuntimeError` if `stop()` is called while `is_recording` is `False`. On daemon start, applies rolling cleanup: retains only the newest `retention_count` WAVs in `output_dir`.
+**What it does:** Opens a `sounddevice.InputStream` on `start()`, accumulates PCM frames into an in-memory list via the stream callback, then on `stop()` writes the accumulated frames to a single fixed WAV file `outputs/recorded.wav` and returns the `Path`. Each call to `stop()` overwrites the same file — no timestamps, no UUIDs, no retention policy. Format is always mono, 16 kHz, 16-bit PCM — exactly what `faster-whisper` expects, so no resampling is ever needed. Raises `RuntimeError` if `stop()` is called while `is_recording` is `False`.
 
 **Who calls it:** `Daemon` (via the `on_toggle` closure on the hotkey-listener thread). `stop()` returns a `Path` that `Daemon` immediately enqueues on the worker queue.
 
 **Who it calls:** `sounddevice.InputStream` internally; `soundfile.write` to flush the WAV. No outbound calls to other Voice Commander subsystems.
 
-**How it is tested:** Either `sounddevice` virtual-device mode is used, or the stream callback is mocked to feed synthetic PCM frames directly. Tests verify: WAV file exists after `stop()`, correct sample rate and channel count, correct filename pattern, `RuntimeError` on double-stop, and retention cleanup behaviour.
+**How it is tested:** Either `sounddevice` virtual-device mode is used, or the stream callback is mocked to feed synthetic PCM frames directly. Tests verify: WAV file exists after `stop()` at the fixed path `recorded.wav`, correct sample rate and channel count, `RuntimeError` on double-stop, and that a second record/stop cycle overwrites the same file (only one WAV in `output_dir`).
 
 ---
 
