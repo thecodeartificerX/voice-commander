@@ -5,7 +5,13 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from faster_whisper import WhisperModel
+# Register CUDA runtime DLLs from nvidia-* pip packages before faster_whisper
+# loads ctranslate2's native code. No-op on non-Windows or when packages absent.
+from . import _cuda_setup
+
+_cuda_setup.register()
+
+from faster_whisper import WhisperModel  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
