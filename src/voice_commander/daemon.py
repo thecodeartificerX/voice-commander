@@ -137,8 +137,29 @@ class Phase2Daemon(Phase1Daemon):
         super().run(hotkey_key)
 
     def shutdown(self) -> None:
+        # Idempotent guard — must come BEFORE we enqueue the poison pill to
+        # avoid flooding the queue on repeated calls.
+        if self._shutdown.is_set():
+            return
+        # Poison the worker queue first so the loop breaks at next .get().
         self._queue.put(None)
+        # Super stops hotkey + recorder and sets self._shutdown.
         super().shutdown()
+        # Join the worker so we know it's not mid-transcribe before we unload
+        # the model out from under it.
+        worker = self._worker
+        if worker is not None:
+            worker.join(timeout=5.0)
+            if worker.is_alive():
+                logger.warning(
+                    "Worker thread did not exit within 5s; continuing shutdown"
+                )
+            self._worker = None
+        # Release the model last.
+        try:
+            self._transcriber.unload()
+        except Exception:
+            logger.exception("Error unloading transcriber")
 
 
 def build_phase2(cfg: Config) -> Phase2Daemon:

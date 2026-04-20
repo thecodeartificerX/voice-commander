@@ -26,3 +26,34 @@ def test_worker_drains_queue_and_reports_transcript(tmp_path):
     assert any(call[0] == "on_transcript" for call in feedback.calls)
     transcript_calls = [c for c in feedback.calls if c[0] == "on_transcript"]
     assert transcript_calls[0][1] == ("hello world", 0.9)
+
+
+def test_shutdown_joins_worker_and_unloads_transcriber(tmp_path):
+    feedback = CapturingFeedbackSink()
+    recorder = MagicMock()
+    recorder.is_recording = False
+    transcriber = MagicMock()
+    daemon = Phase2Daemon(feedback=feedback, recorder=recorder, transcriber=transcriber)
+    daemon.start_worker()
+
+    daemon.shutdown()
+
+    # Worker should have exited
+    assert daemon._worker is None
+    # Transcriber must have been told to release resources
+    transcriber.unload.assert_called_once()
+
+
+def test_shutdown_is_idempotent_on_phase2(tmp_path):
+    feedback = CapturingFeedbackSink()
+    recorder = MagicMock()
+    recorder.is_recording = False
+    transcriber = MagicMock()
+    daemon = Phase2Daemon(feedback=feedback, recorder=recorder, transcriber=transcriber)
+    daemon.start_worker()
+
+    daemon.shutdown()
+    daemon.shutdown()  # must be a no-op
+
+    # unload() should have been called exactly once, not twice
+    transcriber.unload.assert_called_once()

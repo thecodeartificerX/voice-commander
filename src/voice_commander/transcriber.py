@@ -42,6 +42,19 @@ class Transcriber:
         )
         logger.info("Model loaded")
 
+    def unload(self) -> None:
+        """Release the underlying model. Idempotent. Safe to call if load() was never called."""
+        if self._model is None:
+            return
+        logger.info("Unloading faster-whisper model")
+        # Drop the strong reference. CTranslate2 releases the CUDA context
+        # when the last Python reference is collected. There is no user-facing
+        # explicit-release API in ctranslate2 4.x.
+        del self._model
+        self._model = None
+        import gc
+        gc.collect()
+
     def transcribe(self, wav: Path) -> TranscriptionResult:
         if self._model is None:
             raise RuntimeError("Transcriber.load() must be called before transcribe()")

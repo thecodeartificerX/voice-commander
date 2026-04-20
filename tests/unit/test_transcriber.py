@@ -1,6 +1,31 @@
 import pytest
 from pathlib import Path
+from unittest.mock import MagicMock
 from voice_commander.transcriber import Transcriber, TranscriptionResult
+
+# ---------------------------------------------------------------------------
+# Non-hardware tests — no GPU required; WhisperModel is never instantiated.
+# ---------------------------------------------------------------------------
+
+def test_unload_clears_model_when_loaded():
+    t = Transcriber()
+    # Bypass .load() entirely; inject a sentinel
+    t._model = MagicMock()
+    t.unload()
+    assert t._model is None
+
+
+def test_unload_is_idempotent_on_never_loaded():
+    t = Transcriber()
+    # Must not raise
+    t.unload()
+    t.unload()
+    assert t._model is None
+
+
+# ---------------------------------------------------------------------------
+# Hardware tests — require CUDA + faster-whisper model weights.
+# ---------------------------------------------------------------------------
 
 FIX = Path("tests/fixtures/audio")
 
