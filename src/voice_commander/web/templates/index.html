@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-neutral-950">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Commander</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/app.css">
+    <script src="/static/htmx.min.js"></script>
+</head>
+<body class="bg-neutral-950 text-neutral-200 min-h-screen">
+    <div class="max-w-5xl mx-auto px-4 py-8">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-emerald-400">Voice Commander</h1>
+            <p class="text-neutral-400 mt-1">Command Management Dashboard</p>
+        </header>
+        {% for category, tools in groups.items() %}
+        <section class="mb-8">
+            <h2 class="text-lg font-semibold text-emerald-400 mb-3 uppercase tracking-wide">{{ category }}</h2>
+            <div class="grid gap-4">
+                {% for tool in tools %}
+                {% include "_tool_card.html" %}
+                {% endfor %}
+            </div>
+        </section>
+        {% endfor %}
+    </div>
+</body>
+</html>

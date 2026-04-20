@@ -5,21 +5,21 @@ import pyautogui
 from ..registry import tool
 
 
-@tool(phrases=["new tab", "open new tab"])
+@tool
 def new_tab() -> None:
     pyautogui.hotkey("ctrl", "t")
 
 
-@tool(phrases=["close tab", "close this tab"])
+@tool
 def close_tab() -> None:
     pyautogui.hotkey("ctrl", "w")
 
 
-@tool(phrases=["reopen tab", "reopen last tab", "bring back tab"])
+@tool
 def reopen_tab() -> None:
     pyautogui.hotkey("ctrl", "shift", "t")
 
 
-@tool(phrases=["reload", "refresh", "reload page"])
+@tool
 def reload() -> None:
     pyautogui.press("f5")

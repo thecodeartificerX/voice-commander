@@ -1,0 +1,7 @@
+<div id="error-banner" class="bg-red-900/50 border border-red-700 text-red-300 rounded-lg p-3 mb-4 text-sm"
+     hx-swap-oob="afterbegin:body > div">
+    <div class="flex items-center justify-between">
+        <span>{{ error }}</span>
+        <button onclick="this.parentElement.parentElement.remove()" class="text-red-400 hover:text-red-200 ml-4">&times;</button>
+    </div>
+</div>

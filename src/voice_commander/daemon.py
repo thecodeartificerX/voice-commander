@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import os
 import queue
 import signal
 import threading
@@ -17,10 +18,13 @@ from .dispatcher import Dispatcher
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
 from .matcher import Matcher
-from .registry import discover
+from .registry import ToolRegistry, discover
 from .streaming_recorder import StreamingRecorder
+from .tool_metadata import ToolMetadataStore
 from .transcriber import Transcriber, TranscriptionResult
 from .vad_gate import VADGate
+from .web.app import create_app
+from .web.server import WebServer
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,11 @@ class StreamingDaemon:
     While a session is open, silero-vad auto-segments utterances on natural
     silence. Each utterance fires transcribe → gate → match → dispatch
     immediately. No keypresses between commands.
+
+    Optionally runs an embedded uvicorn-hosted web UI for managing tool
+    metadata (phrases / descriptions / enabled flag) via sidecar TOML files.
+    The web server, registry, and matcher all share a single
+    :class:`threading.Lock` so metadata reloads never race with live matches.
     """
 
     def __init__(
@@ -41,21 +50,25 @@ class StreamingDaemon:
         matcher: Matcher,
         dispatcher: Dispatcher,
         *,
+        registry: ToolRegistry | None = None,
         min_confidence: float = 0.30,
         min_word_count: int = 1,
         max_no_speech_prob: float = 0.6,
         output_dir: str = "outputs",
+        web_server: WebServer | None = None,
     ) -> None:
         self._feedback = feedback
         self._recorder = recorder
         self._transcriber = transcriber
         self._matcher = matcher
         self._dispatcher = dispatcher
+        self._registry = registry
         self._min_confidence = min_confidence
         self._min_word_count = min_word_count
         self._max_no_speech_prob = max_no_speech_prob
         self._output_dir = Path(output_dir)
         self._output_dir.mkdir(parents=True, exist_ok=True)
+        self._web_server = web_server
 
         self._utt_q: queue.Queue[npt.NDArray[np.float32] | None] = queue.Queue(maxsize=8)
         self._pipeline_thread: threading.Thread | None = None
@@ -173,6 +186,16 @@ class StreamingDaemon:
         )
         self._pipeline_thread.start()
 
+        # Start embedded web server (if configured) before the hotkey listener
+        # so the UI is responsive as soon as the daemon is ready for input.
+        if self._web_server is not None:
+            try:
+                if not self._web_server.start():
+                    logger.warning("Web UI unavailable — continuing without dashboard")
+            except Exception as e:
+                logger.exception("WebServer.start() failed; continuing without UI")
+                self._feedback.on_error("web.start", e)
+
         # Start hotkey listener.
         try:
             self._hotkey = HotkeyController(hotkey_key, self.on_toggle)
@@ -202,6 +225,14 @@ class StreamingDaemon:
             if self._shutdown.is_set():
                 return
             self._shutdown.set()
+
+        # Stop the web server before tearing down the pipeline so no late UI
+        # request lands on a half-dead registry.
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+            except Exception:
+                logger.exception("Error stopping web server during shutdown")
 
         # Close any open session.
         if self._recorder is not None and self._recorder.is_open:
@@ -234,7 +265,12 @@ class StreamingDaemon:
 
 
 def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
-    """Factory: wire all subsystems into a StreamingDaemon."""
+    """Factory: wire all subsystems into a StreamingDaemon.
+
+    Also wires the embedded web UI when enabled. The metadata store, registry,
+    matcher, and web app all share a single ``threading.Lock`` so hot reloads
+    from the UI never race with the matcher running on the pipeline thread.
+    """
     import torch
 
     torch.set_num_threads(1)
@@ -263,9 +299,20 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         compute_type=cfg.transcription.compute_type,
     )
 
-    registry = discover("voice_commander.tools")
-    matcher = Matcher(registry, threshold=cfg.matching.threshold)
+    # Metadata store + reload lock shared between registry, matcher, and web server.
+    tools_dir = Path(__file__).resolve().parent / "tools"
+    store = ToolMetadataStore(tools_dir)
+    reload_lock = threading.Lock()
+
+    registry = discover("voice_commander.tools", store=store)
+    matcher = Matcher(registry, threshold=cfg.matching.threshold, reload_lock=reload_lock)
     dispatcher = Dispatcher(feedback)
+
+    # Web server — enabled by config + not suppressed by env var.
+    web_server: WebServer | None = None
+    if cfg.web.enabled and os.environ.get("VOICE_COMMANDER_WEB_DISABLED") != "1":
+        app = create_app(registry, store, reload_lock)
+        web_server = WebServer(app, host=cfg.web.host, port=cfg.web.port)
 
     # Build daemon without a recorder first so _on_utterance is available,
     # then wire the recorder with the real callback.
@@ -275,10 +322,12 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         transcriber=transcriber,
         matcher=matcher,
         dispatcher=dispatcher,
+        registry=registry,
         min_confidence=cfg.transcription.min_confidence,
         min_word_count=cfg.vad.gates.min_word_count,
         max_no_speech_prob=cfg.vad.gates.max_no_speech_prob,
         output_dir=cfg.audio.output_dir,
+        web_server=web_server,
     )
     daemon._recorder = StreamingRecorder(
         device=cfg.audio.device if cfg.audio.device >= 0 else None,

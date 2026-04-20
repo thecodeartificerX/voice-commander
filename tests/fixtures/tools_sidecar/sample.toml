@@ -1,0 +1,11 @@
+category = "test"
+
+[tools.alpha]
+phrases = ["alpha one", "alpha two"]
+description = "Test tool alpha."
+enabled = true
+
+[tools.beta]
+phrases = ["beta phrase"]
+description = "Test tool beta."
+enabled = false

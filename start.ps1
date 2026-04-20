@@ -62,7 +62,23 @@ param(
     [int]$Device = -1,
 
     [Parameter(ParameterSetName = 'ListDevices')]
-    [switch]$ListDevices
+    [switch]$ListDevices,
+
+    [Parameter(ParameterSetName = 'Interactive')]
+    [Parameter(ParameterSetName = 'NoMenu')]
+    [Parameter(ParameterSetName = 'DirectDevice')]
+    [switch]$NoUI,
+
+    [Parameter(ParameterSetName = 'Interactive')]
+    [Parameter(ParameterSetName = 'NoMenu')]
+    [Parameter(ParameterSetName = 'DirectDevice')]
+    [ValidateRange(1024, 65535)]
+    [int]$UIPort = 0,
+
+    [Parameter(ParameterSetName = 'Interactive')]
+    [Parameter(ParameterSetName = 'NoMenu')]
+    [Parameter(ParameterSetName = 'DirectDevice')]
+    [switch]$NoOpenBrowser
 )
 
 Set-StrictMode -Version Latest
@@ -421,6 +437,40 @@ function Start-VoiceDaemon {
     return $LASTEXITCODE
 }
 
+function Start-VoiceWithUI {
+    <#
+    .SYNOPSIS
+        Set web UI env vars, optionally open browser, then launch the daemon.
+
+    .DESCRIPTION
+        Applies VOICE_COMMANDER_WEB_DISABLED and VOICE_COMMANDER_WEB_PORT from
+        the -NoUI and -UIPort parameters before calling Start-VoiceDaemon.
+        When the web UI is enabled and -NoOpenBrowser is not set, a background
+        job opens the browser 1.5 s after this function is called (giving the
+        daemon time to bind its port). Returns the daemon's exit code as [int].
+    #>
+    # Apply web UI environment overrides
+    if ($NoUI) {
+        $env:VOICE_COMMANDER_WEB_DISABLED = '1'
+    }
+    if ($UIPort -gt 0) {
+        $env:VOICE_COMMANDER_WEB_PORT = $UIPort.ToString()
+    }
+
+    # Auto-open browser unless the web UI is disabled or the user opted out
+    if (-not $NoUI -and -not $NoOpenBrowser) {
+        $webPort = if ($UIPort -gt 0) { $UIPort } else { 8765 }
+        $webUrl  = "http://127.0.0.1:$webPort"
+        Write-Verbose "Scheduling browser open: $webUrl (after 1500 ms)"
+        Start-Job -ScriptBlock {
+            Start-Sleep -Milliseconds 1500
+            Start-Process $using:webUrl
+        } | Out-Null
+    }
+
+    return Start-VoiceDaemon
+}
+
 # ---------------------------------------------------------------------------
 # Pre-flight: enumerate devices (needed by most code paths)
 # ---------------------------------------------------------------------------
@@ -473,7 +523,7 @@ if ($PSCmdlet.ParameterSetName -eq 'DirectDevice') {
     }
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander (Phase 5: hardened)...'
-    $ExitCode = Start-VoiceDaemon
+    $ExitCode = Start-VoiceWithUI
     if ($ExitCode -eq 0) {
         Write-VoiceSuccess "Voice Commander exited cleanly (code 0)."
     }
@@ -501,7 +551,7 @@ if ($NoMenu) {
     Write-VoiceSuccess "Using saved device [$SavedNoMenu]."
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander (Phase 5: hardened)...'
-    $ExitCode = Start-VoiceDaemon
+    $ExitCode = Start-VoiceWithUI
     if ($ExitCode -eq 0) {
         Write-VoiceSuccess "Voice Commander exited cleanly (code 0)."
     }
@@ -528,7 +578,7 @@ if (-not $IsInteractive) {
     Write-VoiceSuccess "Non-interactive session -- using saved device [$SavedAuto]."
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander (Phase 5: hardened)...'
-    $ExitCode = Start-VoiceDaemon
+    $ExitCode = Start-VoiceWithUI
     exit $ExitCode
 }
 
@@ -664,7 +714,7 @@ else {
 Write-Host ''
 Write-VoicePrompt 'Starting Voice Commander (Phase 5: hardened)...'
 
-$DaemonExitCode = Start-VoiceDaemon
+$DaemonExitCode = Start-VoiceWithUI
 
 Write-Host ''
 if ($DaemonExitCode -eq 0) {

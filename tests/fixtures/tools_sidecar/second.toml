@@ -1,0 +1,6 @@
+category = "other"
+
+[tools.gamma]
+phrases = ["gamma go"]
+description = "Test tool gamma."
+enabled = true

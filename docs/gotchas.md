@@ -200,3 +200,29 @@ The failure is order-dependent:
 **Explanation:** `soxr.ResampleStream` maintains internal filter state (a polyphase FIR delay line) across `resample_chunk()` calls. This is the correct behaviour within a session, as it avoids discontinuities at chunk boundaries. Across sessions, however, the tail of the previous session's audio remains in the filter's internal buffer and is output at the start of the next session, contaminating the VAD's first few frames.
 
 **Mitigation:** `StreamingRecorder` creates a fresh `Resampler` instance at the start of every session (every Scroll Lock open). A `reset()` call would theoretically suffice, but creating a new instance is simpler and eliminates any risk of residual state. Do not reuse a `ResampleStream` across session boundaries.
+
+---
+
+## 14. Uvicorn on a daemon thread
+
+Running `uvicorn.Server.run()` on a `threading.Thread(daemon=True)` works but has a subtle requirement: the thread gets its own asyncio event loop created by uvicorn internally. Do NOT share the uvicorn event loop with other code. Access the FastAPI app synchronously through the registry/store — all shared state is guarded by `threading.Lock`, not asyncio primitives.
+
+Graceful shutdown: set `server.should_exit = True` and join the thread. Uvicorn polls this flag in its main loop.
+
+---
+
+## 15. Portalocker on Windows
+
+`portalocker` uses `msvcrt.locking()` on Windows, which requires the file to be opened in a compatible mode. Always use `mode="a"` (append) for lock files — this creates the file if missing and doesn't truncate existing content. Lock files live in `tools/.locks/` and should be gitignored.
+
+---
+
+## 16. TOML atomic write on Windows
+
+`os.replace()` is atomic on POSIX but NOT guaranteed atomic on Windows (NTFS is close but not specified). The sequence `write .tmp` → `os.replace .tmp → .toml` is the best available. The per-tool file lock (portalocker) is the actual concurrency guard; atomic replace is defense-in-depth.
+
+---
+
+## 17. Tailwind CSS vendoring
+
+The dashboard uses Tailwind CSS Play CDN (`<script src="https://cdn.tailwindcss.com">`) for development. For fully offline use, vendor the CDN script to `web/static/tailwind.min.js`. The Play CDN generates CSS client-side from class names — it's ~300KB but zero-config.

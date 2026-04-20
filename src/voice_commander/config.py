@@ -69,6 +69,14 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True)
+class WebConfig:
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = 8765
+    auto_open_browser: bool = True
+
+
+@dataclass(frozen=True)
 class Config:
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
@@ -77,6 +85,7 @@ class Config:
     feedback: FeedbackConfig = field(default_factory=FeedbackConfig)
     vad: VadConfig = field(default_factory=VadConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    web: WebConfig = field(default_factory=WebConfig)
 
     @classmethod
     def load(cls, path: Path) -> Config:
@@ -94,6 +103,7 @@ class Config:
             feedback=_section(FeedbackConfig, raw.get("feedback", {})),
             vad=_section(VadConfig, {**vad_raw, "gates": _section(VadGatesConfig, gates_raw)}),
             logging=_section(LoggingConfig, raw.get("logging", {})),
+            web=_section(WebConfig, raw.get("web", {})),
         )
 
 

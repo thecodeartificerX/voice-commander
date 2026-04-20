@@ -301,6 +301,46 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 
 ---
 
+## FastAPI
+
+- **Version**: >=0.115.0
+- **Purpose**: Web framework for the command management dashboard.
+- **Why**: Modern async framework, built-in OpenAPI, perfect for HTMX fragment serving. Embedded as uvicorn thread inside daemon process.
+
+---
+
+## uvicorn
+
+- **Version**: >=0.30.0 (with standard extras)
+- **Purpose**: ASGI server running FastAPI app.
+- **Why**: Production-quality, supports running as a thread (not just CLI), graceful shutdown via `should_exit`.
+
+---
+
+## Jinja2
+
+- **Version**: >=3.1.0
+- **Purpose**: Server-side HTML templating for the dashboard.
+- **Why**: FastAPI's native template engine. Renders full pages and HTMX fragments.
+
+---
+
+## portalocker
+
+- **Version**: >=2.8.0
+- **Purpose**: Cross-platform file locking for sidecar TOML writes.
+- **Why**: Prevents corruption when two browser tabs save the same tool's TOML simultaneously. Works on Windows (uses `msvcrt.locking`).
+
+---
+
+## HTMX
+
+- **Version**: 2.0.4 (vendored)
+- **Purpose**: HTML-over-the-wire for the dashboard UI.
+- **Why**: Zero JS build step. Server returns HTML fragments, HTMX swaps them into the DOM. Eliminates SPA complexity.
+
+---
+
 ## Cross-reference index
 
 | Library | ADR |

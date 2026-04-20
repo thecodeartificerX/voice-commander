@@ -10,17 +10,17 @@ from ._win32 import default_browser_progid, focus_window_by_exe, progid_to_exe
 logger = logging.getLogger(__name__)
 
 
-@tool(phrases=["minimize", "minimise", "minimize window"])
+@tool
 def minimize() -> None:
     pyautogui.hotkey("win", "down")
 
 
-@tool(phrases=["maximize", "maximise", "maximize window"])
+@tool
 def maximize() -> None:
     pyautogui.hotkey("win", "up")
 
 
-@tool(phrases=["focus browser", "switch to browser", "bring up browser"])
+@tool
 def focus_browser() -> None:
     _focus_default_browser()
 
@@ -34,7 +34,7 @@ def _focus_default_browser() -> None:
     focus_window_by_exe(exe)
 
 
-@tool(phrases=["focus terminal", "switch to terminal", "bring up terminal"])
+@tool
 def focus_terminal() -> None:
     _focus_terminal()
 

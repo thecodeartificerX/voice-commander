@@ -1,0 +1,5 @@
+/* Tailwind CSS — vendor this file for offline use.
+ * For now the full Tailwind CDN script is loaded via <script> in index.html.
+ * To vendor: download https://cdn.tailwindcss.com/3.4.17 and replace this file,
+ * then swap the <script> tag in index.html back to a <link rel="stylesheet">.
+ */

@@ -1,0 +1,27 @@
+<div id="tool-{{ tool.name }}" class="bg-neutral-900 border border-neutral-800 rounded-lg p-4 {{ 'opacity-50' if not tool.enabled else '' }}">
+    <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-2">
+            <h3 class="text-lg font-medium {{ 'line-through text-neutral-500' if not tool.enabled else 'text-neutral-100' }}">{{ tool.name }}</h3>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-900 text-emerald-400">{{ tool.category }}</span>
+            {% if not tool.enabled %}
+            <span class="text-xs px-2 py-0.5 rounded-full bg-red-900 text-red-400">disabled</span>
+            {% endif %}
+        </div>
+        <div class="flex gap-2">
+            <button hx-get="/tool/{{ tool.name }}/edit" hx-target="#tool-{{ tool.name }}" hx-swap="outerHTML"
+                class="text-sm px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300">Edit</button>
+            <button hx-post="/tool/{{ tool.name }}/toggle" hx-target="#tool-{{ tool.name }}" hx-swap="outerHTML"
+                class="text-sm px-3 py-1 rounded {{ 'bg-red-900 hover:bg-red-800 text-red-300' if tool.enabled else 'bg-emerald-900 hover:bg-emerald-800 text-emerald-300' }}">
+                {{ "Disable" if tool.enabled else "Enable" }}
+            </button>
+        </div>
+    </div>
+    {% if tool.description %}
+    <p class="text-sm text-neutral-400 mb-2">{{ tool.description }}</p>
+    {% endif %}
+    <div class="flex flex-wrap gap-1">
+        {% for phrase in tool.phrases %}
+        <span class="text-xs px-2 py-1 rounded bg-neutral-800 text-neutral-300 {{ 'line-through' if not tool.enabled else '' }}">{{ phrase }}</span>
+        {% endfor %}
+    </div>
+</div>
