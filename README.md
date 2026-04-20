@@ -72,6 +72,8 @@ uv run voice-commander
 
 All tuneable values live in [`config.toml`](config.toml) at the project root. Missing keys fall back to built-in defaults defined in `src/voice_commander/config.py`. Unknown keys or wrong types raise at load time — typos are caught before the daemon starts.
 
+**Machine-local overrides.** Create `config.local.toml` next to `config.toml` for per-machine tweaks (audio device index, GPU compute type, etc.). It is gitignored and deep-merged over the tracked defaults on load, so only override the keys you need. `start.ps1` and `scripts/set-audio-device.py` write the chosen audio device to `config.local.toml` automatically.
+
 ### Sections
 
 | Section | Key | Default | Purpose |

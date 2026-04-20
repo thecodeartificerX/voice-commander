@@ -18,6 +18,9 @@ outputs/*
 *.log
 voice-commander.log
 
+# Local config overrides (device index, per-machine tweaks)
+config.local.toml
+
 # IDE
 .vscode/
 .idea/

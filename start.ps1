@@ -170,21 +170,21 @@ function Show-VoiceBanner {
 function Get-VoiceConfigDevice {
     <#
     .SYNOPSIS
-        Returns the integer device index from config.toml [audio] section, or $null.
+        Returns the merged audio.device index (config.toml + config.local.toml), or $null.
     #>
-    Write-Verbose 'Reading audio.device from config.toml'
+    Write-Verbose 'Reading audio.device via Config.load (base + local override)'
     try {
-        $raw = uv run python -c "import tomllib; d=tomllib.load(open('config.toml','rb')); print(d['audio']['device'])" 2>$null
+        $raw = uv run python -c "from pathlib import Path; from voice_commander.config import Config; print(Config.load(Path('config.toml')).audio.device)" 2>$null
         $val = [int]$raw.Trim()
-        Write-Verbose "config.toml audio.device = $val"
+        Write-Verbose "merged audio.device = $val"
         return $val
     }
     catch [System.Management.Automation.RuntimeException] {
-        Write-Verbose "config.toml read failed (RuntimeException): $_"
+        Write-Verbose "config read failed (RuntimeException): $_"
         return $null
     }
     catch {
-        Write-Verbose "config.toml read failed: $_"
+        Write-Verbose "config read failed: $_"
         return $null
     }
 }

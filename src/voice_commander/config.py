@@ -88,11 +88,12 @@ class Config:
     web: WebConfig = field(default_factory=WebConfig)
 
     @classmethod
-    def load(cls, path: Path) -> Config:
-        raw: dict[str, Any] = {}
-        if path.exists():
-            with path.open("rb") as fh:
-                raw = tomllib.load(fh)
+    def load(cls, path: Path, local_path: Path | None = None) -> Config:
+        raw = _read_toml(path)
+        if local_path is None:
+            local_path = path.with_name(f"{path.stem}.local{path.suffix}")
+        if local_path != path and local_path.exists():
+            raw = _deep_merge(raw, _read_toml(local_path))
         vad_raw = raw.get("vad", {})
         gates_raw = vad_raw.pop("gates", {})
         return cls(
@@ -105,6 +106,23 @@ class Config:
             logging=_section(LoggingConfig, raw.get("logging", {})),
             web=_section(WebConfig, raw.get("web", {})),
         )
+
+
+def _read_toml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    with path.open("rb") as fh:
+        return tomllib.load(fh)
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    result = dict(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
 
 
 def _section(cls: type[T], data: dict[str, Any]) -> T:
