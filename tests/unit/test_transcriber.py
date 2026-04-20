@@ -1,11 +1,14 @@
-import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
+
 from voice_commander.transcriber import Transcriber, TranscriptionResult
 
 # ---------------------------------------------------------------------------
 # Non-hardware tests — no GPU required; WhisperModel is never instantiated.
 # ---------------------------------------------------------------------------
+
 
 def test_unload_clears_model_when_loaded():
     t = Transcriber()

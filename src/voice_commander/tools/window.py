@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
+
 import pyautogui
 
 from ..registry import tool
-from ._win32 import default_browser_progid, progid_to_exe, focus_window_by_exe
+from ._win32 import default_browser_progid, focus_window_by_exe, progid_to_exe
 
 logger = logging.getLogger(__name__)
 

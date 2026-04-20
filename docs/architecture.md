@@ -11,29 +11,38 @@ This document is the canonical reference for Voice Commander's subsystem design 
 ## 1. High-level Flow
 
 ```
-┌──────────────┐   key   ┌──────────────┐   WAV    ┌──────────────┐
-│  HotkeyCtrl  │────────▶│   Recorder   │─────────▶│ Transcriber  │
-│ (pynput)     │ toggle  │ (sounddevice)│  path    │(faster-whisp)│
-└──────────────┘         └──────────────┘          └──────┬───────┘
-                                                          │ text
-                                                          ▼
-┌──────────────┐  result ┌──────────────┐  tool,   ┌──────────────┐
-│ FeedbackSink │◀────────│  Dispatcher  │◀─────────│   Matcher    │
-│ (chime+log)  │         │ (invokes fn) │  score   │ (rapidfuzz)  │
-└──────────────┘         └──────────────┘          └──────┬───────┘
-                                                          │ looks up
-                                                          ▼
-                                                   ┌──────────────┐
-                                                   │ ToolRegistry │
-                                                   │ (@tool decor)│
-                                                   └──────┬───────┘
-                                                          │ imports
-                                                          ▼
-                                                   ┌──────────────┐
-                                                   │   tools/*    │
-                                                   │ copy, paste… │
-                                                   └──────────────┘
+┌──────────────┐  toggle  ┌─────────────────────────────────────────────────────┐
+│  HotkeyCtrl  │─────────▶│              StreamingRecorder                      │
+│  (pynput)    │          │  sd.InputStream + Resampler + VADGate               │
+└──────────────┘          │                                                     │
+                          │  ┌─────────────────┐   raw_q   ┌─────────────────┐ │
+                          │  │PortAudio callback│──────────▶│  VAD worker     │ │
+                          │  │   (RT thread)    │  float32  │ Resampler 48k→  │ │
+                          │  │  indata.copy() + │  frames   │ 16k + VADGate   │ │
+                          │  │  put_nowait()    │           │ (silero-vad)    │ │
+                          │  └─────────────────┘           └────────┬────────┘ │
+                          └───────────────────────────────────────── │ ─────────┘
+                                                            utt_q   │  utterance ndarray
+                                                                     ▼
+                          ┌──────────────────────────────────────────────────────┐
+                          │              StreamingDaemon pipeline worker         │
+                          │                                                      │
+                          │  Transcriber ──text──▶ gates ──▶ Matcher ──▶ Dispatcher │
+                          │  (faster-whisper)       (conf)   (rapidfuzz)  (tool fn) │
+                          │                                                      │
+                          │                         FeedbackSink (chime + log)  │
+                          └──────────────────────────────────────────────────────┘
 ```
+
+**Thread topology:**
+
+| Thread | Owns | Does |
+|---|---|---|
+| PortAudio callback thread | `sd.InputStream` callback | `indata.copy()` + `raw_q.put_nowait()` — no blocking, no allocation |
+| VAD worker thread | `Resampler` + `VADGate` | Drains `raw_q`; resamples 48k→16k; runs silero-vad; emits complete utterances to `utt_q` |
+| Pipeline worker thread | `Transcriber` + `Matcher` + `Dispatcher` | Drains `utt_q`; runs full inference + match + dispatch pipeline |
+
+**Session model:** Scroll Lock opens a session; a second press closes it. While a session is open, VAD auto-segments the audio stream. Each detected utterance fires the pipeline worker immediately — no keypresses required between commands.
 
 ---
 

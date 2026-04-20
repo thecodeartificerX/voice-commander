@@ -4,7 +4,7 @@ import logging
 import winsound
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -14,26 +14,33 @@ class FeedbackSink(Protocol):
     def on_recording_stop(self) -> None: ...
     def on_transcript(self, text: str, confidence: float) -> None: ...
     def on_match(self, tool: str, phrase: str, score: float) -> None: ...
-    def on_miss(
-        self, transcript: str, candidates: Sequence[tuple[str, str, float]]
-    ) -> None: ...
+    def on_miss(self, transcript: str, candidates: Sequence[tuple[str, str, float]]) -> None: ...
     def on_error(self, subsystem: str, err: BaseException) -> None: ...
 
 
 class NullFeedbackSink:
-    def on_recording_start(self) -> None: pass
-    def on_recording_stop(self) -> None: pass
-    def on_transcript(self, text: str, confidence: float) -> None: pass
-    def on_match(self, tool: str, phrase: str, score: float) -> None: pass
-    def on_miss(
-        self, transcript: str, candidates: Sequence[tuple[str, str, float]]
-    ) -> None: pass
-    def on_error(self, subsystem: str, err: BaseException) -> None: pass
+    def on_recording_start(self) -> None:
+        pass
+
+    def on_recording_stop(self) -> None:
+        pass
+
+    def on_transcript(self, text: str, confidence: float) -> None:
+        pass
+
+    def on_match(self, tool: str, phrase: str, score: float) -> None:
+        pass
+
+    def on_miss(self, transcript: str, candidates: Sequence[tuple[str, str, float]]) -> None:
+        pass
+
+    def on_error(self, subsystem: str, err: BaseException) -> None:
+        pass
 
 
 class CapturingFeedbackSink:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, tuple]] = []
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
     def on_recording_start(self) -> None:
         self.calls.append(("on_recording_start", ()))
@@ -47,9 +54,7 @@ class CapturingFeedbackSink:
     def on_match(self, tool: str, phrase: str, score: float) -> None:
         self.calls.append(("on_match", (tool, phrase, score)))
 
-    def on_miss(
-        self, transcript: str, candidates: Sequence[tuple[str, str, float]]
-    ) -> None:
+    def on_miss(self, transcript: str, candidates: Sequence[tuple[str, str, float]]) -> None:
         self.calls.append(("on_miss", (transcript, tuple(candidates))))
 
     def on_error(self, subsystem: str, err: BaseException) -> None:

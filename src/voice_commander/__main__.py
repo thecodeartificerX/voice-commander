@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from .config import Config
-from .daemon import build_phase3
+from .daemon import build_streaming_daemon
 from .single_instance import AlreadyRunning, SingleInstanceLock
 
 logger = logging.getLogger(__name__)
@@ -43,21 +43,26 @@ def _enable_crash_reporting(cfg: Config) -> None:
 def _log_environment() -> None:
     logger.info(
         "python=%s platform=%s executable=%s",
-        sys.version.split()[0], platform.platform(), sys.executable,
+        sys.version.split()[0],
+        platform.platform(),
+        sys.executable,
     )
     try:
         import ctranslate2
+
         logger.info(
             "ctranslate2=%s cuda_devices=%d supported_compute=%s",
             ctranslate2.__version__,
             ctranslate2.get_cuda_device_count(),
             sorted(ctranslate2.get_supported_compute_types("cuda"))
-                if ctranslate2.get_cuda_device_count() > 0 else [],
+            if ctranslate2.get_cuda_device_count() > 0
+            else [],
         )
     except Exception:
         logger.exception("failed to probe ctranslate2")
     try:
         import faster_whisper
+
         logger.info("faster_whisper=%s", faster_whisper.__version__)
     except Exception:
         logger.exception("failed to probe faster_whisper")
@@ -75,7 +80,7 @@ def main() -> None:
         logger.error("Voice Commander already running: %s", e)
         sys.exit(1)
     try:
-        build_phase3(cfg).run(cfg.hotkey.key)
+        build_streaming_daemon(cfg).run(cfg.hotkey.key)
     finally:
         lock.release()
 

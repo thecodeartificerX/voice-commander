@@ -170,3 +170,33 @@ The failure is order-dependent:
 **Diagnostic value retained:** This failure mode is the reason `__main__.py` calls `faulthandler.enable(file=<crash.log>, all_threads=True)` before importing anything heavy, and why `_cuda_setup.register()` logs DLL preload counts at INFO. Without the fault handler, the daemon would have appeared to simply exit with an opaque numeric code and no traceback. That infrastructure is kept — it's general-purpose observability, not toast-specific.
 
 **Related pitfalls to watch for:** Any package that loads COM/WinRT at import time (`winsdk`, `winrt-*`, `pywin32` with early `pythoncom.CoInitialize`, `pythonnet`) may reproduce this class of bug. Keep CUDA-adjacent imports first; lazy-load Windows-specific UI/COM helpers, or — if the feature turns out to be optional — skip the integration entirely. Audio chimes do a lot of the same job with none of the process-level side effects.
+
+---
+
+## 11. VAD RT-Callback Constraint
+
+**Problem:** Performing any blocking work, memory allocation, or Python GIL-contended operation inside the PortAudio stream callback causes audio glitches, dropped frames, or hard RT-deadline violations.
+
+**Explanation:** The PortAudio callback runs on a real-time OS audio thread. Its deadline is the audio buffer period (typically 10–20 ms). Any work that takes longer than that deadline — or that blocks waiting for Python's GIL — causes the callback to overrun, which produces audible artifacts and can destabilize the audio stack.
+
+**Mitigation:** The callback does exactly two things: `indata.copy()` (a single numpy allocation, fast) and `raw_q.put_nowait()` (a non-blocking enqueue). All VAD processing, resampling, and inference happen on the VAD worker thread that drains `raw_q`. This division is a hard architectural constraint — never add logic to the callback.
+
+---
+
+## 12. onnxruntime Thread-Safety
+
+**Problem:** Sharing a silero-vad `VADIterator` (or its underlying ONNX session) across multiple threads causes race conditions, corrupted internal state, and unpredictable detection results.
+
+**Explanation:** silero-vad's ONNX model maintains mutable internal state (hidden states for the RNN layers). `onnxruntime` `InferenceSession` objects are not thread-safe for concurrent inference calls — the library documents this explicitly. Even if calls appear to work initially, the internal hidden-state tensor is corrupted by concurrent writes, producing garbage probability outputs.
+
+**Mitigation:** The `VADGate` and its underlying ONNX session are isolated to a single VAD worker thread. One `VADGate` is created per audio stream and never shared. Do not pass a `VADIterator` instance across thread boundaries.
+
+---
+
+## 13. Resampler State Lifetime
+
+**Problem:** Reusing a `soxr.ResampleStream` instance across recording sessions causes audio from one session to bleed into the next — the filter's internal delay line carries samples from the previous session into the start of the new one.
+
+**Explanation:** `soxr.ResampleStream` maintains internal filter state (a polyphase FIR delay line) across `resample_chunk()` calls. This is the correct behaviour within a session, as it avoids discontinuities at chunk boundaries. Across sessions, however, the tail of the previous session's audio remains in the filter's internal buffer and is output at the start of the next session, contaminating the VAD's first few frames.
+
+**Mitigation:** `StreamingRecorder` creates a fresh `Resampler` instance at the start of every session (every Scroll Lock open). A `reset()` call would theoretically suffice, but creating a new instance is simpler and eliminates any risk of residual state. Do not reuse a `ResampleStream` across session boundaries.

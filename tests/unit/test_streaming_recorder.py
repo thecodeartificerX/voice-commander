@@ -1,0 +1,258 @@
+"""Unit tests for voice_commander.streaming_recorder.StreamingRecorder.
+
+sounddevice is monkeypatched throughout so no real microphone access occurs.
+Hardware tests (requiring an actual audio device) are marked with
+@pytest.mark.hardware and are skipped in CI.
+"""
+
+from __future__ import annotations
+
+import queue
+import threading
+
+import numpy as np
+
+# ---------------------------------------------------------------------------
+# Helpers: fake sounddevice primitives
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_sd(monkeypatch, *, native_rate: float = 48000.0):
+    """Patch sd.query_devices and sd.InputStream on the streaming_recorder module."""
+
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_devices",
+        lambda device: {"default_samplerate": native_rate},
+    )
+
+    class FakeInputStream:
+        def __init__(self, **kwargs):
+            self.callback = kwargs.get("callback")
+            self.started = False
+            self._closed = False
+
+        def start(self):
+            self.started = True
+
+        def stop(self):
+            self.started = False
+
+        def close(self):
+            self._closed = True
+
+    # Keep a reference so tests can retrieve the instance.
+    instances: list[FakeInputStream] = []
+
+    original_cls = FakeInputStream
+
+    class _TrackingFakeInputStream(original_cls):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            instances.append(self)
+
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.InputStream",
+        _TrackingFakeInputStream,
+    )
+
+    return instances
+
+
+class MockResampler:
+    """Pass-through resampler: returns the input unchanged."""
+
+    def __init__(self, src_rate: int, dst_rate: int = 16000):
+        pass
+
+    def process(self, chunk: np.ndarray) -> np.ndarray:
+        return chunk
+
+    def reset(self) -> None:
+        pass
+
+
+class MockVADGate:
+    """Returns a fake utterance ndarray on the Nth call to process()."""
+
+    def __init__(self, trigger_frame: int = 3):
+        self._count = 0
+        self._trigger = trigger_frame
+
+    def process(self, frame: np.ndarray):
+        self._count += 1
+        if self._count == self._trigger:
+            return np.ones(1600, dtype=np.float32)  # fake utterance
+        return None
+
+    def reset(self) -> None:
+        self._count = 0
+
+
+def _make_recorder(monkeypatch, *, vad_gate=None, utterance_sink=None, native_rate=48000.0):
+    """Construct a StreamingRecorder with all hardware patched out."""
+    from voice_commander.streaming_recorder import StreamingRecorder
+
+    stream_instances = _make_fake_sd(monkeypatch, native_rate=native_rate)
+    monkeypatch.setattr("voice_commander.streaming_recorder.Resampler", MockResampler)
+
+    if vad_gate is None:
+        vad_gate = MockVADGate()
+    if utterance_sink is None:
+
+        def utterance_sink(_: object) -> None:
+            return None
+
+    recorder = StreamingRecorder(
+        device=None,
+        channels=1,
+        vad_gate=vad_gate,
+        utterance_sink=utterance_sink,
+    )
+    return recorder, stream_instances
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+def test_open_session_sets_state_to_open(monkeypatch):
+    recorder, _ = _make_recorder(monkeypatch)
+
+    assert recorder.is_open is False
+    recorder.open_session()
+    assert recorder.is_open is True
+    # Cleanup
+    recorder.close_session()
+
+
+def test_close_session_returns_to_idle(monkeypatch):
+    recorder, _ = _make_recorder(monkeypatch)
+
+    recorder.open_session()
+    assert recorder.is_open is True
+
+    recorder.close_session()
+    assert recorder.is_open is False
+
+
+def test_double_open_is_no_op(monkeypatch):
+    recorder, stream_instances = _make_recorder(monkeypatch)
+
+    recorder.open_session()
+    recorder.open_session()  # second call must not raise
+
+    # Only one InputStream should have been created.
+    assert len(stream_instances) == 1
+    assert recorder.is_open is True
+
+    recorder.close_session()
+
+
+def test_close_when_not_open_is_no_op(monkeypatch):
+    recorder, _ = _make_recorder(monkeypatch)
+
+    # Must not raise; recorder stays idle.
+    recorder.close_session()
+    assert recorder.is_open is False
+
+
+def test_vad_worker_processes_frames_and_calls_utterance_sink(monkeypatch):
+    """Push synthetic frames through the captured PortAudio callback and verify
+    the utterance_sink fires when MockVADGate returns an utterance."""
+
+    received: list[np.ndarray] = []
+    sink_event = threading.Event()
+
+    def utterance_sink(arr: np.ndarray) -> None:
+        received.append(arr)
+        sink_event.set()
+
+    vad_gate = MockVADGate(trigger_frame=3)
+    recorder, stream_instances = _make_recorder(
+        monkeypatch, vad_gate=vad_gate, utterance_sink=utterance_sink
+    )
+
+    recorder.open_session()
+
+    # Retrieve the PortAudio callback that was registered.
+    stream = stream_instances[-1]
+    assert stream.callback is not None, "PortAudio callback was not registered"
+
+    # Simulate the VAD_FRAME_SIZE (512) so each chunk = one complete frame.
+    frame = np.zeros(512, dtype=np.float32)
+
+    class _FakeStatus:
+        input_overflow = False
+
+    status = _FakeStatus()
+
+    # Push 3 frames — the 3rd triggers the mock VADGate.
+    for _ in range(3):
+        stream.callback(frame.reshape(-1, 1), 512, None, status)
+
+    triggered = sink_event.wait(timeout=3.0)
+    assert triggered, "utterance_sink was never called within 3 s"
+    assert len(received) == 1
+    assert received[0].shape == (1600,)
+
+    recorder.close_session()
+
+
+def test_input_overflow_logged_does_not_crash(monkeypatch, caplog):
+    """When the PortAudio status indicates input_overflow, the recorder logs a
+    warning but does not raise."""
+    import logging
+
+    recorder, stream_instances = _make_recorder(monkeypatch)
+    recorder.open_session()
+
+    stream = stream_instances[-1]
+    frame = np.zeros(512, dtype=np.float32)
+
+    class _OverflowStatus:
+        input_overflow = True
+
+        def __bool__(self):
+            return True
+
+    with caplog.at_level(logging.WARNING, logger="voice_commander.streaming_recorder"):
+        stream.callback(frame.reshape(-1, 1), 512, None, _OverflowStatus())
+
+    assert any("overflow" in record.message.lower() for record in caplog.records)
+
+    recorder.close_session()
+
+
+def test_queue_full_drops_frame_without_crash(monkeypatch):
+    """Fill raw_q to its maxsize (64) and push one more frame; no exception."""
+    recorder, stream_instances = _make_recorder(monkeypatch)
+    recorder.open_session()
+
+    stream = stream_instances[-1]
+    frame = np.zeros(512, dtype=np.float32)
+
+    class _OkStatus:
+        input_overflow = False
+
+        def __bool__(self):
+            return False
+
+    status = _OkStatus()
+
+    # Pause the VAD worker so it doesn't drain the queue while we fill it.
+    # We achieve this by putting a sentinel now to stop the worker, then
+    # refill the queue with real frames and push one more.
+    # Simpler approach: fill the queue directly through the public attribute.
+    while True:
+        try:
+            recorder._raw_q.put_nowait(frame)
+        except queue.Full:
+            break
+
+    # Queue is now full. Pushing via callback must not raise.
+    stream.callback(frame.reshape(-1, 1), 512, None, status)
+
+    # Still open, no exception raised.
+    assert recorder.is_open is True
+    recorder.close_session()

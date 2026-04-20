@@ -121,6 +121,55 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 
 ---
 
+## `silero-vad` — Voice activity detection
+
+**Purpose in this project:** `silero-vad` powers the `VADGate` subsystem inside `StreamingRecorder`. It segments a continuous audio stream into discrete utterances by detecting speech onset and offset. Each complete utterance is emitted as a numpy ndarray to the pipeline worker queue for transcription.
+
+**Alternatives considered:**
+- `webrtcvad` — Google's WebRTC VAD, a classic lightweight option. Energy-based heuristic; fast, but produces many false positives on background noise and does not model speech well at the phoneme level.
+- `pysilero-vad` / `silero-vad` (torch variant) — the original PyTorch-based silero-vad. Requires a full PyTorch install (multi-GB), which is overkill when the ONNX export exists.
+
+**Why `silero-vad` won:** The ONNX-exported silero-vad model runs in under 1 ms per 30 ms frame on CPU via `onnxruntime`, requires no GPU, and achieves high accuracy on real-world microphone audio. MIT licensed. The `VADIterator` API provides a clean frame-in / utterance-out interface that maps directly to the VAD worker thread's loop. See `gotchas.md` §12 for thread-safety constraints.
+
+**Pin reason:** `>=5.1` for the stable ONNX export and `VADIterator` API with configurable speech/silence thresholds and minimum silence duration. The 5.x series is the current actively maintained branch.
+
+**ADR:** No dedicated ADR yet (VAD streaming feature).
+
+---
+
+## `onnxruntime` — ONNX model runtime
+
+**Purpose in this project:** `onnxruntime` is the CPU inference backend for silero-vad. `silero-vad` distributes its model as an ONNX file; `onnxruntime` loads and runs it. No GPU execution path is needed for VAD — the model is small enough that CPU inference meets the real-time budget comfortably.
+
+**Alternatives considered:**
+- `onnxruntime-gpu` — the GPU-enabled variant. Unnecessary for this use case and adds CUDA dependency complexity to the VAD subsystem.
+- `torch` — silero-vad can also run via PyTorch. Rejected because PyTorch is multi-GB and already avoided elsewhere in the stack.
+
+**Why `onnxruntime` won:** It is the canonical runtime for ONNX models, actively maintained by Microsoft, and the CPU-only wheel installs cleanly without CUDA toolchain requirements. The CPU-only variant keeps the VAD subsystem free of GPU dependencies, which is correct — VAD runs concurrently with GPU transcription on separate threads.
+
+**Pin reason:** `>=1.16.1` is the first release with stable `InferenceSession` behaviour on Python 3.11 and Windows. Required transitively by silero-vad.
+
+**ADR:** No dedicated ADR yet (VAD streaming feature).
+
+---
+
+## `soxr` — High-quality streaming audio resampler
+
+**Purpose in this project:** `soxr` powers the `Resampler` subsystem inside `StreamingRecorder`. The microphone captures at the device-native rate (typically 48 kHz via WASAPI). silero-vad and faster-whisper both require 16 kHz input. `soxr.ResampleStream` converts the raw 48 kHz float32 frames to 16 kHz in real time, chunk by chunk, on the VAD worker thread.
+
+**Alternatives considered:**
+- `scipy.signal.resample` — batch resampler, not streaming. Would require buffering a full utterance before resampling, adding latency and complexity.
+- `librosa.resample` — high quality, but batch-only and adds a heavyweight dependency.
+- `soundfile` + `samplerate` — `samplerate` wraps libsamplerate (SRC), which is a valid streaming alternative, but `soxr` consistently benchmarks faster and produces fewer aliasing artifacts at the ratios used here (48k→16k = 3:1).
+
+**Why `soxr` won:** `soxr` wraps libsoxr, which is widely regarded as the highest-quality open-source resampler. The `ResampleStream` API provides true streaming resampling with internal state management — chunks go in, resampled chunks come out, with the polyphase FIR filter state maintained across calls. This maps exactly to the VAD worker's chunk-by-chunk processing loop. See `gotchas.md` §13 for state lifetime constraints.
+
+**Pin reason:** `>=0.3.7` for the stable `ResampleStream` Python API and Windows wheel availability. The `0.3.x` series is the current stable branch.
+
+**ADR:** No dedicated ADR yet (VAD streaming feature).
+
+---
+
 ## `tomli` — TOML parsing (Python < 3.11 only)
 
 **Purpose in this project:** `tomli` is a conditional dependency (`python_version < '3.11'`) that provides TOML parsing on older Python releases. `config.py` loads `config.toml` via `tomllib` (stdlib in Python 3.11+) with a fallback `import tomli as tomllib` for older environments.
@@ -265,6 +314,7 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 | `pystray`, `Pillow` (Phase 5) | No dedicated ADR yet |
 | CUDA DLL bundling (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`) | [`0012-cuda-dll-bundling.md`](decisions/0012-cuda-dll-bundling.md) |
 | `winsound` | [`0008-winsound-for-chimes.md`](decisions/0008-winsound-for-chimes.md) |
+| `silero-vad`, `onnxruntime`, `soxr` | No dedicated ADR yet (VAD streaming feature) |
 | `tomli` | [`0011-uv-package-manager.md`](decisions/0011-uv-package-manager.md) |
 | `uv`, `ruff`, `mypy` | [`0011-uv-package-manager.md`](decisions/0011-uv-package-manager.md) |
 | `pytest`, `pytest-cov` | [`0009-phased-delivery-with-hitl-gates.md`](decisions/0009-phased-delivery-with-hitl-gates.md) |
