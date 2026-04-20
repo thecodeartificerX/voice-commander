@@ -70,6 +70,15 @@ def test_cancel_returns_card(app_env):
     assert "<form" not in resp.text
 
 
+def test_csrf_rejects_post_without_hx_header(app_env):
+    client, _, _ = app_env
+    resp = client.post("/tool/alpha/toggle")
+    assert resp.status_code == 403
+
+
+HX = {"HX-Request": "true"}
+
+
 def test_save_valid(app_env):
     client, registry, _ = app_env
     resp = client.post(
@@ -79,6 +88,7 @@ def test_save_valid(app_env):
             "description": "Updated.",
             "category": "test",
         },
+        headers=HX,
     )
     assert resp.status_code == 200
     # Registry should be updated
@@ -96,6 +106,7 @@ def test_save_empty_phrases_returns_400(app_env):
             "description": "x",
             "category": "test",
         },
+        headers=HX,
     )
     assert resp.status_code == 400
     assert "at least one phrase" in resp.text.lower()
@@ -111,6 +122,7 @@ def test_save_duplicate_phrase_returns_400(app_env):
             "description": "x",
             "category": "test",
         },
+        headers=HX,
     )
     assert resp.status_code == 400
     assert "already used" in resp.text.lower()
@@ -121,12 +133,12 @@ def test_toggle_flips_enabled(app_env):
     # alpha starts enabled=True
     assert registry.by_name("alpha").enabled is True
 
-    resp = client.post("/tool/alpha/toggle")
+    resp = client.post("/tool/alpha/toggle", headers=HX)
     assert resp.status_code == 200
     assert registry.by_name("alpha").enabled is False
 
     # Toggle back
-    resp = client.post("/tool/alpha/toggle")
+    resp = client.post("/tool/alpha/toggle", headers=HX)
     assert resp.status_code == 200
     assert registry.by_name("alpha").enabled is True
 

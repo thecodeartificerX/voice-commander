@@ -76,6 +76,7 @@ def test_edit_save_updates_registry(live_server):
             "description": "Updated via test.",
             "category": "test",
         },
+        headers={"HX-Request": "true"},
         timeout=5.0,
     )
     assert resp.status_code == 200
@@ -91,6 +92,6 @@ def test_toggle_disables_tool(live_server):
     registry = live_server["registry"]
 
     assert registry.by_name("alpha").enabled is True
-    resp = httpx.post(f"{url}/tool/alpha/toggle", timeout=5.0)
+    resp = httpx.post(f"{url}/tool/alpha/toggle", headers={"HX-Request": "true"}, timeout=5.0)
     assert resp.status_code == 200
     assert registry.by_name("alpha").enabled is False
