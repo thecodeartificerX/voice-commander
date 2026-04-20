@@ -175,3 +175,68 @@ def build_phase2(cfg: Config) -> Phase2Daemon:
         compute_type=cfg.transcription.compute_type,
     )
     return Phase2Daemon(feedback=feedback, recorder=recorder, transcriber=transcriber)
+
+
+from .dispatcher import Dispatcher  # noqa: E402
+from .matcher import Matcher  # noqa: E402
+from .registry import ToolRegistry, discover  # noqa: E402
+
+
+class Phase3Daemon(Phase2Daemon):
+    def __init__(
+        self,
+        feedback: FeedbackSink,
+        recorder: Recorder,
+        transcriber: Transcriber,
+        registry: ToolRegistry,
+        matcher: Matcher,
+        dispatcher: Dispatcher,
+    ) -> None:
+        super().__init__(feedback=feedback, recorder=recorder, transcriber=transcriber)
+        self._registry = registry
+        self._matcher = matcher
+        self._dispatcher = dispatcher
+
+    def _worker_loop(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None:
+                break
+            try:
+                result = self._transcriber.transcribe(item)
+                self._feedback.on_transcript(result.text, result.confidence)
+                if result.confidence < 0.30:
+                    self._feedback.on_miss(result.text, ())
+                    continue
+                match = self._matcher.match(result.text)
+                self._dispatcher.dispatch(result.text, match)
+            except Exception as e:
+                self._feedback.on_error("pipeline", e)
+
+
+def build_phase3(cfg: Config) -> Phase3Daemon:
+    recorder = Recorder(
+        output_dir=Path(cfg.audio.output_dir),
+        channels=cfg.audio.channels,
+        device=cfg.audio.device if cfg.audio.device >= 0 else None,
+    )
+    feedback = WindowsFeedbackSink(
+        sounds_dir=Path(cfg.feedback.sounds_dir),
+        start_sound=cfg.feedback.start_sound,
+        stop_sound=cfg.feedback.stop_sound,
+        miss_sound=cfg.feedback.miss_sound,
+        toast_enabled=cfg.feedback.toast_enabled,
+        toast_show_transcript=cfg.feedback.toast_show_transcript,
+    )
+    transcriber = Transcriber(
+        model_size=cfg.transcription.model_size,
+        device=cfg.transcription.device,
+        compute_type=cfg.transcription.compute_type,
+    )
+    registry = discover("voice_commander.tools")
+    matcher = Matcher(registry, threshold=cfg.matching.threshold)
+    dispatcher = Dispatcher(feedback)
+    return Phase3Daemon(
+        feedback=feedback, recorder=recorder, transcriber=transcriber,
+        registry=registry, matcher=matcher, dispatcher=dispatcher,
+    )
