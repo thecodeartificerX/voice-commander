@@ -28,6 +28,7 @@ Exit codes:
     1 — FAIL (leak detected)
     2 — could not attach to process
 """
+
 from __future__ import annotations
 
 import argparse
@@ -58,7 +59,9 @@ def _sample_bytes(proc: psutil.Process) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Voice Commander RSS soak test.")
-    parser.add_argument("--pid", type=int, required=True, help="PID of running voice-commander daemon")
+    parser.add_argument(
+        "--pid", type=int, required=True, help="PID of running voice-commander daemon"
+    )
     parser.add_argument("--hours", type=float, default=1.0)
     parser.add_argument("--interval", type=float, default=30.0)
     parser.add_argument("--limit-mb", type=float, default=100.0)
@@ -81,7 +84,7 @@ def main() -> int:
 
     print(
         f"soak start: pid={args.pid} hours={args.hours} interval={args.interval}s "
-        f"limit={args.limit_mb:.0f}MB start_rss={start_rss/1e6:.1f}MB"
+        f"limit={args.limit_mb:.0f}MB start_rss={start_rss / 1e6:.1f}MB"
     )
 
     try:
@@ -100,8 +103,8 @@ def main() -> int:
             delta_mb = (rss - start_rss) / 1e6
             samples.append((elapsed, rss))
             print(
-                f"[{datetime.now():%H:%M:%S}] t={elapsed/60:.1f}m "
-                f"rss={rss/1e6:.1f}MB delta={delta_mb:+.1f}MB"
+                f"[{datetime.now():%H:%M:%S}] t={elapsed / 60:.1f}m "
+                f"rss={rss / 1e6:.1f}MB delta={delta_mb:+.1f}MB"
             )
     except KeyboardInterrupt:
         print("\nsoak interrupted by user; reporting partial result")
@@ -120,7 +123,7 @@ def main() -> int:
 
     print(
         f"soak done: samples={len(samples)} "
-        f"final={final_rss/1e6:.1f}MB delta={delta_mb:+.1f}MB "
+        f"final={final_rss / 1e6:.1f}MB delta={delta_mb:+.1f}MB "
         f"peak_delta={peak_delta_mb:+.1f}MB"
     )
     if delta_mb > args.limit_mb:

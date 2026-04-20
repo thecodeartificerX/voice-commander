@@ -1,10 +1,8 @@
-import queue
-import threading
-from pathlib import Path
 from unittest.mock import MagicMock
+
 from voice_commander.daemon import Phase2Daemon
-from voice_commander.transcriber import TranscriptionResult
 from voice_commander.feedback import CapturingFeedbackSink
+from voice_commander.transcriber import TranscriptionResult
 
 
 def test_worker_drains_queue_and_reports_transcript(tmp_path):

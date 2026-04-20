@@ -1,0 +1,21 @@
+category = "clipboard"
+
+[tools.copy]
+phrases = ["copy", "copy that", "copy selection"]
+description = "Sends Ctrl+C to copy the current selection."
+enabled = true
+
+[tools.paste]
+phrases = ["paste", "paste it", "paste here"]
+description = "Ctrl+V."
+enabled = true
+
+[tools.cut]
+phrases = ["cut", "cut selection", "cut that"]
+description = "Ctrl+X."
+enabled = true
+
+[tools.select_all]
+phrases = ["select all", "select everything"]
+description = "Ctrl+A."
+enabled = true

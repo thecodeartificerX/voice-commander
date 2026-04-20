@@ -12,13 +12,11 @@ Covers:
 - Phase3._worker_loop full pipeline (match + dispatch, low-confidence miss)
 - build_phase3 returns a wired Phase3Daemon
 """
+
 from __future__ import annotations
 
 import threading
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from voice_commander.config import Config
 from voice_commander.daemon import (
@@ -31,10 +29,10 @@ from voice_commander.daemon import (
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.transcriber import TranscriptionResult
 
-
 # ---------------------------------------------------------------------------
 # Phase1 on_toggle error branches
 # ---------------------------------------------------------------------------
+
 
 def test_phase1_toggle_start_raises_calls_on_error():
     """recorder.start() raises → on_error("recorder.start", ...) is reported."""
@@ -72,6 +70,7 @@ def test_phase1_toggle_stop_raises_calls_on_error(tmp_path):
 # Phase1.run main loop — keyboard-interrupt path
 # ---------------------------------------------------------------------------
 
+
 def test_phase1_run_keyboard_interrupt_shuts_down(monkeypatch):
     """KeyboardInterrupt inside the wait loop triggers shutdown cleanly."""
     feedback = CapturingFeedbackSink()
@@ -79,9 +78,14 @@ def test_phase1_run_keyboard_interrupt_shuts_down(monkeypatch):
     recorder.is_recording = False
 
     class ImmediateInterruptHotkey:
-        def __init__(self, *a, **k): pass
-        def start(self): pass
-        def stop(self): pass
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
 
     monkeypatch.setattr("voice_commander.daemon.HotkeyController", ImmediateInterruptHotkey)
 
@@ -107,6 +111,7 @@ def test_phase1_run_keyboard_interrupt_shuts_down(monkeypatch):
 # ---------------------------------------------------------------------------
 # Phase1.shutdown edge paths
 # ---------------------------------------------------------------------------
+
 
 def test_phase1_shutdown_when_no_hotkey_and_not_recording():
     """shutdown() with _hotkey=None and not recording is a no-op beyond set."""
@@ -139,6 +144,7 @@ def test_phase1_shutdown_recorder_stop_raises_is_swallowed(tmp_path):
 # Phase2 on_toggle error branch
 # ---------------------------------------------------------------------------
 
+
 def test_phase2_toggle_stop_raises_calls_on_error():
     """Phase2.on_toggle: recorder.stop raises while recording → on_error."""
     feedback = CapturingFeedbackSink()
@@ -158,6 +164,7 @@ def test_phase2_toggle_stop_raises_calls_on_error():
 # ---------------------------------------------------------------------------
 # Phase2._worker_loop error branch
 # ---------------------------------------------------------------------------
+
 
 def test_phase2_worker_transcribe_error_calls_on_error(tmp_path):
     """If transcriber.transcribe() raises, on_error("transcribe", ...) is reported."""
@@ -184,6 +191,7 @@ def test_phase2_worker_transcribe_error_calls_on_error(tmp_path):
 # Phase2.shutdown paths
 # ---------------------------------------------------------------------------
 
+
 def test_phase2_shutdown_worker_slow_join_logs_warning(tmp_path, caplog):
     """If the worker doesn't finish within timeout, a warning is logged."""
     import logging
@@ -196,9 +204,11 @@ def test_phase2_shutdown_worker_slow_join_logs_warning(tmp_path, caplog):
 
     # Make transcriber.transcribe block indefinitely until we release
     gate = threading.Event()
+
     def _blocking_transcribe(path):
         gate.wait()
         return TranscriptionResult(text="hi", language="en", duration_ms=100, confidence=0.9)
+
     transcriber.transcribe.side_effect = _blocking_transcribe
 
     daemon = Phase2Daemon(feedback=feedback, recorder=recorder, transcriber=transcriber)
@@ -209,7 +219,6 @@ def test_phase2_shutdown_worker_slow_join_logs_warning(tmp_path, caplog):
     daemon._queue.put(fake_wav)
 
     # Patch worker.join to simulate timeout (is_alive returns True after join)
-    original_join = threading.Thread.join
     join_calls = [0]
 
     def _fast_join(self, timeout=None):
@@ -218,9 +227,11 @@ def test_phase2_shutdown_worker_slow_join_logs_warning(tmp_path, caplog):
         # is_alive will still return True because the thread is blocking on gate
         return
 
-    with patch.object(threading.Thread, "join", _fast_join):
-        with caplog.at_level(logging.WARNING, logger="voice_commander.daemon"):
-            daemon.shutdown()
+    with (
+        patch.object(threading.Thread, "join", _fast_join),
+        caplog.at_level(logging.WARNING, logger="voice_commander.daemon"),
+    ):
+        daemon.shutdown()
 
     assert any("did not exit" in r.message for r in caplog.records)
 
@@ -251,12 +262,15 @@ def test_phase2_shutdown_transcriber_unload_raises_is_logged(caplog):
 # build_phase2
 # ---------------------------------------------------------------------------
 
+
 def test_build_phase2_returns_phase2_daemon(tmp_path, monkeypatch):
     """build_phase2 wires up a Phase2Daemon using config values."""
     # Prevent Recorder, Transcriber, WindowsFeedbackSink from touching hardware
     monkeypatch.setattr("voice_commander.daemon.Recorder", MagicMock(return_value=MagicMock()))
     monkeypatch.setattr("voice_commander.daemon.Transcriber", MagicMock(return_value=MagicMock()))
-    monkeypatch.setattr("voice_commander.daemon.WindowsFeedbackSink", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(
+        "voice_commander.daemon.WindowsFeedbackSink", MagicMock(return_value=MagicMock())
+    )
 
     cfg = Config()
     daemon = build_phase2(cfg)
@@ -267,6 +281,7 @@ def test_build_phase2_returns_phase2_daemon(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Phase3 worker loop — full pipeline paths
 # ---------------------------------------------------------------------------
+
 
 def _make_phase3(feedback, recorder, transcriber, matcher, dispatcher, min_confidence=0.30):
     registry = MagicMock()
@@ -368,11 +383,14 @@ def test_phase3_worker_pipeline_error_calls_on_error(tmp_path):
 # build_phase3
 # ---------------------------------------------------------------------------
 
+
 def test_build_phase3_returns_phase3_daemon(monkeypatch):
     """build_phase3 wires up a Phase3Daemon using config values."""
     monkeypatch.setattr("voice_commander.daemon.Recorder", MagicMock(return_value=MagicMock()))
     monkeypatch.setattr("voice_commander.daemon.Transcriber", MagicMock(return_value=MagicMock()))
-    monkeypatch.setattr("voice_commander.daemon.WindowsFeedbackSink", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(
+        "voice_commander.daemon.WindowsFeedbackSink", MagicMock(return_value=MagicMock())
+    )
     monkeypatch.setattr("voice_commander.daemon.discover", MagicMock(return_value=MagicMock()))
     monkeypatch.setattr("voice_commander.daemon.Matcher", MagicMock(return_value=MagicMock()))
     monkeypatch.setattr("voice_commander.daemon.Dispatcher", MagicMock(return_value=MagicMock()))

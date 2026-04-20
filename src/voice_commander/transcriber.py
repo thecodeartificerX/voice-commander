@@ -41,7 +41,9 @@ class Transcriber:
             return
         logger.info(
             "Loading faster-whisper model=%s device=%s compute=%s",
-            self._model_size, self._device, self._compute_type,
+            self._model_size,
+            self._device,
+            self._compute_type,
         )
         self._model = WhisperModel(
             self._model_size, device=self._device, compute_type=self._compute_type
@@ -59,6 +61,7 @@ class Transcriber:
         del self._model
         self._model = None
         import gc
+
         gc.collect()
 
     def transcribe(self, wav: Path) -> TranscriptionResult:

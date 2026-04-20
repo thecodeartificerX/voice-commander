@@ -8,19 +8,18 @@ Covers:
 - _pid_alive() with a truly invalid PID → False
 - acquire() stale → reclaim cycle (re-enter after unlink)
 """
+
 from __future__ import annotations
 
 import os
 import sys
 
-import pytest
-
-from voice_commander.single_instance import SingleInstanceLock, AlreadyRunning, _pid_alive
-
+from voice_commander.single_instance import SingleInstanceLock, _pid_alive
 
 # ---------------------------------------------------------------------------
 # acquire / release — core success path
 # ---------------------------------------------------------------------------
+
 
 def test_acquire_writes_pid_to_lock_file(tmp_path):
     """acquire() creates the lock file and writes the current PID into it."""
@@ -50,6 +49,7 @@ def test_acquire_creates_parent_dirs(tmp_path):
 # release() when never acquired
 # ---------------------------------------------------------------------------
 
+
 def test_release_before_acquire_is_noop(tmp_path):
     """release() before acquire() must not raise and must not leave a file."""
     lock_path = tmp_path / "daemon.lock"
@@ -61,6 +61,7 @@ def test_release_before_acquire_is_noop(tmp_path):
 # ---------------------------------------------------------------------------
 # release() when os.close raises
 # ---------------------------------------------------------------------------
+
 
 def test_release_swallows_os_close_error(tmp_path, monkeypatch):
     """If os.close() raises inside release(), the exception is swallowed."""
@@ -76,7 +77,7 @@ def test_release_swallows_os_close_error(tmp_path, monkeypatch):
     original_os_close = si_mod.os.close
 
     def _bad_close(fd):
-        original_os_close(fd)   # actually release the fd so unlink can proceed
+        original_os_close(fd)  # actually release the fd so unlink can proceed
         raise OSError("bad fd")
 
     monkeypatch.setattr(si_mod.os, "close", _bad_close)
@@ -87,6 +88,7 @@ def test_release_swallows_os_close_error(tmp_path, monkeypatch):
 # _pid_alive — alive PID
 # ---------------------------------------------------------------------------
 
+
 def test_pid_alive_current_process_is_alive():
     """_pid_alive(os.getpid()) must return True — we are obviously running."""
     assert _pid_alive(os.getpid()) is True
@@ -95,6 +97,7 @@ def test_pid_alive_current_process_is_alive():
 # ---------------------------------------------------------------------------
 # _pid_alive — dead / invalid PID
 # ---------------------------------------------------------------------------
+
 
 def test_pid_alive_invalid_pid_returns_false():
     """_pid_alive with a PID that cannot possibly be running → False.
@@ -112,6 +115,7 @@ def test_pid_alive_invalid_pid_returns_false():
         assert isinstance(result, bool)
     else:
         import subprocess
+
         proc = subprocess.Popen(["true"])
         proc.wait()
         dead_pid = proc.pid
@@ -121,6 +125,7 @@ def test_pid_alive_invalid_pid_returns_false():
 # ---------------------------------------------------------------------------
 # stale-lock reclaim with controlled PID
 # ---------------------------------------------------------------------------
+
 
 def test_acquire_reclaims_stale_lock_with_dead_pid(tmp_path):
     """If lock file contains an obviously dead PID, acquire() reclaims it."""

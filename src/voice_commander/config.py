@@ -51,6 +51,14 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True)
+class WebConfig:
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = 8765
+    auto_open_browser: bool = True
+
+
+@dataclass(frozen=True)
 class Config:
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
@@ -58,9 +66,10 @@ class Config:
     matching: MatchingConfig = field(default_factory=MatchingConfig)
     feedback: FeedbackConfig = field(default_factory=FeedbackConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    web: WebConfig = field(default_factory=WebConfig)
 
     @classmethod
-    def load(cls, path: Path) -> "Config":
+    def load(cls, path: Path) -> Config:
         raw: dict[str, Any] = {}
         if path.exists():
             with path.open("rb") as fh:
@@ -72,12 +81,13 @@ class Config:
             matching=_section(MatchingConfig, raw.get("matching", {})),
             feedback=_section(FeedbackConfig, raw.get("feedback", {})),
             logging=_section(LoggingConfig, raw.get("logging", {})),
+            web=_section(WebConfig, raw.get("web", {})),
         )
 
 
 def _section(cls: type[T], data: dict[str, Any]) -> T:
     assert is_dataclass(cls)
-    known = {f.name: f for f in fields(cls)}  # type: ignore[arg-type]
+    known = {f.name: f for f in fields(cls)}
     hints = get_type_hints(cls)
     kwargs: dict[str, Any] = {}
     for key, value in data.items():
@@ -89,7 +99,7 @@ def _section(cls: type[T], data: dict[str, Any]) -> T:
                 f"Config {cls.__name__}.{key} expected {expected}, got {type(value).__name__}"
             )
         kwargs[key] = value
-    return cls(**kwargs)  # type: ignore[return-value]
+    return cls(**kwargs)
 
 
 def _type_ok(value: Any, expected: Any) -> bool:

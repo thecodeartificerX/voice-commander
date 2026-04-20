@@ -1,12 +1,30 @@
 from voice_commander.matcher import Matcher
-from voice_commander.registry import ToolRegistry, ToolEntry
+from voice_commander.registry import ToolEntry, ToolRegistry
 
 
 def _registry() -> ToolRegistry:
     r = ToolRegistry()
-    r.register(ToolEntry("copy", ("copy", "copy that"), lambda: None, "m", None))
-    r.register(ToolEntry("paste", ("paste",), lambda: None, "m", None))
-    r.register(ToolEntry("new_tab", ("new tab", "open new tab"), lambda: None, "m", None))
+    r.register(
+        ToolEntry(
+            name="copy",
+            phrases=("copy", "copy that"),
+            func=lambda: None,
+            module="m",
+            docstring=None,
+        )
+    )
+    r.register(
+        ToolEntry(name="paste", phrases=("paste",), func=lambda: None, module="m", docstring=None)
+    )
+    r.register(
+        ToolEntry(
+            name="new_tab",
+            phrases=("new tab", "open new tab"),
+            func=lambda: None,
+            module="m",
+            docstring=None,
+        )
+    )
     return r
 
 
@@ -42,8 +60,12 @@ def test_candidates_are_top_5_sorted_desc():
 
 def test_tiebreak_alphabetical():
     r = ToolRegistry()
-    r.register(ToolEntry("zulu", ("same",), lambda: None, "m", None))
-    r.register(ToolEntry("alpha", ("same",), lambda: None, "m", None))
+    r.register(
+        ToolEntry(name="zulu", phrases=("same",), func=lambda: None, module="m", docstring=None)
+    )
+    r.register(
+        ToolEntry(name="alpha", phrases=("same",), func=lambda: None, module="m", docstring=None)
+    )
     m = Matcher(r, threshold=50.0)
     result = m.match("same")
     assert result.tool.name == "alpha"

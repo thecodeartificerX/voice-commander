@@ -1,6 +1,6 @@
 from unittest.mock import patch
-from pathlib import Path
-from voice_commander.feedback import NullFeedbackSink, CapturingFeedbackSink, WindowsFeedbackSink
+
+from voice_commander.feedback import CapturingFeedbackSink, NullFeedbackSink, WindowsFeedbackSink
 
 
 def test_null_sink_all_methods_noop():

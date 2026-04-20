@@ -4,8 +4,6 @@ import logging
 import winreg
 from subprocess import Popen
 
-import pyautogui
-
 logger = logging.getLogger(__name__)
 
 
@@ -15,7 +13,7 @@ def default_browser_progid() -> str | None:
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
             progid, _ = winreg.QueryValueEx(key, "ProgId")
-            return progid
+            return str(progid)
     except OSError:
         return None
 
@@ -50,6 +48,7 @@ def focus_window_by_exe(exe_name: str) -> bool:
         return False
 
     found: list[int] = []
+
     def _enum(hwnd: int, _: object) -> bool:
         if not win32gui.IsWindowVisible(hwnd):
             return True

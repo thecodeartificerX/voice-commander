@@ -11,10 +11,14 @@ def test_toggle_start_stop_flow(tmp_path):
     feedback = CapturingFeedbackSink()
     recorder = MagicMock()
     recorder.is_recording = False
-    def _start(): recorder.is_recording = True
+
+    def _start():
+        recorder.is_recording = True
+
     def _stop():
         recorder.is_recording = False
         return tmp_path / "out.wav"
+
     recorder.start.side_effect = _start
     recorder.stop.side_effect = _stop
 
@@ -46,6 +50,7 @@ def test_clean_shutdown_via_run(tmp_path):
 
     # Give the listener thread a moment to start, then request shutdown.
     import time
+
     time.sleep(0.2)
     daemon.shutdown()
 
@@ -74,9 +79,14 @@ def test_hotkey_start_failure_aborts_cleanly(monkeypatch, tmp_path):
     recorder.is_recording = False
 
     class ExplodingHotkey:
-        def __init__(self, *a, **k): pass
-        def start(self): raise RuntimeError("pynput dead")
-        def stop(self): pass
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            raise RuntimeError("pynput dead")
+
+        def stop(self):
+            pass
 
     monkeypatch.setattr("voice_commander.daemon.HotkeyController", ExplodingHotkey)
 

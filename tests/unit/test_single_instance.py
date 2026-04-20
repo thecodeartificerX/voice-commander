@@ -1,5 +1,6 @@
 import pytest
-from voice_commander.single_instance import SingleInstanceLock, AlreadyRunning
+
+from voice_commander.single_instance import AlreadyRunning, SingleInstanceLock
 
 
 def test_first_acquire_succeeds(tmp_path):

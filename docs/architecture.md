@@ -298,6 +298,38 @@ Total latency budget (recording stop → tool fires): ~700 ms target, 1.5 s hard
 
 ---
 
+## 7. Web UI Subsystem
+
+The command management web UI runs as an embedded FastAPI server on a uvicorn daemon thread inside the main process.
+
+### Thread Topology
+
+```
+[Main thread]           [HotkeyCtrl thread]    [Pipeline threads]    [uvicorn thread]
+Daemon orchestrator     pynput listener        transcribe→match→     FastAPI app
+owns registry,                                 dispatch worker       handles HTTP
+reload_lock                                    shares ToolRegistry   uses reload_lock
+```
+
+### Components
+
+- **`ToolMetadataStore`** — reads/writes sidecar TOML files next to tool Python modules. Atomic writes via tmp+rename. Per-tool file locking via `portalocker`.
+- **`WebServer`** — wraps uvicorn on a daemon thread. Port-bump fallback (8765 → 8775). Graceful shutdown via `should_exit`.
+- **`FastAPI app`** — 6 routes: dashboard, healthz, edit form, cancel edit, save, toggle. HTMX fragments for partial page updates.
+- **`reload_lock`** — `threading.Lock` guards registry mutations. Held μs for reads, ms for saves.
+
+### Data Flow (Save Cycle)
+
+1. User clicks Edit → `GET /tool/{name}/edit` → HTMX swaps card to form.
+2. User edits → Save → `POST /tool/{name}` with form data.
+3. Server validates (non-empty phrases, no duplicates).
+4. Acquires per-tool file lock → atomic TOML write → release.
+5. Acquires `reload_lock` → `registry.reload_metadata()` → release.
+6. Returns updated card fragment → HTMX swaps form back to card.
+7. Matcher's next `match()` call sees updated phrases.
+
+---
+
 ## 6. See Also
 
 - [`../CLAUDE.md`](../CLAUDE.md) — project-wide durable context for agents and contributors

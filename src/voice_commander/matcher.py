@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass
 
 from rapidfuzz import fuzz, process
 
 from .registry import ToolEntry, ToolRegistry
-
 
 _NORMALIZE_RE = re.compile(r"[^a-z0-9 ]+")
 
@@ -20,21 +20,29 @@ class MatchResult:
 
 
 class Matcher:
-    def __init__(self, registry: ToolRegistry, threshold: float = 85.0) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        threshold: float = 85.0,
+        reload_lock: threading.Lock | None = None,
+    ) -> None:
         self._registry = registry
         self._threshold = threshold
+        self._reload_lock = reload_lock
 
     def match(self, utterance: str) -> MatchResult:
         text = _normalize(utterance)
-        phrases = self._registry.flat_phrases()
+        if self._reload_lock is not None:
+            with self._reload_lock:
+                phrases = self._registry.flat_phrases_enabled()
+        else:
+            phrases = self._registry.flat_phrases_enabled()
         if not phrases:
             return MatchResult(None, None, 0.0, ())
         phrase_list = [p for p, _ in phrases]
         phrase_to_tool = {p: t for p, t in phrases}
 
-        ranked = process.extract(
-            text, phrase_list, scorer=fuzz.WRatio, limit=5
-        )
+        ranked = process.extract(text, phrase_list, scorer=fuzz.WRatio, limit=5)
         ranked_sorted = sorted(
             ranked,
             key=lambda r: (-r[1], phrase_to_tool[r[0]]),

@@ -170,3 +170,29 @@ The failure is order-dependent:
 **Diagnostic value retained:** This failure mode is the reason `__main__.py` calls `faulthandler.enable(file=<crash.log>, all_threads=True)` before importing anything heavy, and why `_cuda_setup.register()` logs DLL preload counts at INFO. Without the fault handler, the daemon would have appeared to simply exit with an opaque numeric code and no traceback. That infrastructure is kept — it's general-purpose observability, not toast-specific.
 
 **Related pitfalls to watch for:** Any package that loads COM/WinRT at import time (`winsdk`, `winrt-*`, `pywin32` with early `pythoncom.CoInitialize`, `pythonnet`) may reproduce this class of bug. Keep CUDA-adjacent imports first; lazy-load Windows-specific UI/COM helpers, or — if the feature turns out to be optional — skip the integration entirely. Audio chimes do a lot of the same job with none of the process-level side effects.
+
+---
+
+## 11. Uvicorn on a daemon thread
+
+Running `uvicorn.Server.run()` on a `threading.Thread(daemon=True)` works but has a subtle requirement: the thread gets its own asyncio event loop created by uvicorn internally. Do NOT share the uvicorn event loop with other code. Access the FastAPI app synchronously through the registry/store — all shared state is guarded by `threading.Lock`, not asyncio primitives.
+
+Graceful shutdown: set `server.should_exit = True` and join the thread. Uvicorn polls this flag in its main loop.
+
+---
+
+## 12. Portalocker on Windows
+
+`portalocker` uses `msvcrt.locking()` on Windows, which requires the file to be opened in a compatible mode. Always use `mode="a"` (append) for lock files — this creates the file if missing and doesn't truncate existing content. Lock files live in `tools/.locks/` and should be gitignored.
+
+---
+
+## 13. TOML atomic write on Windows
+
+`os.replace()` is atomic on POSIX but NOT guaranteed atomic on Windows (NTFS is close but not specified). The sequence `write .tmp` → `os.replace .tmp → .toml` is the best available. The per-tool file lock (portalocker) is the actual concurrency guard; atomic replace is defense-in-depth.
+
+---
+
+## 14. Tailwind CSS vendoring
+
+The dashboard uses Tailwind CSS Play CDN (`<script src="https://cdn.tailwindcss.com">`) for development. For fully offline use, vendor the CDN script to `web/static/tailwind.min.js`. The Play CDN generates CSS client-side from class names — it's ~300KB but zero-config.

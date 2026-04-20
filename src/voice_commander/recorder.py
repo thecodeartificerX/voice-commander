@@ -80,11 +80,13 @@ class Recorder:
             raise RuntimeError("Recorder.stop() called while not recording")
         stream = self._stream
         self._stream = None
+        assert stream is not None  # guarded by is_recording check above
         stream.stop()
         stream.close()
         with self._lock:
             frames = (
-                np.concatenate(self._buffer, axis=0) if self._buffer
+                np.concatenate(self._buffer, axis=0)
+                if self._buffer
                 else np.zeros((0, self._ch), dtype=np.float32)
             )
             self._buffer.clear()

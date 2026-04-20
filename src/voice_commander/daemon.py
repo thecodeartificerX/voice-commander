@@ -1,17 +1,17 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import queue
 import signal
 import threading
 from pathlib import Path
-from typing import Optional
 
 from .config import Config
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
 from .recorder import Recorder
-from .transcriber import Transcriber, TranscriptionResult
+from .transcriber import Transcriber
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +78,8 @@ class Phase1Daemon:
             self._hotkey.stop()
             self._hotkey = None
         if self._recorder.is_recording:
-            try:
+            with contextlib.suppress(Exception):
                 self._recorder.stop()
-            except Exception:
-                pass
 
 
 def build_phase1(cfg: Config) -> Phase1Daemon:
@@ -105,7 +103,7 @@ class Phase2Daemon(Phase1Daemon):
     ) -> None:
         super().__init__(feedback=feedback, recorder=recorder)
         self._transcriber = transcriber
-        self._queue: queue.Queue[Optional[Path]] = queue.Queue()
+        self._queue: queue.Queue[Path | None] = queue.Queue()
         self._worker: threading.Thread | None = None
 
     def on_toggle(self) -> None:
@@ -161,9 +159,7 @@ class Phase2Daemon(Phase1Daemon):
         if worker is not None:
             worker.join(timeout=5.0)
             if worker.is_alive():
-                logger.warning(
-                    "Worker thread did not exit within 5s; continuing shutdown"
-                )
+                logger.warning("Worker thread did not exit within 5s; continuing shutdown")
             self._worker = None
         # Release the model last.
         try:
@@ -190,6 +186,9 @@ def build_phase2(cfg: Config) -> Phase2Daemon:
 from .dispatcher import Dispatcher  # noqa: E402
 from .matcher import Matcher  # noqa: E402
 from .registry import ToolRegistry, discover  # noqa: E402
+from .tool_metadata import ToolMetadataStore  # noqa: E402
+from .web.app import create_app  # noqa: E402
+from .web.server import WebServer  # noqa: E402
 
 
 class Phase3Daemon(Phase2Daemon):
@@ -202,12 +201,28 @@ class Phase3Daemon(Phase2Daemon):
         matcher: Matcher,
         dispatcher: Dispatcher,
         min_confidence: float = 0.30,
+        web_server: WebServer | None = None,
     ) -> None:
         super().__init__(feedback=feedback, recorder=recorder, transcriber=transcriber)
         self._registry = registry
         self._matcher = matcher
         self._dispatcher = dispatcher
         self._min_confidence = min_confidence
+        self._web_server = web_server
+
+    def run(self, hotkey_key: str) -> None:
+        # Start web server before entering the blocking main loop.
+        if self._web_server is not None:
+            self._web_server.start()
+        super().run(hotkey_key)  # Phase2Daemon.run() handles transcriber load + worker + loop
+
+    def shutdown(self) -> None:
+        if self._shutdown.is_set():
+            return
+        # Stop web server before tearing down the pipeline.
+        if self._web_server is not None:
+            self._web_server.stop()
+        super().shutdown()
 
     def _worker_loop(self) -> None:
         while True:
@@ -227,6 +242,8 @@ class Phase3Daemon(Phase2Daemon):
 
 
 def build_phase3(cfg: Config) -> Phase3Daemon:
+    import os
+
     recorder = Recorder(
         output_dir=Path(cfg.audio.output_dir),
         channels=cfg.audio.channels,
@@ -243,11 +260,29 @@ def build_phase3(cfg: Config) -> Phase3Daemon:
         device=cfg.transcription.device,
         compute_type=cfg.transcription.compute_type,
     )
-    registry = discover("voice_commander.tools")
-    matcher = Matcher(registry, threshold=cfg.matching.threshold)
+
+    # Metadata store + reload lock shared between registry, matcher, and web server.
+    tools_dir = Path(__file__).resolve().parent / "tools"
+    store = ToolMetadataStore(tools_dir)
+    reload_lock = threading.Lock()
+
+    registry = discover("voice_commander.tools", store=store)
+    matcher = Matcher(registry, threshold=cfg.matching.threshold, reload_lock=reload_lock)
     dispatcher = Dispatcher(feedback)
+
+    # Web server — created only when enabled and not suppressed by env var.
+    web_server = None
+    if cfg.web.enabled and os.environ.get("VOICE_COMMANDER_WEB_DISABLED") != "1":
+        app = create_app(registry, store, reload_lock)
+        web_server = WebServer(app, host=cfg.web.host, port=cfg.web.port)
+
     return Phase3Daemon(
-        feedback=feedback, recorder=recorder, transcriber=transcriber,
-        registry=registry, matcher=matcher, dispatcher=dispatcher,
+        feedback=feedback,
+        recorder=recorder,
+        transcriber=transcriber,
+        registry=registry,
+        matcher=matcher,
+        dispatcher=dispatcher,
         min_confidence=cfg.transcription.min_confidence,
+        web_server=web_server,
     )

@@ -5,19 +5,29 @@ import pkgutil
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .tool_metadata import ToolMetadataStore
 
 
 class DuplicateToolError(Exception):
     pass
 
 
-@dataclass(frozen=True)
+# Import ToolMetadataError from tool_metadata so callers can catch it from one place.
+
+
+@dataclass
 class ToolEntry:
     name: str
     phrases: tuple[str, ...]
     func: Callable[[], None]
     module: str
     docstring: str | None
+    description: str = ""
+    category: str = ""
+    enabled: bool = True
 
 
 class ToolRegistry:
@@ -32,11 +42,70 @@ class ToolRegistry:
     def all(self) -> list[ToolEntry]:
         return sorted(self._by_name.values(), key=lambda e: e.name)
 
+    def all_enabled(self) -> list[ToolEntry]:
+        """Return only enabled entries, sorted by name."""
+        return sorted(
+            (e for e in self._by_name.values() if e.enabled),
+            key=lambda e: e.name,
+        )
+
     def by_name(self, name: str) -> ToolEntry | None:
         return self._by_name.get(name)
 
     def flat_phrases(self) -> list[tuple[str, str]]:
+        """All (phrase, tool_name) pairs regardless of enabled state."""
         return [(p, e.name) for e in self._by_name.values() for p in e.phrases]
+
+    def flat_phrases_enabled(self) -> list[tuple[str, str]]:
+        """(phrase, tool_name) pairs for enabled tools only."""
+        return [(p, e.name) for e in self._by_name.values() if e.enabled for p in e.phrases]
+
+    def bind_metadata(self, store: ToolMetadataStore) -> None:
+        """Load all TOML metadata and pair each entry with its registered tool.
+
+        Raises :class:`ToolMetadataError` if any function lacks a TOML match
+        or any TOML entry lacks a corresponding registered function.
+        """
+        from .tool_metadata import ToolMetadataError as _TME
+
+        all_meta = store.load_all()
+
+        # Check that every registered tool has a TOML entry.
+        unmatched_funcs = [name for name in self._by_name if name not in all_meta]
+        if unmatched_funcs:
+            raise _TME(f"Registered tools have no TOML metadata: {unmatched_funcs}")
+
+        # Check that every TOML entry has a registered function.
+        unmatched_toml = [name for name in all_meta if name not in self._by_name]
+        if unmatched_toml:
+            raise _TME(f"TOML metadata entries have no registered tool function: {unmatched_toml}")
+
+        # Apply metadata to entries.
+        for name, md in all_meta.items():
+            entry = self._by_name[name]
+            normalized = tuple(_normalize(p) for p in md.phrases)
+            entry.phrases = normalized
+            entry.description = md.description
+            entry.category = md.category
+            entry.enabled = md.enabled
+
+    def reload_metadata(self, store: ToolMetadataStore) -> None:
+        """Re-read all TOML and update existing entries.
+
+        Unlike :meth:`bind_metadata`, this does not raise on pairing mismatches
+        — unknown TOML entries are ignored and unmatched tools keep their current state.
+        Useful for hot-reload scenarios.
+        """
+        all_meta = store.load_all()
+        for name, md in all_meta.items():
+            entry = self._by_name.get(name)
+            if entry is None:
+                continue
+            normalized = tuple(_normalize(p) for p in md.phrases)
+            entry.phrases = normalized
+            entry.description = md.description
+            entry.category = md.category
+            entry.enabled = md.enabled
 
     def __len__(self) -> int:
         return len(self._by_name)
@@ -63,27 +132,57 @@ def _normalize(phrase: str) -> str:
     return " ".join(cleaned.split())
 
 
-def tool(phrases: list[str]) -> Callable[[Callable[[], None]], Callable[[], None]]:
-    if not phrases:
-        raise ValueError("@tool requires at least one phrase")
+def tool(
+    func: Callable[[], None] | None = None,
+) -> Callable[[], None] | Callable[[Callable[[], None]], Callable[[], None]]:
+    """Decorator that registers a function as a voice command tool.
 
-    def wrap(func: Callable[[], None]) -> Callable[[], None]:
-        normalized = tuple(_normalize(p) for p in phrases)
+    Supports both bare ``@tool`` and ``@tool()`` usage.  Phrases are not
+    specified here — they are loaded from sidecar TOML files via
+    :meth:`ToolRegistry.bind_metadata`.
+    """
+
+    def _register(fn: Callable[[], None]) -> Callable[[], None]:
         entry = ToolEntry(
-            name=func.__name__,
-            phrases=normalized,
-            func=func,
-            module=func.__module__,
-            docstring=(func.__doc__ or "").strip() or None,
+            name=fn.__name__,
+            phrases=(),
+            func=fn,
+            module=fn.__module__,
+            docstring=(fn.__doc__ or "").strip() or None,
         )
         get_global_registry().register(entry)
-        return func
+        return fn
 
-    return wrap
+    # Called as @tool (no parens) — func is the decorated function directly.
+    if func is not None:
+        return _register(func)
+
+    # Called as @tool() (with parens) — return the decorator.
+    return _register
 
 
-def discover(package: str = "voice_commander.tools") -> ToolRegistry:
+def discover(
+    package: str = "voice_commander.tools",
+    store: ToolMetadataStore | None = None,
+) -> ToolRegistry:
+    """Import all tool modules and optionally bind TOML metadata.
+
+    Parameters
+    ----------
+    package:
+        Dotted module path of the tools package (default: ``voice_commander.tools``).
+    store:
+        If provided, :meth:`ToolRegistry.bind_metadata` is called after all
+        modules are imported.  Pass ``None`` to skip metadata binding (useful
+        in unit tests that don't need TOML files).
+    """
     pkg = importlib.import_module(package)
     for _, name, _ in pkgutil.iter_modules(pkg.__path__):
         importlib.import_module(f"{package}.{name}")
-    return get_global_registry()
+
+    registry = get_global_registry()
+
+    if store is not None:
+        registry.bind_metadata(store)
+
+    return registry

@@ -1,13 +1,17 @@
 import numpy as np
 import pytest
 import soundfile as sf
+
 from voice_commander.recorder import Recorder
 
 
 def test_start_then_stop_writes_wav(tmp_path, monkeypatch):
     # Patch query_devices to return a device with 48 kHz native rate.
     import sounddevice as sd
-    monkeypatch.setattr(sd, "query_devices", lambda idx: {"default_samplerate": 48000.0, "name": "test"})
+
+    monkeypatch.setattr(
+        sd, "query_devices", lambda idx: {"default_samplerate": 48000.0, "name": "test"}
+    )
 
     rec = Recorder(output_dir=tmp_path, channels=1)
 
@@ -17,9 +21,15 @@ def test_start_then_stop_writes_wav(tmp_path, monkeypatch):
     class _FakeStream:
         def __init__(self, **kwargs):
             opened_samplerate["samplerate"] = kwargs.get("samplerate")
-        def start(self): pass
-        def stop(self): pass
-        def close(self): pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def close(self):
+            pass
 
     monkeypatch.setattr(sd, "InputStream", _FakeStream)
 

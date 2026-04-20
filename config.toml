@@ -25,3 +25,9 @@ miss_sound = "miss.wav"
 [logging]
 level = "INFO"
 file = "voice-commander.log"
+
+[web]
+enabled = true
+host = "127.0.0.1"
+port = 8765
+auto_open_browser = true

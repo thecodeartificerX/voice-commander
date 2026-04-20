@@ -17,6 +17,11 @@ dependencies = [
     "nvidia-cudnn-cu12>=9.21.0.82",
     "psutil>=5.9",
     "pywin32>=306",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.9",
+    "portalocker>=2.8.0",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +36,7 @@ dev = [
     "pytest-cov>=5.0.0",
     "ruff>=0.4.0",
     "mypy>=1.10.0",
+    "httpx>=0.27.0",
 ]
 
 [tool.uv]
@@ -62,6 +68,21 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.11"
 strict = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+    "pynput.*",
+    "sounddevice",
+    "soundfile",
+    "psutil",
+    "win32con",
+    "win32gui",
+    "win32process",
+    "pyautogui",
+    "faster_whisper",
+    "ctranslate2",
+]
+ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["src/voice_commander"]

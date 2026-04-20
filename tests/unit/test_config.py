@@ -1,7 +1,8 @@
-from pathlib import Path
 import textwrap
+
 import pytest
-from voice_commander.config import Config, HotkeyConfig, AudioConfig
+
+from voice_commander.config import Config
 
 
 def test_load_defaults_when_file_has_no_overrides(tmp_path):
@@ -16,12 +17,14 @@ def test_load_defaults_when_file_has_no_overrides(tmp_path):
 
 def test_load_applies_overrides(tmp_path):
     cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text(textwrap.dedent("""
+    cfg_file.write_text(
+        textwrap.dedent("""
         [matching]
         threshold = 70.0
         [audio]
         channels = 2
-    """))
+    """)
+    )
     cfg = Config.load(cfg_file)
     assert cfg.matching.threshold == 70.0
     assert cfg.audio.channels == 2
