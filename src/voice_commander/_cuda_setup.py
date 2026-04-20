@@ -33,18 +33,28 @@ def register() -> None:
 
     import ctypes
 
+    loaded: list[str] = []
+    skipped: list[tuple[str, str]] = []
     for pkg in _NVIDIA_PIP_PACKAGES:
         try:
             bin_dir = str(files(pkg).joinpath("bin"))
-        except (ModuleNotFoundError, FileNotFoundError):
+        except (ModuleNotFoundError, FileNotFoundError) as e:
+            logger.info("cuda_setup: package %s unavailable (%s)", pkg, e)
             continue
         if not os.path.isdir(bin_dir):
+            logger.info("cuda_setup: %s bin dir not found at %s", pkg, bin_dir)
             continue
+        logger.info("cuda_setup: registering %s", bin_dir)
         os.add_dll_directory(bin_dir)
         for dll_path in sorted(glob.glob(os.path.join(bin_dir, "*.dll"))):
             try:
                 ctypes.WinDLL(dll_path)
+                loaded.append(os.path.basename(dll_path))
             except OSError as e:
-                logger.debug("Skipping %s: %s", os.path.basename(dll_path), e)
+                skipped.append((os.path.basename(dll_path), str(e)[:80]))
+    logger.info("cuda_setup: preloaded %d DLLs, skipped %d", len(loaded), len(skipped))
+    logger.debug("cuda_setup: loaded=%s", loaded)
+    for name, err in skipped:
+        logger.debug("cuda_setup: skipped %s: %s", name, err)
 
     _registered = True

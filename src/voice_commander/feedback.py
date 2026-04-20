@@ -6,7 +6,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
-from windows_toasts import InteractableWindowsToaster, Toast
+# windows_toasts is imported lazily inside WindowsFeedbackSink — eager import
+# pulls the WinRT runtime into the process, which corrupts the CUDA DLL
+# loading path and causes ctranslate2 to access-violate during model
+# construction. See docs/gotchas.md §3.
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +76,7 @@ class WindowsFeedbackSink:
         self._miss = sounds_dir / miss_sound
         self._toast_enabled = toast_enabled
         self._toast_show_transcript = toast_show_transcript
-        self._toaster = InteractableWindowsToaster("Voice Commander") if toast_enabled else None
+        self._toaster: object | None = None  # lazy-initialized on first _toast call
 
     def _play(self, path: Path) -> None:
         if not path.exists():
@@ -107,8 +110,15 @@ class WindowsFeedbackSink:
             self._toast("\u2717 no match", f"'{transcript}'")
 
     def _toast(self, title: str, body: str) -> None:
-        if not self._toast_enabled or self._toaster is None:
+        if not self._toast_enabled:
             return
+        try:
+            from windows_toasts import InteractableWindowsToaster, Toast
+        except Exception:
+            logger.exception("windows_toasts unavailable, toast skipped")
+            return
+        if self._toaster is None:
+            self._toaster = InteractableWindowsToaster("Voice Commander")
         try:
             t = Toast()
             t.text_fields = [title, body]

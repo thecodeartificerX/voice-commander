@@ -146,3 +146,36 @@ Each 0.5 s the interpreter wakes, checks the event (still clear → loop again),
 **Explanation:** `pyautogui` ships with a failsafe enabled by default: any mouse movement to within a few pixels of `(0, 0)` immediately raises `FailSafeException`. This is an intentional safety valve to let users regain control of a runaway automation script by flicking the mouse to the corner.
 
 **Mitigation:** Keep `pyautogui.FAILSAFE = True` (the default). This is a feature, not a bug — it is your escape hatch if a dispatched tool misbehaves. Document to users that moving the mouse to the top-left corner during a voice-dispatched action will abort that action. If the failsafe triggers during normal use (e.g. tools that deliberately move the mouse near that corner), adjust those tools to avoid the corner region rather than disabling the failsafe globally. If a user explicitly requests `pyautogui.FAILSAFE = False`, add it as an opt-in config option with a prominent warning in `config.toml`.
+
+---
+
+## 10. `windows_toasts` Eager Import Corrupts CUDA Initialization
+
+**Problem:** `uv run voice-commander` crashes with native access violation (`exit code -1073741819` / `STATUS_ACCESS_VIOLATION / 0xC0000005`) inside `faster_whisper/transcribe.py:689` during `WhisperModel.__init__()` on CUDA. No Python exception; Python dies silently unless `faulthandler.enable()` is on. The same model construction succeeds in the pytest suite.
+
+**Explanation:** Importing `windows_toasts` at module scope pulls the WinRT runtime (`winsdk` / `Windows.Foundation` bindings) into the process. WinRT initialization permanently modifies some process-wide state — likely the DLL search path, COM apartment, or module-resolution cache — that CTranslate2's native code relies on when it lazy-loads `cudnn_graph64_9.dll`, `cudnn_ops64_9.dll`, and the rest of the cuDNN dispatcher chain. The resulting DLL resolution is broken in a way that does not surface as a load error; it surfaces later as a null pointer dereference during the first CUDA context setup.
+
+The failure is order-dependent:
+- Test path: `pytest tests/unit/test_transcriber.py -m hardware` — imports only `transcriber.py` → `_cuda_setup.register()` → `faster_whisper` → succeeds.
+- Daemon path: `uv run voice-commander` — imports `__main__` → `daemon` → `feedback` (which eagerly imports `windows_toasts`) → `transcriber` → `_cuda_setup.register()` → `faster_whisper` → crashes at `WhisperModel.__init__()`.
+
+**Mitigation (implemented):** `windows_toasts` is imported lazily inside `WindowsFeedbackSink._toast()` — the first toast dispatch occurs after the user's first match/miss, long after the model is loaded. No import at `feedback.py` module scope. The CTranslate2 native init runs on a clean process with no WinRT footprint.
+
+```python
+# feedback.py — the import lives inside the method, NOT at the top
+def _toast(self, title: str, body: str) -> None:
+    if not self._toast_enabled:
+        return
+    try:
+        from windows_toasts import InteractableWindowsToaster, Toast
+    except Exception:
+        logger.exception("windows_toasts unavailable, toast skipped")
+        return
+    if self._toaster is None:
+        self._toaster = InteractableWindowsToaster("Voice Commander")
+    # ... dispatch the toast
+```
+
+**Diagnostic value:** This failure mode is the reason `__main__.py` now calls `faulthandler.enable(file=<crash.log>, all_threads=True)` before importing anything heavy, and why `_cuda_setup.register()` logs DLL preload counts at INFO. Without the fault handler, the daemon would appear to simply exit with an opaque numeric code and no traceback.
+
+**Related pitfalls to watch for:** Any other package that loads COM/WinRT at import time (`winsdk`, `winrt`, `pywin32` with early `pythoncom.CoInitialize`, `pythonnet`) may reproduce this class of bug. Keep CUDA-adjacent imports first; lazy-load Windows-specific UI/COM helpers.
