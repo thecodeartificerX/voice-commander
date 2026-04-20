@@ -3,7 +3,7 @@ key = "scroll_lock"
 
 [audio]
 channels = 1
-device = 25
+device = 13
 output_dir = "outputs"
 
 [transcription]
@@ -21,8 +21,6 @@ sounds_dir = "assets/sounds"
 start_sound = "start.wav"
 stop_sound = "stop.wav"
 miss_sound = "miss.wav"
-toast_enabled = true
-toast_show_transcript = true
 
 [logging]
 level = "INFO"
