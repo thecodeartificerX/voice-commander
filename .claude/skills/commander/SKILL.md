@@ -1,17 +1,29 @@
 ---
 name: commander
-description: Interactive skill for creating new voice-commander tools in this repo. Walks the user through an interview — name, phrases, group, action, library — then writes the Python function, sidecar TOML metadata, and unit test, and verifies with pytest. Use whenever the user says "new voice command", "add voice command", "create a voice tool", "extend the voice commander", "/commander", or otherwise wants to wire up a spoken phrase to a keystroke, launcher, script, or system action. Invoke even when the user does not name the skill — any request to add a phrase-triggered action in this repo should trigger it.
+description: Interactive skill for creating, editing, renaming, moving, disabling, or deleting voice-commander tools in this repo. Walks the user through an interview, then writes or patches the Python function, sidecar TOML metadata, and unit test, and verifies with pytest. Use whenever the user says "new voice command", "add voice command", "create a voice tool", "edit voice command", "change a phrase", "rename command", "disable command", "delete command", "move command to a different group", "extend the voice commander", "/commander", or otherwise wants to wire up, modify, or remove a spoken-phrase action in this repo. Invoke even when the user does not name the skill — any request to add, change, or remove a phrase-triggered action here should trigger it.
 ---
 
-# Commander — Voice Tool Creator
+# Commander — Voice Tool Creator & Editor
 
-Guides the user through an interactive interview and produces a working voice-commander tool (Python function + sidecar TOML + unit test) with all paths, patterns, and library choices hard-coded. Do not discover anything; this file has the facts.
+Guides the user through an interactive interview and produces or patches a voice-commander tool (Python function + sidecar TOML + unit test) with all paths, patterns, and library choices hard-coded. Do not discover anything; this file has the facts.
 
 ## Trigger
 
-- "new voice command", "add voice command", "make a voice tool"
+- **Create**: "new voice command", "add voice command", "make a voice tool"
+- **Edit**: "change the phrases for X", "rename command", "move X to a different group", "edit the action for X", "update description for X"
+- **Toggle**: "disable command X", "enable command X", "turn off X"
+- **Delete**: "remove command X", "delete voice tool X"
+- **Locate**: "where is the command for X", "which file holds X"
 - "/commander"
-- Any request to map a spoken phrase to an action in this repo
+- Any request to add, change, or remove a phrase-triggered action in this repo
+
+## Mode selection (first question after trigger)
+
+If the user's opening message doesn't already pin it down, ask:
+
+> "Are we **creating**, **editing**, **toggling enabled/disabled**, or **deleting** a command?"
+
+Each mode below is self-contained. Skip straight to the matching section.
 
 ## Baked-in project facts — do not re-discover
 
@@ -97,15 +109,33 @@ def test_copy_sends_ctrl_c():
 
 For subprocess-based tools, patch `subprocess.Popen` / `subprocess.run`. For `webbrowser`, patch `webbrowser.open`. For `pywin32`, patch the specific `win32gui.*` call.
 
-## Interview flow
+## Locating an existing command
 
-Ask one question at a time. Stay terse. Do not dump the whole form. Propose defaults based on prior answers so the user can confirm with one word.
+Whenever a mode needs to find a tool the user named (by function name, phrase, or rough description), use this deterministic lookup — do not guess.
+
+1. **Grep the sidecar TOMLs** for a phrase or the function name:
+   ```
+   rg -n "^\[tools\.<fn>\]|\"<phrase>\"" src/voice_commander/tools/*.toml
+   ```
+   The file that matches tells you the group. The `[tools.<fn>]` table name is the Python function name.
+
+2. **Open the matching `.py`** (`src/voice_commander/tools/<group>.py`) to see the current implementation.
+
+3. **Open `tests/unit/test_tools_<group>.py`** to see the current test(s) for that function.
+
+4. **Show the user a one-line confirmation** before changing anything: `"Found <fn> in <group>.py, phrases = [...]. Proceed?"`
+
+If the user only gives a vague description ("the clipboard one that copies"), list every `[tools.*]` table in the most likely TOML and ask them to pick.
+
+## Mode: Create
+
+Ask one question at a time. Stay terse. Propose defaults from prior answers so the user can confirm with one word.
 
 1. **Describe the command** — "What should it do? Plain language."
 2. **Phrases** — "Which spoken phrases? Give 2–5 natural variants."
 3. **Function name** — propose a `snake_case` name from the description. Confirm.
-4. **Group** — "Which group: `clipboard`, `window`, `browser`, `system`, or a new one? (If new, give a short name.)"
-5. **Action mechanism** — "How does it fire? Keystroke / launch app / URL / subprocess / win32 call / other?" If unsure, suggest based on the description.
+4. **Group** — "Which group: `clipboard`, `window`, `browser`, `system`, or a new one?" If new, ask for a short name.
+5. **Action mechanism** — "How does it fire? Keystroke / launch app / URL / subprocess / win32 call / other?"
 6. **Library** — pick from the installed set. If a new one is needed, name it and confirm `uv add <pkg>` before writing code.
 7. **One targeted edge-case question** based on mechanism:
    - Keystroke → "Modifier variants? Need a `time.sleep` between keys?"
@@ -114,53 +144,101 @@ Ask one question at a time. Stay terse. Do not dump the whole form. Propose defa
    - Subprocess → "Check return code? Timeout?"
    - win32 → "Which window-class / exe name to target?"
 
-Stop and clarify when requirements conflict. Do not guess.
+Then run the **Create checklist** below.
 
-## Execution checklist (after interview)
+### Create checklist
 
-Run in this order. Do not skip steps.
+1. **Add dependency** (only if a new library is required): `uv add <pkg>`. Announce success. Stop on failure and surface the error.
+2. **Edit or create `<group>.py`** — add imports + `@tool` function. New group: start the file with `from __future__ import annotations`, the library import, and `from ..registry import tool`.
+3. **Edit or create `<group>.toml`** — add the `[tools.<fn>]` table. New group: start with `category = "<group>"` on line 1.
+4. **Edit or create `tests/unit/test_tools_<group>.py`** — one mocked test per new function.
+5. **Verify** — run the shared verification block below.
+6. **Report** — see reporting block below.
 
-1. **Add dependency** (only if a new library is required):
-   ```
-   uv add <pkg>
-   ```
-   Announce success before proceeding. If it fails, stop and surface the error.
+## Mode: Edit
 
-2. **Edit or create `<group>.py`** — add imports + `@tool` function. If the group is new, create the file with `from __future__ import annotations`, the library import, and `from ..registry import tool`.
+First, run the **Locate** steps to fix the target. Then ask which fields are changing. Supported edits and the exact files each one touches:
 
-3. **Edit or create `<group>.toml`** — add the `[tools.<fn>]` table. If the group is new, start the file with `category = "<group>"` on the first line, then the table.
+| Edit | `<group>.py` | `<group>.toml` | `test_tools_<group>.py` | `pyproject.toml` |
+|---|---|---|---|---|
+| Rename function | yes (def + any internal refs) | yes (rename `[tools.<old>]` → `[tools.<new>]`) | yes (test function + patched module attr) | no |
+| Change phrases | no | yes (only the `phrases` list) | no | no |
+| Change description | no | yes (only `description`) | no (unless docstring sync required) | no |
+| Change category label | no | yes (top-level `category = ...`) | no | no |
+| Change action body | yes | no (unless description reflects behaviour) | yes (update mocks + assertions) | maybe (`uv add` if new lib) |
+| Swap library | yes (import + call) | no | yes (patch target moves) | yes (`uv add <new>`; leave old unless confirmed unused elsewhere) |
+| Move to a different group | yes (delete from old `.py`, add to new `.py`) | yes (delete table from old, add to new) | yes (delete test from old, add to new) | no |
 
-4. **Edit or create `tests/unit/test_tools_<group>.py`** — add one mocked test per new function. Match the existing style (see clipboard test above).
+Interview questions for Edit are the minimal set needed for the selected edit — skip anything unchanged. Always show a unified before/after summary before writing, so the user can abort cheaply.
 
-5. **Verify the new test** — run:
-   ```
-   uv run pytest tests/unit/test_tools_<group>.py -q
-   ```
-   Must be green before claiming done. If red, read the failure, fix the code (not the test, unless the test itself is wrong), rerun.
+### Edit checklist
 
-6. **Verify the registry pairing** — run:
+1. **Apply the edits** to the files listed in the table above.
+2. **If renaming a function**, also update every `patch("voice_commander.tools.<group>.<oldname>...")` string in the test module and any import elsewhere that names the function (grep first).
+3. **If moving to a different group**, ensure the old `.toml` doesn't end up with an orphan entry and the old `.py` doesn't export a dangling function. Delete the relevant lines from the old module/test.
+4. **Verify** — shared verification block below.
+5. **Report** — reporting block below.
+
+## Mode: Toggle (enable / disable)
+
+No code change. Flip the `enabled` flag in the sidecar TOML for the target function.
+
+1. Locate the `[tools.<fn>]` table (see Locate steps).
+2. Edit `enabled = true` ↔ `enabled = false`.
+3. Verify — just the pairing test (the unit test doesn't care about `enabled`):
    ```
    uv run pytest tests/unit/test_discover_pairing.py -q
    ```
-   This catches any Python ↔ TOML mismatch (missing table, typo in function name, extra orphan entry) before the daemon would crash on startup.
+4. Report — one line: `"<fn> now enabled=<bool>; restart daemon to pick up."`
 
-7. **Report** to the user in 4 lines max:
-   - Files changed (paths)
-   - Tests passing (count)
-   - Phrases registered
-   - How to try it: "Restart the daemon (`uv run voice-commander`), press Scroll Lock, say `<phrase>`."
+Disabled tools stay in the registry but are skipped by the matcher, so phrases won't trigger until re-enabled.
+
+## Mode: Delete
+
+Remove a tool entirely. Destructive. Confirm the function name and group with the user verbatim before touching files.
+
+1. **Locate** (see Locate steps).
+2. **Confirm** — "Delete `<fn>` from `<group>` and remove its test? This cannot be undone without git." Wait for explicit yes.
+3. **Remove from `<group>.py`** — delete the `@tool`-decorated function. If that was the last tool in the file, also delete the file itself and its sidecar TOML (the registry pairing test will fail otherwise).
+4. **Remove from `<group>.toml`** — delete the `[tools.<fn>]` table. If the file is now empty of tool tables but still has `category = ...`, leave the file as-is (harmless) or delete it if the `.py` was also deleted.
+5. **Remove from `tests/unit/test_tools_<group>.py`** — delete the test(s) for that function.
+6. **Verify** — shared verification block below.
+7. **Report** — `"Deleted <fn> from <group>; N tests remain; pairing test green."`
+
+## Shared verification block
+
+Run both, in order. Do not claim done until both are green.
+
+```
+uv run pytest tests/unit/test_tools_<group>.py -q
+uv run pytest tests/unit/test_discover_pairing.py -q
+```
+
+If the group test is red, read the failure and fix the code (not the test, unless the test itself is wrong). If the pairing test is red, a TOML table name no longer matches a Python function name — reconcile the two.
+
+For cross-group moves, run the test for both groups.
+
+## Shared reporting block
+
+4 lines max:
+
+- Files changed (paths, relative to repo root)
+- Tests passing (count)
+- Phrases registered or removed (comma-separated)
+- How to try it: `"Restart the daemon (uv run voice-commander), press Scroll Lock, say <phrase>."` For delete/disable, skip the phrase line.
 
 ## Red flags — stop and ask
 
-- **Command needs arguments** ("open <app>", "play <song>"): the MVP tools are argument-free. Argument routing is Phase 6 (local LLM). Offer a hard-coded variant ("open readme" → always opens the project README) or defer.
-- **Command writes, deletes, or moves files** outside a clearly scoped path: confirm blast radius and target directory with the user.
+- **Command needs arguments** ("open <app>", "play <song>"): MVP tools are argument-free. Argument routing is Phase 6 (local LLM). Offer a hard-coded variant ("open readme" → always opens the project README) or defer.
+- **Command writes, deletes, or moves files** outside a clearly scoped path: confirm blast radius and target directory.
 - **Command sends network traffic** to a non-local endpoint: confirm URL, auth, and purpose.
-- **User wants to disable an existing command**: flip `enabled = false` in the sidecar TOML — no new code or test needed. Still run step 6.
-- **User wants to rename an existing phrase**: edit the `phrases` list in the sidecar TOML, rerun step 6. Do not touch Python unless the function name is changing.
+- **Edit would rename a function used elsewhere in `src/`**: grep for the old name across the whole source tree before renaming. If it's imported from anywhere other than the registry, surface that and ask how to handle it.
+- **Delete would leave a phrase collision** (another tool already owns a similar phrase): mention it so the user can decide whether to reassign phrases.
 
 ## Why the shape of this skill
 
-- Hard-coded paths and patterns mean zero filesystem discovery per invocation — saves tokens and removes a failure mode (missed file, wrong directory).
-- One question at a time keeps the interview conversational and lets the user redirect cheaply.
-- Two verification steps (unit test + pairing test) catch the two realistic failure modes: broken call and Python ↔ TOML drift.
-- The red-flag list exists because users routinely ask for argument-bearing commands that the MVP cannot serve; catching that before writing code saves a rewrite.
+- Hard-coded paths, decorator shape, and sidecar schema mean zero filesystem discovery per invocation.
+- Mode selection up front keeps the interview short — disable shouldn't ask seven questions.
+- The Locate step is the one piece of search the skill must do, and it's deterministic (`rg` on sidecar TOMLs), so it doesn't drift.
+- Two verification steps (group unit test + pairing test) catch the two realistic failure modes: broken call and Python ↔ TOML drift.
+- The red-flag list reflects the real traps users fall into (argument-bearing asks, cross-module renames, network actions) — catching those before writing code avoids rework.
