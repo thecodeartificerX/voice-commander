@@ -26,6 +26,17 @@ def create_app(
     """Create and return the FastAPI application for the command management dashboard."""
 
     app = FastAPI(title="Voice Commander", docs_url=None, redoc_url=None)
+
+    @app.middleware("http")
+    async def csrf_protect(request: Request, call_next):  # noqa: ARG001
+        """Reject POST requests without the HX-Request header (HTMX sends it)."""
+        if request.method == "POST" and request.headers.get("HX-Request") != "true":
+            return HTMLResponse(
+                content="Forbidden: missing HX-Request header",
+                status_code=403,
+            )
+        return await call_next(request)
+
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
