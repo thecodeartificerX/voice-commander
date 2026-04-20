@@ -4,8 +4,6 @@ import logging
 import winreg
 from subprocess import Popen
 
-import pyautogui
-
 logger = logging.getLogger(__name__)
 
 
@@ -15,7 +13,7 @@ def default_browser_progid() -> str | None:
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
             progid, _ = winreg.QueryValueEx(key, "ProgId")
-            return progid
+            return str(progid)
     except OSError:
         return None
 
@@ -34,7 +32,13 @@ def progid_to_exe(progid: str) -> str | None:
 
 
 def focus_window_by_exe(exe_name: str) -> bool:
-    """Cycles Alt+Tab-less focus to a window whose process exe matches. Returns True on success."""
+    """Cycles Alt+Tab-less focus to a window whose process exe matches. Returns True on success.
+
+    If the pywin32/psutil imports fail, or if no running process matches
+    ``exe_name``, the function falls back to launching the application via
+    ``subprocess.Popen([exe_name])`` and returns False (the window is not yet
+    focused — the OS will raise it once the process initialises).
+    """
     try:
         import psutil
         import win32con
@@ -50,6 +54,7 @@ def focus_window_by_exe(exe_name: str) -> bool:
         return False
 
     found: list[int] = []
+
     def _enum(hwnd: int, _: object) -> bool:
         if not win32gui.IsWindowVisible(hwnd):
             return True

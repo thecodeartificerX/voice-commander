@@ -1,8 +1,10 @@
 import threading
 import time
+
 import pytest
 from pynput.keyboard import Controller, Key
-from voice_commander.hotkey import HotkeyController, KEY_ALIASES
+
+from voice_commander.hotkey import KEY_ALIASES, HotkeyController
 
 
 def test_key_alias_resolves():

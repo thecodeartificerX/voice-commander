@@ -7,7 +7,6 @@ from rapidfuzz import fuzz, process
 
 from .registry import ToolEntry, ToolRegistry
 
-
 _NORMALIZE_RE = re.compile(r"[^a-z0-9 ]+")
 
 
@@ -32,9 +31,7 @@ class Matcher:
         phrase_list = [p for p, _ in phrases]
         phrase_to_tool = {p: t for p, t in phrases}
 
-        ranked = process.extract(
-            text, phrase_list, scorer=fuzz.WRatio, limit=5
-        )
+        ranked = process.extract(text, phrase_list, scorer=fuzz.WRatio, limit=5)
         ranked_sorted = sorted(
             ranked,
             key=lambda r: (-r[1], phrase_to_tool[r[0]]),

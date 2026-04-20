@@ -1,5 +1,5 @@
 from voice_commander.matcher import Matcher
-from voice_commander.registry import ToolRegistry, ToolEntry
+from voice_commander.registry import ToolEntry, ToolRegistry
 
 
 def _registry() -> ToolRegistry:

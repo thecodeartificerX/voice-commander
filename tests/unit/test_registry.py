@@ -1,5 +1,11 @@
 import pytest
-from voice_commander.registry import ToolRegistry, tool, reset_global_registry, DuplicateToolError, get_global_registry
+
+from voice_commander.registry import (
+    DuplicateToolError,
+    get_global_registry,
+    reset_global_registry,
+    tool,
+)
 
 
 def setup_function():
@@ -24,6 +30,7 @@ def test_duplicate_raises():
         pass
 
     with pytest.raises(DuplicateToolError):
+
         @tool(phrases=["y"])
         def foo():  # noqa: F811
             pass
@@ -41,9 +48,12 @@ def test_phrases_are_normalized():
 
 def test_flat_phrases():
     @tool(phrases=["a", "b"])
-    def t1(): pass
+    def t1():
+        pass
+
     @tool(phrases=["c"])
-    def t2(): pass
+    def t2():
+        pass
 
     registry = get_global_registry()
     assert sorted(registry.flat_phrases()) == [("a", "t1"), ("b", "t1"), ("c", "t2")]

@@ -22,13 +22,13 @@ Cross-references to Architecture Decision Records live in [`docs/decisions/`](de
 
 ## `sounddevice` — Microphone capture
 
-**Purpose in this project:** `sounddevice` drives the `Recorder` subsystem. It opens a PortAudio input stream, collects PCM frames into an in-memory buffer while the hotkey is held, and flushes the buffer to a WAV file when the user releases the key. The captured audio is 16 kHz mono 16-bit PCM — exactly what Whisper expects, so no resampling step is needed.
+**Purpose in this project:** `sounddevice` drives the `StreamingRecorder` subsystem. It opens a `sd.InputStream` at the device's native sample rate (e.g. 48 kHz on WASAPI) when a session is opened. The PortAudio callback copies each PCM chunk to `raw_q` without blocking; the VAD worker thread drains `raw_q`, resamples to 16 kHz via `soxr`, and feeds frames to `VADGate`. The stream is closed when the session ends.
 
 **Alternatives considered:** `pyaudio` is the historical standard for PortAudio bindings in Python.
 
 **Why `sounddevice` won:** `pyaudio` requires a compiled native extension that historically has been painful to install on Windows (missing `portaudio.dll`, mismatched architectures). `sounddevice` ships wheels with PortAudio bundled and installs cleanly with `uv add`. Its callback-based streaming API is also cleaner and more Pythonic than `pyaudio`'s blocking read loop. Both libraries ultimately wrap the same PortAudio C library, so there is no capability difference for our use case.
 
-**Pin reason:** `>=0.4.7` is the version that introduced `dtype` support for 16-bit integer arrays. Required for the WAV pipeline.
+**Pin reason:** `>=0.4.7` is the version that introduced `dtype` support for float32 arrays and stable `InputStream` callback semantics required for the streaming pipeline.
 
 **ADR:** [`decisions/0003-sounddevice-over-pyaudio.md`](decisions/0003-sounddevice-over-pyaudio.md)
 
@@ -118,6 +118,55 @@ Originally used for WinRT toast notifications in `WindowsFeedbackSink`. Removed 
 **ADR:** [`decisions/0013-drop-winrt-toasts-audio-only-feedback.md`](decisions/0013-drop-winrt-toasts-audio-only-feedback.md) supersedes [`decisions/0007-windows-toasts-over-tkinter.md`](decisions/0007-windows-toasts-over-tkinter.md).
 
 See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a cautionary case study).
+
+---
+
+## `silero-vad` — Voice activity detection
+
+**Purpose in this project:** `silero-vad` powers the `VADGate` subsystem inside `StreamingRecorder`. It segments a continuous audio stream into discrete utterances by detecting speech onset and offset. Each complete utterance is emitted as a numpy ndarray to the pipeline worker queue for transcription.
+
+**Alternatives considered:**
+- `webrtcvad` — Google's WebRTC VAD, a classic lightweight option. Energy-based heuristic; fast, but produces many false positives on background noise and does not model speech well at the phoneme level.
+- `pysilero-vad` / `silero-vad` (torch variant) — the original PyTorch-based silero-vad. Requires a full PyTorch install (multi-GB), which is overkill when the ONNX export exists.
+
+**Why `silero-vad` won:** The ONNX-exported silero-vad model runs in under 1 ms per 30 ms frame on CPU via `onnxruntime`, requires no GPU, and achieves high accuracy on real-world microphone audio. MIT licensed. The `VADIterator` API provides a clean frame-in / utterance-out interface that maps directly to the VAD worker thread's loop. See `gotchas.md` §12 for thread-safety constraints.
+
+**Pin reason:** `>=5.1` for the stable ONNX export and `VADIterator` API with configurable speech/silence thresholds and minimum silence duration. The 5.x series is the current actively maintained branch.
+
+**ADR:** [`decisions/0016-silero-vad-over-webrtcvad.md`](decisions/0016-silero-vad-over-webrtcvad.md). Context on why this ONNX engine was selected over `webrtcvad` and the torch variant. Session model and streaming architecture in [`decisions/0015-vad-streaming-mode.md`](decisions/0015-vad-streaming-mode.md).
+
+---
+
+## `onnxruntime` — ONNX model runtime
+
+**Purpose in this project:** `onnxruntime` is the CPU inference backend for silero-vad. `silero-vad` distributes its model as an ONNX file; `onnxruntime` loads and runs it. No GPU execution path is needed for VAD — the model is small enough that CPU inference meets the real-time budget comfortably.
+
+**Alternatives considered:**
+- `onnxruntime-gpu` — the GPU-enabled variant. Unnecessary for this use case and adds CUDA dependency complexity to the VAD subsystem.
+- `torch` — silero-vad can also run via PyTorch. Rejected because PyTorch is multi-GB and already avoided elsewhere in the stack.
+
+**Why `onnxruntime` won:** It is the canonical runtime for ONNX models, actively maintained by Microsoft, and the CPU-only wheel installs cleanly without CUDA toolchain requirements. The CPU-only variant keeps the VAD subsystem free of GPU dependencies, which is correct — VAD runs concurrently with GPU transcription on separate threads.
+
+**Pin reason:** `>=1.16.1` is the first release with stable `InferenceSession` behaviour on Python 3.11 and Windows. Required transitively by silero-vad.
+
+**ADR:** [`decisions/0016-silero-vad-over-webrtcvad.md`](decisions/0016-silero-vad-over-webrtcvad.md) (covers the choice of ONNX runtime path over the torch variant and thread-safety constraints).
+
+---
+
+## `soxr` — High-quality streaming audio resampler
+
+**Purpose in this project:** `soxr` powers the `Resampler` subsystem inside `StreamingRecorder`. The microphone captures at the device-native rate (typically 48 kHz via WASAPI). silero-vad and faster-whisper both require 16 kHz input. `soxr.ResampleStream` converts the raw 48 kHz float32 frames to 16 kHz in real time, chunk by chunk, on the VAD worker thread.
+
+**Alternatives considered:**
+- `scipy.signal.resample` — batch resampler, not streaming. Would require buffering a full utterance before resampling, adding latency and complexity.
+- `librosa.resample` — high quality, but batch-only and adds a heavyweight dependency.
+- `soundfile` + `samplerate` — `samplerate` wraps libsamplerate (SRC), which is a valid streaming alternative, but `soxr` consistently benchmarks faster and produces fewer aliasing artifacts at the ratios used here (48k→16k = 3:1).
+
+**Why `soxr` won:** `soxr` wraps libsoxr, which is widely regarded as the highest-quality open-source resampler. The `ResampleStream` API provides true streaming resampling with internal state management — chunks go in, resampled chunks come out, with the polyphase FIR filter state maintained across calls. This maps exactly to the VAD worker's chunk-by-chunk processing loop. See `gotchas.md` §13 for state lifetime constraints.
+
+**Pin reason:** `>=0.3.7` for the stable `ResampleStream` Python API and Windows wheel availability. The `0.3.x` series is the current stable branch.
+
+**ADR:** [`decisions/0017-soxr-streaming-resampler.md`](decisions/0017-soxr-streaming-resampler.md). Covers rejection of `scipy.signal.resample_poly` and `librosa.resample` as non-streaming alternatives.
 
 ---
 
@@ -265,6 +314,8 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 | `pystray`, `Pillow` (Phase 5) | No dedicated ADR yet |
 | CUDA DLL bundling (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`) | [`0012-cuda-dll-bundling.md`](decisions/0012-cuda-dll-bundling.md) |
 | `winsound` | [`0008-winsound-for-chimes.md`](decisions/0008-winsound-for-chimes.md) |
+| `silero-vad`, `onnxruntime` | [`0016-silero-vad-over-webrtcvad.md`](decisions/0016-silero-vad-over-webrtcvad.md); session model in [`0015-vad-streaming-mode.md`](decisions/0015-vad-streaming-mode.md) |
+| `soxr` | [`0017-soxr-streaming-resampler.md`](decisions/0017-soxr-streaming-resampler.md) |
 | `tomli` | [`0011-uv-package-manager.md`](decisions/0011-uv-package-manager.md) |
 | `uv`, `ruff`, `mypy` | [`0011-uv-package-manager.md`](decisions/0011-uv-package-manager.md) |
 | `pytest`, `pytest-cov` | [`0009-phased-delivery-with-hitl-gates.md`](decisions/0009-phased-delivery-with-hitl-gates.md) |

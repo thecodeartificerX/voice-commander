@@ -43,6 +43,24 @@ class FeedbackConfig:
 
 
 @dataclass(frozen=True)
+class VadGatesConfig:
+    min_word_count: int = 1
+    max_no_speech_prob: float = 0.6
+
+
+@dataclass(frozen=True)
+class VadConfig:
+    threshold: float = 0.4
+    min_speech_duration_ms: int = 100
+    min_silence_duration_ms: int = 250
+    speech_pad_ms: int = 30
+    pre_roll_ms: int = 300
+    max_utterance_ms: int = 8000
+    # sample_rate and window_samples are fixed at 16000/512 (Silero VAD model requirement)
+    gates: VadGatesConfig = field(default_factory=VadGatesConfig)
+
+
+@dataclass(frozen=True)
 class LoggingConfig:
     level: str = "INFO"
     file: str = "voice-commander.log"
@@ -57,27 +75,31 @@ class Config:
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
     matching: MatchingConfig = field(default_factory=MatchingConfig)
     feedback: FeedbackConfig = field(default_factory=FeedbackConfig)
+    vad: VadConfig = field(default_factory=VadConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     @classmethod
-    def load(cls, path: Path) -> "Config":
+    def load(cls, path: Path) -> Config:
         raw: dict[str, Any] = {}
         if path.exists():
             with path.open("rb") as fh:
                 raw = tomllib.load(fh)
+        vad_raw = raw.get("vad", {})
+        gates_raw = vad_raw.pop("gates", {})
         return cls(
             hotkey=_section(HotkeyConfig, raw.get("hotkey", {})),
             audio=_section(AudioConfig, raw.get("audio", {})),
             transcription=_section(TranscriptionConfig, raw.get("transcription", {})),
             matching=_section(MatchingConfig, raw.get("matching", {})),
             feedback=_section(FeedbackConfig, raw.get("feedback", {})),
+            vad=_section(VadConfig, {**vad_raw, "gates": _section(VadGatesConfig, gates_raw)}),
             logging=_section(LoggingConfig, raw.get("logging", {})),
         )
 
 
 def _section(cls: type[T], data: dict[str, Any]) -> T:
     assert is_dataclass(cls)
-    known = {f.name: f for f in fields(cls)}  # type: ignore[arg-type]
+    known = {f.name: f for f in fields(cls)}
     hints = get_type_hints(cls)
     kwargs: dict[str, Any] = {}
     for key, value in data.items():
@@ -89,7 +111,7 @@ def _section(cls: type[T], data: dict[str, Any]) -> T:
                 f"Config {cls.__name__}.{key} expected {expected}, got {type(value).__name__}"
             )
         kwargs[key] = value
-    return cls(**kwargs)  # type: ignore[return-value]
+    return cls(**kwargs)
 
 
 def _type_ok(value: Any, expected: Any) -> bool:

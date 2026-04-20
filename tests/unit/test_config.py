@@ -1,7 +1,8 @@
-from pathlib import Path
 import textwrap
+
 import pytest
-from voice_commander.config import Config, HotkeyConfig, AudioConfig
+
+from voice_commander.config import Config
 
 
 def test_load_defaults_when_file_has_no_overrides(tmp_path):
@@ -16,12 +17,14 @@ def test_load_defaults_when_file_has_no_overrides(tmp_path):
 
 def test_load_applies_overrides(tmp_path):
     cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text(textwrap.dedent("""
+    cfg_file.write_text(
+        textwrap.dedent("""
         [matching]
         threshold = 70.0
         [audio]
         channels = 2
-    """))
+    """)
+    )
     cfg = Config.load(cfg_file)
     assert cfg.matching.threshold == 70.0
     assert cfg.audio.channels == 2
@@ -47,3 +50,35 @@ def test_config_is_frozen(tmp_path):
     cfg = Config.load(tmp_path / "nope.toml")
     with pytest.raises((AttributeError, TypeError)):
         cfg.hotkey.key = "a"
+
+
+def test_vad_defaults(tmp_path):
+    cfg = Config.load(tmp_path / "nope.toml")
+    assert cfg.vad.threshold == 0.4
+    assert cfg.vad.min_speech_duration_ms == 100
+    assert cfg.vad.min_silence_duration_ms == 250
+    assert cfg.vad.speech_pad_ms == 30
+    assert cfg.vad.pre_roll_ms == 300
+    assert cfg.vad.max_utterance_ms == 8000
+    assert cfg.vad.gates.min_word_count == 1
+    assert cfg.vad.gates.max_no_speech_prob == 0.6
+
+
+def test_vad_overrides(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        textwrap.dedent("""
+        [vad]
+        threshold = 0.3
+        min_silence_duration_ms = 200
+
+        [vad.gates]
+        min_word_count = 2
+    """)
+    )
+    cfg = Config.load(cfg_file)
+    assert cfg.vad.threshold == 0.3
+    assert cfg.vad.min_silence_duration_ms == 200
+    assert cfg.vad.gates.min_word_count == 2
+    # untouched fields keep defaults
+    assert cfg.vad.pre_roll_ms == 300

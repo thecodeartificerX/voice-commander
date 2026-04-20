@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -13,6 +14,7 @@ def _pid_alive(pid: int) -> bool:
     """Return True if *pid* is a running process, False if it is dead/invalid."""
     if sys.platform == "win32":
         import ctypes
+
         PROCESS_QUERY_INFORMATION = 0x0400
         handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
         if handle:
@@ -43,16 +45,14 @@ class SingleInstanceLock:
     def acquire(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            fh = os.open(
-                self._path, os.O_CREAT | os.O_EXCL | os.O_WRONLY
-            )
+            fh = os.open(self._path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             os.write(fh, str(os.getpid()).encode())
             self._fh = fh
         except FileExistsError:
             if self._stale():
                 self._path.unlink(missing_ok=True)
                 return self.acquire()
-            raise AlreadyRunning(f"Another instance is running (lock: {self._path})")
+            raise AlreadyRunning(f"Another instance is running (lock: {self._path})") from None
 
     def _stale(self) -> bool:
         try:
@@ -65,9 +65,7 @@ class SingleInstanceLock:
 
     def release(self) -> None:
         if self._fh is not None:
-            try:
+            with contextlib.suppress(OSError):
                 os.close(self._fh)
-            except OSError:
-                pass
             self._fh = None
         self._path.unlink(missing_ok=True)

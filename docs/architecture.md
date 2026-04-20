@@ -11,41 +11,52 @@ This document is the canonical reference for Voice Commander's subsystem design 
 ## 1. High-level Flow
 
 ```
-┌──────────────┐   key   ┌──────────────┐   WAV    ┌──────────────┐
-│  HotkeyCtrl  │────────▶│   Recorder   │─────────▶│ Transcriber  │
-│ (pynput)     │ toggle  │ (sounddevice)│  path    │(faster-whisp)│
-└──────────────┘         └──────────────┘          └──────┬───────┘
-                                                          │ text
-                                                          ▼
-┌──────────────┐  result ┌──────────────┐  tool,   ┌──────────────┐
-│ FeedbackSink │◀────────│  Dispatcher  │◀─────────│   Matcher    │
-│ (chime+log)  │         │ (invokes fn) │  score   │ (rapidfuzz)  │
-└──────────────┘         └──────────────┘          └──────┬───────┘
-                                                          │ looks up
-                                                          ▼
-                                                   ┌──────────────┐
-                                                   │ ToolRegistry │
-                                                   │ (@tool decor)│
-                                                   └──────┬───────┘
-                                                          │ imports
-                                                          ▼
-                                                   ┌──────────────┐
-                                                   │   tools/*    │
-                                                   │ copy, paste… │
-                                                   └──────────────┘
+┌──────────────┐  toggle  ┌─────────────────────────────────────────────────────┐
+│  HotkeyCtrl  │─────────▶│              StreamingRecorder                      │
+│  (pynput)    │          │  sd.InputStream + Resampler + VADGate               │
+└──────────────┘          │                                                     │
+                          │  ┌─────────────────┐   raw_q   ┌─────────────────┐ │
+                          │  │PortAudio callback│──────────▶│  VAD worker     │ │
+                          │  │   (RT thread)    │  float32  │ Resampler 48k→  │ │
+                          │  │  indata.copy() + │  frames   │ 16k + VADGate   │ │
+                          │  │  put_nowait()    │           │ (silero-vad)    │ │
+                          │  └─────────────────┘           └────────┬────────┘ │
+                          └───────────────────────────────────────── │ ─────────┘
+                                                            utt_q   │  utterance ndarray
+                                                                     ▼
+                          ┌──────────────────────────────────────────────────────┐
+                          │              StreamingDaemon pipeline worker         │
+                          │                                                      │
+                          │  Transcriber ──text──▶ gates ──▶ Matcher ──▶ Dispatcher │
+                          │  (faster-whisper)       (conf)   (rapidfuzz)  (tool fn) │
+                          │                                                      │
+                          │                         FeedbackSink (chime + log)  │
+                          └──────────────────────────────────────────────────────┘
 ```
+
+**Thread topology:**
+
+| Thread | Owns | Does |
+|---|---|---|
+| PortAudio callback thread | `sd.InputStream` callback | `indata.copy()` + `raw_q.put_nowait()` — no blocking, no allocation |
+| VAD worker thread | `Resampler` + `VADGate` | Drains `raw_q`; resamples 48k→16k; runs silero-vad; emits complete utterances to `utt_q` |
+| Pipeline worker thread | `Transcriber` + `Matcher` + `Dispatcher` | Drains `utt_q`; runs full inference + match + dispatch pipeline |
+
+**Session model:** Scroll Lock opens a session; a second press closes it. While a session is open, VAD auto-segments the audio stream. Each detected utterance fires the pipeline worker immediately — no keypresses required between commands.
 
 ---
 
 ## 2. Subsystem Boundaries
 
-Six subsystems connected by the `Daemon` orchestrator. Each is independently unit-testable:
+Eight subsystems connected by the `StreamingDaemon` orchestrator. Each is independently unit-testable:
 
 | Subsystem | Responsibility | Key dependency |
 |---|---|---|
 | `HotkeyController` | Listen for Scroll Lock, fire `on_toggle` | `pynput` |
-| `Recorder` | Capture microphone audio to WAV file | `sounddevice`, `soundfile` |
-| `Transcriber` | WAV → text using preloaded model | `faster-whisper` (CUDA) |
+| `Resampler` | Stream device-native PCM → 16 kHz float32 chunks | `soxr` |
+| `VADGate` | Detect speech onset/offset; accumulate utterance ndarrays with pre-roll | `silero-vad`, `onnxruntime` |
+| `StreamingRecorder` | Own `sd.InputStream` + VAD worker thread; call `utterance_sink` on speech-end | `sounddevice`, `Resampler`, `VADGate` |
+| `Transcriber` | ndarray (or WAV path) → text using preloaded model | `faster-whisper` (CUDA) |
 | `ToolRegistry` | Register/discover `@tool`-decorated functions | stdlib (`importlib`) |
 | `Matcher` | Fuzzy-match transcript → tool | `rapidfuzz` |
 | `Dispatcher` | Invoke tool function, report outcome | (no external) |
@@ -55,16 +66,23 @@ Six subsystems connected by the `Daemon` orchestrator. Each is independently uni
 
 ## 3. Threading Model
 
-Three long-lived threads plus the main thread:
+Four long-lived threads plus the main thread:
 
 1. **Main thread** — starts the daemon, installs signal handlers, blocks on `shutdown_event`. Does no real work.
-2. **Hotkey listener thread** — owned by `pynput`. Fires `on_toggle()` as a callback on this thread. Keep callbacks tiny (start/stop the recorder; do not do real work here).
-3. **Recorder callback thread** — owned by `sounddevice`. Appends PCM frames to an in-memory buffer while recording is active. `stop()` flushes to WAV, enqueues the path, returns.
-4. **Worker thread** — drains `queue.Queue[Path]`, runs `Transcriber → Matcher → Dispatcher` sequentially. One at a time; if the user records again before the previous run finishes, the new WAV queues up.
+2. **Hotkey listener thread** — owned by `pynput`. Fires `on_toggle()` as a callback on this thread. Callback only calls `StreamingRecorder.open_session()` or `close_session()` — no blocking work.
+3. **PortAudio callback thread** — owned by `sounddevice`. The `sd.InputStream` callback does `indata.copy()` + `raw_q.put_nowait()` only. No allocation, no blocking, no GIL-contested work. See `gotchas.md` §11.
+4. **VAD worker thread** — drains `raw_q`; passes each chunk through `Resampler.process()` (48k→16k); slices into 512-sample frames; feeds each frame to `VADGate.process()`; when `VADGate` returns a complete utterance ndarray, calls `utterance_sink` which enqueues it on `utt_q`.
+5. **Pipeline worker thread** — drains `queue.Queue[ndarray]` (`utt_q`), runs `Transcriber.transcribe() → confidence/word-count gates → Matcher.match() → Dispatcher.dispatch()` sequentially. One utterance at a time; if the VAD worker emits the next utterance before the previous pipeline run finishes, it queues up.
 
-Graceful shutdown: Ctrl+C or SIGTERM sets `shutdown_event`; worker drains queue, stops listener, unloads model.
+Queue topology:
 
-Rationale: keeping capture and inference off the hotkey-listener thread is the whole reason threading matters here. `pynput` callbacks that block will freeze key dispatch. Audio capture callbacks that do heavy work will glitch recordings.
+```
+PortAudio callback thread → raw_q → VAD worker thread → utt_q → pipeline worker thread
+```
+
+Graceful shutdown: Ctrl+C or SIGTERM sets `shutdown_event`; `StreamingRecorder.close_session()` drains `raw_q` and joins the VAD worker; a `None` sentinel is enqueued on `utt_q` to stop the pipeline worker; the hotkey listener is stopped; the model is unloaded.
+
+Rationale: the PortAudio callback has a real-time deadline (10–20 ms) — any blocking work causes audio glitches. The VAD worker must not share state with the pipeline worker — silero-vad ONNX sessions are not thread-safe. See `gotchas.md` §11–12.
 
 ---
 
@@ -89,36 +107,83 @@ class HotkeyController:
 
 ---
 
-### 4.2 `Recorder`
+### 4.2 `Resampler`
 
 ```python
-class Recorder:
-    def __init__(
-        self,
-        output_dir: Path,
-        channels: int = 1,
-        device: int | None = None,
-    ) -> None: ...
-
-    def start(self) -> None: ...
-    def stop(self) -> Path: ...
-    @property
-    def is_recording(self) -> bool: ...
-    @property
-    def actual_sample_rate(self) -> int | None: ...
+class Resampler:
+    def __init__(self, src_rate: int, dst_rate: int = 16000) -> None: ...
+    def process(self, chunk: np.ndarray) -> np.ndarray: ...
+    def flush(self) -> np.ndarray: ...
+    def reset(self) -> None: ...
 ```
 
-**What it does:** Opens a `sounddevice.InputStream` on `start()`, accumulates PCM frames into an in-memory list via the stream callback, then on `stop()` writes the accumulated frames to a single fixed WAV file `outputs/recorded.wav` and returns the `Path`. Each call to `stop()` overwrites the same file — no timestamps, no UUIDs, no retention policy.
+**What it does:** Wraps `soxr.ResampleStream` at `HQ` quality. `process()` accepts a 1-D float32 numpy array at `src_rate` and returns a 1-D float32 array at `dst_rate`. The resampler maintains internal polyphase FIR filter state across calls so chunk-boundary artifacts do not occur. `flush()` drains any samples held in the filter's delay line and recreates the stream for the next session. `reset()` recreates the stream without flushing — use at session open when the previous session's tail should be discarded. One `Resampler` instance per session; not thread-safe for concurrent calls.
 
-The sample rate is **not configured** — it is determined each time `start()` is called by querying the chosen device's `default_samplerate` via `sounddevice.query_devices()`. This ensures WASAPI devices (which only accept their native rate, e.g. 48 kHz) work correctly. The WAV is written at the device-native rate and `actual_sample_rate` exposes it as a read-only property. Phase-2's `faster-whisper` resamples the audio to 16 kHz internally on ingest, so no resampling is required at the capture layer.
+**Who calls it:** `StreamingRecorder`'s VAD worker thread constructs a fresh `Resampler` per `open_session()` call and calls `process()` on every chunk drained from `raw_q`. See `gotchas.md` §13 for the state-lifetime constraint.
 
-Raises `RuntimeError` if `stop()` is called while `is_recording` is `False`.
+**Who it calls:** `soxr.ResampleStream.resample_chunk`. No other Voice Commander subsystems.
 
-**Who calls it:** `Daemon` (via the `on_toggle` closure on the hotkey-listener thread). `stop()` returns a `Path` that `Daemon` immediately enqueues on the worker queue.
+**How it is tested:** Synthetic 48 kHz sine wave chunks are fed in; output sample count and frequency content are verified after resampling. Edge cases: empty input, last=True flush, consecutive process calls produce artefact-free continuity at chunk boundaries.
 
-**Who it calls:** `sounddevice.InputStream` internally; `soundfile.write` to flush the WAV. No outbound calls to other Voice Commander subsystems.
+---
 
-**How it is tested:** Either `sounddevice` virtual-device mode is used, or the stream callback is mocked to feed synthetic PCM frames directly. Tests verify: WAV file exists after `stop()` at the fixed path `recorded.wav`, correct sample rate and channel count, `RuntimeError` on double-stop, and that a second record/stop cycle overwrites the same file (only one WAV in `output_dir`).
+### 4.2a `VADGate`
+
+```python
+class VADGate:
+    def __init__(
+        self,
+        model: Any,           # silero-vad loaded model
+        threshold: float = 0.5,
+        min_speech_ms: int = 250,
+        min_silence_ms: int = 100,
+        speech_pad_ms: int = 30,
+        pre_roll_ms: int = 320,
+        max_utterance_ms: int = 30_000,
+    ) -> None: ...
+
+    def process(self, frame_16k: np.ndarray) -> np.ndarray | None: ...
+    def reset(self) -> None: ...
+```
+
+**What it does:** Wraps `silero_vad.VADIterator` with two additions: a pre-roll ring buffer (keeps the last `pre_roll_ms` worth of frames so speech-start context is not lost) and a max-utterance guard (force-ends an utterance if it exceeds `max_utterance_ms` to prevent unbounded accumulation). `process()` accepts exactly 512 float32 samples at 16 kHz and returns either a concatenated ndarray (pre-roll + speech frames) when speech-end or the guard fires, or `None` while accumulating. `reset()` resets silero's internal hidden states and clears all buffers — call before each `open_session()`. Thread-safe for single-threaded use only; never share an instance across threads (see `gotchas.md` §12).
+
+**Who calls it:** `StreamingRecorder`'s VAD worker thread — one `VADGate` instance per `StreamingRecorder`, reset on each `open_session()`.
+
+**Who it calls:** `silero_vad.VADIterator.__call__()` internally. No other Voice Commander subsystems.
+
+**How it is tested:** Synthetic 16 kHz audio (silence → speech → silence sequence) is fed frame-by-frame; tests assert: utterance returned on speech-end, pre-roll prepended, `None` returned while accumulating, force-end fires at `max_utterance_ms`, `reset()` discards buffered state.
+
+---
+
+### 4.2b `StreamingRecorder`
+
+```python
+class StreamingRecorder:
+    def __init__(
+        self,
+        device: int | None,
+        channels: int,
+        vad_gate: VADGate,
+        utterance_sink: Callable[[np.ndarray], None],
+        vad_sample_rate: int = 16000,
+    ) -> None: ...
+
+    def open_session(self) -> None: ...
+    def close_session(self) -> None: ...
+    @property
+    def is_open(self) -> bool: ...
+```
+
+**What it does:** Opens a `sounddevice.InputStream` on `open_session()`. The PortAudio callback does only `indata.copy()` + `raw_q.put_nowait()`. A VAD worker thread drains `raw_q`, passes chunks through a freshly created `Resampler`, slices the resampled output into 512-sample frames, and feeds each frame to `vad_gate.process()`. When `vad_gate.process()` returns a non-None ndarray, the worker calls `utterance_sink(ndarray)` on the VAD worker thread. `close_session()` stops and closes the stream, sends a `None` sentinel to `raw_q`, and joins the VAD worker (up to 5 s). If a session is not open, `close_session()` is a no-op.
+
+The sample rate is queried via `sounddevice.query_devices()` at `open_session()` time — never hardcoded. A fresh `Resampler` is created per session to avoid filter-state bleed-through (see `gotchas.md` §13). `vad_gate.reset()` is called at `open_session()` for the same reason.
+
+**Who calls it:** `StreamingDaemon.on_toggle()` (on the hotkey-listener thread). `utterance_sink` is wired to `StreamingDaemon._on_utterance()`, which enqueues the ndarray on `utt_q`.
+
+**Who it calls:** `sounddevice.InputStream`; `Resampler.process()`; `VADGate.process()`; `utterance_sink` callback. No other Voice Commander subsystems.
+
+**How it is tested:** The stream callback is driven with synthetic PCM frames via mocked `sounddevice`. Tests verify: `utterance_sink` called with correct ndarray after simulated speech-end, `is_open` state transitions, `close_session()` no-op when idle, VAD worker joins cleanly after sentinel, `RuntimeError` if previous VAD thread still alive on `open_session()`.
 
 ---
 
@@ -141,10 +206,10 @@ class Transcriber:
     ) -> None: ...
 
     def load(self) -> None: ...   # blocks; called once at daemon start
-    def transcribe(self, wav: Path) -> TranscriptionResult: ...
+    def transcribe(self, audio: Path | np.ndarray) -> TranscriptionResult: ...
 ```
 
-**What it does:** Wraps `faster_whisper.WhisperModel`. `load()` is a blocking call that downloads/caches and loads the model weights into GPU VRAM — it is called once at daemon startup so `transcribe()` never incurs cold-start latency. `transcribe()` runs inference on the supplied WAV and returns a `TranscriptionResult`. Language is pinned to English (`small.en` is English-only so no language detection overhead). `confidence` is computed as the mean of each segment's `avg_logprob`, clamped to `[0, 1]` via `max(0.0, min(1.0, (mean_logprob + 1.0)))` — values below `config.transcription.min_confidence` (default `0.30`) are treated as misses by `Dispatcher` regardless of fuzzy score.
+**What it does:** Wraps `faster_whisper.WhisperModel`. `load()` is a blocking call that downloads/caches and loads the model weights into GPU VRAM — it is called once at daemon startup so `transcribe()` never incurs cold-start latency. `transcribe()` runs inference on the supplied audio (either a WAV `Path` or a 1-D float32 ndarray at 16 kHz) and returns a `TranscriptionResult`. In VAD streaming mode an ndarray is passed directly to avoid temp-file I/O on the hot path (see ADR 0018). Language is pinned to English (`small.en` is English-only so no language detection overhead). `confidence` is computed as the mean of each segment's `avg_logprob`, clamped to `[0, 1]` via `max(0.0, min(1.0, (mean_logprob + 1.0)))` — values below `config.transcription.min_confidence` (default `0.30`) are treated as misses by `StreamingDaemon`'s pipeline gate regardless of fuzzy score.
 
 **Who calls it:** The worker thread (inside `Daemon`'s worker loop). `load()` is called by `Daemon.run()` before the worker thread starts. `Daemon.shutdown()` calls `Transcriber.unload()` to release the CUDA context.
 
@@ -260,41 +325,67 @@ class FeedbackSink(Protocol):
 
 ---
 
-### 4.8 `Daemon`
+### 4.8 `StreamingDaemon`
 
 ```python
-class Daemon:
-    def __init__(self, config: Config) -> None: ...
-    def run(self) -> None: ...   # blocks until shutdown
+class StreamingDaemon:
+    def __init__(
+        self,
+        feedback: FeedbackSink,
+        recorder: StreamingRecorder | None,
+        transcriber: Transcriber,
+        matcher: Matcher,
+        dispatcher: Dispatcher,
+        *,
+        min_confidence: float = 0.30,
+        min_word_count: int = 1,
+        max_no_speech_prob: float = 0.6,
+        output_dir: str = "outputs",
+    ) -> None: ...
+    def run(self, hotkey_key: str) -> None: ...  # blocks until shutdown
     def shutdown(self) -> None: ...
+    def on_toggle(self) -> None: ...             # hotkey callback
 ```
 
-**What it does:** The top-level orchestrator. `__init__` calls `discover()` to populate the `ToolRegistry`, then constructs all concrete subsystems (`HotkeyController`, `Recorder`, `Transcriber`, `Matcher`, `Dispatcher`, `FeedbackSink`) wired together. `run()` calls `Transcriber.load()` (blocking model preload), starts the hotkey listener, starts the worker thread, installs signal handlers for SIGINT/SIGTERM, and then blocks on `threading.Event` until `shutdown()` is called. `shutdown()` sets the event, drains the worker queue, stops the hotkey listener, and unloads the model. `__main__.py` does exactly one thing: `Daemon(Config.load()).run()`.
+**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_toggle()` is the hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → match → dispatch`. Async WAV write (`outputs/last_utterance.wav`) is submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` does exactly one thing: `build_streaming_daemon(Config.load()).run(cfg.hotkey.key)`.
 
-**Who calls it:** `__main__.py` (the process entry point) and signal handlers.
+**Who calls it:** `__main__.py` (the process entry point), signal handlers, and `on_toggle` (hotkey-listener thread).
 
 **Who it calls:** All other subsystems. It is the only place where concrete implementations are wired to interfaces.
 
-**How it is tested:** Integration tests bypass `HotkeyController` and `Recorder` entirely — they inject WAV paths directly into the worker queue and assert that the right tool function was called end-to-end. Unit tests for individual subsystems do not involve `Daemon`.
+**How it is tested:** Integration tests bypass `HotkeyController` and `StreamingRecorder` entirely — they inject utterance ndarrays directly into `utt_q` and assert that the right tool function was called end-to-end. Unit tests for individual subsystems do not involve `StreamingDaemon`.
 
 ---
 
 ## 5. Data Flow (Happy Path)
 
+**Session open:**
 1. User presses Scroll Lock. `pynput` fires `on_toggle` on the listener thread.
-2. `on_toggle` checks `Recorder.is_recording`: false → `Recorder.start()` + `feedback.on_recording_start()` (chime).
-3. User speaks for ~2 s.
-4. User presses Scroll Lock again. `on_toggle` → `Recorder.stop()` returns `wav_path`; `feedback.on_recording_stop()` (chime).
-5. `wav_path` enqueued on the worker queue.
-6. Worker thread picks it up: `Transcriber.transcribe(wav_path)` → `TranscriptionResult`.
-7. `feedback.on_transcript(...)` logs transcript.
-8. `Matcher.match(result.text)` → `MatchResult`.
-9. `Dispatcher.dispatch(text, match)`:
-   - Match above threshold → logs match + tool function executes.
-   - Below threshold → miss beep + logs miss.
-10. Worker loops back to queue.
+2. `on_toggle` checks `StreamingRecorder.is_open`: false → `StreamingRecorder.open_session()` + `feedback.on_recording_start()` (chime).
+3. `open_session()` queries device native rate, creates fresh `Resampler`, resets `VADGate`, opens `sd.InputStream`, spawns VAD worker thread.
 
-Total latency budget (recording stop → tool fires): ~700 ms target, 1.5 s hard ceiling.
+**Utterance detection (loops while session is open):**
+4. User speaks. PortAudio callback copies PCM chunks to `raw_q`.
+5. VAD worker drains `raw_q`: `Resampler.process(chunk)` → 16 kHz frames → `VADGate.process(frame)`.
+6. When speech ends (or max-utterance guard fires), `VADGate.process()` returns utterance ndarray.
+7. VAD worker calls `utterance_sink(ndarray)` → `StreamingDaemon._on_utterance()` → `utt_q.put_nowait(ndarray)`.
+8. Pipeline worker picks up utterance: async WAV write to `outputs/last_utterance.wav` (fire-and-forget).
+9. `Transcriber.transcribe(utterance)` → `TranscriptionResult`.
+10. `feedback.on_transcript(...)` logs transcript.
+11. Word-count gate: drop if fewer than `min_word_count` words.
+12. `no_speech_prob` gate: drop if above `max_no_speech_prob`.
+13. Confidence gate: `on_miss()` if below `min_confidence`.
+14. `Matcher.match(result.text)` → `MatchResult`.
+15. `Dispatcher.dispatch(text, match)`:
+    - Match above threshold → logs match + tool function executes.
+    - Below threshold → miss beep + logs miss.
+16. Pipeline worker loops back to `utt_q`.
+
+**Session close:**
+17. User presses Scroll Lock again. `on_toggle` → `StreamingRecorder.close_session()` + `feedback.on_recording_stop()` (chime).
+18. Stream stops; VAD worker receives `None` sentinel, joins cleanly.
+
+Total latency budget (speech-end detected → tool fires): ~700 ms target, 1.5 s hard ceiling.
 
 ---
 
@@ -316,3 +407,9 @@ Total latency budget (recording stop → tool fires): ~700 ms target, 1.5 s hard
   - [`decisions/0011-uv-package-manager.md`](decisions/0011-uv-package-manager.md)
   - [`decisions/0012-cuda-dll-bundling.md`](decisions/0012-cuda-dll-bundling.md)
   - [`decisions/0013-drop-winrt-toasts-audio-only-feedback.md`](decisions/0013-drop-winrt-toasts-audio-only-feedback.md)
+  - [`decisions/0014-miss-only-chimes.md`](decisions/0014-miss-only-chimes.md)
+  - [`decisions/0015-vad-streaming-mode.md`](decisions/0015-vad-streaming-mode.md)
+  - [`decisions/0016-silero-vad-over-webrtcvad.md`](decisions/0016-silero-vad-over-webrtcvad.md)
+  - [`decisions/0017-soxr-streaming-resampler.md`](decisions/0017-soxr-streaming-resampler.md)
+  - [`decisions/0018-ndarray-handoff-to-whisper.md`](decisions/0018-ndarray-handoff-to-whisper.md)
+  - [`decisions/0019-supersede-single-shot-recorder.md`](decisions/0019-supersede-single-shot-recorder.md)
