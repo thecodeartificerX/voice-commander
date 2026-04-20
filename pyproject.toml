@@ -15,6 +15,8 @@ dependencies = [
     "tomli>=2.0.1; python_version < '3.11'",
     "nvidia-cublas-cu12>=12.9.2.10",
     "nvidia-cudnn-cu12>=9.21.0.82",
+    "psutil>=5.9",
+    "pywin32>=306",
 ]
 
 [project.optional-dependencies]
@@ -60,3 +62,26 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.11"
 strict = true
 warn_unused_ignores = true
+
+[tool.coverage.run]
+source = ["src/voice_commander"]
+branch = true
+# Exclude thin hardware-wrapper modules — tested via -m hardware not unit suite.
+omit = [
+    "src/voice_commander/_cuda_setup.py",
+    "src/voice_commander/__main__.py",
+    "src/voice_commander/hotkey.py",
+    "src/voice_commander/transcriber.py",
+    "src/voice_commander/tools/_win32.py",
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]

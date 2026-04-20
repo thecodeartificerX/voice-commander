@@ -70,10 +70,29 @@ uv run voice-commander
 
 ## Configuration
 
-All tuneable values live in [`config.toml`](config.toml) at the project root. Missing keys fall back to built-in defaults defined in `src/voice_commander/config.py`.
+All tuneable values live in [`config.toml`](config.toml) at the project root. Missing keys fall back to built-in defaults defined in `src/voice_commander/config.py`. Unknown keys or wrong types raise at load time — typos are caught before the daemon starts.
 
-For the full schema and field-level documentation see **§5 — Configuration** in the design spec:
-[`docs/superpowers/specs/2026-04-19-voice-commander-design.md`](docs/superpowers/specs/2026-04-19-voice-commander-design.md)
+### Sections
+
+| Section | Key | Default | Purpose |
+|---|---|---|---|
+| `[hotkey]` | `key` | `"scroll_lock"` | Toggle key. Any `pynput.keyboard.Key` name. |
+| `[audio]` | `channels` | `1` | Mono capture. |
+| | `device` | `-1` (= default) | PortAudio device index. Run `start.ps1 -ListDevices` to pick. |
+| | `output_dir` | `"outputs"` | Where `recorded.wav` is written. |
+| `[transcription]` | `model_size` | `"small.en"` | faster-whisper model. `tiny.en` / `base.en` / `small.en` / `medium.en`. |
+| | `device` | `"cuda"` | `"cuda"` or `"cpu"`. |
+| | `compute_type` | `"float16"` | CUDA: `"float16"` or `"int8_float16"`. CPU: `"int8"`. |
+| | `min_confidence` | `0.30` | Transcripts below this score are routed to miss (no tool fires). |
+| `[matching]` | `threshold` | `85.0` | rapidfuzz score floor (0-100). Lower = more lenient. |
+| | `scorer` | `"WRatio"` | rapidfuzz scorer name. |
+| `[feedback]` | `sounds_dir` | `"assets/sounds"` | Where chime WAVs live. |
+| | `start_sound` / `stop_sound` | — | Files exist but are not played (ADR 0014: miss-only feedback). |
+| | `miss_sound` | `"miss.wav"` | Chime on low-confidence or no-match. |
+| `[logging]` | `level` | `"INFO"` | Python log level. Override via `$VC_LOG_LEVEL`. |
+| | `file` | `"voice-commander.log"` | Rolling log path. |
+
+Full field-level reasoning: **§5 — Configuration** in the design spec at [`docs/superpowers/specs/2026-04-19-voice-commander-design.md`](docs/superpowers/specs/2026-04-19-voice-commander-design.md).
 
 ---
 

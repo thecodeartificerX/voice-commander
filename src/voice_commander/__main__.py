@@ -5,10 +5,12 @@ import logging
 import os
 import platform
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from .config import Config
 from .daemon import build_phase3
+from .single_instance import AlreadyRunning, SingleInstanceLock
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +18,16 @@ logger = logging.getLogger(__name__)
 def _configure_logging(cfg: Config) -> None:
     level_name = os.environ.get("VC_LOG_LEVEL", cfg.logging.level).upper()
     level = getattr(logging, level_name, logging.INFO)
+    file_handler = RotatingFileHandler(
+        cfg.logging.file,
+        maxBytes=cfg.logging.max_bytes,
+        backupCount=cfg.logging.backup_count,
+        encoding="utf-8",
+    )
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(threadName)s %(name)s %(levelname)s: %(message)s",
-        handlers=[
-            logging.FileHandler(cfg.logging.file, encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
+        handlers=[file_handler, logging.StreamHandler()],
         force=True,
     )
     logging.getLogger("faster_whisper").setLevel(level)
@@ -63,7 +68,16 @@ def main() -> None:
     _configure_logging(cfg)
     _enable_crash_reporting(cfg)
     _log_environment()
-    build_phase3(cfg).run(cfg.hotkey.key)
+    lock = SingleInstanceLock(Path("outputs/.daemon.lock"))
+    try:
+        lock.acquire()
+    except AlreadyRunning as e:
+        logger.error("Voice Commander already running: %s", e)
+        sys.exit(1)
+    try:
+        build_phase3(cfg).run(cfg.hotkey.key)
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":

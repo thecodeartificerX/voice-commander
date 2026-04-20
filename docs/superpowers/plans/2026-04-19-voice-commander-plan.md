@@ -3044,12 +3044,16 @@ git commit -m "feat(tools): add lock_screen, take_screenshot"
 
 ---
 
-### VC-P4-T05: Phrase tuning pass (measure and improve miss rate)
+### VC-P4-T05: Phrase tuning pass (measure and improve miss rate) — **DROPPED 2026-04-20**
+
+**Status:** Skipped per user decision at Phase 4 wrap-up. Live 14-tool run-through validated phrase coverage qualitatively; formal 20-WAV fixture harness judged unnecessary for MVP. If miss rate becomes a problem in daily use, revisit by reviving this task.
+
+**Original scope (preserved for reference):**
 
 **Files:**
 - Create: `tests/integration/test_phrase_coverage.py`
 
-- [ ] **Step 1: Record 20 canned fixtures (two natural utterances per tool, 10 tools minimum)**
+- [ ] ~~**Step 1: Record 20 canned fixtures (two natural utterances per tool, 10 tools minimum)**~~
 
 Human records WAVs into `tests/fixtures/audio/phrase_coverage/<tool>_<n>.wav` (e.g. `copy_1.wav`, `copy_2.wav`, `new_tab_1.wav`, …).
 
@@ -3134,14 +3138,14 @@ git commit -m "test(integration): phrase coverage at 95%+ across 20 fixtures"
 
 **Blocks:** Phase 5.
 
-- [ ] **Human checklist:**
-  1. Full unit test suite green: `uv run pytest -m "not hardware" -v`.
-  2. Hardware suite green: `uv run pytest -m hardware -v`.
+- [x] **Human checklist:**
+  1. Full unit test suite green: `uv run pytest -m "not hardware" -v` — 46 passed 2026-04-20.
+  2. ~~Hardware suite green~~ — dropped with T05 (see above).
   3. Live run-through (`uv run voice-commander`):
-     - Say each of the 14 commands in sequence. Each produces the expected side effect and a success toast.
-     - Say three nonsense utterances; each produces a miss beep + miss toast.
-  4. Log file contains no `on_error` entries from that session.
-- [ ] **Human marks Phase 4 complete in Kaizen OS.**
+     - Say each of the 14 commands in sequence. Each produces the expected side effect. Silent on start/stop per ADR 0014; log line written for each match.
+     - Say three nonsense utterances; each produces a miss beep + log line. (Toasts no longer exist — see ADR 0013.)
+  4. Log file contains no `on_error` entries from that session — confirmed 2026-04-20.
+- [x] **Human marks Phase 4 complete in Kaizen OS.**
 
 ---
 

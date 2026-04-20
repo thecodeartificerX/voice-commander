@@ -45,8 +45,13 @@ class Phase1Daemon:
                 self._feedback.on_error("recorder.start", e)
 
     def run(self, hotkey_key: str) -> None:
-        self._hotkey = HotkeyController(hotkey_key, self.on_toggle)
-        self._hotkey.start()
+        try:
+            self._hotkey = HotkeyController(hotkey_key, self.on_toggle)
+            self._hotkey.start()
+        except Exception as e:
+            logger.exception("HotkeyController.start() failed; aborting startup")
+            self._feedback.on_error("hotkey.start", e)
+            return
         # Belt-and-braces SIGINT handler — useful on POSIX or if another thread
         # handles the signal.  On Windows the polled wait below is the primary
         # Ctrl+C mechanism because kernel WaitForSingleObject (used by a bare
@@ -132,7 +137,12 @@ class Phase2Daemon(Phase1Daemon):
                 self._feedback.on_error("transcribe", e)
 
     def run(self, hotkey_key: str) -> None:
-        self._transcriber.load()
+        try:
+            self._transcriber.load()
+        except Exception as e:
+            logger.exception("Transcriber.load() failed; aborting startup")
+            self._feedback.on_error("transcriber.load", e)
+            return
         self.start_worker()
         super().run(hotkey_key)
 
@@ -191,11 +201,13 @@ class Phase3Daemon(Phase2Daemon):
         registry: ToolRegistry,
         matcher: Matcher,
         dispatcher: Dispatcher,
+        min_confidence: float = 0.30,
     ) -> None:
         super().__init__(feedback=feedback, recorder=recorder, transcriber=transcriber)
         self._registry = registry
         self._matcher = matcher
         self._dispatcher = dispatcher
+        self._min_confidence = min_confidence
 
     def _worker_loop(self) -> None:
         while True:
@@ -205,7 +217,7 @@ class Phase3Daemon(Phase2Daemon):
             try:
                 result = self._transcriber.transcribe(item)
                 self._feedback.on_transcript(result.text, result.confidence)
-                if result.confidence < 0.30:
+                if result.confidence < self._min_confidence:
                     self._feedback.on_miss(result.text, ())
                     continue
                 match = self._matcher.match(result.text)
@@ -237,4 +249,5 @@ def build_phase3(cfg: Config) -> Phase3Daemon:
     return Phase3Daemon(
         feedback=feedback, recorder=recorder, transcriber=transcriber,
         registry=registry, matcher=matcher, dispatcher=dispatcher,
+        min_confidence=cfg.transcription.min_confidence,
     )

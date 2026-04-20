@@ -78,10 +78,10 @@ class WindowsFeedbackSink:
             logger.exception("winsound.PlaySound failed for %s", path)
 
     def on_recording_start(self) -> None:
-        self._play(self._start)
+        pass
 
     def on_recording_stop(self) -> None:
-        self._play(self._stop)
+        pass
 
     def on_transcript(self, text: str, confidence: float) -> None:
         logger.info("transcript (conf=%.2f): %s", confidence, text)
@@ -94,4 +94,5 @@ class WindowsFeedbackSink:
         logger.info("MISS '%s' top=%s", transcript, list(candidates)[:3])
 
     def on_error(self, subsystem: str, err: BaseException) -> None:
-        logger.exception("Error in %s: %s", subsystem, err)
+        logger.error("Error in %s: %s", subsystem, err, exc_info=err)
+        self._play(self._miss)

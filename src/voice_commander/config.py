@@ -46,6 +46,8 @@ class FeedbackConfig:
 class LoggingConfig:
     level: str = "INFO"
     file: str = "voice-commander.log"
+    max_bytes: int = 5_000_000
+    backup_count: int = 5
 
 
 @dataclass(frozen=True)

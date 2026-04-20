@@ -66,6 +66,28 @@ def test_shutdown_idempotent():
     daemon.shutdown()
 
 
+def test_hotkey_start_failure_aborts_cleanly(monkeypatch, tmp_path):
+    """If HotkeyController.start() raises, daemon.run() must return cleanly
+    and report via feedback.on_error — not crash the process."""
+    feedback = CapturingFeedbackSink()
+    recorder = MagicMock()
+    recorder.is_recording = False
+
+    class ExplodingHotkey:
+        def __init__(self, *a, **k): pass
+        def start(self): raise RuntimeError("pynput dead")
+        def stop(self): pass
+
+    monkeypatch.setattr("voice_commander.daemon.HotkeyController", ExplodingHotkey)
+
+    daemon = Phase1Daemon(feedback=feedback, recorder=recorder)
+    daemon.run("scroll_lock")  # must return, not raise
+
+    errors = [c for c in feedback.calls if c[0] == "on_error"]
+    assert errors, "expected on_error to be reported"
+    assert errors[0][1][0] == "hotkey.start"
+
+
 def test_shutdown_stops_recording_if_active(tmp_path):
     """shutdown() must stop an in-progress recording."""
     feedback = CapturingFeedbackSink()

@@ -149,5 +149,5 @@ voice-commander/
 - [x] Phase 1 (hotkey + audio) complete
 - [x] Phase 2 (transcription) complete
 - [ ] Phase 3 (router + first tool) complete
-- [ ] Phase 4 (full MVP toolset) complete
-- [ ] Phase 5 (hardening) complete
+- [x] Phase 4 (full MVP toolset) complete
+- [x] Phase 5 (hardening) complete
