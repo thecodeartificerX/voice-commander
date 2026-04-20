@@ -19,7 +19,7 @@ This document is the canonical reference for Voice Commander's subsystem design 
                                                           ▼
 ┌──────────────┐  result ┌──────────────┐  tool,   ┌──────────────┐
 │ FeedbackSink │◀────────│  Dispatcher  │◀─────────│   Matcher    │
-│(toast/chime) │         │ (invokes fn) │  score   │ (rapidfuzz)  │
+│ (chime+log)  │         │ (invokes fn) │  score   │ (rapidfuzz)  │
 └──────────────┘         └──────────────┘          └──────┬───────┘
                                                           │ looks up
                                                           ▼
@@ -49,7 +49,7 @@ Six subsystems connected by the `Daemon` orchestrator. Each is independently uni
 | `ToolRegistry` | Register/discover `@tool`-decorated functions | stdlib (`importlib`) |
 | `Matcher` | Fuzzy-match transcript → tool | `rapidfuzz` |
 | `Dispatcher` | Invoke tool function, report outcome | (no external) |
-| `FeedbackSink` | Chimes + native Windows toast + log | `winsound`, `windows_toasts` |
+| `FeedbackSink` | Chimes + log | `winsound` |
 
 ---
 
@@ -248,15 +248,15 @@ class FeedbackSink(Protocol):
 
 **What it does:** A `Protocol` (structural subtype) that decouples all user-visible feedback from the pipeline logic. Concrete implementations:
 
-- `WindowsFeedbackSink` — plays WAV chimes via `winsound.PlaySound(path, SND_FILENAME | SND_ASYNC)` (fire-and-forget, does not block the worker thread); sends native WinRT toasts via `windows_toasts.InteractableWindowsToaster`. Toast content: match → `✓ {tool}  ·  "{transcript}"  ({score:.0f})`; miss → `✗ no match  ·  "{transcript}"  ·  top: {candidate} ({score:.0f})`.
+- `WindowsFeedbackSink` — plays WAV chimes via `winsound.PlaySound(path, SND_FILENAME | SND_ASYNC)` (fire-and-forget, does not block the worker thread) and logs match/miss/error events. No visual notifications — see ADR 0013 for why toasts were dropped.
 - `NullFeedbackSink` — all methods are no-ops. The default in unit tests where feedback is irrelevant.
 - `CapturingFeedbackSink` — records every call into a list for assertion in `Dispatcher` tests.
 
 **Who calls it:** `Daemon` (for `on_recording_start` / `on_recording_stop`) and `Dispatcher` (for all other callbacks).
 
-**Who it calls:** `winsound.PlaySound` and `windows_toasts` WinRT APIs (`WindowsFeedbackSink` only).
+**Who it calls:** `winsound.PlaySound` (`WindowsFeedbackSink` only) and the module logger.
 
-**How it is tested:** `WindowsFeedbackSink` has smoke tests only (chime plays without raising; toast dispatches without raising). Behavioural correctness is covered by `CapturingFeedbackSink` assertions in the `Dispatcher` test suite.
+**How it is tested:** `WindowsFeedbackSink` is pure side-effects on `winsound` and the logger — covered by the unit suite's `NullFeedbackSink` / `CapturingFeedbackSink` patterns, plus smoke coverage by the Phase-3 GATE when a human runs the daemon and hears the chimes.
 
 ---
 
@@ -287,11 +287,11 @@ class Daemon:
 4. User presses Scroll Lock again. `on_toggle` → `Recorder.stop()` returns `wav_path`; `feedback.on_recording_stop()` (chime).
 5. `wav_path` enqueued on the worker queue.
 6. Worker thread picks it up: `Transcriber.transcribe(wav_path)` → `TranscriptionResult`.
-7. `feedback.on_transcript(...)` logs transcript (and in dev mode, shows a debug toast).
+7. `feedback.on_transcript(...)` logs transcript.
 8. `Matcher.match(result.text)` → `MatchResult`.
 9. `Dispatcher.dispatch(text, match)`:
-   - Match above threshold → chime + toast + tool function executes.
-   - Below threshold → miss beep + miss toast.
+   - Match above threshold → logs match + tool function executes.
+   - Below threshold → miss beep + logs miss.
 10. Worker loops back to queue.
 
 Total latency budget (recording stop → tool fires): ~700 ms target, 1.5 s hard ceiling.
@@ -314,3 +314,5 @@ Total latency budget (recording stop → tool fires): ~700 ms target, 1.5 s hard
   - [`decisions/0009-phased-delivery-with-hitl-gates.md`](decisions/0009-phased-delivery-with-hitl-gates.md)
   - [`decisions/0010-threading-model.md`](decisions/0010-threading-model.md)
   - [`decisions/0011-uv-package-manager.md`](decisions/0011-uv-package-manager.md)
+  - [`decisions/0012-cuda-dll-bundling.md`](decisions/0012-cuda-dll-bundling.md)
+  - [`decisions/0013-drop-winrt-toasts-audio-only-feedback.md`](decisions/0013-drop-winrt-toasts-audio-only-feedback.md)

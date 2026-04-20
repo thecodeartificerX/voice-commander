@@ -69,17 +69,19 @@ Use `device = -1` (system default) as the fallback when no matching device is fo
 
 ---
 
-## 4. WinRT Toast Permissions on Windows 11 (AUMID)
+## 4. WinRT Toast Permissions on Windows 11 (AUMID) — HISTORICAL
 
-**Problem:** Toast notifications are silently dropped — no error, no notification — on some Windows 11 systems, even though `windows_toasts` reports success.
+**Status:** Not a live issue — `windows_toasts` was removed in ADR 0013 (2026-04-20). The feedback subsystem is audio-chime only. Kept here for historical reference in case a future dev reintroduces visual notifications.
 
-**Explanation:** Windows 11 notification dispatch requires the sending process to have a registered **Application User Model ID (AUMID)**. `windows_toasts` auto-registers a temporary AUMID on first use, but Focus Assist, notification grouping policies, or a missing app entry in the registry can prevent delivery without raising a Python exception.
+**Problem:** Toast notifications were silently dropped — no error, no notification — on some Windows 11 systems, even though `windows_toasts` reported success.
 
-**Mitigation:**
-1. `windows_toasts` should handle registration automatically — verify it is imported and a `WindowsToaster` instance is created before the first notification attempt.
-2. If toasts silently fail: open **Settings → System → Notifications & actions** and confirm that Python (or "voice-commander") is listed and **not** blocked.
+**Explanation:** Windows 11 notification dispatch requires the sending process to have a registered **Application User Model ID (AUMID)**. `windows_toasts` auto-registers a temporary AUMID on first use, but Focus Assist, notification grouping policies, or a missing app entry in the registry could prevent delivery without raising a Python exception.
+
+**Mitigation (if toasts are ever reintroduced):**
+1. `windows_toasts` should handle registration automatically — verify a `WindowsToaster` instance is created before the first notification attempt.
+2. If toasts silently fail: open **Settings → System → Notifications & actions** and confirm the hosting process is listed and **not** blocked.
 3. Check that Focus Assist / Do Not Disturb is not suppressing all notifications during your test session.
-4. As a fallback, the feedback subsystem uses `winsound.MessageBeep` as an audio-only path that requires no permissions, so the user always gets audio confirmation even when toasts are blocked.
+4. Always keep audio chimes as the primary feedback path so the user gets confirmation even when toasts are blocked.
 
 ---
 
@@ -103,7 +105,7 @@ def on_press(key):
 
 **Problem:** Launching the daemon twice (e.g. from a startup script while a session is already running) results in two processes both listening for Scroll Lock. Both receive the hotkey, both start recording, both transcribe, and both attempt tool dispatch — producing duplicate or conflicting actions.
 
-**Explanation:** There is no OS-level exclusion preventing multiple copies of the same Python script from running simultaneously. The symptom is subtle: commands appear to execute twice, or two competing toast notifications fire.
+**Explanation:** There is no OS-level exclusion preventing multiple copies of the same Python script from running simultaneously. The symptom is subtle: commands appear to execute twice, or two daemons compete for the same hotkey and audio device.
 
 **Mitigation (Phase 5):** Implement a named OS mutex at startup using `win32event.CreateMutex(None, True, "VoiceCommanderDaemon")`. If `GetLastError()` returns `ERROR_ALREADY_EXISTS`, log the conflict and exit cleanly. As a simpler fallback, write a lock file to `outputs/.daemon.lock` containing the current PID, and check for its existence at launch (with stale-PID detection). This is explicitly deferred to Phase 5 alongside the system-tray icon.
 
@@ -149,7 +151,9 @@ Each 0.5 s the interpreter wakes, checks the event (still clear → loop again),
 
 ---
 
-## 10. `windows_toasts` Eager Import Corrupts CUDA Initialization
+## 10. `windows_toasts` Eager Import Corrupts CUDA Initialization — HISTORICAL
+
+**Status:** Not a live issue — `windows_toasts` was removed as a dependency in ADR 0013 (2026-04-20). Kept here as a cautionary case study for any future dev tempted to add a package that initializes WinRT / COM at import time.
 
 **Problem:** `uv run voice-commander` crashes with native access violation (`exit code -1073741819` / `STATUS_ACCESS_VIOLATION / 0xC0000005`) inside `faster_whisper/transcribe.py:689` during `WhisperModel.__init__()` on CUDA. No Python exception; Python dies silently unless `faulthandler.enable()` is on. The same model construction succeeds in the pytest suite.
 
@@ -159,23 +163,10 @@ The failure is order-dependent:
 - Test path: `pytest tests/unit/test_transcriber.py -m hardware` — imports only `transcriber.py` → `_cuda_setup.register()` → `faster_whisper` → succeeds.
 - Daemon path: `uv run voice-commander` — imports `__main__` → `daemon` → `feedback` (which eagerly imports `windows_toasts`) → `transcriber` → `_cuda_setup.register()` → `faster_whisper` → crashes at `WhisperModel.__init__()`.
 
-**Mitigation (implemented):** `windows_toasts` is imported lazily inside `WindowsFeedbackSink._toast()` — the first toast dispatch occurs after the user's first match/miss, long after the model is loaded. No import at `feedback.py` module scope. The CTranslate2 native init runs on a clean process with no WinRT footprint.
+**Original mitigation (commit `e3a8fe7`, later superseded):** `windows_toasts` was lazy-imported inside `WindowsFeedbackSink._toast()` so the first toast dispatch (after the user's first match/miss, long after model load) triggered the import. That kept the package out of the process during CUDA init. Rejected as the durable fix — one careless future refactor that promotes the import back to module scope silently reintroduces the crash.
 
-```python
-# feedback.py — the import lives inside the method, NOT at the top
-def _toast(self, title: str, body: str) -> None:
-    if not self._toast_enabled:
-        return
-    try:
-        from windows_toasts import InteractableWindowsToaster, Toast
-    except Exception:
-        logger.exception("windows_toasts unavailable, toast skipped")
-        return
-    if self._toaster is None:
-        self._toaster = InteractableWindowsToaster("Voice Commander")
-    # ... dispatch the toast
-```
+**Final resolution (ADR 0013, commit removing the toast system):** `windows_toasts` dropped as a dependency entirely. Feedback is audio-chimes-only. No WinRT in the process, no way to regress.
 
-**Diagnostic value:** This failure mode is the reason `__main__.py` now calls `faulthandler.enable(file=<crash.log>, all_threads=True)` before importing anything heavy, and why `_cuda_setup.register()` logs DLL preload counts at INFO. Without the fault handler, the daemon would appear to simply exit with an opaque numeric code and no traceback.
+**Diagnostic value retained:** This failure mode is the reason `__main__.py` calls `faulthandler.enable(file=<crash.log>, all_threads=True)` before importing anything heavy, and why `_cuda_setup.register()` logs DLL preload counts at INFO. Without the fault handler, the daemon would have appeared to simply exit with an opaque numeric code and no traceback. That infrastructure is kept — it's general-purpose observability, not toast-specific.
 
-**Related pitfalls to watch for:** Any other package that loads COM/WinRT at import time (`winsdk`, `winrt`, `pywin32` with early `pythoncom.CoInitialize`, `pythonnet`) may reproduce this class of bug. Keep CUDA-adjacent imports first; lazy-load Windows-specific UI/COM helpers.
+**Related pitfalls to watch for:** Any package that loads COM/WinRT at import time (`winsdk`, `winrt-*`, `pywin32` with early `pythoncom.CoInitialize`, `pythonnet`) may reproduce this class of bug. Keep CUDA-adjacent imports first; lazy-load Windows-specific UI/COM helpers, or — if the feature turns out to be optional — skip the integration entirely. Audio chimes do a lot of the same job with none of the process-level side effects.

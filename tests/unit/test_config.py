@@ -11,7 +11,7 @@ def test_load_defaults_when_file_has_no_overrides(tmp_path):
     assert cfg.hotkey.key == "scroll_lock"
     assert cfg.audio.channels == 1
     assert cfg.matching.threshold == 85.0
-    assert cfg.feedback.toast_enabled is True
+    assert cfg.feedback.sounds_dir == "assets/sounds"
 
 
 def test_load_applies_overrides(tmp_path):

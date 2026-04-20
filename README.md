@@ -35,7 +35,7 @@ A Windows voice-command launcher: press Scroll Lock, speak a command, and the ma
 | cuDNN | 9.x |
 | NVIDIA GPU | Any CUDA-capable card (6 GB VRAM recommended for `small.en`) |
 
-> **Windows only.** Voice Commander uses `pynput`, `pyautogui`, and Windows-native toast notifications — it does not run on Linux or macOS.
+> **Windows only.** Voice Commander uses `pynput`, `pyautogui`, and `winsound` for audio chimes — it does not run on Linux or macOS.
 
 ---
 
@@ -64,7 +64,7 @@ uv run voice-commander
 2. Press **Scroll Lock** — you will hear a start chime.
 3. Speak a command (e.g. "copy").
 4. Press **Scroll Lock** again — you will hear a stop chime.
-5. The matched tool fires. If nothing matches you will hear a miss chime and a toast notification.
+5. The matched tool fires. If nothing matches you will hear a miss chime.
 
 ---
 

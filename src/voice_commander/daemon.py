@@ -225,8 +225,6 @@ def build_phase3(cfg: Config) -> Phase3Daemon:
         start_sound=cfg.feedback.start_sound,
         stop_sound=cfg.feedback.stop_sound,
         miss_sound=cfg.feedback.miss_sound,
-        toast_enabled=cfg.feedback.toast_enabled,
-        toast_show_transcript=cfg.feedback.toast_show_transcript,
     )
     transcriber = Transcriber(
         model_size=cfg.transcription.model_size,

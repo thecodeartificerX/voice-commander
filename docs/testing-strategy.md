@@ -40,7 +40,7 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 - **Location:** `tests/unit/`
 - **Markers:** *(no marker — runs by default)*
 - **Speed:** milliseconds per test; whole suite under 30 s.
-- **Principle:** every subsystem is independently testable. Hardware dependencies (`pynput`, `sounddevice`, `faster-whisper`, `winsound`, `windows_toasts`) are mocked or replaced with fakes. No GPU required.
+- **Principle:** every subsystem is independently testable. Hardware dependencies (`pynput`, `sounddevice`, `faster-whisper`, `winsound`) are mocked or replaced with fakes. No GPU required.
 - **Triggered by:** every `uv run pytest` invocation; CI on every push.
 
 ### Layer 2 — Integration tests (canned WAVs)
@@ -56,7 +56,7 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 
 - **Location:** Per-phase checklists in §3 below.
 - **Markers:** `@pytest.mark.hardware` (automated sub-steps only; manual steps are checkbox lists).
-- **Principle:** a human sits at the machine with a microphone, runs `uv run voice-commander`, and follows the checklist step by step. Validates real audio capture, CUDA transcription, WinRT toasts, and clipboard side effects that cannot be simulated.
+- **Principle:** a human sits at the machine with a microphone, runs `uv run voice-commander`, and follows the checklist step by step. Validates real audio capture, CUDA transcription, audio chimes, and clipboard side effects that cannot be simulated.
 - **Triggered by:** phase gate — human signs off before the next phase begins.
 
 ### Layer 4 — Soak test
@@ -78,7 +78,7 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 | `ToolRegistry` | `tests/unit/test_registry.py` | `@tool` decorator registers entry, `by_name()` / `all()` / `flat_phrases()` return correct data, duplicate name raises `DuplicateToolError`, phrases normalized (lowercase, stripped punctuation, collapsed whitespace) | In-memory registry reset via `reset_global_registry()` in `setup_function()`; no external deps |
 | `Matcher` | `tests/unit/test_matcher.py` | Above-threshold utterance returns correct tool and score, below-threshold returns `tool=None`, candidates top-5 populated, ties broken alphabetically by tool name, utterance normalized before matching | Stub `ToolRegistry` with hard-coded phrase sets; no `rapidfuzz` mocking (real algorithm under test) |
 | `Dispatcher` | `tests/unit/test_dispatcher.py` | Match above threshold → `on_match` + tool function called, match below threshold → `on_miss` called, tool function raises → `on_error` called + exception swallowed | `CapturingFeedbackSink` records all calls; tool functions are bare `MagicMock()` instances |
-| `FeedbackSink` | `tests/unit/test_feedback.py` | `NullFeedbackSink` methods callable without error, `CapturingFeedbackSink` records calls in order, `WindowsFeedbackSink` smoke test (chime plays, toast dispatches without raising) — smoke test marked `@pytest.mark.hardware` | `NullFeedbackSink` and `CapturingFeedbackSink` tested directly; `WindowsFeedbackSink` uses real `winsound` / `windows_toasts` only in hardware-marked test |
+| `FeedbackSink` | `tests/unit/test_feedback.py` | `NullFeedbackSink` methods callable without error, `CapturingFeedbackSink` records calls in order. `WindowsFeedbackSink` is pure `winsound` + logger side-effects — covered via the `CapturingFeedbackSink` pattern in `Dispatcher` tests and through the Phase-3 GATE (human hears the chimes). | No hardware-marked `FeedbackSink` test needed after ADR 0013 (toasts removed) |
 | `Config` | `tests/unit/test_config.py` | Round-trip: write TOML → `Config.load()` → values match, defaults applied when keys absent, invalid types raise `ConfigError`, `Config` is frozen (mutation raises `FrozenInstanceError`) | `tmp_path` fixture for temp `config.toml`; no external deps |
 | `Daemon` | `tests/unit/test_daemon.py` | `Daemon.shutdown()` sets shutdown event and worker drains; all subsystem constructors called with values from `Config`; worker thread restarted once on death then exits | All subsystems mocked with `MagicMock`; `threading.Event` used to control shutdown timing |
 
@@ -97,10 +97,10 @@ These checklists are the acceptance criteria that a human must verify before unl
 - [ ] `uv sync --all-groups` exits 0 with no errors.
 - [ ] `uv run pytest` exits 0 (only `Config` unit tests exist at this point).
 - [ ] All 11 ADRs present in `docs/decisions/` and each follows the standard template (Context, Decision, Consequences, Alternatives).
-- [ ] All 9 reference docs present in `docs/references/` (faster-whisper, rapidfuzz, sounddevice, pynput, windows_toasts, pyautogui, pystray, uv, winsound); spot-check at least two for accuracy.
+- [ ] Reference docs present in `docs/references/` for each live dependency (faster-whisper, rapidfuzz, sounddevice, pynput, pyautogui, pystray, uv, winsound); spot-check at least two for accuracy. `windows_toasts.md` was removed in ADR 0013.
 - [ ] `docs/index.md` present and reviewed — table of contents is accurate.
 - [ ] `docs/architecture.md` present and reviewed — diagrams and subsystem descriptions match spec §2.
-- [ ] `docs/gotchas.md` present and reviewed — covers Scroll Lock LED, CUDA DLL paths, PortAudio device drift, WinRT toast permissions, pynput callback threading.
+- [ ] `docs/gotchas.md` present and reviewed — covers Scroll Lock LED, CUDA DLL paths, PortAudio device drift, pynput callback threading, and the historical §10 on WinRT-eager-import corrupting CUDA init (kept as a cautionary case study).
 - [ ] `docs/libraries.md` present and reviewed — long-form rationale for every dependency.
 - [ ] `docs/testing-strategy.md` (this file) present and reviewed — phase checklists accurate, pytest commands correct.
 - [ ] `CLAUDE.md` present at project root and reviewed.
@@ -207,8 +207,8 @@ uv run voice-commander
   - [ ] `scroll down` — view scrolls down.
   - [ ] `scroll up` — view scrolls up.
   - [ ] `take screenshot` — screenshot saved or clipboard populated.
-- [ ] For each command above, a success toast appeared with score ≥ 85.
-- [ ] Say three nonsense utterances — each produces a miss beep and a miss toast.
+- [ ] For each command above, the `voice-commander.log` line `MATCH {tool} <- '{phrase}' ({score})` appeared with score ≥ 85 and the corresponding side-effect fired (e.g. clipboard change).
+- [ ] Say three nonsense utterances — each produces a miss beep and a `MISS` log line.
 - [ ] Log file contains no `on_error` entries from that session.
 - [ ] Miss rate on the 20-utterance check (14 commands + 6 natural variations) is ≤ 5 % (at most 1 miss).
 - [ ] Human marks Phase 4 complete in Kaizen OS (`VC-P4-GATE` subquest → done).
@@ -231,7 +231,7 @@ uv run voice-commander
 - [ ] `config.toml` tweaks take effect after restart:
   - [ ] Change `[matching] threshold` from 85.0 to 95.0 → utterances that previously matched now miss.
   - [ ] Change `[hotkey] key` to `"pause"` → Scroll Lock no longer triggers; Pause key does.
-  - [ ] Change `[feedback] toast_enabled` to `false` → no toasts appear.
+  - [ ] (Removed — `toast_enabled` no longer exists; see ADR 0013.)
 - [ ] Soak test passes:
   - [ ] Run `uv run pytest -m soak` (or the soak harness directly) for 24 h.
   - [ ] RSS memory at end − RSS at start ≤ 100 MB.
@@ -393,7 +393,7 @@ Output lands in `htmlcov/index.html`.
 uv run pytest -m hardware
 ```
 
-Requires: real GPU with CUDA, microphone present, display (for toast smoke tests). Run at phase gates.
+Requires: real GPU with CUDA, microphone present. Run at phase gates.
 
 ### Integration tests only
 

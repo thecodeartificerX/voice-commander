@@ -6,11 +6,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
-# windows_toasts is imported lazily inside WindowsFeedbackSink — eager import
-# pulls the WinRT runtime into the process, which corrupts the CUDA DLL
-# loading path and causes ctranslate2 to access-violate during model
-# construction. See docs/gotchas.md §3.
-
 logger = logging.getLogger(__name__)
 
 
@@ -68,15 +63,10 @@ class WindowsFeedbackSink:
         start_sound: str = "start.wav",
         stop_sound: str = "stop.wav",
         miss_sound: str = "miss.wav",
-        toast_enabled: bool = True,
-        toast_show_transcript: bool = True,
     ) -> None:
         self._start = sounds_dir / start_sound
         self._stop = sounds_dir / stop_sound
         self._miss = sounds_dir / miss_sound
-        self._toast_enabled = toast_enabled
-        self._toast_show_transcript = toast_show_transcript
-        self._toaster: object | None = None  # lazy-initialized on first _toast call
 
     def _play(self, path: Path) -> None:
         if not path.exists():
@@ -97,34 +87,11 @@ class WindowsFeedbackSink:
         logger.info("transcript (conf=%.2f): %s", confidence, text)
 
     def on_match(self, tool: str, phrase: str, score: float) -> None:
-        logger.info("MATCH %s \u2190 '%s' (%.0f)", tool, phrase, score)
-        self._toast(f"\u2713 {tool}", f"'{phrase}' ({score:.0f})")
+        logger.info("MATCH %s <- '%s' (%.0f)", tool, phrase, score)
 
     def on_miss(self, transcript: str, candidates: Sequence[tuple[str, str, float]]) -> None:
         self._play(self._miss)
-        top = candidates[0] if candidates else None
         logger.info("MISS '%s' top=%s", transcript, list(candidates)[:3])
-        if top is not None:
-            self._toast("\u2717 no match", f"'{transcript}' \u2192 top: {top[0]} ({top[2]:.0f})")
-        else:
-            self._toast("\u2717 no match", f"'{transcript}'")
-
-    def _toast(self, title: str, body: str) -> None:
-        if not self._toast_enabled:
-            return
-        try:
-            from windows_toasts import InteractableWindowsToaster, Toast
-        except Exception:
-            logger.exception("windows_toasts unavailable, toast skipped")
-            return
-        if self._toaster is None:
-            self._toaster = InteractableWindowsToaster("Voice Commander")
-        try:
-            t = Toast()
-            t.text_fields = [title, body]
-            self._toaster.show_toast(t)
-        except Exception:
-            logger.exception("toast dispatch failed")
 
     def on_error(self, subsystem: str, err: BaseException) -> None:
         logger.exception("Error in %s: %s", subsystem, err)

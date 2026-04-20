@@ -108,20 +108,16 @@ Cross-references to Architecture Decision Records live in [`docs/decisions/`](de
 
 ---
 
-## `windows-toasts` — Native Windows toast notifications
+## ~~`windows-toasts`~~ — REMOVED (ADR 0013)
 
-**Purpose in this project:** `windows-toasts` drives the notification half of `WindowsFeedbackSink`. After each recognition cycle, a WinRT toast is fired: `✓ {tool} · "{transcript}" ({score:.0f})` on a match, or `✗ no match · "{transcript}" · top: {candidate} ({score:.0f})` on a miss. Toasts are fire-and-forget — no waiting for dismissal.
+Originally used for WinRT toast notifications in `WindowsFeedbackSink`. Removed in ADR 0013 (2026-04-20) for two reasons:
 
-**Alternatives considered:**
-- `win11toast` — a thin wrapper around WinRT toasts. Simple, but less actively maintained and the API changed between versions without deprecation warnings.
-- `plyer` — cross-platform notification library. Uses `win10toast` on Windows, which renders legacy balloon tooltips rather than modern WinRT toasts and cannot be styled.
-- Tkinter popup — the classic `tkinter.Tk()` overlay approach. A notorious footgun: Tkinter windows must be driven from the main thread, creating threading complexity and visual lag.
+1. **UX:** toasts are interruptive for a tool used in short, repeated bursts. Audio chimes already communicate recording state and match/miss outcomes from the peripheral channel (ear) without pulling focus.
+2. **Technical:** eager import of `windows_toasts` at module scope corrupts the process-wide state CTranslate2 relies on when loading cuDNN kernels, causing silent `STATUS_ACCESS_VIOLATION` crashes during `WhisperModel.__init__()`. A lazy-import workaround shipped in commit `e3a8fe7` was judged too fragile to keep long-term — one careless refactor reintroduces the crash.
 
-**Why `windows-toasts` won:** WinRT-backed, renders as proper Windows 11 Action Center notifications, supports custom XML templates for styling, and is fire-and-forget from any thread. It solves the threading problem that kills Tkinter for daemon use. Active maintenance and a clean API make it the clear choice.
+**ADR:** [`decisions/0013-drop-winrt-toasts-audio-only-feedback.md`](decisions/0013-drop-winrt-toasts-audio-only-feedback.md) supersedes [`decisions/0007-windows-toasts-over-tkinter.md`](decisions/0007-windows-toasts-over-tkinter.md).
 
-**Pin reason:** `>=1.1.0` for the `InteractableWindowsToaster` API and async-safe fire-and-forget dispatch.
-
-**ADR:** [`decisions/0007-windows-toasts-over-tkinter.md`](decisions/0007-windows-toasts-over-tkinter.md)
+See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a cautionary case study).
 
 ---
 
@@ -151,7 +147,7 @@ Cross-references to Architecture Decision Records live in [`docs/decisions/`](de
 
 **Pin reason:** `>=0.19.5` for stable `pystray.Menu` and `pystray.MenuItem` API with proper icon update support.
 
-**ADR:** [`decisions/0007-windows-toasts-over-tkinter.md`](decisions/0007-windows-toasts-over-tkinter.md)
+**ADR:** No dedicated ADR yet (Phase 5 scope).
 
 ---
 
@@ -165,7 +161,7 @@ Cross-references to Architecture Decision Records live in [`docs/decisions/`](de
 
 **Pin reason:** `>=10.2.0` for Python 3.11 compatibility and CVE-clean status. Pillow has had security fixes in the 10.x series that make a lower bound important.
 
-**ADR:** [`decisions/0007-windows-toasts-over-tkinter.md`](decisions/0007-windows-toasts-over-tkinter.md)
+**ADR:** No dedicated ADR yet (Phase 5 scope — pulls in Pillow as a pystray dependency).
 
 ---
 
@@ -265,7 +261,9 @@ Cross-references to Architecture Decision Records live in [`docs/decisions/`](de
 | `faster-whisper` | [`0004-faster-whisper-cuda.md`](decisions/0004-faster-whisper-cuda.md) |
 | `rapidfuzz` | [`0005-rapidfuzz-matching.md`](decisions/0005-rapidfuzz-matching.md) |
 | `pyautogui` | [`0002-pynput-over-keyboard.md`](decisions/0002-pynput-over-keyboard.md) |
-| `windows-toasts`, `pystray`, `Pillow` | [`0007-windows-toasts-over-tkinter.md`](decisions/0007-windows-toasts-over-tkinter.md) |
+| `windows-toasts` (removed) | [`0013-drop-winrt-toasts-audio-only-feedback.md`](decisions/0013-drop-winrt-toasts-audio-only-feedback.md) supersedes [`0007-windows-toasts-over-tkinter.md`](decisions/0007-windows-toasts-over-tkinter.md) |
+| `pystray`, `Pillow` (Phase 5) | No dedicated ADR yet |
+| CUDA DLL bundling (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`) | [`0012-cuda-dll-bundling.md`](decisions/0012-cuda-dll-bundling.md) |
 | `winsound` | [`0008-winsound-for-chimes.md`](decisions/0008-winsound-for-chimes.md) |
 | `tomli` | [`0011-uv-package-manager.md`](decisions/0011-uv-package-manager.md) |
 | `uv`, `ruff`, `mypy` | [`0011-uv-package-manager.md`](decisions/0011-uv-package-manager.md) |

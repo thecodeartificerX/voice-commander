@@ -1,6 +1,6 @@
 # ADR 0007: Windows Toasts via windows_toasts over Tkinter Overlays
 
-**Status:** Accepted
+**Status:** Superseded by [ADR 0013](0013-drop-winrt-toasts-audio-only-feedback.md) (2026-04-20). The comparative reasoning below (why toasts over Tkinter) remains correct; the project has since concluded that no visual notification at all is preferable for this use case.
 **Date:** 2026-04-19
 
 ## Context

@@ -24,10 +24,10 @@ A voice-driven command launcher for Windows — like Talon Voice, but you say th
 HotkeyCtrl ──toggle──▶ Recorder ──WAV──▶ Transcriber ──text──▶ Matcher ──▶ Dispatcher ──▶ tool fn
    pynput             sounddevice         faster-whisper       rapidfuzz       invokes      tools/*
                                            (CUDA, small.en)                  + FeedbackSink
-                                                                              (chime/toast)
+                                                                              (chime + log)
 ```
 
-Subsystems connected by a thread-safe queue. Hotkey listener, audio capture, and the transcribe→match→dispatch worker each run on their own thread. Main thread only orchestrates. This keeps the UI/chime/toast layer non-blocking — no Python floating windows, just native WinRT toasts via `windows_toasts`.
+Subsystems connected by a thread-safe queue. Hotkey listener, audio capture, and the transcribe→match→dispatch worker each run on their own thread. Main thread only orchestrates. Feedback is audio-only — `winsound` chimes for start/stop/miss plus structured logs; no visual notifications (see ADR 0013).
 
 Tools live in `src/voice_commander/tools/*.py` and register themselves via a `@tool(phrases=[...])` decorator. The registry auto-discovers them on daemon start. Adding a new tool = drop a file.
 
@@ -42,7 +42,7 @@ Tools live in `src/voice_commander/tools/*.py` and register themselves via a `@t
 | Transcription | `faster-whisper` `small.en` on **CUDA** | Sub-second latency on NVIDIA GPU |
 | Fuzzy match | `rapidfuzz`, threshold ~85 | Fast, no ML deps, good-enough for Phase 1 |
 | Tool registry | `@tool` decorator + auto-discovery | Phrases live next to code; zero boilerplate to add tools |
-| Feedback | Windows `.wav` chimes via `winsound` + native toast via `windows_toasts` | Fire-and-forget, no thread blocking |
+| Feedback | Windows `.wav` chimes via `winsound` only (no visual toasts) | Fire-and-forget, non-interruptive. Toasts dropped in ADR 0013 (UX + CUDA-init fragility). |
 | Recording retention | Single overwriting file `outputs/recorded.wav` — newest only | Simpler; transcriber always reads one fixed path; no retention subsystem needed |
 | Config | `config.toml` at project root | Tweak threshold/hotkey/model without editing code |
 | CUDA DLL loading | `nvidia-cublas-cu12` + `nvidia-cudnn-cu12` pip packages + `_cuda_setup.register()` preloads DLLs via `ctypes.WinDLL` before `faster_whisper` import | Venv self-contained; no system CUDA install needed; sidesteps Windows native DLL-search quirks. ADR 0012. |
@@ -56,7 +56,7 @@ Each phase ends in a validation gate. No skipping.
 - **Phase 0** — Scaffolding + full docs (no code yet). *Validation: doc review.*
 - **Phase 1** — Hotkey + audio capture to WAV, start/stop chimes. *Validation: press key, speak, verify WAV.*
 - **Phase 2** — Transcription wired (CUDA, `small.en`, model preloaded). *Validation: transcript appears in log within ~1s.*
-- **Phase 3** — Router + registry + one tool (`copy`) end-to-end with toast feedback. *Validation: say "copy" with text selected → clipboard updates.*
+- **Phase 3** — Router + registry + one tool (`copy`) end-to-end with audio-chime feedback. *Validation: say "copy" with text selected → clipboard updates.*
 - **Phase 4** — Full MVP toolset (14 tools: clipboard, window, browser, system). Tune phrases + threshold. Miss-beep on low confidence. *Validation: full command run-through, measure miss rate.*
 - **Phase 5** — Hardening: config file, retention cleanup, system tray icon, error recovery, complete unit + integration test suite. *Validation: green suite + stability soak.*
 - **Phase 6+ (future)** — Local LLM intent router for argument-bearing commands, per-app command sets, wake word.
@@ -118,7 +118,7 @@ voice-commander/
 - `ToolRegistry` — `@tool(phrases=[...])` decorator; `discover(pkg)` auto-imports.
 - `Matcher(registry, threshold)` — rapidfuzz `match(utterance) -> MatchResult`.
 - `Dispatcher(feedback)` — runs tool fn; reports to feedback sink.
-- `FeedbackSink` — chimes + toast + log. Swap to `NullFeedbackSink` in tests.
+- `FeedbackSink` — chimes + log. Swap to `NullFeedbackSink` in tests.
 - `Daemon` — the only place concretes meet. Owns the queue and threads.
 
 ## Workflow for agents and humans

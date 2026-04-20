@@ -40,8 +40,6 @@ class FeedbackConfig:
     start_sound: str = "start.wav"
     stop_sound: str = "stop.wav"
     miss_sound: str = "miss.wav"
-    toast_enabled: bool = True
-    toast_show_transcript: bool = True
 
 
 @dataclass(frozen=True)
