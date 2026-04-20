@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from .config import Config
-from .daemon import build_phase1
+from .daemon import build_phase2
 
 
 def main() -> None:
@@ -17,7 +17,7 @@ def main() -> None:
             logging.StreamHandler(),
         ],
     )
-    build_phase1(cfg).run(cfg.hotkey.key)
+    build_phase2(cfg).run(cfg.hotkey.key)
 
 
 if __name__ == "__main__":
