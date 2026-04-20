@@ -45,6 +45,7 @@ Tools live in `src/voice_commander/tools/*.py` and register themselves via a `@t
 | Feedback | Windows `.wav` chimes via `winsound` + native toast via `windows_toasts` | Fire-and-forget, no thread blocking |
 | Recording retention | Single overwriting file `outputs/recorded.wav` — newest only | Simpler; transcriber always reads one fixed path; no retention subsystem needed |
 | Config | `config.toml` at project root | Tweak threshold/hotkey/model without editing code |
+| CUDA DLL loading | `start.ps1` auto-detects system CUDA + cuDNN install, prepends to `$env:PATH` before launching daemon | Windows native DLL search uses process env block set at start; Python-level mutations come too late; pip bundled CUDA packages conflict with CTranslate2's shim |
 
 Every one of these has (or will have) a full ADR in `docs/decisions/`.
 

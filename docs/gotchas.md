@@ -119,6 +119,71 @@ Each 0.5 s the interpreter wakes, checks the event (still clear → loop again),
 
 ---
 
+## 10. Windows CUDA DLL Loading Requires PATH Set BEFORE Python Starts
+
+**Problem:** `faster-whisper` (via CTranslate2) crashes at first encode with:
+
+```
+RuntimeError: Library cublas64_12.dll is not found or cannot be loaded.
+```
+
+This can happen even when the CUDA Toolkit and cuDNN are correctly installed and present in the
+machine-level PATH in the Windows registry — specifically when the launching shell session is
+**stale**: it was opened before a CUDA version upgrade and still carries the old, deleted
+`CUDA\v12.x\bin` path in its environment block.
+
+**Why `os.environ['PATH']` mutation inside Python does NOT work:**
+Windows' native `LoadLibraryExW` uses a snapshot of the process environment block that was
+inherited when the Python interpreter process was created. Any mutations to `os.environ['PATH']`
+after the interpreter is running only affect child processes spawned by Python — they have no
+effect on the DLL search path of the current process. The ctranslate2 CUDA DLL load happens
+during `import ctranslate2`, before any application code can mutate the environment.
+
+**Why `os.add_dll_directory()` does NOT work:**
+`os.add_dll_directory()` adds directories to the set searched when Python resolves DLLs for
+its own extension module loading (the `LOAD_LIBRARY_SEARCH_USER_DIRS` flag path). CTranslate2's
+internal `LoadLibraryExW` calls for `cublas64_12.dll` and the cuDNN kernels do not go through
+the Python loader and therefore do not see these additions.
+
+**Why `uv add nvidia-cublas-cu12 nvidia-cudnn-cu12` does NOT work:**
+`ctranslate2` 4.x ships its own `cudnn64_9.dll` dispatcher shim bundled in its wheel. When a
+pip-installed `nvidia-cudnn-cu12` package also places a `cudnn64_9.dll` in the process, two
+cuDNN versions are resident simultaneously. The conflict produces garbage transcriptions —
+the Whisper model emits repeated nonsense ("cataclysmic cataclysm") from known-good audio.
+Pinning older pip cuDNN versions does not resolve the conflict. See ADR 0012 for full details.
+
+**The working fix: set PATH at shell level before `uv run` via `start.ps1`'s `Add-VoiceCudaToPath`:**
+`start.ps1` contains two helper functions:
+
+- `Get-VoiceCudaPath` — scans the standard NVIDIA install locations for the highest-version
+  CUDA 12.x and cuDNN 9.x directories that contain the required sentinel DLLs
+  (`cublas64_12.dll` and `cudnn_graph64_9.dll`).
+- `Add-VoiceCudaToPath` — prepends those directories to `$env:PATH` in the PowerShell process
+  before `uv run voice-commander` is called. The child Python process inherits the corrected
+  PATH from the start.
+
+This is called in all four launch paths of `start.ps1`. Always use `start.ps1` to launch the
+daemon rather than calling `uv run voice-commander` directly from a shell whose PATH you have
+not manually verified.
+
+**Diagnostic: detecting stale PATH:**
+
+Check what the registry actually says (ground truth, requires no elevation to read):
+```powershell
+[System.Environment]::GetEnvironmentVariable('PATH', 'Machine')
+```
+
+Compare with the current shell's PATH:
+```powershell
+$env:PATH
+```
+
+If the machine PATH contains `CUDA\v12.8\bin` but `$env:PATH` still shows `CUDA\v12.6\bin`
+(or a path that no longer exists on disk), the shell is stale. Close and reopen the terminal,
+or use `start.ps1` which auto-corrects this at launch time.
+
+---
+
 ## 8. `pyautogui` Failsafe Corner
 
 **Problem:** While voice-dispatched automation is running, if the mouse cursor passes through the top-left corner of the screen (coordinate `(0, 0)`), `pyautogui` raises `FailSafeException` and the tool execution aborts mid-flight.

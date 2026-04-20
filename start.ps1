@@ -71,6 +71,172 @@ $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 
 # ---------------------------------------------------------------------------
+# CUDA path detection helpers
+# ---------------------------------------------------------------------------
+
+function Get-VoiceCudaPath {
+    <#
+    .SYNOPSIS
+        Detect installed CUDA Toolkit + cuDNN bin directories for DLL loading.
+    .DESCRIPTION
+        Scans the standard NVIDIA install locations for CUDA 12.x and cuDNN 9.x.
+        Returns the highest-version directories that contain the required sentinel
+        DLLs (cublas64_12.dll for CUDA, cudnn_graph64_9.dll for cuDNN).
+
+        Windows native DLL search (LoadLibraryExW) uses the process environment
+        block snapshotted at process start — not $env:PATH mutations after Python
+        starts. These paths must therefore be injected BEFORE `uv run` is called.
+    .OUTPUTS
+        [PSCustomObject] with properties CudaBin (string or $null) and
+        CudnnBin (string or $null). Either may be $null if not found.
+    #>
+    [CmdletBinding()]
+    param()
+
+    # --- CUDA Toolkit ---
+    $cudaRoot = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA'
+    $cudaBin  = $null
+
+    if (Test-Path -LiteralPath $cudaRoot) {
+        $cudaDirs = Get-ChildItem -LiteralPath $cudaRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^v(\d+)\.(\d+)' } |
+            Sort-Object {
+                if ($_.Name -match '^v(\d+)\.(\d+)') {
+                    [int]$Matches[1] * 10000 + [int]$Matches[2]
+                }
+                else { 0 }
+            } -Descending
+
+        foreach ($dir in $cudaDirs) {
+            $candidate = Join-Path $dir.FullName 'bin'
+            $sentinel  = Join-Path $candidate 'cublas64_12.dll'
+            if ((Test-Path -LiteralPath $candidate -PathType Container) -and
+                (Test-Path -LiteralPath $sentinel   -PathType Leaf)) {
+                $cudaBin = $candidate
+                Write-Verbose "Get-VoiceCudaPath: CUDA bin found at $cudaBin"
+                break
+            }
+        }
+    }
+
+    if ($null -eq $cudaBin) {
+        Write-Warning (
+            'CUDA Toolkit bin directory not found or cublas64_12.dll missing. ' +
+            'Expected install location: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\bin. ' +
+            'Install CUDA Toolkit 12.x from https://developer.nvidia.com/cuda-downloads. ' +
+            'The daemon will likely crash with ''cublas64_12.dll is not found or cannot be loaded''.'
+        )
+    }
+
+    # --- cuDNN ---
+    $cudnnRoot = 'C:\Program Files\NVIDIA\CUDNN'
+    $cudnnBin  = $null
+
+    if (Test-Path -LiteralPath $cudnnRoot) {
+        # Top-level: v9.x dirs (e.g. v9.11)
+        $cudnnTopDirs = Get-ChildItem -LiteralPath $cudnnRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^v(\d+)\.(\d+)' } |
+            Sort-Object {
+                if ($_.Name -match '^v(\d+)\.(\d+)') {
+                    [int]$Matches[1] * 10000 + [int]$Matches[2]
+                }
+                else { 0 }
+            } -Descending
+
+        :cudnnSearch foreach ($topDir in $cudnnTopDirs) {
+            # Sub-dirs under bin\: 12.x (CUDA major version sub-dirs)
+            $binParent = Join-Path $topDir.FullName 'bin'
+            if (-not (Test-Path -LiteralPath $binParent -PathType Container)) { continue }
+
+            $cuda12SubDirs = Get-ChildItem -LiteralPath $binParent -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^12\.' } |
+                Sort-Object {
+                    if ($_.Name -match '^(\d+)\.(\d+)') {
+                        [int]$Matches[1] * 10000 + [int]$Matches[2]
+                    }
+                    else { 0 }
+                } -Descending
+
+            foreach ($subDir in $cuda12SubDirs) {
+                $sentinel = Join-Path $subDir.FullName 'cudnn_graph64_9.dll'
+                if (Test-Path -LiteralPath $sentinel -PathType Leaf) {
+                    $cudnnBin = $subDir.FullName
+                    Write-Verbose "Get-VoiceCudaPath: cuDNN bin found at $cudnnBin"
+                    break cudnnSearch
+                }
+            }
+        }
+    }
+
+    if ($null -eq $cudnnBin) {
+        Write-Warning (
+            'cuDNN bin directory not found or cudnn_graph64_9.dll missing. ' +
+            'Expected install location: C:\Program Files\NVIDIA\CUDNN\v9.x\bin\12.x. ' +
+            'Install cuDNN 9.x for CUDA 12 from https://developer.nvidia.com/cudnn-downloads. ' +
+            'The daemon will likely crash with cuDNN-related DLL load errors.'
+        )
+    }
+
+    return [PSCustomObject]@{
+        CudaBin  = $cudaBin
+        CudnnBin = $cudnnBin
+    }
+}
+
+function Add-VoiceCudaToPath {
+    <#
+    .SYNOPSIS
+        Prepend CUDA + cuDNN bin dirs to $env:PATH for this process.
+    .DESCRIPTION
+        Idempotent — re-running does not duplicate entries. Must be called
+        BEFORE `uv run voice-commander` because Windows native DLL search uses
+        the initial process env block, which child processes inherit.
+
+        If Get-VoiceCudaPath returns $null for either component, that component
+        is silently skipped (a warning was already emitted by Get-VoiceCudaPath).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $cudaPaths = Get-VoiceCudaPath
+
+    $toAdd = @()
+    if ($null -ne $cudaPaths.CudaBin) {
+        $toAdd += $cudaPaths.CudaBin
+    }
+    if ($null -ne $cudaPaths.CudnnBin) {
+        $toAdd += $cudaPaths.CudnnBin
+    }
+
+    if ($toAdd.Count -eq 0) {
+        Write-Verbose 'Add-VoiceCudaToPath: no CUDA/cuDNN dirs found; PATH unchanged'
+        return
+    }
+
+    # Normalise current PATH entries for idempotent comparison (trim trailing \)
+    $currentEntries = $env:PATH -split ';' | ForEach-Object { $_.TrimEnd('\') }
+
+    $newEntries = foreach ($dir in $toAdd) {
+        $normalised = $dir.TrimEnd('\')
+        if ($currentEntries -notcontains $normalised) {
+            $normalised
+            Write-Verbose "Add-VoiceCudaToPath: prepending $normalised to PATH"
+        }
+        else {
+            Write-Verbose "Add-VoiceCudaToPath: $normalised already in PATH; skipped"
+        }
+    }
+
+    if ($null -ne $newEntries -and @($newEntries).Count -gt 0) {
+        $env:PATH = ($newEntries -join ';') + ';' + $env:PATH
+        Write-Verbose "Add-VoiceCudaToPath: PATH updated (prepended: $($newEntries -join ', '))"
+    }
+    else {
+        Write-Verbose 'Add-VoiceCudaToPath: all CUDA/cuDNN dirs already present in PATH; no change'
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Color helper functions
 # ---------------------------------------------------------------------------
 
@@ -473,6 +639,7 @@ if ($PSCmdlet.ParameterSetName -eq 'DirectDevice') {
     }
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander (Phase 2: transcription)...'
+    Add-VoiceCudaToPath
     $ExitCode = Start-VoiceDaemon
     if ($ExitCode -eq 0) {
         Write-VoiceSuccess "Voice Commander exited cleanly (code 0)."
@@ -501,6 +668,7 @@ if ($NoMenu) {
     Write-VoiceSuccess "Using saved device [$SavedNoMenu]."
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander (Phase 2: transcription)...'
+    Add-VoiceCudaToPath
     $ExitCode = Start-VoiceDaemon
     if ($ExitCode -eq 0) {
         Write-VoiceSuccess "Voice Commander exited cleanly (code 0)."
@@ -528,6 +696,7 @@ if (-not $IsInteractive) {
     Write-VoiceSuccess "Non-interactive session -- using saved device [$SavedAuto]."
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander (Phase 2: transcription)...'
+    Add-VoiceCudaToPath
     $ExitCode = Start-VoiceDaemon
     exit $ExitCode
 }
@@ -663,6 +832,7 @@ else {
 }
 Write-Host ''
 Write-VoicePrompt 'Starting Voice Commander (Phase 2: transcription)...'
+Add-VoiceCudaToPath
 
 $DaemonExitCode = Start-VoiceDaemon
 
