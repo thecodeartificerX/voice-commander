@@ -5,6 +5,9 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+import numpy.typing as npt
+
 # Register CUDA runtime DLLs from nvidia-* pip packages before faster_whisper
 # loads ctranslate2's native code. No-op on non-Windows or when packages absent.
 from . import _cuda_setup
@@ -22,9 +25,17 @@ class TranscriptionResult:
     language: str
     duration_ms: int
     confidence: float  # [0, 1]
+    no_speech_prob: float = 0.0  # average no_speech_prob across segments
 
 
 class Transcriber:
+    """Wraps faster-whisper for speech-to-text.
+
+    Lifecycle: call load() once at startup, transcribe() per utterance,
+    unload() at shutdown.  transcribe() is called on the pipeline worker
+    thread; load/unload run on the main thread.
+    """
+
     def __init__(
         self,
         model_size: str = "small.en",
@@ -55,34 +66,47 @@ class Transcriber:
         if self._model is None:
             return
         logger.info("Unloading faster-whisper model")
-        # Drop the strong reference. CTranslate2 releases the CUDA context
-        # when the last Python reference is collected. There is no user-facing
-        # explicit-release API in ctranslate2 4.x.
         del self._model
         self._model = None
         import gc
 
         gc.collect()
 
-    def transcribe(self, wav: Path) -> TranscriptionResult:
+    def transcribe(self, source: Path | npt.NDArray[np.float32]) -> TranscriptionResult:
+        """Transcribe audio from a WAV path or a 16 kHz float32 mono ndarray."""
         if self._model is None:
             raise RuntimeError("Transcriber.load() must be called before transcribe()")
+
+        if isinstance(source, np.ndarray):
+            if source.ndim != 1:
+                raise ValueError(f"Expected 1-D audio array, got shape {source.shape}")
+            if source.dtype != np.float32:
+                raise ValueError(f"Expected float32 audio, got {source.dtype}")
+            audio_input: npt.NDArray[np.float32] | str = source
+            use_vad = False
+        else:
+            audio_input = str(source)
+            use_vad = True
+
         segments_iter, info = self._model.transcribe(
-            str(wav),
+            audio_input,
             language="en",
             beam_size=5,
-            vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 300},
+            vad_filter=use_vad,
+            vad_parameters={"min_silence_duration_ms": 300} if use_vad else None,
         )
         segments = list(segments_iter)
         text = " ".join(s.text for s in segments).strip()
         confidences = [s.avg_logprob for s in segments if s.avg_logprob is not None]
         conf = _normalize_logprob(sum(confidences) / len(confidences)) if confidences else 0.0
+        no_speech_probs = [s.no_speech_prob for s in segments if s.no_speech_prob is not None]
+        avg_no_speech = sum(no_speech_probs) / len(no_speech_probs) if no_speech_probs else 0.0
         return TranscriptionResult(
             text=text,
             language=info.language,
             duration_ms=int(info.duration * 1000),
             confidence=conf,
+            no_speech_prob=avg_no_speech,
         )
 
 

@@ -6,7 +6,7 @@ This file is the durable context for any AI agent or human working on this proje
 
 A voice-driven command launcher for Windows — like Talon Voice, but you say the **actual command** ("copy", "new tab", "focus browser") instead of memorizing spoken shortcuts. A local-first daemon, no cloud, no LLM in the MVP.
 
-**One-line flow:** press Scroll Lock → speak → press Scroll Lock → the matching tool runs.
+**One-line flow:** press Scroll Lock → speak naturally → VAD auto-segments on silence → commands fire immediately → press Scroll Lock to end session.
 
 **End-state vision (beyond MVP):** natural utterances with arguments ("open readme in the projects folder") routed via a small local LLM doing tool-calling. We get the fuzzy-match MVP working first; the LLM layer comes later.
 
@@ -21,13 +21,13 @@ A voice-driven command launcher for Windows — like Talon Voice, but you say th
 ## Architecture (locked)
 
 ```
-HotkeyCtrl ──toggle──▶ Recorder ──WAV──▶ Transcriber ──text──▶ Matcher ──▶ Dispatcher ──▶ tool fn
-   pynput             sounddevice         faster-whisper       rapidfuzz       invokes      tools/*
-                                           (CUDA, small.en)                  + FeedbackSink
-                                                                              (chime + log)
+HotkeyCtrl ──toggle──▶ StreamingRecorder ──NDArray──▶ Transcriber ──text──▶ Matcher ──▶ Dispatcher ──▶ tool fn
+   pynput             sounddevice+Resampler+VADGate   faster-whisper       rapidfuzz       invokes      tools/*
+                      (device-native→16kHz, silero)    (CUDA, small.en)                  + FeedbackSink
+                                                                                          (chime + log)
 ```
 
-Subsystems connected by a thread-safe queue. Hotkey listener, audio capture, and the transcribe→match→dispatch worker each run on their own thread. Main thread only orchestrates. Feedback is audio-only — `winsound` chimes for start/stop/miss plus structured logs; no visual notifications (see ADR 0013).
+Subsystems connected by thread-safe queues. Four long-lived threads: PortAudio callback thread pushes raw PCM to `raw_q`; VAD worker thread drains `raw_q`, resamples 48k→16k via soxr, runs silero-vad, and emits complete utterance ndarrays to `utt_q`; pipeline worker thread drains `utt_q` and runs transcribe→match→dispatch; hotkey listener thread fires session open/close. Main thread only orchestrates. Feedback is audio-only — `winsound` chimes for session start/stop/miss plus structured logs; no visual notifications (see ADR 0013).
 
 Tools live in `src/voice_commander/tools/*.py` and register themselves via a `@tool(phrases=[...])` decorator. The registry auto-discovers them on daemon start. Adding a new tool = drop a file.
 
@@ -38,13 +38,17 @@ Tools live in `src/voice_commander/tools/*.py` and register themselves via a `@t
 | Package manager | `uv` | Fast, reproducible, pyproject.toml-native |
 | Hotkey | Scroll Lock, single-tap toggle | Non-printable, won't conflict with typing |
 | Hotkey listener | `pynput` (primary) / `keyboard` (fallback) | Supports Scroll Lock, cross-platform path |
-| Audio capture | `sounddevice`, device-native rate, mono WAV | Opens stream at device's `default_samplerate` (e.g. 48 kHz for WASAPI); Phase-2 transcription resamples to 16 kHz internally |
-| Transcription | `faster-whisper` `small.en` on **CUDA** | Sub-second latency on NVIDIA GPU |
+| Audio capture | `sounddevice`, device-native rate, mono float32 | Opens `InputStream` at device's `default_samplerate` (e.g. 48 kHz for WASAPI); raw frames pushed to `raw_q` |
+| Resampler | `soxr.ResampleStream`, device-native → 16 kHz, HQ | True streaming resampler with internal filter state; one instance per session. ADR 0017. |
+| VAD engine | `silero-vad` ONNX, 512-sample 16 kHz frames, `onnxruntime` on CPU | Neural VAD, float confidence score, configurable threshold; robust to keyboard/fan noise. ADR 0016. |
+| VAD gate | `VADGate` — pre-roll buffering + utterance accumulation + max-utterance guard | Pre-roll captures audio before speech-start; max-utterance guard prevents unbounded buffers |
+| Session model | Toggle: Scroll Lock opens session, second press closes it | While open, VAD auto-segments; zero keypresses between commands. ADR 0015. |
+| Transcription | `faster-whisper` `small.en` on **CUDA**; utterance ndarray passed directly | Sub-second latency on NVIDIA GPU; ndarray handoff skips temp-file I/O. ADR 0018. |
 | Fuzzy match | `rapidfuzz`, threshold ~85 | Fast, no ML deps, good-enough for Phase 1 |
 | Tool registry | `@tool` decorator + auto-discovery | Phrases live next to code; zero boilerplate to add tools |
 | Feedback | Windows `.wav` chimes via `winsound` only (no visual toasts) | Fire-and-forget, non-interruptive. Toasts dropped in ADR 0013 (UX + CUDA-init fragility). |
-| Recording retention | Single overwriting file `outputs/recorded.wav` — newest only | Simpler; transcriber always reads one fixed path; no retention subsystem needed |
-| Config | `config.toml` at project root | Tweak threshold/hotkey/model without editing code |
+| Debug artifact | `outputs/last_utterance.wav` — async overwrite per utterance | Written fire-and-forget after enqueuing for transcription; for post-mortem inspection only. ADR 0018, 0019. |
+| Config | `config.toml` at project root | Tweak threshold/hotkey/model/VAD params without editing code |
 | CUDA DLL loading | `nvidia-cublas-cu12` + `nvidia-cudnn-cu12` pip packages + `_cuda_setup.register()` preloads DLLs via `ctypes.WinDLL` before `faster_whisper` import | Venv self-contained; no system CUDA install needed; sidesteps Windows native DLL-search quirks. ADR 0012. |
 
 Every one of these has (or will have) a full ADR in `docs/decisions/`.
@@ -79,7 +83,7 @@ voice-commander/
 ├── docs/
 │   ├── index.md            # doc table of contents
 │   ├── architecture.md
-│   ├── decisions/          # ADRs — one per big choice
+│   ├── decisions/          # ADRs 0001–0019 — one per big choice
 │   ├── gotchas.md          # Windows traps, CUDA DLLs, threading pitfalls
 │   ├── libraries.md        # every dep + why
 │   ├── testing-strategy.md
@@ -89,9 +93,11 @@ voice-commander/
 │       └── plans/          # implementation plans from writing-plans
 ├── src/voice_commander/
 │   ├── __main__.py         # daemon entrypoint
-│   ├── daemon.py           # wires subsystems, owns the queue
+│   ├── daemon.py           # StreamingDaemon + build_streaming_daemon factory
 │   ├── hotkey.py
-│   ├── recorder.py
+│   ├── streaming_recorder.py  # VAD streaming audio capture (replaces recorder.py)
+│   ├── resampler.py           # soxr streaming resampler wrapper
+│   ├── vad_gate.py            # silero-vad pre-roll + utterance accumulation
 │   ├── transcriber.py
 │   ├── matcher.py
 │   ├── dispatcher.py
@@ -113,13 +119,15 @@ voice-commander/
 ## Subsystem contracts (summary — full details in `docs/architecture.md`)
 
 - `HotkeyController(key, on_toggle)` — pynput listener, fires callback on toggle.
-- `Recorder(output_dir, channels, device)` — `start()` queries device native rate, records; `stop() -> Path` writes WAV at that rate.
-- `Transcriber(model_size, device)` — `load()` once; `transcribe(wav) -> TranscriptionResult`.
+- `Resampler(src_rate, dst_rate)` — streaming soxr resampler; `process(chunk) -> ndarray`; `flush() -> ndarray`; `reset()`. One instance per session; not shared across threads.
+- `VADGate(model, threshold, ...)` — silero-vad + pre-roll ring buffer + utterance accumulation; `process(frame_16k) -> ndarray|None`; returns completed utterance on speech-end or max-utterance guard; `reset()` for clean session start.
+- `StreamingRecorder(device, channels, vad_gate, utterance_sink)` — owns `sd.InputStream`; `open_session()` starts stream + VAD worker thread; `close_session()` stops stream and joins VAD worker; calls `utterance_sink(ndarray)` on the VAD worker thread when a complete utterance is detected.
+- `Transcriber(model_size, device)` — `load()` once; `transcribe(audio: ndarray|Path) -> TranscriptionResult`.
 - `ToolRegistry` — `@tool(phrases=[...])` decorator; `discover(pkg)` auto-imports.
 - `Matcher(registry, threshold)` — rapidfuzz `match(utterance) -> MatchResult`.
 - `Dispatcher(feedback)` — runs tool fn; reports to feedback sink.
 - `FeedbackSink` — chimes + log. Swap to `NullFeedbackSink` in tests.
-- `Daemon` — the only place concretes meet. Owns the queue and threads.
+- `StreamingDaemon` — the only place concretes meet. Owns `utt_q` and pipeline thread; `run(hotkey_key)` blocks until shutdown.
 
 ## Workflow for agents and humans
 
@@ -148,6 +156,7 @@ voice-commander/
 - [x] Phase 0 (scaffolding + docs) complete
 - [x] Phase 1 (hotkey + audio) complete
 - [x] Phase 2 (transcription) complete
-- [ ] Phase 3 (router + first tool) complete
+- [x] Phase 3 (router + first tool) complete — delivered as part of Phase 4
 - [x] Phase 4 (full MVP toolset) complete
 - [x] Phase 5 (hardening) complete
+- [x] VAD streaming refactor complete — `Recorder` → `StreamingRecorder` + `VADGate` + `Resampler`; `Phase*Daemon` → `StreamingDaemon` (ADRs 0015–0019)

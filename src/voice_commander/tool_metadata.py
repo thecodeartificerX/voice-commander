@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import tomllib
 from collections.abc import Iterator
@@ -8,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import portalocker
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -68,7 +71,11 @@ class ToolMetadataStore:
         new_index: dict[str, Path] = {}
 
         for toml_path in sorted(self._tools_dir.glob("*.toml")):
-            file_data = _read_toml(toml_path)
+            try:
+                file_data = _read_toml(toml_path)
+            except ToolMetadataError:
+                logger.warning("Skipping corrupt TOML file: %s", toml_path)
+                continue
             default_category = str(file_data.get("category", ""))
             tools_raw = file_data.get("tools", {})
             tools_section: dict[str, object] = tools_raw if isinstance(tools_raw, dict) else {}
@@ -179,8 +186,11 @@ class ToolMetadataStore:
 
 
 def _read_toml(path: Path) -> dict[str, object]:
-    with path.open("rb") as fh:
-        return tomllib.load(fh)
+    try:
+        with path.open("rb") as fh:
+            return tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        raise ToolMetadataError(f"Invalid TOML in {path}: {exc}") from exc
 
 
 def _parse_tool(

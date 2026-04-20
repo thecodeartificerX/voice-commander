@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from .config import Config
-from .daemon import build_phase3
+from .daemon import build_streaming_daemon
 from .single_instance import AlreadyRunning, SingleInstanceLock
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def main() -> None:
         logger.error("Voice Commander already running: %s", e)
         sys.exit(1)
     try:
-        build_phase3(cfg).run(cfg.hotkey.key)
+        build_streaming_daemon(cfg).run(cfg.hotkey.key)
     finally:
         lock.release()
 

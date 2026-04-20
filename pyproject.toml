@@ -22,6 +22,9 @@ dependencies = [
     "jinja2>=3.1.0",
     "python-multipart>=0.0.9",
     "portalocker>=2.8.0",
+    "silero-vad>=5.1",
+    "onnxruntime>=1.16.1",
+    "soxr>=0.3.7",
 ]
 
 [project.optional-dependencies]
@@ -71,16 +74,18 @@ warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 module = [
+    "faster_whisper.*",
+    "ctranslate2.*",
+    "sounddevice.*",
+    "soundfile.*",
+    "silero_vad.*",
+    "soxr.*",
     "pynput.*",
-    "sounddevice",
-    "soundfile",
-    "psutil",
-    "win32con",
-    "win32gui",
-    "win32process",
-    "pyautogui",
-    "faster_whisper",
-    "ctranslate2",
+    "pyautogui.*",
+    "psutil.*",
+    "win32con.*",
+    "win32gui.*",
+    "win32process.*",
 ]
 ignore_missing_imports = true
 

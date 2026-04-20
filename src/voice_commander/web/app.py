@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from fastapi.templating import Jinja2Templates
 
 from ..registry import ToolRegistry
 from ..tool_metadata import ToolMetadata, ToolMetadataError, ToolMetadataStore
+
+logger = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -141,8 +144,15 @@ def create_app(
                 status_code=500,
             )
 
-        with reload_lock:
-            registry.reload_metadata(store)
+        try:
+            with reload_lock:
+                registry.reload_metadata(store)
+        except Exception:
+            logger.exception("reload_metadata failed after saving %s", name)
+            return HTMLResponse(
+                content=_render_error("Saved to disk, but live reload failed. Restart daemon to apply."),
+                status_code=200,
+            )
 
         tool = registry.by_name(name)
         return templates.TemplateResponse(
@@ -189,8 +199,15 @@ def create_app(
                 status_code=500,
             )
 
-        with reload_lock:
-            registry.reload_metadata(store)
+        try:
+            with reload_lock:
+                registry.reload_metadata(store)
+        except Exception:
+            logger.exception("reload_metadata failed after saving %s", name)
+            return HTMLResponse(
+                content=_render_error("Saved to disk, but live reload failed. Restart daemon to apply."),
+                status_code=200,
+            )
 
         tool = registry.by_name(name)
         return templates.TemplateResponse(

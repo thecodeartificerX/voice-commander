@@ -137,7 +137,7 @@ while not self._shutdown.wait(0.5):
     pass
 ```
 
-Each 0.5 s the interpreter wakes, checks the event (still clear → loop again), and also services any pending SIGINT. When Ctrl+C arrives, the next 0.5 s wakeup raises `KeyboardInterrupt` in the main thread, which the surrounding `try/except KeyboardInterrupt` catches to call `shutdown()` cleanly. See `src/voice_commander/daemon.py` `Phase1Daemon.run()` for the full implementation.
+Each 0.5 s the interpreter wakes, checks the event (still clear → loop again), and also services any pending SIGINT. When Ctrl+C arrives, the next 0.5 s wakeup raises `KeyboardInterrupt` in the main thread, which the surrounding `try/except KeyboardInterrupt` catches to call `shutdown()` cleanly. See `src/voice_commander/daemon.py` `StreamingDaemon.run()` for the full implementation.
 
 ---
 
@@ -173,7 +173,37 @@ The failure is order-dependent:
 
 ---
 
-## 11. Uvicorn on a daemon thread
+## 11. VAD RT-Callback Constraint
+
+**Problem:** Performing any blocking work, memory allocation, or Python GIL-contended operation inside the PortAudio stream callback causes audio glitches, dropped frames, or hard RT-deadline violations.
+
+**Explanation:** The PortAudio callback runs on a real-time OS audio thread. Its deadline is the audio buffer period (typically 10–20 ms). Any work that takes longer than that deadline — or that blocks waiting for Python's GIL — causes the callback to overrun, which produces audible artifacts and can destabilize the audio stack.
+
+**Mitigation:** The callback does exactly two things: `indata.copy()` (a single numpy allocation, fast) and `raw_q.put_nowait()` (a non-blocking enqueue). All VAD processing, resampling, and inference happen on the VAD worker thread that drains `raw_q`. This division is a hard architectural constraint — never add logic to the callback.
+
+---
+
+## 12. onnxruntime Thread-Safety
+
+**Problem:** Sharing a silero-vad `VADIterator` (or its underlying ONNX session) across multiple threads causes race conditions, corrupted internal state, and unpredictable detection results.
+
+**Explanation:** silero-vad's ONNX model maintains mutable internal state (hidden states for the RNN layers). `onnxruntime` `InferenceSession` objects are not thread-safe for concurrent inference calls — the library documents this explicitly. Even if calls appear to work initially, the internal hidden-state tensor is corrupted by concurrent writes, producing garbage probability outputs.
+
+**Mitigation:** The `VADGate` and its underlying ONNX session are isolated to a single VAD worker thread. One `VADGate` is created per audio stream and never shared. Do not pass a `VADIterator` instance across thread boundaries.
+
+---
+
+## 13. Resampler State Lifetime
+
+**Problem:** Reusing a `soxr.ResampleStream` instance across recording sessions causes audio from one session to bleed into the next — the filter's internal delay line carries samples from the previous session into the start of the new one.
+
+**Explanation:** `soxr.ResampleStream` maintains internal filter state (a polyphase FIR delay line) across `resample_chunk()` calls. This is the correct behaviour within a session, as it avoids discontinuities at chunk boundaries. Across sessions, however, the tail of the previous session's audio remains in the filter's internal buffer and is output at the start of the next session, contaminating the VAD's first few frames.
+
+**Mitigation:** `StreamingRecorder` creates a fresh `Resampler` instance at the start of every session (every Scroll Lock open). A `reset()` call would theoretically suffice, but creating a new instance is simpler and eliminates any risk of residual state. Do not reuse a `ResampleStream` across session boundaries.
+
+---
+
+## 14. Uvicorn on a daemon thread
 
 Running `uvicorn.Server.run()` on a `threading.Thread(daemon=True)` works but has a subtle requirement: the thread gets its own asyncio event loop created by uvicorn internally. Do NOT share the uvicorn event loop with other code. Access the FastAPI app synchronously through the registry/store — all shared state is guarded by `threading.Lock`, not asyncio primitives.
 
@@ -181,18 +211,18 @@ Graceful shutdown: set `server.should_exit = True` and join the thread. Uvicorn 
 
 ---
 
-## 12. Portalocker on Windows
+## 15. Portalocker on Windows
 
 `portalocker` uses `msvcrt.locking()` on Windows, which requires the file to be opened in a compatible mode. Always use `mode="a"` (append) for lock files — this creates the file if missing and doesn't truncate existing content. Lock files live in `tools/.locks/` and should be gitignored.
 
 ---
 
-## 13. TOML atomic write on Windows
+## 16. TOML atomic write on Windows
 
 `os.replace()` is atomic on POSIX but NOT guaranteed atomic on Windows (NTFS is close but not specified). The sequence `write .tmp` → `os.replace .tmp → .toml` is the best available. The per-tool file lock (portalocker) is the actual concurrency guard; atomic replace is defense-in-depth.
 
 ---
 
-## 14. Tailwind CSS vendoring
+## 17. Tailwind CSS vendoring
 
 The dashboard uses Tailwind CSS Play CDN (`<script src="https://cdn.tailwindcss.com">`) for development. For fully offline use, vendor the CDN script to `web/static/tailwind.min.js`. The Play CDN generates CSS client-side from class names — it's ~300KB but zero-config.

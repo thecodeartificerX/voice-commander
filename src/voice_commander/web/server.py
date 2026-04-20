@@ -30,8 +30,8 @@ class WebServer:
     # Public API
     # ------------------------------------------------------------------
 
-    def start(self) -> None:
-        """Spawn uvicorn on a daemon thread.
+    def start(self) -> bool:
+        """Spawn uvicorn on a daemon thread. Returns True on success.
 
         Tries ``port``, then ``port+1`` … ``port+10`` on ``EADDRINUSE``.
         Sets ``self.bound_port`` to the actual port used.
@@ -54,13 +54,14 @@ class WebServer:
                 )
                 self._thread.start()
                 logger.info("Web UI started on http://%s:%d", self._host, port)
-                return
+                return True
 
         logger.error(
             "Could not bind web UI to any port in range %d-%d",
             self._port,
             self._port + 10,
         )
+        return False
 
     def stop(self, timeout: float = 5.0) -> None:
         """Signal uvicorn to shut down and wait for the thread to exit."""

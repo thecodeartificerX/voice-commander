@@ -4,7 +4,7 @@ import logging
 import winsound
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class NullFeedbackSink:
 
 class CapturingFeedbackSink:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
     def on_recording_start(self) -> None:
         self.calls.append(("on_recording_start", ()))

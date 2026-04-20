@@ -15,8 +15,6 @@ class DuplicateToolError(Exception):
     pass
 
 
-# Import ToolMetadataError from tool_metadata so callers can catch it from one place.
-
 
 @dataclass
 class ToolEntry:
