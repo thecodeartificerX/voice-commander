@@ -53,6 +53,7 @@ def _make_vad_gate(
     *,
     pre_roll_ms: int = 320,
     max_utterance_ms: int = 30_000,
+    min_speech_ms: int = 0,
 ) -> VADGate:  # noqa: F821
     """Construct a VADGate with fake silero and an optional event schedule."""
     _install_fake_silero(monkeypatch)
@@ -67,6 +68,7 @@ def _make_vad_gate(
     gate = VADGate(
         model=fake_model,
         threshold=0.5,
+        min_speech_ms=min_speech_ms,
         pre_roll_ms=pre_roll_ms,
         max_utterance_ms=max_utterance_ms,
     )
@@ -245,6 +247,7 @@ def test_back_to_back_utterances_no_pre_roll_corruption(monkeypatch):
     gate = VADGate(
         model=fake_model,
         threshold=0.5,
+        min_speech_ms=0,
         pre_roll_ms=320,  # up to 10 ring frames
         max_utterance_ms=30_000,
     )

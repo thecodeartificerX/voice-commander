@@ -31,8 +31,11 @@ class VADGate:
         model: Loaded silero VAD model (``torch.nn.Module``; typed as ``Any``
             because silero doesn't export typed model classes).
         threshold: VAD speech-probability threshold (0–1).
-        min_speech_ms: Minimum speech duration in milliseconds for the
-            VADIterator to confirm a speech segment.
+        min_speech_ms: Minimum speech duration in milliseconds. Utterances
+            whose speech portion (excluding pre-roll) is shorter than this
+            are discarded as false wakes. Enforced in :meth:`process` because
+            silero's ``VADIterator`` does not accept this parameter directly
+            (only the higher-level ``get_speech_timestamps`` helper does).
         min_silence_ms: Minimum silence after speech (ms) before speech-end
             is declared.
         speech_pad_ms: Padding added around each speech segment (ms).
@@ -60,7 +63,6 @@ class VADGate:
             model,
             sampling_rate=_SAMPLE_RATE,
             threshold=threshold,
-            min_speech_duration_ms=min_speech_ms,
             min_silence_duration_ms=min_silence_ms,
             speech_pad_ms=speech_pad_ms,
         )
@@ -73,10 +75,12 @@ class VADGate:
         )
 
         self._max_utterance_samples: int = int(_SAMPLE_RATE * max_utterance_ms / 1000)
+        self._min_speech_samples: int = int(_SAMPLE_RATE * min_speech_ms / 1000)
 
         self._state: _State = _State.IDLE
         self._active: list[npt.NDArray[np.float32]] = []
         self._active_samples: int = 0
+        self._speech_samples: int = 0
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -113,6 +117,7 @@ class VADGate:
             elif self._state is _State.ACTIVE:
                 self._active.append(frame_16k)
                 self._active_samples += frame_16k.shape[0]
+                self._speech_samples += frame_16k.shape[0]
 
                 force_end = self._active_samples >= self._max_utterance_samples
                 speech_end = result is not None and "end" in result
@@ -126,10 +131,29 @@ class VADGate:
                     else:
                         logger.debug("VAD speech-end detected (t=%s)", result["end"])  # type: ignore[index]
 
+                    too_short = (
+                        not force_end
+                        and self._speech_samples < self._min_speech_samples
+                    )
+
+                    if too_short:
+                        logger.debug(
+                            "VAD utterance discarded: speech %d samples < min %d",
+                            self._speech_samples,
+                            self._min_speech_samples,
+                        )
+                        self._state = _State.IDLE
+                        self._active = []
+                        self._active_samples = 0
+                        self._speech_samples = 0
+                        self._ring.clear()
+                        return None
+
                     utterance: npt.NDArray[np.float32] = np.concatenate(self._active, axis=0)
                     self._state = _State.IDLE
                     self._active = []
                     self._active_samples = 0
+                    self._speech_samples = 0
                     self._ring.clear()
                     return utterance
 
@@ -145,5 +169,6 @@ class VADGate:
             self._ring.clear()
             self._active = []
             self._active_samples = 0
+            self._speech_samples = 0
             self._state = _State.IDLE
             logger.debug("VADGate reset")
