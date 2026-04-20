@@ -146,7 +146,9 @@ class Transcriber:
 
 **What it does:** Wraps `faster_whisper.WhisperModel`. `load()` is a blocking call that downloads/caches and loads the model weights into GPU VRAM — it is called once at daemon startup so `transcribe()` never incurs cold-start latency. `transcribe()` runs inference on the supplied WAV and returns a `TranscriptionResult`. Language is pinned to English (`small.en` is English-only so no language detection overhead). `confidence` is computed as the mean of each segment's `avg_logprob`, clamped to `[0, 1]` via `max(0.0, min(1.0, (mean_logprob + 1.0)))` — values below `config.transcription.min_confidence` (default `0.30`) are treated as misses by `Dispatcher` regardless of fuzzy score.
 
-**Who calls it:** The worker thread (inside `Daemon`'s worker loop). `load()` is called by `Daemon.run()` before the worker thread starts.
+**Who calls it:** The worker thread (inside `Daemon`'s worker loop). `load()` is called by `Daemon.run()` before the worker thread starts. `Daemon.shutdown()` calls `Transcriber.unload()` to release the CUDA context.
+
+**CUDA DLL loading:** At module import time, `transcriber.py` imports `_cuda_setup` and calls `_cuda_setup.register()` before `from faster_whisper import WhisperModel`. `register()` preloads cuBLAS and cuDNN DLLs from the `nvidia-cublas-cu12` + `nvidia-cudnn-cu12` pip packages via `ctypes.WinDLL(abs_path)`, which makes them resolvable by CTranslate2's native `LoadLibrary` calls regardless of shell PATH state. See ADR 0012 and `docs/gotchas.md` §2.
 
 **Who it calls:** `faster_whisper.WhisperModel.transcribe()`. No other Voice Commander subsystems.
 

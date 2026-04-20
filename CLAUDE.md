@@ -45,6 +45,7 @@ Tools live in `src/voice_commander/tools/*.py` and register themselves via a `@t
 | Feedback | Windows `.wav` chimes via `winsound` + native toast via `windows_toasts` | Fire-and-forget, no thread blocking |
 | Recording retention | Single overwriting file `outputs/recorded.wav` — newest only | Simpler; transcriber always reads one fixed path; no retention subsystem needed |
 | Config | `config.toml` at project root | Tweak threshold/hotkey/model without editing code |
+| CUDA DLL loading | `nvidia-cublas-cu12` + `nvidia-cudnn-cu12` pip packages + `_cuda_setup.register()` preloads DLLs via `ctypes.WinDLL` before `faster_whisper` import | Venv self-contained; no system CUDA install needed; sidesteps Windows native DLL-search quirks. ADR 0012. |
 
 Every one of these has (or will have) a full ADR in `docs/decisions/`.
 
@@ -140,13 +141,13 @@ voice-commander/
 ## Current status
 
 - [x] Brainstorm complete
-- [ ] Design doc written to `docs/superpowers/specs/`
-- [ ] Reference docs gathered in `docs/references/`
-- [ ] Kaizen OS area + subquests created
-- [ ] Implementation plan written to `docs/superpowers/plans/`
-- [ ] Phase 0 (scaffolding + docs) complete
-- [ ] Phase 1 (hotkey + audio) complete
-- [ ] Phase 2 (transcription) complete
+- [x] Design doc written to `docs/superpowers/specs/`
+- [x] Reference docs gathered in `docs/references/`
+- [x] Kaizen OS area + subquests created
+- [x] Implementation plan written to `docs/superpowers/plans/`
+- [x] Phase 0 (scaffolding + docs) complete
+- [x] Phase 1 (hotkey + audio) complete
+- [x] Phase 2 (transcription) complete
 - [ ] Phase 3 (router + first tool) complete
 - [ ] Phase 4 (full MVP toolset) complete
 - [ ] Phase 5 (hardening) complete

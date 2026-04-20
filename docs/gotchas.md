@@ -14,17 +14,37 @@ Windows-specific traps, threading pitfalls, and hardware quirks discovered durin
 
 ---
 
-## 2. CUDA DLL Loader Paths on Windows
+## 2. CUDA DLL Loading on Windows
 
-**Problem:** `faster-whisper` (via CTranslate2) fails to load with a cryptic `OSError` or silent CPU fallback because Windows cannot find `cudart64_12.dll`, `cublas64_12.dll`, `cublasLt64_12.dll`, or `cudnn_*.dll`.
+**Problem:** `faster-whisper` (via CTranslate2) fails at first `transcribe()` with `RuntimeError: Library cublas64_12.dll is not found or cannot be loaded`, even when CUDA Toolkit is installed and on the system PATH.
 
-**Explanation:** CTranslate2 dynamically loads CUDA runtime DLLs at import time. Windows DLL search order does not include NVIDIA's install directories unless they are on `PATH`. A missing cuDNN is the single most common failure — the CUDA Toolkit installer does not bundle cuDNN; it must be downloaded separately from the NVIDIA developer portal.
+**Explanation:** Three Windows-specific quirks stack on top of each other:
 
-**Mitigation:**
-1. Install **NVIDIA CUDA Toolkit 12.x** — this places `cudart64_12.dll`, `cublas64_12.dll`, and `cublasLt64_12.dll` under `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\bin\`.
-2. Install **cuDNN 9.x** for CUDA 12 — copy the `bin\`, `include\`, and `lib\` contents into the matching CUDA Toolkit directory, or place the DLLs on `PATH` directly.
-3. Verify: `python -c "from faster_whisper import WhisperModel; m = WhisperModel('small.en', device='cuda')"` should not print any warnings.
-4. If GPU is unavailable at runtime, `config.toml` `device = "cpu"` is the fallback; the daemon will log a warning but continue.
+1. **Native DLL search uses the process env block snapshotted at process start.** `LoadLibraryExW` called from C++ in CTranslate2 ignores later `os.environ['PATH']` mutations. Terminals opened before a CUDA version upgrade can carry a stale PATH pointing at a deleted `CUDA\v12.6\bin` while the registry-backed machine PATH is fine. Child `uv run` processes inherit that stale env.
+2. **`os.add_dll_directory()` only affects Python-level DLL loading.** It does not help third-party native code. PATH from the launching shell is the only thing Windows consults for native `LoadLibrary`.
+3. **CTranslate2 4.x bundles its own `cudnn64_9.dll` dispatcher shim** inside the package dir. That shim delegates to full cuDNN kernel libraries (`cudnn_ops64_9.dll`, `cudnn_graph64_9.dll`, etc.) which are NOT bundled. Those kernels must come from somewhere reachable.
+
+**Mitigation (chosen):** Bundle the CUDA runtime directly in the venv via pip packages, then preload the DLLs by absolute path at import time. See ADR 0012 for the full reasoning.
+
+- `pyproject.toml` depends on `nvidia-cublas-cu12` + `nvidia-cudnn-cu12`. These install into `.venv/Lib/site-packages/nvidia/*/bin` and travel with the venv — no system CUDA install required.
+- `src/voice_commander/_cuda_setup.py` is imported before `faster_whisper` inside `transcriber.py`. Its `register()` function walks the nvidia packages and calls `ctypes.WinDLL(abs_path)` on every DLL. Once mapped into the process, subsequent short-name `LoadLibrary` calls from CTranslate2 resolve to the preloaded handles.
+- No-op on non-Windows; idempotent.
+
+**Diagnostic commands:**
+```powershell
+# Registry truth (machine PATH)
+[System.Environment]::GetEnvironmentVariable('PATH', 'Machine') -split ';' | sls 'cuda|cudnn'
+
+# Current shell PATH (may differ if shell was launched before a CUDA upgrade)
+$env:PATH -split ';' | sls 'cuda|cudnn'
+```
+
+**Rejected alternatives:**
+- Requiring users to install system CUDA Toolkit + cuDNN and manage PATH manually — brittle; any stale terminal breaks the daemon.
+- Prepending PATH inside `start.ps1` before `uv run` — works but couples the launcher to an unrelated concern, and fails for any other entry point (raw `uv run voice-commander`, pytest, an IDE run config).
+- Python-level `os.environ['PATH']` prepend or `os.add_dll_directory()` — does not affect CTranslate2's native-code DLL search.
+
+**If GPU is unavailable**, `config.toml` `transcription.device = "cpu"` is the fallback; the daemon logs a warning but continues.
 
 ---
 
