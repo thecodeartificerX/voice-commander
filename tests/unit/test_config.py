@@ -60,8 +60,6 @@ def test_vad_defaults(tmp_path):
     assert cfg.vad.speech_pad_ms == 30
     assert cfg.vad.pre_roll_ms == 300
     assert cfg.vad.max_utterance_ms == 8000
-    assert cfg.vad.sample_rate == 16000
-    assert cfg.vad.window_samples == 512
     assert cfg.vad.gates.min_word_count == 1
     assert cfg.vad.gates.max_no_speech_prob == 0.6
 

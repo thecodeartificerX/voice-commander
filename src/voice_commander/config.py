@@ -56,8 +56,7 @@ class VadConfig:
     speech_pad_ms: int = 30
     pre_roll_ms: int = 300
     max_utterance_ms: int = 8000
-    sample_rate: int = 16000
-    window_samples: int = 512
+    # sample_rate and window_samples are fixed at 16000/512 (Silero VAD model requirement)
     gates: VadGatesConfig = field(default_factory=VadGatesConfig)
 
 

@@ -193,3 +193,120 @@ def test_pre_roll_captured_correctly(monkeypatch):
     assert utterance.shape[0] > _VAD_FRAME_SAMPLES, (
         "Utterance must be longer than a single frame (pre-roll included)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Ring buffer cleared at speech-start (back-to-back utterances)
+# ---------------------------------------------------------------------------
+
+
+def test_back_to_back_utterances_no_pre_roll_corruption(monkeypatch):
+    """The ring buffer is cleared after each utterance so back-to-back
+    utterances do not contain pre-roll samples from the previous utterance.
+
+    Design: the VADGate clears _ring after returning an utterance (at
+    speech-end).  When a second speech-start is detected, only the frames
+    accumulated since the previous utterance ended end up as pre-roll — not
+    leftover frames from the first utterance.
+
+    Verification strategy:
+    - First utterance: frames 0..4 are silence (value=1.0), start on frame 5,
+      end on frame 7.  After frame 7 the ring is empty.
+    - Silence gap: frames 8..9 (value=99.0).  These are the only frames that
+      can possibly enter the ring before the second start.
+    - Second utterance: start on frame 10, end on frame 12 (value=2.0..12.0).
+    - The pre-roll of the second utterance must NOT contain value=1.0 frames
+      (which belonged to the first utterance).
+    """
+    _install_fake_silero(monkeypatch)
+    if "voice_commander.vad_gate" in sys.modules:
+        del sys.modules["voice_commander.vad_gate"]
+    from voice_commander.vad_gate import VADGate
+
+    fake_model = MagicMock()
+
+    # Use a subclassed FakeVADIterator with a two-part schedule.
+    class _TwoPartIterator(FakeVADIterator):
+        _SCHEDULE = {
+            5: {"start": 0.16},
+            7: {"end": 0.224},
+            10: {"start": 0.32},
+            12: {"end": 0.384},
+        }
+
+        def __init__(self, model: Any, **kwargs: Any) -> None:
+            super().__init__(model, **kwargs)
+            self._schedule = dict(self._SCHEDULE)
+
+    # Temporarily replace the VADIterator in the fake silero module with our
+    # two-part variant so VADGate instantiates it.
+    sys.modules["silero_vad"].VADIterator = _TwoPartIterator  # type: ignore[attr-defined]
+
+    gate = VADGate(
+        model=fake_model,
+        threshold=0.5,
+        pre_roll_ms=320,  # up to 10 ring frames
+        max_utterance_ms=30_000,
+    )
+
+    # Frames 0..4: value=1.0 (these should NEVER appear in the second utterance's pre-roll)
+    # Frames 5..7: first utterance speech body
+    # Frames 8..9: value=99.0 (only valid pre-roll source for second utterance)
+    # Frames 10..12: second utterance speech body (value=2.0)
+
+    def _frame_value(i: int) -> float:
+        if i < 5:
+            return 1.0
+        elif i < 8:
+            return 1.0  # still part of first utterance
+        elif i < 10:
+            return 99.0  # silence between utterances — valid pre-roll for 2nd
+        else:
+            return 2.0
+
+    utterances: list[np.ndarray] = []
+    for i in range(20):
+        frame = np.full(_VAD_FRAME_SAMPLES, _frame_value(i), dtype=np.float32)
+        out = gate.process(frame)
+        if out is not None:
+            utterances.append(out)
+            if len(utterances) == 2:
+                break
+
+    assert len(utterances) >= 2, (
+        f"Expected 2 utterances from back-to-back speech events, got {len(utterances)}"
+    )
+
+    second_utterance = utterances[1]
+
+    # Every sample in the second utterance's pre-roll must be 99.0 or 2.0 —
+    # not 1.0, which would indicate stale frames from the first utterance.
+    # (Pre-roll frames are the ones before the first value=2.0 frame.)
+    unique_vals = set(np.unique(second_utterance))
+    assert 1.0 not in unique_vals, (
+        f"Second utterance contains value=1.0 frames from the first utterance's pre-roll. "
+        f"Unique values found: {unique_vals}"
+    )
+
+
+def test_ring_cleared_on_speech_start(monkeypatch):
+    """After a speech-start event the ring buffer is cleared so it cannot bleed
+    into the pre-roll of the next utterance."""
+    schedule = {2: {"start": 0.064}, 4: {"end": 0.128}}
+    gate = _make_vad_gate(monkeypatch, schedule, pre_roll_ms=320)
+
+    # Consume all frames until utterance is returned.
+    utterance = None
+    for _ in range(10):
+        out = gate.process(_zero_frame())
+        if out is not None:
+            utterance = out
+            break
+
+    assert utterance is not None
+
+    # After the utterance is returned the gate is IDLE and the ring must be empty.
+    assert len(gate._ring) == 0, (
+        "Ring buffer was not cleared after speech-end; "
+        f"found {len(gate._ring)} frames remaining"
+    )

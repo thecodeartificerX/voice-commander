@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import collections
 import logging
+import threading
 from enum import Enum, auto
 from typing import Any
 
@@ -76,6 +77,7 @@ class VADGate:
         self._state: _State = _State.IDLE
         self._active: list[npt.NDArray[np.float32]] = []
         self._active_samples: int = 0
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
@@ -91,50 +93,57 @@ class VADGate:
             Concatenated ndarray of pre-roll + speech when a speech-end event
             is detected (or the max-utterance guard fires), else ``None``.
         """
-        result: dict[str, Any] | None = self._vad(frame_16k)
+        with self._lock:
+            result: dict[str, Any] | None = self._vad(frame_16k)
 
-        if self._state is _State.IDLE:
-            self._ring.append(frame_16k)
+            if self._state is _State.IDLE:
+                self._ring.append(frame_16k)
 
-            if result is not None and "start" in result:
-                logger.debug("VAD speech-start detected (t=%s)", result["start"])
-                # Snapshot ring buffer as pre-roll (oldest → newest order is preserved
-                # because deque iteration is FIFO).
-                pre_roll_frames: list[npt.NDArray[np.float32]] = list(self._ring)
-                self._active = pre_roll_frames
-                self._active_samples = sum(f.shape[0] for f in pre_roll_frames)
-                self._state = _State.ACTIVE
+                if result is not None and "start" in result:
+                    logger.debug("VAD speech-start detected (t=%s)", result["start"])
+                    # Snapshot ring buffer as pre-roll (oldest → newest order is preserved
+                    # because deque iteration is FIFO).
+                    pre_roll_frames: list[npt.NDArray[np.float32]] = list(self._ring)
+                    self._active = pre_roll_frames
+                    self._active_samples = sum(f.shape[0] for f in pre_roll_frames)
+                    # Clear ring so back-to-back utterances get a fresh pre-roll.
+                    self._ring.clear()
+                    self._state = _State.ACTIVE
 
-        elif self._state is _State.ACTIVE:
-            self._active.append(frame_16k)
-            self._active_samples += frame_16k.shape[0]
+            elif self._state is _State.ACTIVE:
+                self._active.append(frame_16k)
+                self._active_samples += frame_16k.shape[0]
 
-            force_end = self._active_samples >= self._max_utterance_samples
-            speech_end = result is not None and "end" in result
+                force_end = self._active_samples >= self._max_utterance_samples
+                speech_end = result is not None and "end" in result
 
-            if speech_end or force_end:
-                if force_end:
-                    logger.debug("VAD max-utterance guard fired (%d samples)", self._active_samples)
-                else:
-                    logger.debug("VAD speech-end detected (t=%s)", result["end"])  # type: ignore[index]
+                if speech_end or force_end:
+                    if force_end:
+                        logger.debug(
+                            "VAD max-utterance guard fired (%d samples)",
+                            self._active_samples,
+                        )
+                    else:
+                        logger.debug("VAD speech-end detected (t=%s)", result["end"])  # type: ignore[index]
 
-                utterance: npt.NDArray[np.float32] = np.concatenate(self._active, axis=0)
-                self._state = _State.IDLE
-                self._active = []
-                self._active_samples = 0
-                self._ring.clear()
-                return utterance
+                    utterance: npt.NDArray[np.float32] = np.concatenate(self._active, axis=0)
+                    self._state = _State.IDLE
+                    self._active = []
+                    self._active_samples = 0
+                    self._ring.clear()
+                    return utterance
 
-        return None
+            return None
 
     def reset(self) -> None:
         """Reset VAD internal states, ring buffer, and active utterance buffer.
 
-        Call at session open/close to ensure a clean slate.
+        Call at session open to ensure a clean slate.
         """
-        self._vad.reset_states()
-        self._ring.clear()
-        self._active = []
-        self._active_samples = 0
-        self._state = _State.IDLE
-        logger.debug("VADGate reset")
+        with self._lock:
+            self._vad.reset_states()
+            self._ring.clear()
+            self._active = []
+            self._active_samples = 0
+            self._state = _State.IDLE
+            logger.debug("VADGate reset")

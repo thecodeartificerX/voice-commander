@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import queue
 import signal
@@ -35,7 +36,7 @@ class StreamingDaemon:
     def __init__(
         self,
         feedback: FeedbackSink,
-        recorder: StreamingRecorder,
+        recorder: StreamingRecorder | None,
         transcriber: Transcriber,
         matcher: Matcher,
         dispatcher: Dispatcher,
@@ -60,12 +61,19 @@ class StreamingDaemon:
         self._pipeline_thread: threading.Thread | None = None
         self._hotkey: HotkeyController | None = None
         self._shutdown = threading.Event()
+        self._shutdown_lock = threading.Lock()
+        self._wav_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="wav-writer",
+        )
 
     # ------------------------------------------------------------------
     # Hotkey callback
     # ------------------------------------------------------------------
 
     def on_toggle(self) -> None:
+        if self._recorder is None:
+            logger.warning("on_toggle called but recorder is not yet initialised; ignoring")
+            return
         if self._recorder.is_open:
             self._recorder.close_session()
             self._feedback.on_recording_stop()
@@ -131,7 +139,7 @@ class StreamingDaemon:
             except Exception:
                 logger.exception("Failed to write %s", path)
 
-        threading.Thread(target=_write, name="wav-writer", daemon=True).start()
+        self._wav_executor.submit(_write)
 
     # ------------------------------------------------------------------
     # Utterance sink (called from StreamingRecorder's VAD worker thread)
@@ -155,7 +163,7 @@ class StreamingDaemon:
         except Exception as e:
             logger.exception("Transcriber.load() failed; aborting startup")
             self._feedback.on_error("transcriber.load", e)
-            return
+            raise
 
         # Start pipeline worker thread.
         self._pipeline_thread = threading.Thread(
@@ -172,9 +180,14 @@ class StreamingDaemon:
         except Exception as e:
             logger.exception("HotkeyController.start() failed; aborting startup")
             self._feedback.on_error("hotkey.start", e)
-            return
+            raise
 
-        signal.signal(signal.SIGINT, lambda *_: self.shutdown())
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, lambda *_: self.shutdown())
+        else:
+            logger.warning(
+                "run() called from a non-main thread; SIGINT handler not registered"
+            )
         logger.info("StreamingDaemon running. Press Ctrl+C to exit.")
         try:
             while not self._shutdown.wait(0.5):
@@ -185,12 +198,13 @@ class StreamingDaemon:
             self.shutdown()
 
     def shutdown(self) -> None:
-        if self._shutdown.is_set():
-            return
-        self._shutdown.set()
+        with self._shutdown_lock:
+            if self._shutdown.is_set():
+                return
+            self._shutdown.set()
 
         # Close any open session.
-        if self._recorder.is_open:
+        if self._recorder is not None and self._recorder.is_open:
             try:
                 self._recorder.close_session()
             except Exception:
@@ -208,6 +222,9 @@ class StreamingDaemon:
             if self._pipeline_thread.is_alive():
                 logger.warning("Pipeline thread did not exit within 5 s")
             self._pipeline_thread = None
+
+        # Shut down the WAV writer executor.
+        self._wav_executor.shutdown(wait=False)
 
         # Release model.
         try:
@@ -250,17 +267,11 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     matcher = Matcher(registry, threshold=cfg.matching.threshold)
     dispatcher = Dispatcher(feedback)
 
-    # StreamingDaemon creates the utterance_sink binding, so build the recorder
-    # with a placeholder and patch after.
+    # Build daemon without a recorder first so _on_utterance is available,
+    # then wire the recorder with the real callback.
     daemon = StreamingDaemon(
         feedback=feedback,
-        recorder=StreamingRecorder(
-            device=cfg.audio.device if cfg.audio.device >= 0 else None,
-            channels=cfg.audio.channels,
-            vad_gate=vad_gate,
-            utterance_sink=lambda _: None,  # patched below
-            vad_sample_rate=cfg.vad.sample_rate,
-        ),
+        recorder=None,
         transcriber=transcriber,
         matcher=matcher,
         dispatcher=dispatcher,
@@ -269,6 +280,10 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         max_no_speech_prob=cfg.vad.gates.max_no_speech_prob,
         output_dir=cfg.audio.output_dir,
     )
-    # Patch the utterance_sink to point at the daemon's queue push.
-    daemon._recorder._utterance_sink = daemon._on_utterance
+    daemon._recorder = StreamingRecorder(
+        device=cfg.audio.device if cfg.audio.device >= 0 else None,
+        channels=cfg.audio.channels,
+        vad_gate=vad_gate,
+        utterance_sink=daemon._on_utterance,
+    )
     return daemon

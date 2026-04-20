@@ -29,6 +29,13 @@ class TranscriptionResult:
 
 
 class Transcriber:
+    """Wraps faster-whisper for speech-to-text.
+
+    Lifecycle: call load() once at startup, transcribe() per utterance,
+    unload() at shutdown.  transcribe() is called on the pipeline worker
+    thread; load/unload run on the main thread.
+    """
+
     def __init__(
         self,
         model_size: str = "small.en",
@@ -71,6 +78,10 @@ class Transcriber:
             raise RuntimeError("Transcriber.load() must be called before transcribe()")
 
         if isinstance(source, np.ndarray):
+            if source.ndim != 1:
+                raise ValueError(f"Expected 1-D audio array, got shape {source.shape}")
+            if source.dtype != np.float32:
+                raise ValueError(f"Expected float32 audio, got {source.dtype}")
             audio_input: npt.NDArray[np.float32] | str = source
             use_vad = False
         else:

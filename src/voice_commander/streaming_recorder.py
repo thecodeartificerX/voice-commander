@@ -85,7 +85,28 @@ class StreamingRecorder:
     @property
     def is_open(self) -> bool:
         """``True`` when the session is in the OPEN state."""
-        return self._state is _SessionState.OPEN
+        with self._state_lock:
+            return self._state is _SessionState.OPEN
+
+    def _teardown(self) -> None:
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                logger.exception("StreamingRecorder: error stopping stream")
+            finally:
+                self._stream = None
+
+        self._raw_q.put(None)
+
+        if self._vad_thread is not None:
+            self._vad_thread.join(timeout=5.0)
+            if self._vad_thread.is_alive():
+                logger.warning("StreamingRecorder: VAD worker thread did not exit within 5 s")
+            self._vad_thread = None
+
+        self._resampler = None
 
     def open_session(self) -> None:
         """Open the audio stream and start the VAD worker thread.
@@ -99,6 +120,12 @@ class StreamingRecorder:
                 return
             self._state = _SessionState.OPENING
             logger.debug("Session state → OPENING")
+
+        if self._vad_thread is not None and self._vad_thread.is_alive():
+            logger.warning("StreamingRecorder: previous VAD worker thread still alive")
+            with self._state_lock:
+                self._state = _SessionState.IDLE
+            raise RuntimeError("Cannot open session: previous VAD worker thread is still alive")
 
         try:
             # Query the device's native sample rate (WASAPI only accepts it).
@@ -139,10 +166,10 @@ class StreamingRecorder:
             self._vad_thread.start()
 
         except Exception:
-            # Roll back to IDLE so the caller can retry or handle the error.
+            logger.exception("StreamingRecorder: failed to open session")
+            self._teardown()
             with self._state_lock:
                 self._state = _SessionState.IDLE
-            logger.exception("StreamingRecorder: failed to open session")
             raise
 
         with self._state_lock:
@@ -166,25 +193,7 @@ class StreamingRecorder:
 
         logger.info("StreamingRecorder: closing session")
 
-        # Stop and close the PortAudio stream first so the callback stops.
-        if self._stream is not None:
-            try:
-                self._stream.stop()
-                self._stream.close()
-            except Exception:
-                logger.exception("StreamingRecorder: error stopping stream")
-            finally:
-                self._stream = None
-
-        # Poison the queue so the VAD worker exits its loop.
-        self._raw_q.put(None)
-
-        # Join the VAD worker thread.
-        if self._vad_thread is not None:
-            self._vad_thread.join(timeout=5.0)
-            if self._vad_thread.is_alive():
-                logger.warning("StreamingRecorder: VAD worker thread did not exit within 5 s")
-            self._vad_thread = None
+        self._teardown()
 
         with self._state_lock:
             self._state = _SessionState.IDLE
@@ -221,6 +230,7 @@ class StreamingRecorder:
         """Pull raw chunks, resample, frame, gate, and fire utterance_sink."""
         logger.debug("VAD worker started")
         buf = np.empty(0, dtype=np.float32)
+        consecutive_errors = 0
 
         while True:
             chunk = self._raw_q.get()
@@ -228,20 +238,35 @@ class StreamingRecorder:
                 logger.debug("VAD worker received sentinel; exiting")
                 break
 
-            assert self._resampler is not None, "Resampler not initialised"
-            resampled: npt.NDArray[np.float32] = self._resampler.process(chunk.flatten())
-            buf = np.concatenate((buf, resampled))
+            try:
+                if self._resampler is None:
+                    raise RuntimeError("Resampler not initialised")
+                resampled: npt.NDArray[np.float32] = self._resampler.process(chunk.flatten())
+                buf = np.concatenate((buf, resampled))
 
-            while buf.shape[0] >= _VAD_FRAME_SIZE:
-                frame: npt.NDArray[np.float32] = buf[:_VAD_FRAME_SIZE]
-                buf = buf[_VAD_FRAME_SIZE:]
+                while buf.shape[0] >= _VAD_FRAME_SIZE:
+                    frame: npt.NDArray[np.float32] = buf[:_VAD_FRAME_SIZE]
+                    buf = buf[_VAD_FRAME_SIZE:]
 
-                result = self._vad_gate.process(frame)
-                if result is not None:
-                    logger.debug("VAD worker: utterance complete (%d samples)", len(result))
-                    try:
-                        self._utterance_sink(result)
-                    except Exception:
-                        logger.exception("StreamingRecorder: utterance_sink raised")
+                    result = self._vad_gate.process(frame)
+                    if result is not None:
+                        logger.debug("VAD worker: utterance complete (%d samples)", len(result))
+                        try:
+                            self._utterance_sink(result)
+                        except Exception:
+                            logger.exception("StreamingRecorder: utterance_sink raised")
+
+                consecutive_errors = 0
+            except Exception:
+                consecutive_errors += 1
+                logger.exception(
+                    "StreamingRecorder: VAD worker error (consecutive=%d)",
+                    consecutive_errors,
+                )
+                if consecutive_errors >= 5:
+                    logger.critical(
+                        "StreamingRecorder: VAD worker exceeded 5 consecutive errors; aborting",
+                    )
+                    break
 
         logger.debug("VAD worker exited")

@@ -11,6 +11,7 @@ import queue
 import threading
 
 import numpy as np
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers: fake sounddevice primitives
@@ -256,3 +257,137 @@ def test_queue_full_drops_frame_without_crash(monkeypatch):
     # Still open, no exception raised.
     assert recorder.is_open is True
     recorder.close_session()
+
+
+# ---------------------------------------------------------------------------
+# Teardown on partial failure tests
+# ---------------------------------------------------------------------------
+
+
+def test_open_session_cleans_up_stream_when_vad_thread_spawn_fails(monkeypatch):
+    """If an exception is raised after the InputStream is started but before
+    open_session() completes, _teardown() must close the stream and the
+    recorder must return to IDLE state.
+
+    We simulate the failure by making threading.Thread.__init__ raise after
+    the stream has already been started.
+    """
+    from voice_commander.streaming_recorder import StreamingRecorder
+
+    stream_instances = _make_fake_sd(monkeypatch, native_rate=48000.0)
+    monkeypatch.setattr("voice_commander.streaming_recorder.Resampler", MockResampler)
+
+    # Patch threading.Thread so that it raises when the target is _vad_loop.
+    original_thread_cls = threading.Thread
+
+    class _BoomThread(original_thread_cls):
+        def __init__(self, *args, **kwargs):
+            # Only explode when spawning the vad-worker thread (identified by name).
+            if kwargs.get("name") == "vad-worker":
+                raise RuntimeError("thread pool exhausted (simulated)")
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr("voice_commander.streaming_recorder.threading.Thread", _BoomThread)
+
+    recorder = StreamingRecorder(
+        device=None,
+        channels=1,
+        vad_gate=MockVADGate(),
+        utterance_sink=lambda _: None,
+    )
+
+    with pytest.raises(RuntimeError, match="thread pool exhausted"):
+        recorder.open_session()
+
+    # The recorder must be back in IDLE (not stuck in OPENING).
+    assert recorder.is_open is False
+
+    # The InputStream that was created must have been closed.
+    assert len(stream_instances) == 1
+    assert stream_instances[0]._closed is True, (
+        "InputStream was not closed after open_session() failure"
+    )
+
+    # The internal _stream reference must be cleared.
+    assert recorder._stream is None
+
+
+def test_open_session_cleans_up_when_stream_start_raises(monkeypatch):
+    """If sd.InputStream.start() raises, _teardown() is called and the
+    recorder stays IDLE."""
+    from voice_commander.streaming_recorder import StreamingRecorder
+
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_devices",
+        lambda device: {"default_samplerate": 48000.0},
+    )
+
+    class _ExplodingInputStream:
+        def __init__(self, **kwargs):
+            self.callback = kwargs.get("callback")
+            self._closed = False
+
+        def start(self):
+            raise OSError("device in use (simulated)")
+
+        def stop(self):
+            pass
+
+        def close(self):
+            self._closed = True
+
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.InputStream",
+        _ExplodingInputStream,
+    )
+    monkeypatch.setattr("voice_commander.streaming_recorder.Resampler", MockResampler)
+
+    recorder = StreamingRecorder(
+        device=None,
+        channels=1,
+        vad_gate=MockVADGate(),
+        utterance_sink=lambda _: None,
+    )
+
+    with pytest.raises(OSError, match="device in use"):
+        recorder.open_session()
+
+    assert recorder.is_open is False
+    assert recorder._stream is None
+
+
+def test_orphaned_vad_thread_blocks_new_session(monkeypatch):
+    """If the VAD worker thread is still alive when open_session() is called
+    a second time (after a previous session was somehow not cleaned up),
+    open_session() must raise RuntimeError and leave the recorder IDLE.
+
+    We simulate this by injecting a live thread as ``_vad_thread`` before
+    calling open_session().
+    """
+    from voice_commander.streaming_recorder import StreamingRecorder
+
+    _make_fake_sd(monkeypatch, native_rate=48000.0)
+    monkeypatch.setattr("voice_commander.streaming_recorder.Resampler", MockResampler)
+
+    recorder = StreamingRecorder(
+        device=None,
+        channels=1,
+        vad_gate=MockVADGate(),
+        utterance_sink=lambda _: None,
+    )
+
+    # Plant a live thread to simulate an orphaned worker.
+    barrier = threading.Event()
+    orphan = threading.Thread(target=barrier.wait, daemon=True)
+    orphan.start()
+    recorder._vad_thread = orphan
+
+    try:
+        with pytest.raises(RuntimeError, match="previous VAD worker thread is still alive"):
+            recorder.open_session()
+
+        # Recorder must be IDLE after the rejected open attempt.
+        assert recorder.is_open is False
+    finally:
+        barrier.set()  # unblock the orphan thread so the test exits cleanly
+        orphan.join(timeout=2.0)

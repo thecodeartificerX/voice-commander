@@ -22,13 +22,13 @@ Cross-references to Architecture Decision Records live in [`docs/decisions/`](de
 
 ## `sounddevice` — Microphone capture
 
-**Purpose in this project:** `sounddevice` drives the `Recorder` subsystem. It opens a PortAudio input stream, collects PCM frames into an in-memory buffer while the hotkey is held, and flushes the buffer to a WAV file when the user releases the key. The captured audio is 16 kHz mono 16-bit PCM — exactly what Whisper expects, so no resampling step is needed.
+**Purpose in this project:** `sounddevice` drives the `StreamingRecorder` subsystem. It opens a `sd.InputStream` at the device's native sample rate (e.g. 48 kHz on WASAPI) when a session is opened. The PortAudio callback copies each PCM chunk to `raw_q` without blocking; the VAD worker thread drains `raw_q`, resamples to 16 kHz via `soxr`, and feeds frames to `VADGate`. The stream is closed when the session ends.
 
 **Alternatives considered:** `pyaudio` is the historical standard for PortAudio bindings in Python.
 
 **Why `sounddevice` won:** `pyaudio` requires a compiled native extension that historically has been painful to install on Windows (missing `portaudio.dll`, mismatched architectures). `sounddevice` ships wheels with PortAudio bundled and installs cleanly with `uv add`. Its callback-based streaming API is also cleaner and more Pythonic than `pyaudio`'s blocking read loop. Both libraries ultimately wrap the same PortAudio C library, so there is no capability difference for our use case.
 
-**Pin reason:** `>=0.4.7` is the version that introduced `dtype` support for 16-bit integer arrays. Required for the WAV pipeline.
+**Pin reason:** `>=0.4.7` is the version that introduced `dtype` support for float32 arrays and stable `InputStream` callback semantics required for the streaming pipeline.
 
 **ADR:** [`decisions/0003-sounddevice-over-pyaudio.md`](decisions/0003-sounddevice-over-pyaudio.md)
 
@@ -133,7 +133,7 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 
 **Pin reason:** `>=5.1` for the stable ONNX export and `VADIterator` API with configurable speech/silence thresholds and minimum silence duration. The 5.x series is the current actively maintained branch.
 
-**ADR:** No dedicated ADR yet (VAD streaming feature).
+**ADR:** [`decisions/0016-silero-vad-over-webrtcvad.md`](decisions/0016-silero-vad-over-webrtcvad.md). Context on why this ONNX engine was selected over `webrtcvad` and the torch variant. Session model and streaming architecture in [`decisions/0015-vad-streaming-mode.md`](decisions/0015-vad-streaming-mode.md).
 
 ---
 
@@ -149,7 +149,7 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 
 **Pin reason:** `>=1.16.1` is the first release with stable `InferenceSession` behaviour on Python 3.11 and Windows. Required transitively by silero-vad.
 
-**ADR:** No dedicated ADR yet (VAD streaming feature).
+**ADR:** [`decisions/0016-silero-vad-over-webrtcvad.md`](decisions/0016-silero-vad-over-webrtcvad.md) (covers the choice of ONNX runtime path over the torch variant and thread-safety constraints).
 
 ---
 
@@ -166,7 +166,7 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 
 **Pin reason:** `>=0.3.7` for the stable `ResampleStream` Python API and Windows wheel availability. The `0.3.x` series is the current stable branch.
 
-**ADR:** No dedicated ADR yet (VAD streaming feature).
+**ADR:** [`decisions/0017-soxr-streaming-resampler.md`](decisions/0017-soxr-streaming-resampler.md). Covers rejection of `scipy.signal.resample_poly` and `librosa.resample` as non-streaming alternatives.
 
 ---
 
@@ -314,7 +314,8 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 | `pystray`, `Pillow` (Phase 5) | No dedicated ADR yet |
 | CUDA DLL bundling (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`) | [`0012-cuda-dll-bundling.md`](decisions/0012-cuda-dll-bundling.md) |
 | `winsound` | [`0008-winsound-for-chimes.md`](decisions/0008-winsound-for-chimes.md) |
-| `silero-vad`, `onnxruntime`, `soxr` | No dedicated ADR yet (VAD streaming feature) |
+| `silero-vad`, `onnxruntime` | [`0016-silero-vad-over-webrtcvad.md`](decisions/0016-silero-vad-over-webrtcvad.md); session model in [`0015-vad-streaming-mode.md`](decisions/0015-vad-streaming-mode.md) |
+| `soxr` | [`0017-soxr-streaming-resampler.md`](decisions/0017-soxr-streaming-resampler.md) |
 | `tomli` | [`0011-uv-package-manager.md`](decisions/0011-uv-package-manager.md) |
 | `uv`, `ruff`, `mypy` | [`0011-uv-package-manager.md`](decisions/0011-uv-package-manager.md) |
 | `pytest`, `pytest-cov` | [`0009-phased-delivery-with-hitl-gates.md`](decisions/0009-phased-delivery-with-hitl-gates.md) |

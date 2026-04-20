@@ -23,7 +23,24 @@ class Resampler:
 
     def process(self, chunk: np.ndarray) -> np.ndarray:
         """Resample a 1D float32 chunk; returns a 1D float32 array at dst_rate."""
+        if chunk.ndim != 1:
+            raise ValueError(f"Expected 1-D audio chunk, got shape {chunk.shape}")
+        if chunk.dtype != np.float32:
+            raise ValueError(f"Expected float32 audio, got {chunk.dtype}")
         return self._stream.resample_chunk(chunk)  # type: ignore[no-any-return]
+
+    def flush(self) -> np.ndarray:
+        """Flush the internal soxr filter tail and return any remaining samples.
+
+        Call at the end of a session to drain samples held inside the resampler's
+        filter delay.  After flushing, the stream is recreated so the resampler is
+        ready for the next session.
+        """
+        tail: np.ndarray = self._stream.resample_chunk(
+            np.array([], dtype=np.float32), last=True
+        )
+        self._stream = self._make_stream()
+        return tail  # type: ignore[return-value]
 
     def reset(self) -> None:
         """Recreate the internal ResampleStream for a fresh session."""
