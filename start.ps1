@@ -142,7 +142,7 @@ function Show-VoiceBanner {
     Write-VoiceHeader '  \ V /| () | | | \__ \ ) _)  )( (__( () |)  / | \/ |/    \/    / ) D ( ) _)  )   /'
     Write-VoiceHeader '   \_/ \____/\___/(____/(____)(__)\___)\__/(__/  \_)(_/\_/\_/\_)__)(____/(____)(__\_)'
     Write-VoiceHeader ''
-    Write-VoiceHeader '  Phase 1: Hotkey + Audio Capture'
+    Write-VoiceHeader '  Phase 2: Transcription'
     Write-Host '  ---------------------------------------------------------------' -ForegroundColor Cyan
     Write-Host ''
 }
@@ -472,7 +472,7 @@ if ($PSCmdlet.ParameterSetName -eq 'DirectDevice') {
         Write-VoiceSuccess "Using device [$Device]."
     }
     Write-Host ''
-    Write-VoicePrompt 'Starting Voice Commander (Phase 1: hotkey + audio)...'
+    Write-VoicePrompt 'Starting Voice Commander (Phase 2: transcription)...'
     $ExitCode = Start-VoiceDaemon
     if ($ExitCode -eq 0) {
         Write-VoiceSuccess "Voice Commander exited cleanly (code 0)."
@@ -500,7 +500,7 @@ if ($NoMenu) {
     Write-Verbose "Non-interactive: using saved device [$SavedNoMenu]"
     Write-VoiceSuccess "Using saved device [$SavedNoMenu]."
     Write-Host ''
-    Write-VoicePrompt 'Starting Voice Commander (Phase 1: hotkey + audio)...'
+    Write-VoicePrompt 'Starting Voice Commander (Phase 2: transcription)...'
     $ExitCode = Start-VoiceDaemon
     if ($ExitCode -eq 0) {
         Write-VoiceSuccess "Voice Commander exited cleanly (code 0)."
@@ -527,7 +527,7 @@ if (-not $IsInteractive) {
     }
     Write-VoiceSuccess "Non-interactive session -- using saved device [$SavedAuto]."
     Write-Host ''
-    Write-VoicePrompt 'Starting Voice Commander (Phase 1: hotkey + audio)...'
+    Write-VoicePrompt 'Starting Voice Commander (Phase 2: transcription)...'
     $ExitCode = Start-VoiceDaemon
     exit $ExitCode
 }
@@ -662,7 +662,7 @@ else {
     Write-VoiceSuccess "Using device [$PickedIndex]."
 }
 Write-Host ''
-Write-VoicePrompt 'Starting Voice Commander (Phase 1: hotkey + audio)...'
+Write-VoicePrompt 'Starting Voice Commander (Phase 2: transcription)...'
 
 $DaemonExitCode = Start-VoiceDaemon
 
