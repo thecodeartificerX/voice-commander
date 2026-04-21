@@ -108,6 +108,7 @@ def _os_lock(fh: int) -> None:
     if sys.platform == "win32":
         import msvcrt
 
+        os.lseek(fh, 0, os.SEEK_SET)
         msvcrt.locking(fh, msvcrt.LK_NBLCK, 1)
     else:
         import fcntl
@@ -126,7 +127,6 @@ def _os_unlock(fh: int) -> None:
         except OSError:
             logger.debug("_os_unlock: fd %d already unlocked or invalid", fh)
     else:
-        import contextlib
         import fcntl
 
         with contextlib.suppress(OSError):
