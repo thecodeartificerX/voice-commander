@@ -45,8 +45,9 @@ class StreamingDaemon:
 
     Optionally runs an embedded uvicorn-hosted web UI for managing tool
     metadata (phrases / descriptions / enabled flag) via sidecar TOML files.
-    The web server, registry, and matcher all share a single
-    :class:`threading.Lock` so metadata reloads never race with live matches.
+    The web server, registry, and LLM router all share a single
+    :class:`threading.Lock` so metadata reloads never race with
+    live tool-call routing.
     """
 
     def __init__(
@@ -157,7 +158,7 @@ class StreamingDaemon:
             logger.debug("Drained %d utterance(s) from utt_q", drained)
 
     # ------------------------------------------------------------------
-    # Pipeline worker (transcribe → gate → match → dispatch)
+    # Pipeline worker (transcribe → gate → resolve → dispatch)
     # ------------------------------------------------------------------
 
     def _pipeline_loop(self) -> None:
@@ -363,8 +364,9 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     """Factory: wire all subsystems into a StreamingDaemon.
 
     Also wires the embedded web UI when enabled. The metadata store, registry,
-    matcher, and web app all share a single ``threading.Lock`` so hot reloads
-    from the UI never race with the matcher running on the pipeline thread.
+    LLM router, and web app all share a single ``threading.Lock`` so hot reloads
+    from the UI never race with the LLM router reading tool metadata on the
+    pipeline thread.
     """
     import torch
 
@@ -394,7 +396,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         compute_type=cfg.transcription.compute_type,
     )
 
-    # Metadata store + reload lock shared between registry, matcher, and web server.
+    # Metadata store + reload lock shared between registry, LLM router, and web server.
     tools_dir = Path(__file__).resolve().parent / "tools"
     store = ToolMetadataStore(tools_dir)
     reload_lock = threading.Lock()

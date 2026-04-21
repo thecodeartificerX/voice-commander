@@ -26,9 +26,15 @@ class LLMRouter:
         self._total_timeouts: int = 0
         self._total_errors: int = 0
         self._total_latency_ms: float = 0.0
+        read_s = config.timeout_ms / 1000.0 - 0.1
+        if read_s <= 0:
+            raise ValueError(
+                f"LLMConfig.timeout_ms={config.timeout_ms} too small; "
+                f"must be > 100 to leave headroom for read timeout"
+            )
         timeout = httpx.Timeout(
             connect=0.1,  # 100ms connect
-            read=config.timeout_ms / 1000.0 - 0.1,  # remainder for read
+            read=read_s,  # remainder for read
             write=5.0,
             pool=5.0,
         )

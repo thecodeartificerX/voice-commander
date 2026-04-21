@@ -71,7 +71,7 @@ Ten subsystems connected by the `StreamingDaemon` orchestrator. Each is independ
 Four long-lived threads plus the main thread:
 
 1. **Main thread** — starts the daemon, installs signal handlers, blocks on `shutdown_event`. Does no real work.
-2. **Hotkey listener thread** — owned by `pynput`. Fires `on_toggle()` as a callback on this thread. Callback only calls `StreamingRecorder.open_session()` or `close_session()` — no blocking work.
+2. **Hotkey listener thread** — owned by `pynput`. Fires `on_scroll_lock()` or `on_mute_toggle()` as callbacks on this thread. Callbacks only call `StreamingRecorder.open_session()` or `close_session()` — no blocking work.
 3. **PortAudio callback thread** — owned by `sounddevice`. The `sd.InputStream` callback does `indata.copy()` + `raw_q.put_nowait()` only. No allocation, no blocking, no GIL-contested work. See `gotchas.md` §11.
 4. **VAD worker thread** — drains `raw_q`; passes each chunk through `Resampler.process()` (48k→16k); slices into 512-sample frames; feeds each frame to `VADGate.process()`; when `VADGate` returns a complete utterance ndarray, calls `utterance_sink` which enqueues it on `utt_q`.
 5. **Pipeline worker thread** — drains `queue.Queue[ndarray]` (`utt_q`), runs `Transcriber.transcribe() → confidence/word-count gates → Resolver.resolve() → Dispatcher.run_plan()` sequentially. One utterance at a time; if the VAD worker emits the next utterance before the previous pipeline run finishes, it queues up.
@@ -103,9 +103,9 @@ class HotkeyController:
 
 **Who calls it:** `Daemon.__init__` constructs it; `Daemon.run()` calls `start()`; `Daemon.shutdown()` calls `stop()`.
 
-**Who it calls:** `on_toggle` callback (injected by `Daemon`). That callback does nothing heavy — it just checks `Recorder.is_recording` and delegates to `Recorder.start()` or `Recorder.stop()`.
+**Who it calls:** `on_scroll_lock` callback (injected by `Daemon`). That callback does nothing heavy — it just checks `StreamingRecorder._session_active` and delegates to `StreamingRecorder.open_session()` or `close_session()`.
 
-**How it is tested:** A fake `on_toggle` callable is injected. Key events are driven via `pynput.keyboard.Controller` in a test thread. Tests assert the toggle fired the expected number of times and that the callback is never invoked concurrently with itself (re-entrant safety).
+**How it is tested:** A fake `on_scroll_lock` callable is injected. Key events are driven via `pynput.keyboard.Controller` in a test thread. Tests assert the toggle fired the expected number of times and that the callback is never invoked concurrently with itself (re-entrant safety).
 
 ---
 
@@ -181,7 +181,7 @@ class StreamingRecorder:
 
 The sample rate is queried via `sounddevice.query_devices()` at `open_session()` time — never hardcoded. A fresh `Resampler` is created per session to avoid filter-state bleed-through (see `gotchas.md` §13). `vad_gate.reset()` is called at `open_session()` for the same reason.
 
-**Who calls it:** `StreamingDaemon.on_toggle()` (on the hotkey-listener thread). `utterance_sink` is wired to `StreamingDaemon._on_utterance()`, which enqueues the ndarray on `utt_q`.
+**Who calls it:** `StreamingDaemon.on_scroll_lock()` (on the hotkey-listener thread). `utterance_sink` is wired to `StreamingDaemon._on_utterance()`, which enqueues the ndarray on `utt_q`.
 
 **Who it calls:** `sounddevice.InputStream`; `Resampler.process()`; `VADGate.process()`; `utterance_sink` callback. No other Voice Commander subsystems.
 
@@ -229,7 +229,7 @@ class Transcriber:
 @dataclass(frozen=True)
 class ToolEntry:
     name: str             # function name, e.g. "copy"
-    phrases: tuple[str, ...]  # always empty; retained for backward compatibility
+    phrases: tuple[str, ...]  # populated from TOML if phrases keys present; unused for routing. Retained for backward compatibility and web UI display.
     func: Callable[[], None]
     module: str           # e.g. "voice_commander.tools.clipboard"
     docstring: str | None
@@ -251,7 +251,7 @@ def discover(package: str = "voice_commander.tools") -> ToolRegistry:
     """Imports every submodule in `package`, triggering @tool registration."""
 ```
 
-**What it does:** Maintains a name-keyed dictionary of `ToolEntry` records. The `@tool` decorator registers the decorated function on the module-global `ToolRegistry` singleton at import time. `discover()` uses `importlib` to import every submodule under `voice_commander.tools`, which triggers all `@tool` decorators as a side effect. Re-registering the same `name` raises `DuplicateToolError` to catch accidental duplicates early. The `phrases` field is retained as an empty tuple for backward compatibility but is no longer populated or used for routing.
+**What it does:** Maintains a name-keyed dictionary of `ToolEntry` records. The `@tool` decorator registers the decorated function on the module-global `ToolRegistry` singleton at import time. `discover()` uses `importlib` to import every submodule under `voice_commander.tools`, which triggers all `@tool` decorators as a side effect. Re-registering the same `name` raises `DuplicateToolError` to catch accidental duplicates early. The `phrases` field is populated from TOML when phrases keys are present; it is not used for routing but is retained for backward compatibility and web UI display.
 
 **Who calls it:** `build_streaming_daemon()` factory calls `discover()` to populate the registry at startup. `LLMRouter` calls `all_llm_visible()` to build the tools array for each chat completion request. `Dispatcher.run_plan()` calls `by_name()` to look up tool functions during plan execution.
 
@@ -346,14 +346,15 @@ class StreamingDaemon:
         max_no_speech_prob: float = 0.6,
         output_dir: str = "outputs",
     ) -> None: ...
-    def run(self, hotkey_key: str) -> None: ...  # blocks until shutdown
+    def run(self, hotkey_key: str, mute_key: str = "") -> None: ...  # blocks until shutdown
     def shutdown(self) -> None: ...
-    def on_toggle(self) -> None: ...             # hotkey callback
+    def on_scroll_lock(self) -> None: ...        # scroll-lock hotkey callback
+    def on_mute_toggle(self) -> None: ...        # mute-key hotkey callback
 ```
 
-**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_toggle()` is the hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → resolve → dispatch`. Async WAV write (`outputs/last_utterance.wav`) is submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` does exactly one thing: `build_streaming_daemon(Config.load()).run(cfg.hotkey.key)`. The pipeline worker calls `Resolver.resolve(transcript)` for every utterance that passes the gates. If `resolve()` returns a `Plan`, `Dispatcher.run_plan()` executes it. If `resolve()` returns `None`, the miss was already signalled by `Resolver` and the worker loops back to `utt_q`.
+**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_scroll_lock()` is the scroll-lock hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. `on_mute_toggle()` is the mute-key callback: suspends or resumes the audio stream within an open session. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → resolve → dispatch`. Async WAV write (`outputs/last_utterance.wav`) is submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` handles `--validate` mode (runs `validate_or_die()` then exits), acquires a single-instance OS-level lock to prevent duplicate daemon processes, configures logging, logs environment diagnostics, installs a crash reporter, and then calls `build_streaming_daemon(Config.load()).run(cfg.hotkey.key, cfg.hotkey.mute_key)`. The pipeline worker calls `Resolver.resolve(transcript)` for every utterance that passes the gates. If `resolve()` returns a `Plan`, `Dispatcher.run_plan()` executes it. If `resolve()` returns `None`, the miss was already signalled by `Resolver` and the worker loops back to `utt_q`.
 
-**Who calls it:** `__main__.py` (the process entry point), signal handlers, and `on_toggle` (hotkey-listener thread).
+**Who calls it:** `__main__.py` (the process entry point), signal handlers, and `on_scroll_lock` / `on_mute_toggle` (hotkey-listener thread).
 
 **Who it calls:** All other subsystems. It is the only place where concrete implementations are wired to interfaces.
 
@@ -373,7 +374,7 @@ class LLMRouter:
     def metrics(self) -> dict[str, Any]: ...
 ```
 
-**What it does:** One-shot tool-call planner via local LM Studio. `route()` sends the transcript to the configured LM Studio endpoint as an OpenAI-compatible chat completion with `tool_choice="required"`. It parses the response into a `Plan` of `ToolCall` steps. Returns `None` on timeout, connection error, HTTP error, malformed response, or if the LLM calls `no_match`. `warmup()` pings `/models` to verify the server is reachable. `close()` shuts down the underlying `httpx.Client`. Tracks simple metrics (total calls, timeouts, errors, avg latency).
+**What it does:** One-shot tool-call planner via local LM Studio. `route()` sends the transcript to the configured LM Studio endpoint as an OpenAI-compatible chat completion with `tool_choice="required"`. It parses the response into a `Plan` of `ToolCall` steps. Returns `None` on timeout, connection error, HTTP error, malformed response, or if the LLM calls `no_match`. `warmup()` posts a real chat-completion request with a synthetic transcript and `max_tokens=1` to prefill LM Studio's KV cache before the first real utterance. Returns `True` on success, `False` on any error. `close()` shuts down the underlying `httpx.Client`. Tracks simple metrics (total calls, timeouts, errors, avg latency).
 
 **Who calls it:** `Resolver.resolve()`, on every utterance that passes the confidence/word-count gates.
 
@@ -419,8 +420,8 @@ def validate_or_die(registry: ToolRegistry, store: ToolMetadataStore) -> None: .
 ## 5. Data Flow (Happy Path)
 
 **Session open:**
-1. User presses Scroll Lock. `pynput` fires `on_toggle` on the listener thread.
-2. `on_toggle` checks `StreamingRecorder.is_open`: false → `StreamingRecorder.open_session()` + `feedback.on_recording_start()` (chime).
+1. User presses Scroll Lock. `pynput` fires `on_scroll_lock` on the listener thread.
+2. `on_scroll_lock` checks `StreamingRecorder._session_active`: false → `StreamingRecorder.open_session()` + `feedback.on_recording_start()` (chime).
 3. `open_session()` queries device native rate, creates fresh `Resampler`, resets `VADGate`, opens `sd.InputStream`, spawns VAD worker thread.
 
 **Utterance detection (loops while session is open):**
@@ -440,7 +441,7 @@ def validate_or_die(registry: ToolRegistry, store: ToolMetadataStore) -> None: .
 15. Pipeline worker loops back to `utt_q`.
 
 **Session close:**
-17. User presses Scroll Lock again. `on_toggle` → `StreamingRecorder.close_session()` + `feedback.on_recording_stop()` (chime).
+17. User presses Scroll Lock again. `on_scroll_lock` → `StreamingRecorder.close_session()` + `feedback.on_recording_stop()` (chime).
 18. Stream stops; VAD worker receives `None` sentinel, joins cleanly.
 
 Total latency budget (speech-end detected → tool fires): ~700 ms target, 1.5 s hard ceiling.

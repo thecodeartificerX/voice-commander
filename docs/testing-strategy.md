@@ -76,7 +76,7 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 | `Recorder` | `tests/unit/test_recorder.py` | WAV written to fixed path `recorded.wav` with correct sample rate / channels / bit depth, second record/stop cycle overwrites the same file (only one WAV in output dir), `stop()` before `start()` raises `RuntimeError` | `sounddevice` stream callback injected with synthetic PCM frames (`numpy.zeros`); `tmp_path` fixture for output dir |
 | `Transcriber` | `tests/unit/test_transcriber.py` | `TranscriptionResult` fields populated, `language == "en"`, `confidence` clamped to `[0, 1]`, empty audio returns low confidence; `hardware` marker for real CUDA transcription | Fixture WAVs: `tests/fixtures/audio/hello_world.wav`, `tests/fixtures/audio/copy.wav`, `tests/fixtures/audio/silence.wav`; model mocked in non-hardware tests |
 | `ToolRegistry` | `tests/unit/test_registry.py` | `@tool` decorator registers entry, `by_name()` / `all()` / `flat_phrases()` return correct data, duplicate name raises `DuplicateToolError`, phrases normalized (lowercase, stripped punctuation, collapsed whitespace) | In-memory registry reset via `reset_global_registry()` in `setup_function()`; no external deps |
-| `Matcher` | `tests/unit/test_matcher.py` | Above-threshold utterance returns correct tool and score, below-threshold returns `tool=None`, candidates top-5 populated, ties broken alphabetically by tool name, utterance normalized before matching | Stub `ToolRegistry` with hard-coded phrase sets; no `rapidfuzz` mocking (real algorithm under test) |
+| `Resolver` | `tests/unit/test_resolver.py` | Utterance dispatched to `LLMRouter` returns correct tool and plan, LLM miss returns `tool=None`, error from LLM falls back gracefully, response JSON parsed correctly | Stub `LLMRouter` returning canned JSON responses; no real HTTP calls |
 | `Dispatcher` | `tests/unit/test_dispatcher.py` | Match above threshold → `on_match` + tool function called, match below threshold → `on_miss` called, tool function raises → `on_error` called + exception swallowed | `CapturingFeedbackSink` records all calls; tool functions are bare `MagicMock()` instances |
 | `FeedbackSink` | `tests/unit/test_feedback.py` | `NullFeedbackSink` methods callable without error, `CapturingFeedbackSink` records calls in order. `WindowsFeedbackSink` is pure `winsound` + logger side-effects — covered via the `CapturingFeedbackSink` pattern in `Dispatcher` tests and through the Phase-3 GATE (human hears the chimes). | No hardware-marked `FeedbackSink` test needed after ADR 0013 (toasts removed) |
 | `Config` | `tests/unit/test_config.py` | Round-trip: write TOML → `Config.load()` → values match, defaults applied when keys absent, invalid types raise `ConfigError`, `Config` is frozen (mutation raises `FrozenInstanceError`) | `tmp_path` fixture for temp `config.toml`; no external deps |
@@ -97,7 +97,7 @@ These checklists are the acceptance criteria that a human must verify before unl
 - [ ] `uv sync --all-groups` exits 0 with no errors.
 - [ ] `uv run pytest` exits 0 (only `Config` unit tests exist at this point).
 - [ ] All 11 ADRs present in `docs/decisions/` and each follows the standard template (Context, Decision, Consequences, Alternatives).
-- [ ] Reference docs present in `docs/references/` for each live dependency (faster-whisper, rapidfuzz, sounddevice, pynput, pyautogui, pystray, uv, winsound); spot-check at least two for accuracy. `windows_toasts.md` was removed in ADR 0013.
+- [ ] Reference docs present in `docs/references/` for each live dependency (faster-whisper, sounddevice, pynput, pyautogui, pystray, uv, winsound); spot-check at least two for accuracy. `windows_toasts.md` was removed in ADR 0013. `rapidfuzz.md` was removed when the Matcher was replaced by the LLM-based Resolver (ADR 0039).
 - [ ] `docs/index.md` present and reviewed — table of contents is accurate.
 - [ ] `docs/architecture.md` present and reviewed — diagrams and subsystem descriptions match spec §2.
 - [ ] `docs/gotchas.md` present and reviewed — covers Scroll Lock LED, CUDA DLL paths, PortAudio device drift, pynput callback threading, and the historical §10 on WinRT-eager-import corrupting CUDA init (kept as a cautionary case study).
@@ -174,13 +174,13 @@ uv run voice-commander
 - [ ] Press Scroll Lock. Say "copy". Press Scroll Lock.
 - [ ] Within approximately 1.5 s of the stop press:
   - [ ] Stop chime plays.
-  - [ ] Toast appears: `✓ copy  ·  "copy"  (100)` (score may vary, should be ≥ 85).
+  - [ ] Log line appears: `MATCH copy <- 'copy'` (LLM resolved the tool).
   - [ ] Paste elsewhere (Ctrl+V in a text editor) — the text "hello world" appears.
 - [ ] Press Scroll Lock. Say "xyzzy nonsense". Press Scroll Lock.
   - [ ] Miss beep plays.
-  - [ ] Toast appears: `✗ no match  ·  "xyzzy nonsense"  ·  top: <something> (<score>)`.
+  - [ ] Log line appears: `MISS 'xyzzy nonsense'` (LLM returned no tool).
 - [ ] Ctrl+C exits the daemon cleanly.
-- [ ] `uv run pytest -m "not hardware"` exits 0 — `ToolRegistry`, `Matcher`, `Dispatcher`, `FeedbackSink` unit tests all pass.
+- [ ] `uv run pytest -m "not hardware"` exits 0 — `ToolRegistry`, `Resolver`, `Dispatcher`, `FeedbackSink` unit tests all pass.
 - [ ] Integration test `tests/integration/test_copy_e2e.py` passes: WAV fixture → `copy` tool called.
 - [ ] Human marks Phase 3 complete in Kaizen OS (`VC-P3-GATE` subquest → done).
 
@@ -207,7 +207,7 @@ uv run voice-commander
   - [ ] `scroll down` — view scrolls down.
   - [ ] `scroll up` — view scrolls up.
   - [ ] `take screenshot` — screenshot saved or clipboard populated.
-- [ ] For each command above, the `voice-commander.log` line `MATCH {tool} <- '{phrase}' ({score})` appeared with score ≥ 85 and the corresponding side-effect fired (e.g. clipboard change).
+- [ ] For each command above, the `voice-commander.log` line `MATCH {tool} <- '{phrase}'` appeared (LLM resolved the tool) and the corresponding side-effect fired (e.g. clipboard change).
 - [ ] Say three nonsense utterances — each produces a miss beep and a `MISS` log line.
 - [ ] Log file contains no `on_error` entries from that session.
 - [ ] Miss rate on the 20-utterance check (14 commands + 6 natural variations) is ≤ 5 % (at most 1 miss).
@@ -229,7 +229,7 @@ uv run voice-commander
 - [ ] Second-instance launch exits immediately with a human-readable lock message (e.g., `Voice Commander is already running.`).
 - [ ] Verify log rotation at 5 MB: grow `voice-commander.log` artificially or wait for natural growth; confirm rotated file appears (`voice-commander.log.1`) and main log is trimmed.
 - [ ] `config.toml` tweaks take effect after restart:
-  - [ ] Change `[matching] threshold` from 85.0 to 95.0 → utterances that previously matched now miss.
+  - [ ] Change `[llm] model` to a non-existent model name → daemon logs a connection/model error and misses gracefully (no crash).
   - [ ] Change `[hotkey] key` to `"pause"` → Scroll Lock no longer triggers; Pause key does.
   - [ ] (Removed — `toast_enabled` no longer exists; see ADR 0013.)
 - [ ] Soak test passes:
@@ -306,7 +306,7 @@ import pytest
 
 from voice_commander.transcriber import Transcriber
 from voice_commander.registry import discover
-from voice_commander.matcher import Matcher
+from voice_commander.resolver import Resolver
 from voice_commander.dispatcher import Dispatcher
 from voice_commander.feedback import CapturingFeedbackSink
 
@@ -320,21 +320,21 @@ def pipeline():
     transcriber = Transcriber(model_size="small.en", device="cuda", compute_type="float16")
     transcriber.load()
     feedback = CapturingFeedbackSink()
-    matcher = Matcher(registry=registry)
+    resolver = Resolver(registry=registry)
     dispatcher = Dispatcher(feedback=feedback)
-    return transcriber, matcher, dispatcher, feedback
+    return transcriber, resolver, dispatcher, feedback
 
 
 @pytest.mark.integration
 def test_<tool_name>_wav_triggers_tool(pipeline):
     """<tool_name>_1.wav transcribes and dispatches to <tool_name> tool."""
-    transcriber, matcher, dispatcher, feedback = pipeline
+    transcriber, resolver, dispatcher, feedback = pipeline
     wav = FIXTURES / "<tool_name>_1.wav"
     assert wav.exists(), f"Fixture WAV not found: {wav}"
 
     with patch("voice_commander.tools.<module>.<tool_name>") as mock_fn:
         result = transcriber.transcribe(wav)
-        match = matcher.match(result.text)
+        match = resolver.resolve(result.text)
         dispatcher.dispatch(result.text, match)
 
     assert match.tool is not None, f"No match for transcript: {result.text!r}"
@@ -420,7 +420,7 @@ uv run pytest -v --tb=short
 ### Run a single test file
 
 ```bash
-uv run pytest tests/unit/test_matcher.py -v
+uv run pytest tests/unit/test_resolver.py -v
 ```
 
 ### pytest.ini markers (declared in `pyproject.toml`)

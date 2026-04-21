@@ -142,10 +142,19 @@ def scroll(direction: str, amount: int = 3) -> None:
     pyautogui.scroll(clicks)
 
 
+_ALLOWED_URL_SCHEMES = frozenset({"http", "https"})
+
+
 @tool
 def open_url(url: str) -> None:
     """Open a URL in the default browser."""
+    import urllib.parse
     import webbrowser
+
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme.lower() not in _ALLOWED_URL_SCHEMES:
+        logger.warning("open_url blocked non-http(s) scheme: %r", url)
+        return
     webbrowser.open(url)
 
 

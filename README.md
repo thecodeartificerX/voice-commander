@@ -25,7 +25,7 @@ Voice Commander is the boring middle ground. Push-to-talk, speak plain English, 
 
 - **Push-to-talk session model.** Tap Scroll Lock to open a session → speak one or many commands back-to-back → tap again to close. Silero VAD auto-segments utterances on silence, so you never press a key between commands.
 - **Sub-second latency.** [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper) running `small.en` on CUDA, with an ndarray hand-off (no temp-file I/O on the hot path), puts the speech-end → keystroke budget at ~700 ms.
-- **Fuzzy phrase matching.** Multiple spoken phrases can trigger the same tool (`"copy"`, `"copy that"`, `"copy selection"`). `rapidfuzz` handles homophones and mis-transcriptions gracefully.
+- **LLM-powered routing.** Every utterance is dispatched through a local LLM (LM Studio, default model: Gemma 4 E4B) which returns a typed, ordered plan of tool calls. Chained commands like *"new tab then paste"* work out of the box. If LM Studio is offline the daemon degrades to a miss chime and keeps running.
 - **Mute hotkey for dictation coexistence.** Secondary key (default Right Ctrl) suspends the mic so Voice Commander does not fight your other dictation software. See [ADR 0025](docs/decisions/0025-mute-hotkey-for-external-dictation.md).
 - **Web UI.** Open `http://127.0.0.1:8765` while the daemon runs to edit phrases, toggle tools, and hot-reload without restarting. HTMX + FastAPI, no SPA build step. See [ADR 0022](docs/decisions/0022-htmx-over-spa.md).
 - **Sidecar TOML metadata.** Phrases and descriptions live in `.toml` files beside each tool module, so config and code evolve independently. See [ADR 0021](docs/decisions/0021-sidecar-toml-per-tool.md).
@@ -159,7 +159,11 @@ All runtime settings live in [`config.toml`](config.toml). Create `config.local.
 | `[transcription]` | `model_size` | `"small.en"` | `tiny.en` / `base.en` / `small.en` / `medium.en`. |
 | `[transcription]` | `device` | `"cuda"` | `"cuda"` or `"cpu"`. |
 | `[transcription]` | `min_confidence` | `0.30` | Transcripts below this score fire a miss chime. |
-| `[matching]` | `threshold` | `85.0` | rapidfuzz score floor (0–100). Lower = looser. |
+| `[llm]` | `endpoint_url` | `"http://localhost:1234/v1"` | LM Studio (or any OpenAI-compatible) endpoint. |
+| `[llm]` | `model_id` | `"google/gemma-4-e4b"` | Model served by the endpoint. |
+| `[llm]` | `timeout_ms` | `600` | Per-request budget in milliseconds. |
+| `[llm]` | `max_plan_steps` | `8` | Maximum tool calls in one dispatched plan. |
+| `[llm]` | `warmup_on_startup` | `true` | POST a 1-token completion at startup to seed the KV cache. |
 | `[vad]` | `threshold` | `0.4` | Silero speech-probability floor. |
 | `[vad.gates]` | `min_word_count` | `1` | Drop transcripts shorter than N words. |
 | `[web]` | `enabled` | `true` | Start the management UI on port 8765. |
@@ -168,17 +172,14 @@ Full schema + rationale: [`docs/superpowers/specs/2026-04-19-voice-commander-des
 
 ---
 
-## LLM Router (experimental)
+## LLM Router
 
-> **Status:** experimental, default off. Opt-in via `config.toml`.
+Every transcript goes through a local LLM unconditionally. The `Resolver` module wraps `LLMRouter`, which POSTs to an LM Studio OpenAI-compatible endpoint (default model: Gemma 4 E4B). The LLM returns a one-shot ordered plan of typed tool calls — including chained commands like *"open a new tab then paste"* — which the `Dispatcher` executes step-by-step with per-tool settle delays. If LM Studio is offline, unreachable, or returns an unparseable response, the router degrades silently to a miss chime; the daemon keeps running.
 
-Voice Commander uses a hybrid routing strategy. `rapidfuzz` handles every utterance first: if the best-match score meets the threshold, the bound tool fires immediately (~1 ms routing overhead, unchanged from the default behavior). Utterances that fall below the threshold escalate to a local LLM via LM Studio's OpenAI-compatible endpoint (default model: Gemma 4 E4B). The LLM returns a one-shot ordered plan of typed tool calls — including chained commands like *"open a new tab then type hello"* — which the dispatcher executes step-by-step with per-tool settle delays. If LM Studio is offline, unreachable, or returns garbage, the router degrades silently to a miss chime; the daemon keeps running.
-
-To enable, add the following to `config.toml` (or `config.local.toml`):
+Configure in `config.toml` (or `config.local.toml`):
 
 ```toml
-[llm_router]
-enabled             = false
+[llm]
 endpoint_url        = "http://localhost:1234/v1"
 model_id            = "google/gemma-4-e4b"
 timeout_ms          = 600
@@ -189,37 +190,16 @@ warmup_timeout_ms   = 5000   # budget for the startup POST; higher than timeout_
 
 > **Warmup note.** When `warmup_on_startup = true`, the daemon POSTs a real `/v1/chat/completions` request (with `max_tokens = 1`) at startup. This seeds LM Studio's prefix KV cache with the system prompt and tools array so the first real voice command lands on a warm cache. Startup takes ~5 s longer, but the first spoken command completes within the normal `timeout_ms` budget. `GET /v1/models` alone does not seed the cache — see [ADR 0038](docs/decisions/0038-llm-router-warmup-real-chat-completion.md).
 
-When `enabled = true`, also raise the matching threshold so only high-confidence utterances stay on the hot path:
-
-```toml
-[matching]
-threshold = 95
-```
-
-Full design: [`docs/superpowers/specs/2026-04-21-llm-router-design.md`](docs/superpowers/specs/2026-04-21-llm-router-design.md).
-
-### Router mode flag (for isolated testing)
-
-Force a specific routing strategy at launch without editing `config.toml`:
-
-```
-uv run python -m voice_commander --router-mode hybrid   # default: rapidfuzz first, LLM fallback
-uv run python -m voice_commander --router-mode fuzzy    # rapidfuzz only, LLM disabled
-uv run python -m voice_commander --router-mode llm      # LLM only, fuzzy threshold set above 100
-```
-
-`--router-mode llm` requires a valid `[llm_router]` section in `config.toml` with
-`endpoint_url` and `model_id` set; it will raise an error if they are absent.
-The flag works with `--validate` too: `uv run python -m voice_commander --validate --router-mode fuzzy`.
+Full design: [`docs/superpowers/specs/2026-04-21-llm-router-design.md`](docs/superpowers/specs/2026-04-21-llm-router-design.md). Routing architecture decisions: [ADR 0040](docs/decisions/0040-llm-only-routing.md), [ADR 0041](docs/decisions/0041-drop-rapidfuzz.md).
 
 ---
 
 ## Architecture at a glance
 
 ```
-HotkeyCtrl ─toggle─▶ StreamingRecorder ─ndarray─▶ Transcriber ─text─▶ Matcher ─▶ Dispatcher ─▶ tool fn
-  pynput            sounddevice + soxr +          faster-whisper       rapidfuzz      invokes
-                    silero-vad (48k→16k)          (CUDA, small.en)                  + FeedbackSink
+HotkeyCtrl ─toggle─▶ StreamingRecorder ─ndarray─▶ Transcriber ─text─▶ Resolver ─plan─▶ Dispatcher ─▶ tool fn
+  pynput            sounddevice + soxr +          faster-whisper       LLMRouter        run_plan()
+                    silero-vad (48k→16k)          (CUDA, small.en)     (httpx→LM Studio) + FeedbackSink
 ```
 
 Four long-lived threads (PortAudio callback → VAD worker → pipeline worker, plus hotkey listener) connected by thread-safe queues. Every subsystem is independently unit-testable with no hardware.
@@ -279,15 +259,15 @@ That is it. The registry auto-discovers every module under `voice_commander.tool
 Pull requests welcome. This is a small, opinionated codebase — but the surface for useful contributions is huge:
 
 ### Easy first PRs
-- Add a new tool (see above). Every new phrase is valuable.
-- Broaden an existing tool's phrases. Speech recognition is fuzzy; more synonyms = fewer misses.
-- Fix a miss that you actually hit. Reproduce with the fixture, tighten the matcher.
+- Add a new tool (see above). Every new tool expands what you can say.
+- Improve a tool's description or sidecar TOML so the LLM can select it more reliably.
+- Fix a miss that you actually hit. Reproduce with the fixture, inspect the LLM plan, tighten the tool description.
 
 ### Meatier contributions
 - **Cross-browser support.** Replace the Comet-only `focus_browser` with a config-driven lookup (ProgID → EXE, or just a user-supplied path).
 - **Per-app command sets.** Activate different tools when Chrome vs VS Code is focused (Phase 6 roadmap).
 - **Wake-word mode.** Drop the push-to-talk hotkey for an always-on wake phrase. Porcupine or OpenWakeWord are the obvious choices.
-- **Argument-bearing commands.** "Open readme in the projects folder" routed via a local LLM doing tool-calling. Design is already sketched in [`docs/superpowers/specs/`](docs/superpowers/specs/).
+- **Argument-bearing commands.** "Open readme in the projects folder" — the LLM router already handles chained tool calls; argument extraction (path, app name, etc.) is the next step. Design is sketched in [`docs/superpowers/specs/`](docs/superpowers/specs/).
 - **Tray icon + systray controls.** Stub exists in `pyproject.toml` (optional `tray` extra); nobody has wired it up yet.
 
 ### House rules
@@ -354,7 +334,8 @@ Start at [`docs/index.md`](docs/index.md) for a guided reading order.
 - ✅ Mute hotkey for dictation coexistence
 - 🔜 Per-app command sets
 - 🔜 Wake-word mode (opt-in)
-- 🔜 Local LLM intent router for argument-bearing commands
+- ✅ LLM intent router (unconditional dispatch via LM Studio)
+- 🔜 Argument-bearing commands (path, app name extraction via tool-calling)
 
 ---
 
@@ -363,7 +344,6 @@ Start at [`docs/index.md`](docs/index.md) for a guided reading order.
 Built on the shoulders of:
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — CTranslate2-accelerated Whisper
 - [silero-vad](https://github.com/snakers4/silero-vad) — ONNX voice activity detection
-- [rapidfuzz](https://github.com/rapidfuzz/RapidFuzz) — fast fuzzy string matching
 - [sounddevice](https://python-sounddevice.readthedocs.io/) / [soxr](https://pypi.org/project/soxr/) — audio I/O and resampling
 - [pynput](https://pynput.readthedocs.io/) / [pyautogui](https://pyautogui.readthedocs.io/) — hotkey and keystroke emulation
 - [FastAPI](https://fastapi.tiangolo.com/) / [HTMX](https://htmx.org/) — the web UI
