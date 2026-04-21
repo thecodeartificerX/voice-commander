@@ -258,6 +258,60 @@ def test_llm_warmup_timeout_ms_string_raises(tmp_path):
         Config.load(cfg_file)
 
 
+def test_legacy_llm_router_key_rejected(tmp_path, caplog):
+    """Legacy [llm_router] section must be rejected (or at minimum warned about).
+
+    The section was renamed from [llm_router] → [llm] during the LLM-only
+    routing migration (ADR 0040 / 0041). Configs still carrying the old key
+    would silently lose their settings under a lenient loader, so the loader
+    must either raise (preferred) or emit a warning mentioning the rename.
+
+    This test accepts either contract — raise or warn — but requires that
+    *something* surfaces the rename to the user.
+    """
+    import logging
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        textwrap.dedent("""
+        [llm_router]
+        endpoint_url = "http://localhost:1234/v1"
+        timeout_ms = 600
+    """)
+    )
+
+    raised: Exception | None = None
+    cfg = None
+    with caplog.at_level(logging.WARNING, logger="voice_commander.config"):
+        try:
+            cfg = Config.load(cfg_file)
+        except Exception as exc:  # noqa: BLE001 — we inspect any error type
+            raised = exc
+
+    if raised is not None:
+        # Strict contract: loader raised. Message must reference both the old
+        # and new section names so the user knows what to do.
+        msg = str(raised)
+        assert "llm_router" in msg, (
+            f"Rejection message must name the legacy section, got: {msg!r}"
+        )
+        assert "llm" in msg, (
+            f"Rejection message must mention the new [llm] section, got: {msg!r}"
+        )
+        return
+
+    # Lenient contract: loader did not raise → a WARNING must have been logged
+    # mentioning the rename, otherwise the user's settings are silently dropped.
+    warning_text = "\n".join(
+        rec.getMessage() for rec in caplog.records if rec.levelno >= logging.WARNING
+    )
+    assert "llm_router" in warning_text and "llm" in warning_text, (
+        "Legacy [llm_router] section was silently ignored — loader must either "
+        "raise ConfigError or log a WARNING that mentions the rename to [llm]. "
+        f"Captured warnings: {warning_text!r}"
+    )
+
+
 def test_llm_warmup_timeout_ms_independent_of_timeout_ms(tmp_path):
     """warmup_timeout_ms and timeout_ms are independent fields with separate defaults."""
     cfg_file = tmp_path / "config.toml"

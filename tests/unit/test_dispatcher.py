@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from voice_commander.dispatcher import Dispatcher
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.plan import Plan, ToolCall
@@ -62,6 +64,86 @@ def test_run_plan_tool_error_fires_error_and_does_not_raise():
     complete_call = next(c for c in sink.calls if c[0] == "on_plan_complete")
     assert complete_call[1][1] == 0, (
         f"Expected 0 steps executed after error, got {complete_call[1][1]}"
+    )
+
+
+def test_run_plan_sleeps_settle_ms():
+    """A tool with settle_ms=250 triggers exactly one time.sleep(0.25)."""
+    fired: list[int] = []
+    entry = ToolEntry(
+        name="slow_tool",
+        phrases=("slow",),
+        func=lambda: fired.append(1),
+        module="m",
+        docstring=None,
+        settle_ms=250,
+    )
+    registry = _make_registry(entry)
+    sink = CapturingFeedbackSink()
+    d = Dispatcher(feedback=sink)
+    plan = Plan(steps=(ToolCall(name="slow_tool", kwargs={}),), raw_response={})
+
+    with patch("voice_commander.dispatcher.time.sleep") as mock_sleep:
+        d.run_plan("slow please", plan, registry)
+
+    assert fired == [1], "Tool function was not called"
+    assert mock_sleep.call_count == 1, (
+        f"Expected time.sleep to be called exactly once, got {mock_sleep.call_count}"
+    )
+    mock_sleep.assert_called_once_with(0.25)
+
+
+def test_run_plan_halts_on_mid_chain_error():
+    """Step 2 raises RuntimeError → step 3 is not executed; on_error fires once
+    for step index 1 (the second step), on_plan_complete fires with executed=1."""
+    log: list[str] = []
+
+    def boom() -> None:
+        raise RuntimeError("step 2 exploded")
+
+    entry_a = ToolEntry("first", (), lambda: log.append("first"), "m", None)
+    entry_b = ToolEntry("second", (), boom, "m", None)
+    entry_c = ToolEntry("third", (), lambda: log.append("third"), "m", None)
+    registry = _make_registry(entry_a, entry_b, entry_c)
+    sink = CapturingFeedbackSink()
+    d = Dispatcher(feedback=sink)
+    plan = Plan(
+        steps=(
+            ToolCall(name="first", kwargs={}),
+            ToolCall(name="second", kwargs={}),
+            ToolCall(name="third", kwargs={}),
+        ),
+        raw_response={},
+    )
+
+    # Must not raise — dispatcher catches exceptions from tool funcs.
+    d.run_plan("three step chain", plan, registry)
+
+    # (a) first tool executed, (c) third tool did NOT execute
+    assert log == ["first"], f"Expected only 'first' to execute, got {log}"
+
+    # (d) on_error fired exactly once, identifying the offending step by name
+    error_calls = [c for c in sink.calls if c[0] == "on_error"]
+    assert len(error_calls) == 1, (
+        f"Expected exactly one on_error call, got {len(error_calls)}"
+    )
+    subsystem, exc = error_calls[0][1]
+    # Dispatcher tags errors as "plan:step:<tool_name>". The second step's tool
+    # is named "second" → subsystem reflects step index 1 (the second step).
+    assert subsystem == "plan:step:second", (
+        f"Expected on_error subsystem to point to step 1 ('second'), got {subsystem!r}"
+    )
+    # (b) the second tool was actually invoked (and raised)
+    assert isinstance(exc, RuntimeError)
+    assert "step 2 exploded" in str(exc)
+
+    # (e) on_plan_complete fired with executed=1
+    complete_calls = [c for c in sink.calls if c[0] == "on_plan_complete"]
+    assert len(complete_calls) == 1, "on_plan_complete should fire exactly once"
+    transcript, steps_executed = complete_calls[0][1]
+    assert transcript == "three step chain"
+    assert steps_executed == 1, (
+        f"Expected steps_executed == 1 (only 'first' succeeded), got {steps_executed}"
     )
 
 

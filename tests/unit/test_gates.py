@@ -178,6 +178,54 @@ def test_confidence_gate_triggers_miss(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def test_llm_returns_none_triggers_miss(tmp_path):
+    """When llm_router.route() returns None, the real Resolver fires on_miss
+    and the daemon short-circuits before ever calling dispatcher.run_plan."""
+    fb = CapturingFeedbackSink()
+    result = _make_result(text="copy", confidence=0.9, no_speech_prob=0.1)
+
+    _stub_heavy_imports()
+    from voice_commander.daemon import StreamingDaemon
+    from voice_commander.resolver import Resolver
+
+    # Real resolver, fake LLMRouter whose .route() returns None.
+    llm_router = MagicMock()
+    llm_router.route.return_value = None
+    resolver = Resolver(llm_router=llm_router, feedback=fb)
+
+    transcriber = MagicMock()
+    transcriber.transcribe.return_value = result
+
+    dispatcher = MagicMock()
+    recorder = MagicMock()
+    recorder.is_open = False
+
+    daemon = StreamingDaemon(
+        feedback=fb,
+        recorder=recorder,
+        transcriber=transcriber,
+        resolver=resolver,
+        dispatcher=dispatcher,
+        registry=MagicMock(),
+        min_confidence=0.3,
+        min_word_count=1,
+        max_no_speech_prob=0.6,
+        output_dir=str(tmp_path),
+    )
+
+    daemon._process_utterance(_DUMMY_AUDIO)
+
+    # LLM was consulted
+    llm_router.route.assert_called_once_with("copy")
+    # on_miss fired (by Resolver)
+    miss_calls = [c for c in fb.calls if c[0] == "on_miss"]
+    assert len(miss_calls) == 1, (
+        f"Expected exactly one on_miss event, got {len(miss_calls)}: {fb.calls}"
+    )
+    # Dispatcher was NOT reached
+    dispatcher.run_plan.assert_not_called()
+
+
 def test_all_gates_pass_calls_dispatch(tmp_path):
     """When confidence, no_speech_prob, and word_count are all acceptable,
     resolver.resolve and dispatcher.run_plan must both be called."""
