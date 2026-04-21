@@ -236,6 +236,38 @@ def close_window() -> None:
     _close_with_verify(("alt", "f4"), verb="close_window")
 
 
+@tool
+def minimize(target: str | None = None) -> None:
+    """Minimize a single window. Defaults to the currently focused window.
+
+    Never minimizes all windows. Do NOT emit ``press(combo="win+d")`` or
+    ``press(combo="win+m")`` for "minimize" utterances — use this tool.
+
+    Parameters
+    ----------
+    target:
+        Optional process name or window title (fuzzy-matched via
+        :func:`resolver.resolve_window`). Omit to minimize the focused
+        window.
+    """
+    try:
+        import win32con
+        import win32gui
+    except ImportError:
+        logger.warning("pywin32 not available, cannot minimize window")
+        return
+
+    if target is None:
+        hwnd = win32gui.GetForegroundWindow()
+        if not hwnd:
+            logger.warning("minimize: no foreground window to minimize")
+            return
+    else:
+        hwnd = resolver.resolve_window(target)
+
+    win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
+
+
 def _close_with_verify(combo: tuple[str, ...], *, verb: str) -> None:
     """Issue *combo*, then poll ``GetForegroundWindow`` for a change."""
     try:

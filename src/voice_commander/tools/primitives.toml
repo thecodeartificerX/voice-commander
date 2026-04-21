@@ -50,6 +50,18 @@ enabled = true
 settle_ms = 100
 llm_only = true
 
+[tools.minimize]
+phrases = []
+description = "Minimize a single window (defaults to the currently focused window). ALWAYS use this tool for 'minimize' utterances. NEVER emit press(combo='win+d') or press(combo='win+m') — those minimize everything."
+enabled = true
+settle_ms = 100
+llm_only = true
+
+[tools.minimize.args.target]
+description = "Optional process name or window title (fuzzy-matched). Omit to minimize the focused window only."
+required = false
+type = "string"
+
 [tools.press]
 phrases = []
 description = "Press a key combination like 'ctrl+c', 'alt+tab', 'win+l'."
