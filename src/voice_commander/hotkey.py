@@ -13,15 +13,20 @@ KEY_ALIASES: dict[str, keyboard.Key] = {
     "pause": keyboard.Key.pause,
     "f13": keyboard.Key.f13,
     "caps_lock": keyboard.Key.caps_lock,
+    "ctrl_r": keyboard.Key.ctrl_r,
+    "ctrl_l": keyboard.Key.ctrl_l,
 }
 
 
 class HotkeyController:
-    def __init__(self, key: str, on_toggle: Callable[[], None]) -> None:
-        if key not in KEY_ALIASES:
-            raise ValueError(f"Unknown hotkey '{key}'. Known: {sorted(KEY_ALIASES)}")
-        self._target = KEY_ALIASES[key]
-        self._on_toggle = on_toggle
+    def __init__(self, bindings: dict[str, Callable[[], None]]) -> None:
+        if not bindings:
+            raise ValueError("At least one binding required")
+        self._dispatch: dict[keyboard.Key, Callable[[], None]] = {}
+        for key_name, callback in bindings.items():
+            if key_name not in KEY_ALIASES:
+                raise ValueError(f"Unknown hotkey '{key_name}'. Known: {sorted(KEY_ALIASES)}")
+            self._dispatch[KEY_ALIASES[key_name]] = callback
         self._listener: keyboard.Listener | None = None
         self._lock = threading.Lock()
 
@@ -31,7 +36,7 @@ class HotkeyController:
         self._listener = keyboard.Listener(on_release=self._on_release)
         self._listener.daemon = True
         self._listener.start()
-        logger.info("HotkeyController started on %s", self._target)
+        logger.info("HotkeyController started, bindings: %s", list(self._dispatch.keys()))
 
     def stop(self) -> None:
         if self._listener is not None:
@@ -45,10 +50,11 @@ class HotkeyController:
             logger.info("HotkeyController stopped")
 
     def _on_release(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
-        if key != self._target:
+        callback = self._dispatch.get(key)
+        if callback is None:
             return
         with self._lock:
             try:
-                self._on_toggle()
+                callback()
             except Exception:
-                logger.exception("on_toggle raised")
+                logger.exception("Hotkey callback raised for %s", key)

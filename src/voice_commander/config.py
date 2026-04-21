@@ -11,6 +11,7 @@ T = TypeVar("T")
 @dataclass(frozen=True)
 class HotkeyConfig:
     key: str = "scroll_lock"
+    mute_key: str = ""
 
 
 @dataclass(frozen=True)

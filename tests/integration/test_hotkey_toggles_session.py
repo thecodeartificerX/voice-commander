@@ -7,7 +7,7 @@ method directly — no real hotkey listener is started.
 
 The test strategy is:
   1. Build a StreamingDaemon with a stub recorder (tracks open/close calls).
-  2. Call ``daemon.on_toggle()`` programmatically — same code path that the
+  2. Call ``daemon.on_scroll_lock()`` programmatically — same code path that the
      real HotkeyController fires on key release.
   3. Assert the stub recorder saw the expected open/close sequence.
 
@@ -127,13 +127,13 @@ def test_toggle_opens_and_closes(stub_daemon: Any) -> None:
     assert recorder.close_calls == 0
 
     # First toggle: should open the session.
-    stub_daemon.on_toggle()
+    stub_daemon.on_scroll_lock()
     assert recorder.is_open
     assert recorder.open_calls == 1
     assert recorder.close_calls == 0
 
     # Second toggle: should close the session.
-    stub_daemon.on_toggle()
+    stub_daemon.on_scroll_lock()
     assert not recorder.is_open
     assert recorder.open_calls == 1
     assert recorder.close_calls == 1
@@ -159,7 +159,7 @@ def test_multiple_toggles_alternate(stub_daemon: Any) -> None:
         (2, 1),  # after toggle 3
         (2, 2),  # after toggle 4
     ]:
-        stub_daemon.on_toggle()
+        stub_daemon.on_scroll_lock()
         assert recorder.open_calls == expected_open_count
         assert recorder.close_calls == expected_close_count
 
@@ -195,7 +195,7 @@ def test_toggle_open_failure_reported(tmp_path: Any) -> None:
     )
 
     # Toggle: open will fail.
-    daemon.on_toggle()
+    daemon.on_scroll_lock()
 
     # Recorder must still be closed.
     assert not recorder.is_open
@@ -230,7 +230,7 @@ def test_toggle_thread_safety(stub_daemon: Any) -> None:
     def _do_toggles(n: int) -> None:
         for _ in range(n):
             try:
-                stub_daemon.on_toggle()
+                stub_daemon.on_scroll_lock()
             except Exception as exc:
                 errors.append(exc)
 

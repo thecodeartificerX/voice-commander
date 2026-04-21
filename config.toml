@@ -1,5 +1,6 @@
 [hotkey]
 key = "scroll_lock"
+# mute_key = "ctrl_r"
 
 [audio]
 channels = 1

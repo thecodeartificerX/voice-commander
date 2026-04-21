@@ -132,3 +132,22 @@ def test_vad_overrides(tmp_path):
     assert cfg.vad.gates.min_word_count == 2
     # untouched fields keep defaults
     assert cfg.vad.pre_roll_ms == 300
+
+
+def test_mute_key_defaults_to_empty(tmp_path):
+    cfg = Config.load(tmp_path / "nope.toml")
+    assert cfg.hotkey.mute_key == ""
+
+
+def test_mute_key_loads_from_toml(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[hotkey]\nmute_key = "ctrl_r"\n')
+    cfg = Config.load(cfg_file)
+    assert cfg.hotkey.mute_key == "ctrl_r"
+
+
+def test_mute_key_invalid_type_raises(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[hotkey]\nmute_key = 123\n")
+    with pytest.raises((TypeError, ValueError)):
+        Config.load(cfg_file)
