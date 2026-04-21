@@ -665,6 +665,45 @@ class TestSignalHandler:
         lock._prev_handlers[signal.SIGINT] = None
         lock._signal_handler(signal.SIGINT, None)  # must not raise
 
+    def test_signal_handler_survives_release_exception(self, tmp_path):
+        """If release() raises, handler must still chain to prev handler."""
+        lock = SingleInstanceLock(tmp_path / "daemon.lock")
+        lock.acquire()
+
+        chained_calls: list[tuple[int, object]] = []
+
+        def prev(signum: int, frame: object) -> None:
+            chained_calls.append((signum, frame))
+
+        def bad_release() -> None:
+            raise TypeError("internal state corrupted")
+
+        lock.release()  # clean up real lock first
+        lock.release = bad_release  # type: ignore[method-assign]
+        lock._prev_handlers[signal.SIGINT] = prev
+
+        lock._signal_handler(signal.SIGINT, None)
+        assert chained_calls == [(signal.SIGINT, None)]
+
+    def test_signal_handler_survives_prev_handler_exception(self, tmp_path, monkeypatch):
+        """If prev handler raises, handler must fall through to SIG_DFL re-raise."""
+        lock = SingleInstanceLock(tmp_path / "daemon.lock")
+        lock.acquire()
+        lock.release()
+
+        def bad_prev(signum: int, frame: object) -> None:
+            raise RuntimeError("prev handler exploded")
+
+        lock._prev_handlers[signal.SIGTERM] = bad_prev
+
+        killed_with: list[tuple[int, int]] = []
+        import voice_commander.single_instance as si_mod
+        monkeypatch.setattr(signal, "signal", lambda sig, handler: None)
+        monkeypatch.setattr(si_mod.os, "kill", lambda pid, sig: killed_with.append((pid, sig)))
+
+        lock._signal_handler(signal.SIGTERM, None)
+        assert (os.getpid(), signal.SIGTERM) in killed_with
+
 
 # ===========================================================================
 # _cleanup_signals() — static method

@@ -49,4 +49,10 @@ When you touch any row, also update the corresponding ADR (never the other way a
 | `SetForegroundWindow` hardening | `AttachThreadInput(foreground_tid, target_tid, True)` + `AllowSetForegroundWindow(ASFW_ANY)` + `GetForegroundWindow()` post-call verification; raises `FocusWindowError` on verified failure | Windows 11 foreground-lockout causes silent failure; chains continued with keystrokes landing in wrong window; verified raise halts plan cleanly | [0037](../decisions/0037-focus-window-attachthreadinput-workaround.md) |
 | Focus tool `settle_ms` | `settle_ms = 200` on `focus_browser`, `focus_terminal`, `focus_window` | Extra 50 ms over previous 150 ms value accounts for Windows 11 paint latency after `AttachThreadInput`-based focus; only applied on success, never after `FocusWindowError` | [0037](../decisions/0037-focus-window-attachthreadinput-workaround.md), [0033](../decisions/0033-per-tool-settle-ms-plus-wait-primitive.md) |
 
+## Daemon Lifecycle
+
+| Decision | Choice | Why | ADR |
+|---|---|---|---|
+| Single-instance lock | OS-level file locking (`msvcrt`/`fcntl`) + fixed ctypes HANDLE truncation + PID:GUID + cleanup handlers | Advisory file lock auto-released on crash; ctypes `c_void_p` for 64-bit HANDLE correctness | [0039](../decisions/0039-single-instance-lock-hardening.md) |
+
 All ADRs live in [`../decisions/`](../decisions/). Add a new row here whenever you add a new ADR.

@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import logging
 import os
 import signal
 import sys
 import uuid
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class AlreadyRunning(Exception):
@@ -76,6 +79,7 @@ def _pid_alive(pid: int) -> bool:
             if _GetExitCodeProcess(handle, ctypes.byref(exit_code)):
                 return exit_code.value == STILL_ACTIVE
             # GetExitCodeProcess failed — assume dead
+            logger.debug("GetExitCodeProcess failed for pid %d; assuming dead", pid)
             return False
         finally:
             _CloseHandle(handle)
@@ -120,7 +124,7 @@ def _os_unlock(fh: int) -> None:
             os.lseek(fh, 0, os.SEEK_SET)
             msvcrt.locking(fh, msvcrt.LK_UNLCK, 1)
         except OSError:
-            pass  # already unlocked or fd invalid
+            logger.debug("_os_unlock: fd %d already unlocked or invalid", fh)
     else:
         import contextlib
         import fcntl
@@ -165,6 +169,9 @@ class SingleInstanceLock:
             # Lock held by another process.
             pid = self._read_pid_from_fd(fh)
             os.close(fh)
+            logger.warning(
+                "Lock held by another process (pid=%d, lock=%s)", pid, self._path,
+            )
             raise AlreadyRunning(
                 f"Another instance is running (pid={pid}, lock={self._path})"
             ) from None
@@ -176,11 +183,16 @@ class SingleInstanceLock:
         os.write(fh, f"{os.getpid()}:{self._guid}".encode())
         os.fsync(fh)
         self._fh = fh
+        logger.debug(
+            "Lock acquired (pid=%d, guid=%s, lock=%s)",
+            os.getpid(), self._guid, self._path,
+        )
 
         self._register_cleanup()
 
     def release(self) -> None:
         """Release the lock and remove the lock file."""
+        logger.debug("Releasing lock (%s)", self._path)
         if self._fh is not None:
             with contextlib.suppress(OSError):
                 _os_unlock(self._fh)
@@ -199,14 +211,15 @@ class SingleInstanceLock:
             data = os.read(fh, 256).decode().strip()
             return int(data.split(":")[0])
         except (OSError, ValueError, IndexError):
+            logger.debug("Failed to read PID from lock-file fd %d", fh)
             return -1
 
     def _stale(self) -> bool:
         """Fallback stale-PID check (defence-in-depth).
 
-        Under normal operation OS-level locking makes this unnecessary —
-        this path is only hit if the OS lock could not be acquired AND
-        the caller wants to decide based on PID liveness.
+        Not currently called internally.  Retained as a public
+        defence-in-depth helper for callers that want PID-liveness
+        decisions outside the normal OS-lock path.
         """
         try:
             data = self._path.read_text().strip()
@@ -238,12 +251,22 @@ class SingleInstanceLock:
 
     def _signal_handler(self, signum: int, frame: Any) -> None:
         """Release lock, then chain to the previous handler."""
-        self.release()
+        try:
+            self.release()
+        except Exception:
+            logger.debug("Signal handler: release() failed for signal %d", signum, exc_info=True)
 
         prev = self._prev_handlers.get(signum)
-        if callable(prev):
-            prev(signum, frame)
-        elif prev == signal.SIG_DFL:
-            # Re-raise with default disposition.
-            signal.signal(signum, signal.SIG_DFL)
-            os.kill(os.getpid(), signum)
+        try:
+            if callable(prev):
+                prev(signum, frame)
+                return
+        except Exception:
+            pass  # Previous handler failed; fall through to default
+
+        if prev == signal.SIG_IGN or prev is None:
+            return  # Signal was ignored or no previous handler
+
+        # Default: re-raise with default disposition.
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
