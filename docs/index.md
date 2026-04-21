@@ -2,15 +2,16 @@
 
 Read in this order when joining the project:
 
-1. [`/CLAUDE.md`](../CLAUDE.md) — project-wide durable context
-2. [`architecture.md`](architecture.md) — subsystem diagram and contracts
-3. [`libraries.md`](libraries.md) — every dependency and why
-4. [`gotchas.md`](gotchas.md) — Windows traps, threading pitfalls, CUDA DLLs
-5. [`testing-strategy.md`](testing-strategy.md) — unit / integration / human-validation
-6. [`superpowers/specs/`](superpowers/specs/) — design docs from brainstorming
-7. [`superpowers/plans/`](superpowers/plans/) — implementation plans
-8. [`decisions/`](decisions/) — ADRs for every locked decision
-9. [`references/`](references/) — vendored framework documentation
+1. [`/CLAUDE.md`](../CLAUDE.md) — canonical entry point; lazy-references everything below
+2. [`agents/`](agents/) — agent-oriented lazy references (repo layout, technical-decisions summary)
+3. [`architecture.md`](architecture.md) — subsystem diagram and contracts
+4. [`libraries.md`](libraries.md) — every dependency and why
+5. [`gotchas.md`](gotchas.md) — Windows traps, threading pitfalls, CUDA DLLs
+6. [`testing-strategy.md`](testing-strategy.md) — unit / integration / human-validation
+7. [`superpowers/specs/`](superpowers/specs/) — design docs from brainstorming
+8. [`superpowers/plans/`](superpowers/plans/) — implementation plans
+9. [`decisions/`](decisions/) — ADRs for every locked decision
+10. [`references/`](references/) — vendored framework documentation
 
 ## Quick links
 
