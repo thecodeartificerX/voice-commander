@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
 import os
 import queue
 import signal
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -18,12 +20,16 @@ from .config import Config
 from .dispatcher import Dispatcher
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
+from .llm_router import LLMRouter
 from .matcher import Matcher
+from .plan import Plan
 from .registry import ToolRegistry, discover
 from .streaming_recorder import StreamingRecorder
 from .tool_metadata import ToolMetadataStore
+from .tool_schema import sig_to_json_schema
 from .transcriber import Transcriber, TranscriptionResult
 from .vad_gate import VADGate
+from .validator import validate_or_die
 from .web.app import create_app
 from .web.server import WebServer
 
@@ -52,6 +58,7 @@ class StreamingDaemon:
         dispatcher: Dispatcher,
         *,
         registry: ToolRegistry | None = None,
+        llm_router: LLMRouter | None = None,
         min_confidence: float = 0.30,
         min_word_count: int = 1,
         max_no_speech_prob: float = 0.6,
@@ -64,6 +71,7 @@ class StreamingDaemon:
         self._matcher = matcher
         self._dispatcher = dispatcher
         self._registry = registry
+        self._llm_router = llm_router
         self._min_confidence = min_confidence
         self._min_word_count = min_word_count
         self._max_no_speech_prob = max_no_speech_prob
@@ -196,6 +204,23 @@ class StreamingDaemon:
             return
 
         match = self._matcher.match(result.text)
+
+        # Hot path: high-confidence rapidfuzz match → direct dispatch
+        if match.tool is not None:
+            self._dispatcher.dispatch(result.text, match)
+            return
+
+        # LLM escalation path (if enabled)
+        if self._llm_router is not None and self._registry is not None:
+            plan = self._llm_router.route(result.text)
+            if plan is None:
+                self._feedback.on_miss(result.text, match.candidates)
+            else:
+                self._dispatcher.run_plan(result.text, plan, self._registry)
+                self._write_plan_async(result.text, plan)
+            return
+
+        # Fallback: no LLM router, report miss
         self._dispatcher.dispatch(result.text, match)
 
     def _write_utterance_async(self, utterance: npt.NDArray[np.float32]) -> None:
@@ -204,6 +229,27 @@ class StreamingDaemon:
         def _write() -> None:
             try:
                 sf.write(path, utterance, 16000, subtype="FLOAT")
+            except Exception:
+                logger.exception("Failed to write %s", path)
+
+        self._wav_executor.submit(_write)
+
+    def _write_plan_async(self, transcript: str, plan: Plan) -> None:
+        path = self._output_dir / "last_plan.json"
+
+        def _write() -> None:
+            try:
+                artifact = {
+                    "transcript": transcript,
+                    "steps": [
+                        {"name": s.name, "kwargs": s.kwargs}
+                        for s in plan.steps
+                    ],
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+                path.write_text(
+                    json.dumps(artifact, indent=2), encoding="utf-8",
+                )
             except Exception:
                 logger.exception("Failed to write %s", path)
 
@@ -366,8 +412,31 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     reload_lock = threading.Lock()
 
     registry = discover("voice_commander.tools", store=store)
+
+    # Generate JSON schemas for all tools (used by LLM router).
+    all_meta = store.load_all()
+    for entry in registry.all():
+        meta = all_meta.get(entry.name)
+        args_meta = meta.args if meta else {}
+        entry.params_schema = sig_to_json_schema(
+            entry.func, args_meta, tool_name=entry.name, description=entry.description,
+        )
+
+    # Startup validation — refuse to run on drift.
+    validate_or_die(registry, store)
+
     matcher = Matcher(registry, threshold=cfg.matching.threshold, reload_lock=reload_lock)
     dispatcher = Dispatcher(feedback)
+
+    # LLM Router — enabled by config.
+    llm_router: LLMRouter | None = None
+    if cfg.llm_router.enabled:
+        llm_router = LLMRouter(cfg.llm_router, registry)
+        if cfg.llm_router.warmup_on_startup:
+            if llm_router.warmup():
+                logger.info("LLM router warmup succeeded")
+            else:
+                logger.warning("LLM router warmup failed — LM Studio may be offline")
 
     # Web server — enabled by config + not suppressed by env var.
     web_server: WebServer | None = None
@@ -384,6 +453,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         matcher=matcher,
         dispatcher=dispatcher,
         registry=registry,
+        llm_router=llm_router,
         min_confidence=cfg.transcription.min_confidence,
         min_word_count=cfg.vad.gates.min_word_count,
         max_no_speech_prob=cfg.vad.gates.max_no_speech_prob,

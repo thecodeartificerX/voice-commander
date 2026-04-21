@@ -1,0 +1,67 @@
+category = "primitives"
+
+[tools.wait]
+phrases = []
+description = "Pause execution for the specified milliseconds."
+enabled = true
+settle_ms = 0
+llm_only = true
+
+[tools.wait.args.ms]
+description = "Duration to wait in milliseconds."
+required = true
+
+[tools.press_keys]
+phrases = []
+description = "Press a key combination (e.g. ctrl+c, alt+tab)."
+enabled = true
+settle_ms = 50
+llm_only = true
+
+[tools.press_keys.args.combo]
+description = "Key combination string with + separator (e.g. 'ctrl+c', 'alt+tab')."
+required = true
+
+[tools.type_text]
+phrases = []
+description = "Type arbitrary text via keystroke synthesis."
+enabled = true
+settle_ms = 50
+llm_only = true
+
+[tools.type_text.args.text]
+description = "The text to type."
+required = true
+
+[tools.focus_window]
+phrases = []
+description = "Focus a window whose title contains the given substring."
+enabled = true
+settle_ms = 200
+llm_only = true
+
+[tools.focus_window.args.title_substring]
+description = "Case-insensitive substring to match against window titles."
+required = true
+
+[tools.launch]
+phrases = []
+description = "Launch an application, file, or URI via the system handler."
+enabled = true
+settle_ms = 500
+llm_only = true
+
+[tools.launch.args.app]
+description = "Application name, file path, or URI to open."
+required = true
+
+[tools.no_match]
+phrases = []
+description = "Signals that no tool matches the user's intent."
+enabled = true
+settle_ms = 0
+llm_only = true
+
+[tools.no_match.args.reason]
+description = "Brief explanation of why no tool matched."
+required = true

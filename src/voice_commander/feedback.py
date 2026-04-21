@@ -16,6 +16,8 @@ class FeedbackSink(Protocol):
     def on_match(self, tool: str, phrase: str, score: float) -> None: ...
     def on_miss(self, transcript: str, candidates: Sequence[tuple[str, str, float]]) -> None: ...
     def on_error(self, subsystem: str, err: BaseException) -> None: ...
+    def on_plan_start(self, transcript: str, step_count: int) -> None: ...
+    def on_plan_complete(self, transcript: str, steps_executed: int) -> None: ...
 
 
 class NullFeedbackSink:
@@ -35,6 +37,12 @@ class NullFeedbackSink:
         pass
 
     def on_error(self, subsystem: str, err: BaseException) -> None:
+        pass
+
+    def on_plan_start(self, transcript: str, step_count: int) -> None:
+        pass
+
+    def on_plan_complete(self, transcript: str, steps_executed: int) -> None:
         pass
 
 
@@ -59,6 +67,12 @@ class CapturingFeedbackSink:
 
     def on_error(self, subsystem: str, err: BaseException) -> None:
         self.calls.append(("on_error", (subsystem, err)))
+
+    def on_plan_start(self, transcript: str, step_count: int) -> None:
+        self.calls.append(("on_plan_start", (transcript, step_count)))
+
+    def on_plan_complete(self, transcript: str, steps_executed: int) -> None:
+        self.calls.append(("on_plan_complete", (transcript, steps_executed)))
 
 
 class WindowsFeedbackSink:
@@ -101,3 +115,9 @@ class WindowsFeedbackSink:
     def on_error(self, subsystem: str, err: BaseException) -> None:
         logger.error("Error in %s: %s", subsystem, err, exc_info=err)
         self._play(self._miss)
+
+    def on_plan_start(self, transcript: str, step_count: int) -> None:
+        logger.info("PLAN_START '%s' steps=%d", transcript, step_count)
+
+    def on_plan_complete(self, transcript: str, steps_executed: int) -> None:
+        logger.info("PLAN_COMPLETE '%s' steps_executed=%d", transcript, steps_executed)

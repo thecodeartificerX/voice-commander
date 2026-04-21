@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -28,7 +29,9 @@ def create_app(
     app = FastAPI(title="Voice Commander", docs_url=None, redoc_url=None)
 
     @app.middleware("http")
-    async def csrf_protect(request: Request, call_next):  # noqa: ARG001
+    async def csrf_protect(  # noqa: ARG001
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         """Reject POST requests without the HX-Request header (HTMX sends it)."""
         if request.method == "POST" and request.headers.get("HX-Request") != "true":
             return HTMLResponse(
@@ -161,7 +164,9 @@ def create_app(
         except Exception:
             logger.exception("reload_metadata failed after saving %s", name)
             return HTMLResponse(
-                content=_render_error("Saved to disk, but live reload failed. Restart daemon to apply."),
+                content=_render_error(
+                    "Saved to disk, but live reload failed. Restart daemon to apply."
+                ),
                 status_code=200,
             )
 
@@ -216,7 +221,9 @@ def create_app(
         except Exception:
             logger.exception("reload_metadata failed after saving %s", name)
             return HTMLResponse(
-                content=_render_error("Saved to disk, but live reload failed. Restart daemon to apply."),
+                content=_render_error(
+                    "Saved to disk, but live reload failed. Restart daemon to apply."
+                ),
                 status_code=200,
             )
 

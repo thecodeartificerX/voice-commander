@@ -40,7 +40,7 @@ class Resampler:
             np.array([], dtype=np.float32), last=True
         )
         self._stream = self._make_stream()
-        return tail  # type: ignore[return-value]
+        return tail
 
     def reset(self) -> None:
         """Recreate the internal ResampleStream for a fresh session."""

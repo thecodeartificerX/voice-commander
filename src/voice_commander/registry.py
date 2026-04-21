@@ -4,8 +4,8 @@ import importlib
 import pkgutil
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .tool_metadata import ToolMetadataStore
@@ -20,12 +20,15 @@ class DuplicateToolError(Exception):
 class ToolEntry:
     name: str
     phrases: tuple[str, ...]
-    func: Callable[[], None]
+    func: Callable[..., None]
     module: str
     docstring: str | None
     description: str = ""
     category: str = ""
     enabled: bool = True
+    params_schema: dict[str, Any] = field(default_factory=dict)
+    settle_ms: int = 0
+    llm_only: bool = False
 
 
 class ToolRegistry:
@@ -55,8 +58,20 @@ class ToolRegistry:
         return [(p, e.name) for e in self._by_name.values() for p in e.phrases]
 
     def flat_phrases_enabled(self) -> list[tuple[str, str]]:
-        """(phrase, tool_name) pairs for enabled tools only."""
-        return [(p, e.name) for e in self._by_name.values() if e.enabled for p in e.phrases]
+        """(phrase, tool_name) pairs for enabled, non-llm_only tools only."""
+        return [
+            (p, e.name)
+            for e in self._by_name.values()
+            if e.enabled and not e.llm_only
+            for p in e.phrases
+        ]
+
+    def all_llm_visible(self) -> list[ToolEntry]:
+        """All enabled tools visible to the LLM router (both regular and llm_only)."""
+        return sorted(
+            (e for e in self._by_name.values() if e.enabled),
+            key=lambda e: e.name,
+        )
 
     def bind_metadata(self, store: ToolMetadataStore) -> None:
         """Load all TOML metadata and pair each entry with its registered tool.
@@ -86,6 +101,8 @@ class ToolRegistry:
             entry.description = md.description
             entry.category = md.category
             entry.enabled = md.enabled
+            entry.settle_ms = md.settle_ms
+            entry.llm_only = md.llm_only
 
     def reload_metadata(self, store: ToolMetadataStore) -> None:
         """Re-read all TOML and update existing entries.
@@ -104,6 +121,8 @@ class ToolRegistry:
             entry.description = md.description
             entry.category = md.category
             entry.enabled = md.enabled
+            entry.settle_ms = md.settle_ms
+            entry.llm_only = md.llm_only
 
     def __len__(self) -> int:
         return len(self._by_name)
@@ -131,8 +150,8 @@ def _normalize(phrase: str) -> str:
 
 
 def tool(
-    func: Callable[[], None] | None = None,
-) -> Callable[[], None] | Callable[[Callable[[], None]], Callable[[], None]]:
+    func: Callable[..., None] | None = None,
+) -> Callable[..., None] | Callable[[Callable[..., None]], Callable[..., None]]:
     """Decorator that registers a function as a voice command tool.
 
     Supports both bare ``@tool`` and ``@tool()`` usage.  Phrases are not
@@ -140,7 +159,7 @@ def tool(
     :meth:`ToolRegistry.bind_metadata`.
     """
 
-    def _register(fn: Callable[[], None]) -> Callable[[], None]:
+    def _register(fn: Callable[..., None]) -> Callable[..., None]:
         entry = ToolEntry(
             name=fn.__name__,
             phrases=(),

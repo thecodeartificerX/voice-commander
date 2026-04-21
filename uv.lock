@@ -2322,6 +2322,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "faster-whisper" },
+    { name = "httpx" },
     { name = "jinja2" },
     { name = "numpy" },
     { name = "nvidia-cublas-cu12" },
@@ -2349,7 +2350,6 @@ tray = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -2360,6 +2360,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "faster-whisper", specifier = ">=1.0.3" },
+    { name = "httpx", specifier = ">=0.27.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "nvidia-cublas-cu12", specifier = ">=12.9.2.10" },
@@ -2384,7 +2385,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.27.0" },
     { name = "mypy", specifier = ">=1.10.0" },
     { name = "pytest", specifier = ">=8.1.0" },
     { name = "pytest-cov", specifier = ">=5.0.0" },

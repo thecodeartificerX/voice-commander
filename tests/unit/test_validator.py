@@ -1,0 +1,247 @@
+"""Unit tests for voice_commander.validator.validate()."""
+
+# NOTE: Do NOT add `from __future__ import annotations` here.
+# validate() calls typing.get_type_hints(entry.func) which needs real runtime
+# annotations, not stringified ones.
+
+from unittest.mock import MagicMock
+
+from voice_commander.registry import ToolEntry, ToolRegistry
+from voice_commander.tool_metadata import ArgMetadata, ToolMetadata, ToolMetadataStore
+from voice_commander.validator import validate
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_store(tools: dict[str, ToolMetadata]) -> MagicMock:
+    """Return a mock ToolMetadataStore whose load_all() yields *tools*."""
+    store = MagicMock(spec=ToolMetadataStore)
+    store.load_all.return_value = tools
+    return store
+
+
+def _make_registry(*entries: ToolEntry) -> ToolRegistry:
+    registry = ToolRegistry()
+    for entry in entries:
+        registry.register(entry)
+    return registry
+
+
+def _entry(
+    name: str,
+    func,
+    *,
+    module: str = "voice_commander.tools.fake",
+    phrases: tuple[str, ...] = ("do thing",),
+    llm_only: bool = False,
+) -> ToolEntry:
+    return ToolEntry(
+        name=name,
+        phrases=phrases,
+        func=func,
+        module=module,
+        docstring=None,
+        llm_only=llm_only,
+    )
+
+
+def _meta(
+    name: str,
+    *,
+    phrases: tuple[str, ...] = ("do thing",),
+    description: str = "A tool.",
+    category: str = "test",
+    enabled: bool = True,
+    settle_ms: int = 0,
+    llm_only: bool = False,
+    args: dict[str, ArgMetadata] | None = None,
+) -> ToolMetadata:
+    return ToolMetadata(
+        name=name,
+        phrases=phrases,
+        description=description,
+        category=category,
+        enabled=enabled,
+        settle_ms=settle_ms,
+        llm_only=llm_only,
+        args=args or {},
+    )
+
+
+def _arg(name: str, type_str: str = "str", description: str = "A param.") -> ArgMetadata:
+    return ArgMetadata(
+        name=name,
+        type_str=type_str,
+        description=description,
+        required=True,
+        default=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 2: sig param without TOML arg entry
+# ---------------------------------------------------------------------------
+
+def test_rule2_param_without_toml_arg():
+    """A function parameter that has no matching [args.*] in TOML → [rule2]."""
+
+    def my_tool(query: str) -> None:
+        pass
+
+    registry = _make_registry(_entry("my_tool", my_tool))
+    # TOML metadata has no args block — 'query' is missing
+    store = _make_store({"my_tool": _meta("my_tool", args={})})
+
+    errors = validate(registry, store)
+
+    assert any("[rule2]" in e for e in errors), f"Expected [rule2] error, got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Rule 3: TOML arg not in signature
+# ---------------------------------------------------------------------------
+
+def test_rule3_toml_arg_not_in_signature():
+    """TOML declares arg 'foo' but function has no such parameter → [rule3]."""
+
+    def my_tool() -> None:
+        pass
+
+    registry = _make_registry(_entry("my_tool", my_tool))
+    store = _make_store({
+        "my_tool": _meta("my_tool", args={"foo": _arg("foo")})
+    })
+
+    errors = validate(registry, store)
+
+    assert any("[rule3]" in e for e in errors), f"Expected [rule3] error, got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Rule 4: unsupported type annotation
+# ---------------------------------------------------------------------------
+
+def test_rule4_unsupported_type():
+    """A param annotated with `list` (unsupported) → [rule4]."""
+
+    def my_tool(items: list) -> None:
+        pass
+
+    registry = _make_registry(_entry("my_tool", my_tool))
+    store = _make_store({
+        "my_tool": _meta("my_tool", args={"items": _arg("items", type_str="list")})
+    })
+
+    errors = validate(registry, store)
+
+    assert any("[rule4]" in e for e in errors), f"Expected [rule4] error, got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Rule 5: settle_ms out of range
+# ---------------------------------------------------------------------------
+
+def test_rule5_settle_ms_negative():
+    """settle_ms=-1 is below the allowed range [0, 5000] → [rule5]."""
+
+    def my_tool() -> None:
+        pass
+
+    registry = _make_registry(_entry("my_tool", my_tool))
+    store = _make_store({
+        "my_tool": _meta("my_tool", settle_ms=-1)
+    })
+
+    errors = validate(registry, store)
+
+    assert any("[rule5]" in e for e in errors), f"Expected [rule5] error, got: {errors}"
+
+
+def test_rule5_settle_ms_too_high():
+    """settle_ms=5001 is above the allowed range [0, 5000] → [rule5]."""
+
+    def my_tool() -> None:
+        pass
+
+    registry = _make_registry(_entry("my_tool", my_tool))
+    store = _make_store({
+        "my_tool": _meta("my_tool", settle_ms=5001)
+    })
+
+    errors = validate(registry, store)
+
+    assert any("[rule5]" in e for e in errors), f"Expected [rule5] error, got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Rule 6: llm_only with phrases
+# ---------------------------------------------------------------------------
+
+def test_rule6_llm_only_with_phrases():
+    """llm_only=True while entry.phrases is non-empty → [rule6]."""
+
+    def my_tool() -> None:
+        pass
+
+    entry = _entry("my_tool", my_tool, phrases=("foo",), llm_only=True)
+    registry = _make_registry(entry)
+    store = _make_store({
+        "my_tool": _meta("my_tool", llm_only=True, phrases=("foo",))
+    })
+
+    errors = validate(registry, store)
+
+    assert any("[rule6]" in e for e in errors), f"Expected [rule6] error, got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Rule 7: missing required primitive
+# ---------------------------------------------------------------------------
+
+def test_rule7_missing_primitive():
+    """Module is 'voice_commander.tools.primitives' but 'no_match' is absent → [rule7]."""
+
+    def wait() -> None:
+        pass
+
+    # Register *only* 'wait' from the primitives module — 'no_match' is absent.
+    entry = _entry(
+        "wait",
+        wait,
+        module="voice_commander.tools.primitives",
+        llm_only=True,
+        phrases=(),
+    )
+    registry = _make_registry(entry)
+    store = _make_store({
+        "wait": _meta("wait", llm_only=True, phrases=())
+    })
+
+    errors = validate(registry, store)
+
+    rule7_errors = [e for e in errors if "[rule7]" in e]
+    assert rule7_errors, f"Expected [rule7] error, got: {errors}"
+    assert any("no_match" in e for e in rule7_errors), (
+        f"Expected 'no_match' mentioned in [rule7] errors, got: {rule7_errors}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Happy path: no errors
+# ---------------------------------------------------------------------------
+
+def test_happy_path_all_valid():
+    """A properly configured zero-arg tool produces an empty error list."""
+
+    def my_tool() -> None:
+        pass
+
+    registry = _make_registry(_entry("my_tool", my_tool))
+    store = _make_store({
+        "my_tool": _meta("my_tool", args={})
+    })
+
+    errors = validate(registry, store)
+
+    assert errors == [], f"Expected no errors, got: {errors}"

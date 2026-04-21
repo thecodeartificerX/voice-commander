@@ -45,3 +45,11 @@ enabled = true
 host = "127.0.0.1"
 port = 8765
 auto_open_browser = true
+
+[llm_router]
+enabled = false
+# endpoint_url = "http://localhost:1234/v1"
+# model_id = "google/gemma-4-e4b"
+# timeout_ms = 600
+# max_plan_steps = 8
+# warmup_on_startup = true

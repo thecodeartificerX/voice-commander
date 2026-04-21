@@ -68,7 +68,26 @@ def _log_environment() -> None:
         logger.exception("failed to probe faster_whisper")
 
 
+def _run_validate(cfg: Config) -> None:
+    """Discover tools, bind metadata, run startup validator, and exit."""
+    from .registry import discover
+    from .tool_metadata import ToolMetadataStore
+    from .validator import validate_or_die
+
+    tools_dir = Path(__file__).resolve().parent / "tools"
+    store = ToolMetadataStore(tools_dir)
+    registry = discover("voice_commander.tools", store=store)
+    validate_or_die(registry, store)
+    print("OK")
+
+
 def main() -> None:
+    if "--validate" in sys.argv:
+        cfg = Config.load(Path("config.toml"))
+        _configure_logging(cfg)
+        _run_validate(cfg)
+        return
+
     cfg = Config.load(Path("config.toml"))
     _configure_logging(cfg)
     _enable_crash_reporting(cfg)

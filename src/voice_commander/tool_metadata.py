@@ -5,7 +5,7 @@ import os
 import tomllib
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import portalocker
@@ -18,12 +18,24 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class ArgMetadata:
+    name: str
+    type_str: str
+    description: str
+    required: bool
+    default: str | None
+
+
+@dataclass(frozen=True)
 class ToolMetadata:
     name: str
     phrases: tuple[str, ...]
     description: str
     category: str
     enabled: bool
+    settle_ms: int = 0
+    llm_only: bool = False
+    args: dict[str, ArgMetadata] = field(default_factory=dict)
 
 
 class ToolMetadataError(Exception):
@@ -133,7 +145,7 @@ class ToolMetadataStore:
             if not isinstance(tools_raw, dict):
                 raise ToolMetadataError(f"'tools' key in {toml_path} is not a TOML table")
 
-            tools_raw[name] = {
+            tool_entry: dict[str, object] = {
                 "phrases": list(md.phrases),
                 "description": md.description,
                 "enabled": md.enabled,
@@ -144,6 +156,22 @@ class ToolMetadataStore:
                     else {}
                 ),
             }
+            # Only write non-default values for new fields.
+            if md.settle_ms != 0:
+                tool_entry["settle_ms"] = md.settle_ms
+            if md.llm_only:
+                tool_entry["llm_only"] = md.llm_only
+            if md.args:
+                tool_entry["args"] = {
+                    arg_name: {
+                        "type": arg_md.type_str,
+                        "description": arg_md.description,
+                        "required": arg_md.required,
+                        **({"default": arg_md.default} if arg_md.default is not None else {}),
+                    }
+                    for arg_name, arg_md in md.args.items()
+                }
+            tools_raw[name] = tool_entry
 
             # Serialise and write atomically.
             content = _render_toml(file_data)
@@ -208,6 +236,22 @@ def _parse_tool(
         description = str(raw.get("description", ""))
         enabled = bool(raw.get("enabled", True))
         category = str(raw.get("category", default_category))
+        settle_ms_raw = raw.get("settle_ms", 0)
+        settle_ms = int(settle_ms_raw) if isinstance(settle_ms_raw, (int, float)) else 0
+        llm_only = bool(raw.get("llm_only", False))
+
+        args: dict[str, ArgMetadata] = {}
+        args_raw = raw.get("args")
+        if isinstance(args_raw, dict):
+            for arg_name, arg_data in args_raw.items():
+                if isinstance(arg_data, dict):
+                    args[arg_name] = ArgMetadata(
+                        name=arg_name,
+                        type_str=str(arg_data.get("type", "")),
+                        description=str(arg_data.get("description", "")),
+                        required=bool(arg_data.get("required", True)),
+                        default=str(arg_data["default"]) if "default" in arg_data else None,
+                    )
     except (KeyError, TypeError) as exc:
         raise ToolMetadataError(
             f"Malformed tool section '[tools.{name}]' in {source}: {exc}"
@@ -219,6 +263,9 @@ def _parse_tool(
         description=description,
         category=category,
         enabled=enabled,
+        settle_ms=settle_ms,
+        llm_only=llm_only,
+        args=args,
     )
 
 
@@ -254,8 +301,21 @@ def _render_toml(data: dict[str, object]) -> str:
         for tool_name, tool_data in tools_section.items():
             lines.append(f"[tools.{tool_name}]")
             if isinstance(tool_data, dict):
+                # Flat scalar/list fields first; defer nested "args" dict-of-dicts.
+                args_data: dict[str, object] | None = None
                 for field_key, field_val in tool_data.items():
+                    if field_key == "args" and isinstance(field_val, dict):
+                        args_data = field_val
+                        continue
                     lines.append(f"{field_key} = {_toml_value(field_val)}")
+                # Render [tools.<name>.args.<arg>] sub-tables after flat fields.
+                if args_data:
+                    for arg_name, arg_fields in args_data.items():
+                        lines.append("")
+                        lines.append(f"[tools.{tool_name}.args.{arg_name}]")
+                        if isinstance(arg_fields, dict):
+                            for arg_key, arg_val in arg_fields.items():
+                                lines.append(f"{arg_key} = {_toml_value(arg_val)}")
             lines.append("")  # blank line between sections
 
     # Trim trailing blank line.
