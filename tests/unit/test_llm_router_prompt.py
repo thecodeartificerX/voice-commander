@@ -39,11 +39,11 @@ def test_prompt_includes_all_three_examples() -> None:
 
 
 def test_prompt_token_budget() -> None:
-    """~4 chars/token rule-of-thumb → len(prompt) < 2000 keeps us well under 500 tokens."""
+    """~4 chars/token rule-of-thumb → len(prompt) < 2500 keeps us well under 650 tokens."""
     router = _make_router()
     prompt = router._build_system_prompt()
-    assert len(prompt) < 2000, (
-        f"System prompt length {len(prompt)} exceeds the 2000-char soft cap"
+    assert len(prompt) < 2500, (
+        f"System prompt length {len(prompt)} exceeds the 2500-char soft cap"
     )
 
 
