@@ -38,14 +38,14 @@ type = "string"
 
 [tools.close]
 phrases = []
-description = "Close the current tab/document in the focused window via Ctrl+W."
+description = "Close the current tab/document via Ctrl+W. DEFAULT for any bare 'close' utterance. Do NOT use close_window for a plain 'close' — only when the user explicitly says 'close window', 'close app', or 'quit'."
 enabled = true
 settle_ms = 100
 llm_only = true
 
 [tools.close_window]
 phrases = []
-description = "Close the currently focused window via Alt+F4."
+description = "Close the entire focused window (Alt+F4). ONLY use when the user explicitly says 'close window', 'close app', 'close application', or 'quit'. For bare 'close', use the `close` tool instead."
 enabled = true
 settle_ms = 100
 llm_only = true

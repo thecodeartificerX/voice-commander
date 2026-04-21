@@ -27,6 +27,12 @@ Rules
   or search intents.
 - Emit tool calls in strict execution order. The dispatcher runs
   them linearly and cannot replan.
+- "close", "close this", "close that", "close tab" → call `close()`
+  (Ctrl+W — closes the current tab / document). This is the default
+  for any bare "close" utterance.
+- "close window", "close app", "close application", "quit" → call
+  `close_window()` (Alt+F4 — closes the entire window). Only use
+  this when the user explicitly says window/app/quit.
 - Call `no_match(reason)` only when the utterance is not an
   executable command (casual speech, nonsense).
 
@@ -46,6 +52,12 @@ Tools: press(combo="ctrl+c"),
 
 User: "open spotify"
 Tools: open(target="spotify")
+
+User: "close"
+Tools: close()
+
+User: "close window"
+Tools: close_window()
 """
 
 
