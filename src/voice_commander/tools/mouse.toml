@@ -1,0 +1,11 @@
+category = "mouse"
+
+[tools.click]
+phrases = ["click", "left click", "click it"]
+description = "Left-click at the cursor."
+enabled = true
+
+[tools.right_click]
+phrases = ["right click", "right-click", "context click"]
+description = "Right-click at the cursor."
+enabled = true
