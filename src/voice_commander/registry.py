@@ -54,9 +54,12 @@ class ToolRegistry:
         return self._by_name.get(name)
 
     def all_llm_visible(self) -> list[ToolEntry]:
-        """All enabled tools visible to the LLM router (both regular and llm_only)."""
+        """Return tools that are both enabled and marked llm_only=True.
+
+        These are the only tools passed to the LLM router's tools array.
+        """
         return sorted(
-            (e for e in self._by_name.values() if e.enabled),
+            (e for e in self._by_name.values() if e.enabled and e.llm_only),
             key=lambda e: e.name,
         )
 

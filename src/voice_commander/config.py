@@ -102,6 +102,11 @@ class Config:
             local_path = path.with_name(f"{path.stem}.local{path.suffix}")
         if local_path != path and local_path.exists():
             raw = _deep_merge(raw, _read_toml(local_path))
+        if "llm_router" in raw:
+            raise ValueError(
+                "Config section '[llm_router]' was renamed to '[llm]' in ADR 0040. "
+                "Rename the section in your config file."
+            )
         vad_raw = raw.get("vad", {})
         gates_raw = vad_raw.pop("gates", {})
         return cls(

@@ -28,6 +28,7 @@ def _make_registry() -> ToolRegistry:
         module="test",
         docstring=None,
         description="Copy",
+        llm_only=True,
         params_schema={
             "type": "function",
             "function": {
