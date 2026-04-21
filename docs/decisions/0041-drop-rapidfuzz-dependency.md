@@ -34,7 +34,7 @@ With LLM-only routing (ADR 0040), `rapidfuzz` is no longer used anywhere in the 
 ### Neutral
 
 - The `llm_only` flag on `ToolEntry` is retained (see ADR 0040 for revised meaning).
-- The `@tool` decorator signature may retain a `phrases` parameter for a transition period, but it is ignored and emits a deprecation log at registration time.
+- The `@tool` decorator no longer requires `phrases`; tool metadata may still carry an optional empty `phrases` tuple for backward compatibility with the TOML round-trip.
 
 ## Related
 

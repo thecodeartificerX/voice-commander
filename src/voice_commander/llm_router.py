@@ -145,7 +145,7 @@ class LLMRouter:
             return None
 
         steps: list[ToolCall] = []
-        for tc in tool_calls:
+        for i, tc in enumerate(tool_calls):
             if len(steps) >= self._config.max_plan_steps:
                 break
             try:
@@ -160,8 +160,8 @@ class LLMRouter:
                 else:
                     kwargs = {}
                 steps.append(ToolCall(name=name, kwargs=kwargs))
-            except (json.JSONDecodeError, KeyError, TypeError):
-                logger.warning("LLM router: malformed tool_call entry, skipping")
+            except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                logger.warning("llm_router: skipping malformed tool_call at step %d: %s", i, exc)
                 continue
 
         if not steps:

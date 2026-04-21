@@ -10,7 +10,7 @@ The original primitive catalog shipped six verbs:
 | Verb | Purpose |
 |---|---|
 | `wait(ms)` | Pause between plan steps |
-| `press_keys(*keys)` | Send arbitrary keystroke combinations |
+| `press_keys(combo: str)` | Send arbitrary keystroke combinations |
 | `type_text(text)` | Type a string via `pyautogui.typewrite()` |
 | `focus_window(title_substring)` | Bring a window to foreground |
 | `launch(app)` | Open an application |
@@ -32,7 +32,7 @@ Add three primitives, all marked `llm_only = true`:
 
 - `direction`: `"up"` | `"down"` | `"left"` | `"right"`
 - `amount`: integer number of scroll clicks (default 3)
-- Implementation: `pyautogui.scroll(clicks)` (positive = up, negative = down) or `pyautogui.hscroll()` for left/right.
+- Implementation: `pyautogui.scroll(clicks)` (positive = up, negative = down). Horizontal scrolling (left/right) is not implemented in the current catalog.
 - `settle_ms`: 0 (scroll is near-instantaneous)
 
 ### `open_url(url)`

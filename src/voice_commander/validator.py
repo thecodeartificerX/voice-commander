@@ -136,7 +136,7 @@ def validate_config(cfg: Config) -> list[str]:
     # for read; values below 200 ms produce a negative read timeout.
     if cfg.llm.timeout_ms < _LLM_TIMEOUT_MIN_MS:
         errors.append(
-            f"[rule_c1] llm_router.timeout_ms={cfg.llm.timeout_ms} is below "
+            f"[rule_c1] llm.timeout_ms={cfg.llm.timeout_ms} is below "
             f"the minimum allowed value of {_LLM_TIMEOUT_MIN_MS} ms"
         )
 

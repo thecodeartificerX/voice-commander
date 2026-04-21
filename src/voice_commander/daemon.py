@@ -40,7 +40,7 @@ class StreamingDaemon:
     """VAD-streaming daemon: hotkey toggles a live voice-command session.
 
     While a session is open, silero-vad auto-segments utterances on natural
-    silence. Each utterance fires transcribe → gate → match → dispatch
+    silence. Each utterance fires transcribe → gate → resolve → dispatch
     immediately. No keypresses between commands.
 
     Optionally runs an embedded uvicorn-hosted web UI for managing tool

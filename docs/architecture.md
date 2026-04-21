@@ -211,7 +211,7 @@ class Transcriber:
     def transcribe(self, audio: Path | np.ndarray) -> TranscriptionResult: ...
 ```
 
-**What it does:** Wraps `faster_whisper.WhisperModel`. `load()` is a blocking call that downloads/caches and loads the model weights into GPU VRAM — it is called once at daemon startup so `transcribe()` never incurs cold-start latency. `transcribe()` runs inference on the supplied audio (either a WAV `Path` or a 1-D float32 ndarray at 16 kHz) and returns a `TranscriptionResult`. In VAD streaming mode an ndarray is passed directly to avoid temp-file I/O on the hot path (see ADR 0018). Language is pinned to English (`small.en` is English-only so no language detection overhead). `confidence` is computed as the mean of each segment's `avg_logprob`, clamped to `[0, 1]` via `max(0.0, min(1.0, (mean_logprob + 1.0)))` — values below `config.transcription.min_confidence` (default `0.30`) are treated as misses by `StreamingDaemon`'s pipeline gate regardless of fuzzy score.
+**What it does:** Wraps `faster_whisper.WhisperModel`. `load()` is a blocking call that downloads/caches and loads the model weights into GPU VRAM — it is called once at daemon startup so `transcribe()` never incurs cold-start latency. `transcribe()` runs inference on the supplied audio (either a WAV `Path` or a 1-D float32 ndarray at 16 kHz) and returns a `TranscriptionResult`. In VAD streaming mode an ndarray is passed directly to avoid temp-file I/O on the hot path (see ADR 0018). Language is pinned to English (`small.en` is English-only so no language detection overhead). `confidence` is computed as the mean of each segment's `avg_logprob`, clamped to `[0, 1]` via `max(0.0, min(1.0, (mean_logprob + 1.0)))` — values below `config.transcription.min_confidence` (default `0.30`) are treated as misses by `StreamingDaemon`'s pipeline gate.
 
 **Who calls it:** The worker thread (inside `Daemon`'s worker loop). `load()` is called by `Daemon.run()` before the worker thread starts. `Daemon.shutdown()` calls `Transcriber.unload()` to release the CUDA context.
 
@@ -242,7 +242,7 @@ class ToolRegistry:
     def all(self) -> list[ToolEntry]: ...
     def by_name(self, name: str) -> ToolEntry | None: ...
     def all_llm_visible(self) -> list[ToolEntry]: ...
-        # All entries visible to the LLM router (all registered tools)
+        # All entries visible to the LLM router (all enabled tools)
 
 def tool() -> Callable[[Callable], Callable]:
     """Decorator. Registers the function on the module-global registry."""
@@ -317,7 +317,7 @@ class FeedbackSink(Protocol):
 
 **What it does:** A `Protocol` (structural subtype) that decouples all user-visible feedback from the pipeline logic. Concrete implementations:
 
-- `WindowsFeedbackSink` — plays WAV chimes via `winsound.PlaySound(path, SND_FILENAME | SND_ASYNC)` (fire-and-forget, does not block the worker thread) and logs match/miss/error events. No visual notifications — see ADR 0013 for why toasts were dropped.
+- `WindowsFeedbackSink` — plays WAV chimes via `winsound.PlaySound(path, SND_FILENAME | SND_ASYNC)` (fire-and-forget, does not block the worker thread) and logs plan/miss/error events. No visual notifications — see ADR 0013 for why toasts were dropped.
 - `NullFeedbackSink` — all methods are no-ops. The default in unit tests where feedback is irrelevant.
 - `CapturingFeedbackSink` — records every call into a list for assertion in `Dispatcher` tests.
 
@@ -374,7 +374,7 @@ class LLMRouter:
     def metrics(self) -> dict[str, Any]: ...
 ```
 
-**What it does:** One-shot tool-call planner via local LM Studio. `route()` sends the transcript to the configured LM Studio endpoint as an OpenAI-compatible chat completion with `tool_choice="required"`. It parses the response into a `Plan` of `ToolCall` steps. Returns `None` on timeout, connection error, HTTP error, malformed response, or if the LLM calls `no_match`. `warmup()` posts a real chat-completion request with a synthetic transcript and `max_tokens=1` to prefill LM Studio's KV cache before the first real utterance. Returns `True` on success, `False` on any error. `close()` shuts down the underlying `httpx.Client`. Tracks simple metrics (total calls, timeouts, errors, avg latency).
+**What it does:** One-shot tool-call planner via local LM Studio. `route()` sends the transcript to the configured LM Studio endpoint as an OpenAI-compatible chat completion with `tool_choice="required"`. It parses the response into a `Plan` of `ToolCall` steps. Returns `None` on timeout, connection error, HTTP error, malformed response, no tool_calls in response, or if the LLM calls `no_match`. `warmup()` posts a real chat-completion request with a synthetic transcript and `max_tokens=1` to prefill LM Studio's KV cache before the first real utterance. Returns `True` on success, `False` on any error. `close()` shuts down the underlying `httpx.Client`. Tracks simple metrics (total calls, timeouts, errors, avg latency).
 
 **Who calls it:** `Resolver.resolve()`, on every utterance that passes the confidence/word-count gates.
 
@@ -504,3 +504,7 @@ reload_lock                                    shares ToolRegistry   uses reload
   - [`decisions/0017-soxr-streaming-resampler.md`](decisions/0017-soxr-streaming-resampler.md)
   - [`decisions/0018-ndarray-handoff-to-whisper.md`](decisions/0018-ndarray-handoff-to-whisper.md)
   - [`decisions/0019-supersede-single-shot-recorder.md`](decisions/0019-supersede-single-shot-recorder.md)
+  - [`decisions/0040-llm-only-routing.md`](decisions/0040-llm-only-routing.md)
+  - [`decisions/0041-drop-rapidfuzz-dependency.md`](decisions/0041-drop-rapidfuzz-dependency.md)
+  - [`decisions/0042-resolver-split-from-dispatcher.md`](decisions/0042-resolver-split-from-dispatcher.md)
+  - [`decisions/0043-nine-verb-primitive-catalog.md`](decisions/0043-nine-verb-primitive-catalog.md)

@@ -138,7 +138,14 @@ def launch(app: str) -> None:
 @tool
 def scroll(direction: str, amount: int = 3) -> None:
     """Scroll the active window up or down."""
-    clicks = amount if direction.lower() == "up" else -amount
+    d = direction.lower()
+    if d == "up":
+        clicks = amount
+    elif d == "down":
+        clicks = -amount
+    else:
+        logger.warning("scroll: unknown direction %r; no-op", direction)
+        return
     pyautogui.scroll(clicks)
 
 
