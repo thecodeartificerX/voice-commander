@@ -151,3 +151,117 @@ def test_mute_key_invalid_type_raises(tmp_path):
     cfg_file.write_text("[hotkey]\nmute_key = 123\n")
     with pytest.raises((TypeError, ValueError)):
         Config.load(cfg_file)
+
+
+# ---------------------------------------------------------------------------
+# LLMRouterConfig parsing
+# ---------------------------------------------------------------------------
+
+def test_llm_router_section_absent_returns_all_defaults(tmp_path):
+    """No [llm_router] section → all fields carry their documented defaults."""
+    cfg = Config.load(tmp_path / "nope.toml")
+    r = cfg.llm_router
+    assert r.enabled is False
+    assert r.endpoint_url == "http://localhost:1234/v1"
+    assert r.model_id == "google/gemma-4-e4b"
+    assert r.timeout_ms == 600
+    assert r.max_plan_steps == 8
+    assert r.warmup_on_startup is True
+
+
+def test_llm_router_all_fields_round_trip(tmp_path):
+    """Every [llm_router] field explicitly set → values round-trip into dataclass."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        textwrap.dedent("""
+        [llm_router]
+        enabled = true
+        endpoint_url = "http://192.168.1.50:1234/v1"
+        model_id = "mistral/mistral-7b"
+        timeout_ms = 1200
+        max_plan_steps = 4
+        warmup_on_startup = false
+    """)
+    )
+    cfg = Config.load(cfg_file)
+    r = cfg.llm_router
+    assert r.enabled is True
+    assert r.endpoint_url == "http://192.168.1.50:1234/v1"
+    assert r.model_id == "mistral/mistral-7b"
+    assert r.timeout_ms == 1200
+    assert r.max_plan_steps == 4
+    assert r.warmup_on_startup is False
+
+
+def test_llm_router_partial_section_respects_set_fields_and_defaults(tmp_path):
+    """Partial [llm_router] section → set fields respected, missing fields get defaults."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        textwrap.dedent("""
+        [llm_router]
+        enabled = true
+        max_plan_steps = 3
+    """)
+    )
+    cfg = Config.load(cfg_file)
+    r = cfg.llm_router
+    assert r.enabled is True
+    assert r.max_plan_steps == 3
+    # unset fields stay at defaults
+    assert r.endpoint_url == "http://localhost:1234/v1"
+    assert r.model_id == "google/gemma-4-e4b"
+    assert r.timeout_ms == 600
+    assert r.warmup_on_startup is True
+
+
+def test_llm_router_enabled_only_gets_default_endpoint_and_model(tmp_path):
+    """enabled = true with no other fields → router-enabled with all default endpoint/model/timeout values."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[llm_router]\nenabled = true\n")
+    cfg = Config.load(cfg_file)
+    r = cfg.llm_router
+    assert r.enabled is True
+    assert r.endpoint_url == "http://localhost:1234/v1"
+    assert r.model_id == "google/gemma-4-e4b"
+    assert r.timeout_ms == 600
+    assert r.max_plan_steps == 8
+    assert r.warmup_on_startup is True
+
+
+def test_llm_router_timeout_ms_string_raises(tmp_path):
+    """timeout_ms = 'fast' (string) → TypeError raised by _section type check."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[llm_router]\ntimeout_ms = "fast"\n')
+    with pytest.raises((TypeError, ValueError)):
+        Config.load(cfg_file)
+
+
+def test_llm_router_max_plan_steps_string_raises(tmp_path):
+    """max_plan_steps = 'many' (string) → TypeError raised by _section type check."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[llm_router]\nmax_plan_steps = "many"\n')
+    with pytest.raises((TypeError, ValueError)):
+        Config.load(cfg_file)
+
+
+def test_llm_router_enabled_wrong_type_raises(tmp_path):
+    """enabled = 1 (int, not bool) → TypeError raised by _section type check."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[llm_router]\nenabled = 1\n")
+    with pytest.raises((TypeError, ValueError)):
+        Config.load(cfg_file)
+
+
+def test_llm_router_unknown_key_raises(tmp_path):
+    """Unrecognised key in [llm_router] → ValueError from _section."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[llm_router]\nnot_a_real_field = true\n")
+    with pytest.raises((TypeError, ValueError)):
+        Config.load(cfg_file)
+
+
+def test_llm_router_is_frozen(tmp_path):
+    """LLMRouterConfig is frozen — mutation raises."""
+    cfg = Config.load(tmp_path / "nope.toml")
+    with pytest.raises((AttributeError, TypeError)):
+        cfg.llm_router.enabled = True
