@@ -84,6 +84,7 @@ class StreamingDaemon:
         self._hotkey: HotkeyController | None = None
         self._shutdown = threading.Event()
         self._shutdown_lock = threading.Lock()
+        # Single-worker executor for fire-and-forget async WAV writes (outputs/last_utterance.wav).
         self._wav_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="wav-writer",
         )

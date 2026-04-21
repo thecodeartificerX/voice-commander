@@ -25,4 +25,20 @@ When you touch any row, also update the corresponding ADR (never the other way a
 | Phased delivery | Each phase ends in an automated test gate **and** a human validation gate | No feature is "done" until both pass | [0009](../decisions/0009-phased-delivery-with-hitl-gates.md) |
 | Web UI | Embedded FastAPI + HTMX on a uvicorn daemon thread | Zero build step; partial-page updates; hot-reloads registry metadata | [0020](../decisions/0020-web-ui-embedded-fastapi.md), [0022](../decisions/0022-htmx-over-spa.md), [0023](../decisions/0023-metadata-only-hot-reload.md) |
 
+## LLM Router
+
+| Decision | Choice | Why | ADR |
+|---|---|---|---|
+| Routing strategy | rapidfuzz first (≥95 confidence); escalate to LLM on miss | Preserves ~1 ms hot path for simple commands; unlocks natural-language routing for the long tail | [0026](../decisions/0026-hybrid-routing-rapidfuzz-then-llm.md) |
+| rapidfuzz threshold when LLM enabled | 95 (up from 85) | Tighter gate pushes ambiguous matches to LLM instead of wrong hot-path dispatch | [0027](../decisions/0027-rapidfuzz-threshold-tightening.md) |
+| LLM backend | LM Studio OpenAI-compatible endpoint (`http://localhost:1234/v1`) | Already the standard local-model GUI on Windows; identical OpenAI tool-call request/response shape | [0028](../decisions/0028-lm-studio-openai-endpoint.md) |
+| First router model | Gemma 4 E4B Q4_K_M (`google/gemma-4-e4b`) | ~4 GB VRAM, ~510 ms warm on RTX 3060+, native tool-calling, one-click LM Studio install | [0029](../decisions/0029-gemma-4-e4b-as-first-model.md) |
+| LLM request history | Stateless — fresh two-message request per utterance | Voice commands are self-contained imperatives; history inflates prompt tokens and pollutes context | [0030](../decisions/0030-stateless-per-call-requests.md) |
+| Unroutable utterances | `tool_choice="required"` + `no_match(reason)` escape tool | Forces a structured response always; `no_match` gives the model a valid tool to call when uncertain | [0031](../decisions/0031-tool-choice-required-plus-no-match.md) |
+| Execution model | One-shot plan — all tool calls returned in a single LLM response, executed sequentially | Voice commands are deterministic sequences; multi-turn agentic loops cost 1.5 s–6 s per chain | [0032](../decisions/0032-one-shot-plan-not-agentic-loop.md) |
+| Inter-step timing | Per-tool `settle_ms` TOML key + LLM-callable `wait(ms)` primitive | Tool-inherent delay encoded once at authoring time; LLM can add extra pacing for unusual chains | [0033](../decisions/0033-per-tool-settle-ms-plus-wait-primitive.md) |
+| Tool argument source of truth | Python type hints + sidecar TOML `[tool.args.<name>]` sub-tables | Single authoring point; `inspect.signature` derives JSON schema; no extra deps | [0034](../decisions/0034-sig-plus-toml-as-single-source-of-truth.md) |
+| Commander skill for argument-bearing tools | Extended interview: args, `settle_ms`, `llm_only`; post-write validator run | Prevents sig↔TOML drift at creation time rather than at daemon start | [0035](../decisions/0035-commander-skill-contract-extension.md) |
+| Startup validation | `build_streaming_daemon()` validates sig↔TOML consistency; `--validate` CLI flag for CI | Fail-loud at load time; wrong arg names or missing descriptions crash before any utterance runs | [0036](../decisions/0036-startup-validator-tool-drift.md) |
+
 All ADRs live in [`../decisions/`](../decisions/). Add a new row here whenever you add a new ADR.
