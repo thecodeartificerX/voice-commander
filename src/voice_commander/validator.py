@@ -8,6 +8,7 @@ import types
 import typing
 from typing import Any
 
+from .config import Config
 from .registry import ToolRegistry
 from .tool_metadata import ToolMetadataStore
 
@@ -118,6 +119,42 @@ def validate_or_die(registry: ToolRegistry, store: ToolMetadataStore) -> None:
     errors = validate(registry, store)
     if errors:
         print("Startup validation FAILED:", file=sys.stderr)
+        for err in errors:
+            print(f"  {err}", file=sys.stderr)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Config validation
+# ---------------------------------------------------------------------------
+
+_LLM_TIMEOUT_MIN_MS = 200
+
+
+def validate_config(cfg: Config) -> list[str]:
+    """Validate runtime config values that cannot be caught by type-checking alone.
+
+    Returns a list of error strings. Empty list means valid.
+    """
+    errors: list[str] = []
+
+    # Rule C1: llm_router.timeout_ms must be >= 200.
+    # The HTTP client allocates 100 ms for connect and splits the remainder
+    # for read; values below 200 ms produce a negative read timeout.
+    if cfg.llm_router.timeout_ms < _LLM_TIMEOUT_MIN_MS:
+        errors.append(
+            f"[rule_c1] llm_router.timeout_ms={cfg.llm_router.timeout_ms} is below "
+            f"the minimum allowed value of {_LLM_TIMEOUT_MIN_MS} ms"
+        )
+
+    return errors
+
+
+def validate_config_or_die(cfg: Config) -> None:
+    """Run config validation; print errors and sys.exit(1) if any are found."""
+    errors = validate_config(cfg)
+    if errors:
+        print("Startup config validation FAILED:", file=sys.stderr)
         for err in errors:
             print(f"  {err}", file=sys.stderr)
         sys.exit(1)

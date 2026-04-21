@@ -29,7 +29,7 @@ from .tool_metadata import ToolMetadataStore
 from .tool_schema import sig_to_json_schema
 from .transcriber import Transcriber, TranscriptionResult
 from .vad_gate import VADGate
-from .validator import validate_or_die
+from .validator import validate_config_or_die, validate_or_die
 from .web.app import create_app
 from .web.server import WebServer
 
@@ -422,7 +422,8 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
             entry.func, args_meta, tool_name=entry.name, description=entry.description,
         )
 
-    # Startup validation — refuse to run on drift.
+    # Startup validation — refuse to run on bad config or tool/TOML drift.
+    validate_config_or_die(cfg)
     validate_or_die(registry, store)
 
     matcher = Matcher(registry, threshold=cfg.matching.threshold, reload_lock=reload_lock)

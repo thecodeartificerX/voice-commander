@@ -72,11 +72,12 @@ def _run_validate(cfg: Config) -> None:
     """Discover tools, bind metadata, run startup validator, and exit."""
     from .registry import discover
     from .tool_metadata import ToolMetadataStore
-    from .validator import validate_or_die
+    from .validator import validate_config_or_die, validate_or_die
 
     tools_dir = Path(__file__).resolve().parent / "tools"
     store = ToolMetadataStore(tools_dir)
     registry = discover("voice_commander.tools", store=store)
+    validate_config_or_die(cfg)
     validate_or_die(registry, store)
     print("OK")
 

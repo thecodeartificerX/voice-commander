@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import types
 import typing
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .tool_metadata import ArgMetadata
@@ -58,11 +61,11 @@ def sig_to_json_schema(
     # Resolve string annotations → real types (handles `from __future__ import annotations`).
     try:
         hints = typing.get_type_hints(func)
-    except Exception as exc:  # pragma: no cover — guard against import-time failures
+    except Exception:  # pragma: no cover — guard against import-time failures
         hints = {}
         # Surface the failure as a generic ToolSchemaError on the first parameter
         # that can't be resolved; we'll hit the missing-annotation guard below.
-        _ = exc  # noqa: F841
+        logger.debug("get_type_hints() failed for %s; falling back to empty hints", func, exc_info=True)
 
     properties: dict[str, Any] = {}
     required: list[str] = []

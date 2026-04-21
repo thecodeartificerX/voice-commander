@@ -168,6 +168,35 @@ Full schema + rationale: [`docs/superpowers/specs/2026-04-19-voice-commander-des
 
 ---
 
+## LLM Router (experimental)
+
+> **Status:** experimental, default off. Opt-in via `config.toml`.
+
+Voice Commander uses a hybrid routing strategy. `rapidfuzz` handles every utterance first: if the best-match score meets the threshold, the bound tool fires immediately (~1 ms routing overhead, unchanged from the default behavior). Utterances that fall below the threshold escalate to a local LLM via LM Studio's OpenAI-compatible endpoint (default model: Gemma 4 E4B). The LLM returns a one-shot ordered plan of typed tool calls — including chained commands like *"open a new tab then type hello"* — which the dispatcher executes step-by-step with per-tool settle delays. If LM Studio is offline, unreachable, or returns garbage, the router degrades silently to a miss chime; the daemon keeps running.
+
+To enable, add the following to `config.toml` (or `config.local.toml`):
+
+```toml
+[llm_router]
+enabled           = false
+endpoint_url      = "http://localhost:1234/v1"
+model_id          = "google/gemma-4-e4b"
+timeout_ms        = 600
+max_plan_steps    = 8
+warmup_on_startup = true
+```
+
+When `enabled = true`, also raise the matching threshold so only high-confidence utterances stay on the hot path:
+
+```toml
+[matching]
+threshold = 95
+```
+
+Full design: [`docs/superpowers/specs/2026-04-21-llm-router-design.md`](docs/superpowers/specs/2026-04-21-llm-router-design.md).
+
+---
+
 ## Architecture at a glance
 
 ```

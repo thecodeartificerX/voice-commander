@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class LLMRouter:
-    """Stateless one-shot tool-call planner via local LM Studio."""
+    """One-shot tool-call planner via local LM Studio."""
 
     def __init__(self, config: LLMRouterConfig, registry: ToolRegistry) -> None:
         self._config = config
@@ -167,6 +167,7 @@ class LLMRouter:
             resp = self._client.get("/models")
             return resp.status_code == 200
         except httpx.HTTPError:
+            logger.debug("LLM router warmup ping failed", exc_info=True)
             return False
 
     @property

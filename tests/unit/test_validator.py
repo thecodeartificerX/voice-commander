@@ -1,14 +1,16 @@
-"""Unit tests for voice_commander.validator.validate()."""
+"""Unit tests for voice_commander.validator.validate() and validate_config()."""
 
 # NOTE: Do NOT add `from __future__ import annotations` here.
 # validate() calls typing.get_type_hints(entry.func) which needs real runtime
 # annotations, not stringified ones.
 
+from dataclasses import replace
 from unittest.mock import MagicMock
 
+from voice_commander.config import Config, LLMRouterConfig
 from voice_commander.registry import ToolEntry, ToolRegistry
 from voice_commander.tool_metadata import ArgMetadata, ToolMetadata, ToolMetadataStore
-from voice_commander.validator import validate
+from voice_commander.validator import validate, validate_config
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -245,3 +247,48 @@ def test_happy_path_all_valid():
     errors = validate(registry, store)
 
     assert errors == [], f"Expected no errors, got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Rule C1: llm_router.timeout_ms minimum
+# ---------------------------------------------------------------------------
+
+def _cfg_with_timeout(timeout_ms: int) -> "Config":
+    """Build a default Config with llm_router.timeout_ms overridden."""
+    llm_cfg = LLMRouterConfig(timeout_ms=timeout_ms)
+    return replace(Config(), llm_router=llm_cfg)
+
+
+def test_rule_c1_timeout_ms_below_minimum():
+    """timeout_ms=100 is below the 200 ms minimum → [rule_c1] error mentioning timeout_ms and 200."""
+    cfg = _cfg_with_timeout(100)
+
+    errors = validate_config(cfg)
+
+    assert any("[rule_c1]" in e for e in errors), (
+        f"Expected [rule_c1] error, got: {errors}"
+    )
+    assert any("timeout_ms" in e for e in errors), (
+        f"Expected 'timeout_ms' in error message, got: {errors}"
+    )
+    assert any("200" in e for e in errors), (
+        f"Expected minimum value '200' mentioned in error message, got: {errors}"
+    )
+
+
+def test_rule_c1_timeout_ms_at_minimum_is_valid():
+    """timeout_ms=200 is exactly at the minimum → no errors."""
+    cfg = _cfg_with_timeout(200)
+
+    errors = validate_config(cfg)
+
+    assert errors == [], f"Expected no errors at timeout_ms=200, got: {errors}"
+
+
+def test_rule_c1_timeout_ms_above_minimum_is_valid():
+    """timeout_ms=600 is well above the minimum → no errors."""
+    cfg = _cfg_with_timeout(600)
+
+    errors = validate_config(cfg)
+
+    assert errors == [], f"Expected no errors at timeout_ms=600, got: {errors}"
