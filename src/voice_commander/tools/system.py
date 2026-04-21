@@ -13,3 +13,9 @@ def lock_screen() -> None:
 @tool
 def take_screenshot() -> None:
     pyautogui.hotkey("win", "shift", "s")
+
+
+@tool
+def cancel() -> None:
+    """Press and release Escape to cancel the current UI action."""
+    pyautogui.press("esc")

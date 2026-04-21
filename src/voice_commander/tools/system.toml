@@ -9,3 +9,8 @@ enabled = true
 phrases = ["take screenshot", "screenshot", "capture screen", "snip"]
 description = "Opens Snipping Tool with Win+Shift+S."
 enabled = true
+
+[tools.cancel]
+phrases = ["cancel", "escape", "dismiss"]
+description = "Press and release Escape."
+enabled = true
