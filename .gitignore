@@ -27,6 +27,9 @@ config.local.toml
 # Claude Code ephemeral state
 .claude/scheduled_tasks.lock
 
+# Superpowers brainstorming mockups + session state
+.superpowers/
+
 # IDE
 .vscode/
 .idea/
