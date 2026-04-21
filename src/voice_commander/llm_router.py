@@ -162,13 +162,84 @@ class LLMRouter:
         return Plan(steps=tuple(steps), raw_response=data)
 
     def warmup(self) -> bool:
-        """Ping LM Studio /models endpoint. Returns True if reachable."""
-        try:
-            resp = self._client.get("/models")
-            return resp.status_code == 200
-        except httpx.HTTPError:
-            logger.debug("LLM router warmup ping failed", exc_info=True)
+        """Seed LM Studio's prefix KV cache by posting a real chat-completion request.
+
+        Sends the exact same system prompt and tools array that real calls use,
+        but with a minimal ``"__warmup__"`` user transcript, ``tool_choice="none"``
+        (so the model is not forced into a useless tool invocation), and
+        ``max_tokens=1`` to abort generation immediately after the prefix prefill.
+        This ensures the ``system + tools`` prefix is in the KV cache before the
+        first real user utterance arrives.
+
+        Uses ``warmup_timeout_ms`` (not ``timeout_ms``) as the HTTP deadline,
+        since this is a one-shot startup cost — not a per-call latency budget.
+
+        Returns True on success, False on any error (best-effort; daemon continues).
+        Does NOT mutate any router state visible to subsequent ``route()`` calls —
+        the stateless-per-call contract is preserved.
+        """
+        tools = self._build_tools_array()
+        if not tools:
+            logger.debug("LLM router warmup skipped: no tools in registry")
             return False
+
+        body: dict[str, Any] = {
+            "model": self._config.model_id,
+            "messages": [
+                {"role": "system", "content": self._system_prompt},
+                {"role": "user", "content": "__warmup__"},
+            ],
+            "tools": tools,
+            # "none" prevents the model from emitting a tool call for a fake
+            # transcript, while still prefilling the system+tools prefix in the
+            # KV cache. Fall back to "auto" if a backend rejects "none".
+            "tool_choice": "none",
+            "temperature": 0,
+            "stream": False,
+            # max_tokens=1: abort generation after the prefix prefill so LM
+            # Studio doesn't waste compute producing a full response.
+            # Note: some model adapters may reject max_tokens=1; use 2 if needed.
+            "max_tokens": 1,
+        }
+
+        warmup_timeout = httpx.Timeout(
+            connect=0.1,
+            read=self._config.warmup_timeout_ms / 1000.0 - 0.1,
+            write=5.0,
+            pool=5.0,
+        )
+
+        start = time.perf_counter()
+        try:
+            resp = self._client.post(
+                "/chat/completions",
+                json=body,
+                timeout=warmup_timeout,
+            )
+            resp.raise_for_status()
+        except httpx.TimeoutException as exc:
+            logger.warning("LLM router warmup timed out: %s", exc)
+            return False
+        except httpx.ConnectError as exc:
+            logger.warning("LLM router warmup connect error: %s", exc)
+            return False
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "LLM router warmup HTTP %d: %s",
+                exc.response.status_code, exc,
+            )
+            return False
+        except httpx.HTTPError as exc:
+            logger.warning("LLM router warmup HTTP error: %s", exc)
+            return False
+
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        logger.info(
+            "LLM router warmup succeeded (latency_ms=%d, model=%s)",
+            elapsed_ms,
+            self._config.model_id,
+        )
+        return True
 
     @property
     def metrics(self) -> dict[str, Any]:

@@ -265,3 +265,35 @@ def test_llm_router_is_frozen(tmp_path):
     cfg = Config.load(tmp_path / "nope.toml")
     with pytest.raises((AttributeError, TypeError)):
         cfg.llm_router.enabled = True
+
+
+def test_llm_router_warmup_timeout_ms_default(tmp_path):
+    """warmup_timeout_ms defaults to 5000 when absent from config."""
+    cfg = Config.load(tmp_path / "nope.toml")
+    assert cfg.llm_router.warmup_timeout_ms == 5000
+
+
+def test_llm_router_warmup_timeout_ms_round_trip(tmp_path):
+    """warmup_timeout_ms can be set via TOML and round-trips into the dataclass."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[llm_router]\nwarmup_timeout_ms = 8000\n")
+    cfg = Config.load(cfg_file)
+    assert cfg.llm_router.warmup_timeout_ms == 8000
+
+
+def test_llm_router_warmup_timeout_ms_string_raises(tmp_path):
+    """warmup_timeout_ms = 'slow' (string) → TypeError from _section type check."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[llm_router]\nwarmup_timeout_ms = "slow"\n')
+    with pytest.raises((TypeError, ValueError)):
+        Config.load(cfg_file)
+
+
+def test_llm_router_warmup_timeout_ms_independent_of_timeout_ms(tmp_path):
+    """warmup_timeout_ms and timeout_ms are independent fields with separate defaults."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[llm_router]\ntimeout_ms = 300\n")
+    cfg = Config.load(cfg_file)
+    # per-call timeout changed, warmup timeout unchanged
+    assert cfg.llm_router.timeout_ms == 300
+    assert cfg.llm_router.warmup_timeout_ms == 5000

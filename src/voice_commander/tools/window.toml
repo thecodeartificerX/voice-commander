@@ -14,8 +14,10 @@ enabled = true
 phrases = ["focus browser", "switch to browser", "bring up browser"]
 description = "Focuses the Comet browser window."
 enabled = true
+settle_ms = 200
 
 [tools.focus_terminal]
 phrases = ["focus terminal", "switch to terminal", "bring up terminal"]
 description = "Focuses the Windows Terminal window."
 enabled = true
+settle_ms = 200

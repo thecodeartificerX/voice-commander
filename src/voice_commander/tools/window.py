@@ -5,7 +5,7 @@ import logging
 import pyautogui
 
 from ..registry import tool
-from ._win32 import COMET_EXE, COMET_LAUNCH_PATH, focus_window_by_exe
+from ._win32 import COMET_EXE, COMET_LAUNCH_PATH, FocusWindowError, focus_window_by_exe
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,15 @@ def focus_browser() -> None:
 
 
 def _focus_comet() -> None:
-    focus_window_by_exe(COMET_EXE, launch_path=str(COMET_LAUNCH_PATH))
+    try:
+        focus_window_by_exe(COMET_EXE, launch_path=str(COMET_LAUNCH_PATH))
+    except FocusWindowError:
+        logger.error(
+            "focus_browser: failed to focus exe=%r launch_path=%r",
+            COMET_EXE,
+            str(COMET_LAUNCH_PATH),
+        )
+        raise
 
 
 @tool
@@ -35,4 +43,8 @@ def focus_terminal() -> None:
 
 
 def _focus_terminal() -> None:
-    focus_window_by_exe("WindowsTerminal.exe")
+    try:
+        focus_window_by_exe("WindowsTerminal.exe")
+    except FocusWindowError:
+        logger.error("focus_terminal: failed to focus exe=%r", "WindowsTerminal.exe")
+        raise

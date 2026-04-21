@@ -83,6 +83,10 @@ class LLMRouterConfig:
     endpoint_url: str = "http://localhost:1234/v1"
     model_id: str = "google/gemma-4-e4b"
     timeout_ms: int = 600
+    # warmup_timeout_ms is a one-shot startup cost paid once at daemon init,
+    # not a per-call budget. Keep it generous (default 5000ms) so the first
+    # real user call always hits a pre-filled prefix KV cache.
+    warmup_timeout_ms: int = 5000
     max_plan_steps: int = 8
     warmup_on_startup: bool = True
 

@@ -65,6 +65,16 @@ Rejected. Requires the LLM to know the settle time of every tool. This is fragil
 ### Async settle (pipeline proceeds; next step waits for OS signal)
 Rejected. No reliable OS signal indicates "window is ready to receive keystrokes" or "tab is fully open". A time-based settle is practical and sufficient for the MVP.
 
+## Also see: ADR 0037
+
+ADR 0037 (Focus-Window Hardening — AttachThreadInput + Verified Raise Pattern) adds a clarification on how `settle_ms` interacts with the new `FocusWindowError` raise contract:
+
+- `settle_ms` for focus tools (`focus_browser`, `focus_terminal`, `focus_window`) is set to **200 ms** in ADR 0037. This timer is started only when `SetForegroundWindow` succeeds and is verified via `GetForegroundWindow()`.
+- If focus fails, `FocusWindowError` is raised. `Dispatcher.run_plan` catches it, halts the plan, and plays the miss chime. The `settle_ms` sleep is never reached.
+- In other words: `settle_ms` handles the "focus succeeded, now wait for the OS to paint" case; `FocusWindowError` handles the "focus never succeeded" case. The two mechanisms are complementary and non-overlapping.
+
+This relationship is important for future tool authors: `settle_ms` is not a substitute for focus verification. A focus tool must verify that the target window is actually in the foreground before returning; the `settle_ms` delay that follows is for safe downstream keystroke delivery, not for retrying a failed focus.
+
 ## References
 
 - Spec §Architecture (Dispatcher.run_plan, ToolEntry, primitive toolset), §Risks (chain race conditions) — `docs/superpowers/specs/2026-04-21-llm-router-design.md`
@@ -73,3 +83,4 @@ Rejected. No reliable OS signal indicates "window is ready to receive keystrokes
 - ADR 0032 — one-shot plan execution; `run_plan` step loop
 - ADR 0034 — TOML as single source of truth; `settle_ms` lives in TOML
 - ADR 0036 — startup validator; `settle_ms` range check
+- ADR 0037 — focus-window hardening; `FocusWindowError` raise contract; 200 ms `settle_ms` on focus tools

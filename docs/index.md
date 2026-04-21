@@ -18,4 +18,4 @@ Read in this order when joining the project:
 - Latest spec: [`superpowers/specs/2026-04-19-voice-commander-design.md`](superpowers/specs/2026-04-19-voice-commander-design.md)
 - Latest plan: [`superpowers/plans/2026-04-19-voice-commander-plan.md`](superpowers/plans/2026-04-19-voice-commander-plan.md)
 - LLM router spec: [`superpowers/specs/2026-04-21-llm-router-design.md`](superpowers/specs/2026-04-21-llm-router-design.md)
-- LLM router ADRs: 0026–0036 in [`decisions/`](decisions/)
+- LLM router ADRs: 0026–0038 in [`decisions/`](decisions/)

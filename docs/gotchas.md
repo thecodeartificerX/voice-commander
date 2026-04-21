@@ -227,3 +227,54 @@ Graceful shutdown: set `server.should_exit = True` and join the thread. Uvicorn 
 ## 17. Tailwind CSS vendoring
 
 The dashboard uses Tailwind CSS Play CDN (`<script src="https://cdn.tailwindcss.com">`) for development. For fully offline use, vendor the CDN script to `web/static/tailwind.min.js`. The Play CDN generates CSS client-side from class names — it's ~300KB but zero-config.
+
+---
+
+## 18. Windows 11 Foreground Lockout and `SetForegroundWindow` Silent Failure
+
+**Problem:** `SetForegroundWindow(hwnd)` appears to succeed (no Python exception) but the target window does not come to the foreground. Subsequent keystrokes land in the wrong window. The daemon log may show:
+
+```
+pywintypes.error: (0, 'SetForegroundWindow', 'No error message is available')
+```
+
+or the call may return `False` with no exception at all.
+
+**Explanation:** Windows 11 has tighter foreground-lockout rules than Windows 10. A background process (such as the Voice Commander daemon) is denied the ability to call `SetForegroundWindow` unless it holds the foreground permission token — which it does not, because it received no recent input event. The call fails silently: the Win32 return value is `False` and the error code is 0, neither of which raises a Python exception by default. If the function returns without raising, the caller assumes focus succeeded and continues — leading to keystrokes being sent to the wrong window.
+
+**Mitigation (ADR 0037):** Use the `AttachThreadInput` + `AllowSetForegroundWindow(ASFW_ANY)` + post-call `GetForegroundWindow` verification pattern:
+
+1. Call `AllowSetForegroundWindow(ASFW_ANY)` to acquire the foreground permission token.
+2. Retrieve the current foreground thread ID and the target window's thread ID.
+3. Call `AttachThreadInput(foreground_tid, target_tid, True)` to temporarily link the input queues.
+4. Call `SetForegroundWindow(hwnd)`.
+5. Unconditionally call `AttachThreadInput(foreground_tid, target_tid, False)` in a `finally` block.
+6. Call `GetForegroundWindow()` to verify focus actually changed. If `GetForegroundWindow() != hwnd`, raise `FocusWindowError`.
+
+Grep anchor for future agents: `pywintypes.error: (0, 'SetForegroundWindow', 'No error message is available')` — if you see this string in a log, the focus call failed and the daemon silently continued. Apply the pattern above.
+
+**Elevated windows:** a non-elevated daemon cannot focus an admin-elevated window regardless of `AttachThreadInput`. This failure is expected and `FocusWindowError` is raised.
+
+See ADR 0037 for the full rationale and alternatives considered.
+
+---
+
+## 19. LM Studio Prefix KV Cache: `GET /v1/models` Warmup Is Useless
+
+**Problem:** The daemon's startup warmup logs `warmup complete` after a successful `GET /v1/models` response, but the first real voice command still times out (observed: ~21 s gap between warmup success and first-call timeout in production log — see ADR 0038 for the exact excerpt).
+
+**Explanation:** `GET /v1/models` is a pure metadata query. It does not touch the LM Studio inference engine, does not allocate KV cache buffers, and does not execute any model computation. The model is loaded in VRAM, but LM Studio's prefix KV cache (which stores the prefilled key-value activations for the stable system prompt + tools array prefix) is empty. The first `/v1/chat/completions` call pays the full cold-prefill cost: 4–8 s on typical hardware for Gemma 4 E4B with the full tools array. The per-call `timeout_ms = 600` budget is calibrated for warm calls and is correctly too tight for this cold first call.
+
+R1 §5 documents this: prefix KV cache reuse applies only to the unchanging prefix that has already been processed by a real inference call. A GET request contributes nothing.
+
+**Mitigation (ADR 0038):** Replace the `GET /v1/models` warmup with a `POST /v1/chat/completions` call that matches the exact runtime request shape:
+
+- Use the real system prompt and real tools array (same as every routing call).
+- Set `tool_choice = "none"` (or `"auto"` as fallback) and `max_tokens = 1`.
+- Use a dedicated `warmup_timeout_ms = 5000` config field (separate from per-call `timeout_ms = 600`).
+
+This forces LM Studio to execute a full prompt prefill, populate the KV cache, and compile any CUDA kernels — so the first real call hits a warm cache and completes within the 600 ms budget.
+
+**Rule for future agents:** a warmup that does not POST the same request shape as the real calls will not seed the prefix KV cache. `GET /v1/models` only confirms the HTTP server is alive; it does not confirm inference readiness. Always POST a minimal chat-completion request to genuinely warm the cache.
+
+See ADR 0038 for the full rationale and alternatives considered.

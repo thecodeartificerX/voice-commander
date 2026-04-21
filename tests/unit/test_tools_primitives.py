@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import MagicMock, patch
 
 from voice_commander.tools.primitives import (
@@ -40,41 +41,72 @@ def test_type_text():
     mock_write.assert_called_once_with("hello", interval=0.02)
 
 
-def test_focus_window_matching_window():
-    """EnumWindows finds a visible matching window; SetForegroundWindow is called."""
+def test_focus_window_matching_window(monkeypatch):
+    """EnumWindows finds a visible matching window; AttachThreadInput path runs; returns None (no raise)."""
     mock_win32gui = MagicMock()
     mock_win32con = MagicMock()
+    mock_win32process = MagicMock()
     mock_win32con.SW_RESTORE = 9
 
-    # IsWindowVisible returns True, GetWindowText returns a matching title.
+    _TARGET_HWND = 42
+    _FG_HWND = 99
+    _FG_TID = 10
+    _TARGET_TID = 20
+
+    # IsWindowVisible returns True; GetWindowText returns a matching title.
     mock_win32gui.IsWindowVisible.return_value = True
     mock_win32gui.GetWindowText.return_value = "My Notepad Window"
+    mock_win32gui.IsIconic.return_value = False
+
+    # First call to GetForegroundWindow → fg_hwnd; subsequent calls (verification) → target hwnd.
+    _gfw_calls: list[int] = []
+
+    def _gfw():
+        if not _gfw_calls:
+            _gfw_calls.append(1)
+            return _FG_HWND
+        _gfw_calls.append(1)
+        return _TARGET_HWND  # verification succeeds immediately
+
+    mock_win32gui.GetForegroundWindow.side_effect = _gfw
+
+    # GetWindowThreadProcessId: (tid, pid)
+    mock_win32process.GetWindowThreadProcessId.side_effect = lambda hwnd, *_: (
+        (_FG_TID, 0) if hwnd == _FG_HWND else (_TARGET_TID, 12345)
+    )
 
     # Simulate EnumWindows by calling the callback immediately with hwnd=42.
     def fake_enum_windows(callback, extra):
-        callback(42, None)
+        callback(_TARGET_HWND, None)
 
     mock_win32gui.EnumWindows.side_effect = fake_enum_windows
 
+    monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", lambda *a: None)
+    monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
+
     with patch.dict(
         "sys.modules",
-        {"win32gui": mock_win32gui, "win32con": mock_win32con},
+        {"win32gui": mock_win32gui, "win32con": mock_win32con, "win32process": mock_win32process},
     ):
         focus_window("notepad")
 
-    mock_win32gui.ShowWindow.assert_called_once_with(42, mock_win32con.SW_RESTORE)
-    mock_win32gui.SetForegroundWindow.assert_called_once_with(42)
+    mock_win32gui.BringWindowToTop.assert_called_once_with(_TARGET_HWND)
+    mock_win32gui.SetForegroundWindow.assert_called_once_with(_TARGET_HWND)
 
 
 def test_focus_window_no_matching_window(caplog):
-    """EnumWindows finds no match; SetForegroundWindow is never called."""
+    """EnumWindows finds no match; FocusWindowError is raised and logged."""
     import logging
+
+    from voice_commander.tools._win32 import FocusWindowError
 
     mock_win32gui = MagicMock()
     mock_win32con = MagicMock()
+    mock_win32process = MagicMock()
 
     mock_win32gui.IsWindowVisible.return_value = True
     mock_win32gui.GetWindowText.return_value = "Some Unrelated Window"
+    mock_win32gui.GetForegroundWindow.return_value = 99
 
     def fake_enum_windows(callback, extra):
         callback(99, None)
@@ -83,21 +115,25 @@ def test_focus_window_no_matching_window(caplog):
 
     with patch.dict(
         "sys.modules",
-        {"win32gui": mock_win32gui, "win32con": mock_win32con},
-    ), caplog.at_level(logging.WARNING, logger="voice_commander.tools.primitives"):
-        focus_window("notepad")
+        {"win32gui": mock_win32gui, "win32con": mock_win32con, "win32process": mock_win32process},
+    ), caplog.at_level(logging.ERROR, logger="voice_commander.tools.primitives"):
+        with pytest.raises(FocusWindowError):
+            focus_window("notepad")
 
     mock_win32gui.SetForegroundWindow.assert_not_called()
     assert "notepad" in caplog.text
 
 
 def test_focus_window_import_error_fallback(caplog):
-    """When pywin32 is missing, focus_window logs a warning and returns cleanly."""
+    """When pywin32 is missing, focus_window logs a warning and raises FocusWindowError."""
     import logging
 
+    from voice_commander.tools._win32 import FocusWindowError
+
     with (
-        patch.dict("sys.modules", {"win32gui": None, "win32con": None}),
+        patch.dict("sys.modules", {"win32gui": None, "win32con": None, "win32process": None}),
         caplog.at_level(logging.WARNING, logger="voice_commander.tools.primitives"),
+        pytest.raises(FocusWindowError),
     ):
         focus_window("anything")
 

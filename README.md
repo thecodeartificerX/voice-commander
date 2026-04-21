@@ -178,13 +178,16 @@ To enable, add the following to `config.toml` (or `config.local.toml`):
 
 ```toml
 [llm_router]
-enabled           = false
-endpoint_url      = "http://localhost:1234/v1"
-model_id          = "google/gemma-4-e4b"
-timeout_ms        = 600
-max_plan_steps    = 8
-warmup_on_startup = true
+enabled             = false
+endpoint_url        = "http://localhost:1234/v1"
+model_id            = "google/gemma-4-e4b"
+timeout_ms          = 600
+max_plan_steps      = 8
+warmup_on_startup   = true
+warmup_timeout_ms   = 5000   # budget for the startup POST; higher than timeout_ms to cover cold KV-cache prefill
 ```
+
+> **Warmup note.** When `warmup_on_startup = true`, the daemon POSTs a real `/v1/chat/completions` request (with `max_tokens = 1`) at startup. This seeds LM Studio's prefix KV cache with the system prompt and tools array so the first real voice command lands on a warm cache. Startup takes ~5 s longer, but the first spoken command completes within the normal `timeout_ms` budget. `GET /v1/models` alone does not seed the cache — see [ADR 0038](docs/decisions/0038-llm-router-warmup-real-chat-completion.md).
 
 When `enabled = true`, also raise the matching threshold so only high-confidence utterances stay on the hot path:
 

@@ -40,5 +40,13 @@ When you touch any row, also update the corresponding ADR (never the other way a
 | Tool argument source of truth | Python type hints + sidecar TOML `[tool.args.<name>]` sub-tables | Single authoring point; `inspect.signature` derives JSON schema; no extra deps | [0034](../decisions/0034-sig-plus-toml-as-single-source-of-truth.md) |
 | Commander skill for argument-bearing tools | Extended interview: args, `settle_ms`, `llm_only`; post-write validator run | Prevents sig↔TOML drift at creation time rather than at daemon start | [0035](../decisions/0035-commander-skill-contract-extension.md) |
 | Startup validation | `build_streaming_daemon()` validates sig↔TOML consistency; `--validate` CLI flag for CI | Fail-loud at load time; wrong arg names or missing descriptions crash before any utterance runs | [0036](../decisions/0036-startup-validator-tool-drift.md) |
+| LLM warmup | `warmup()` POSTs a real `/v1/chat/completions` with system prompt + tools array, `tool_choice="none"`, `max_tokens=1`; dedicated `warmup_timeout_ms = 5000` config field | `GET /v1/models` does not seed the KV cache; cold first call timed out in production; warmup POST pre-populates the prefix cache so the first real call is warm | [0038](../decisions/0038-llm-router-warmup-real-chat-completion.md) |
+
+## Window / Focus Primitives
+
+| Decision | Choice | Why | ADR |
+|---|---|---|---|
+| `SetForegroundWindow` hardening | `AttachThreadInput(foreground_tid, target_tid, True)` + `AllowSetForegroundWindow(ASFW_ANY)` + `GetForegroundWindow()` post-call verification; raises `FocusWindowError` on verified failure | Windows 11 foreground-lockout causes silent failure; chains continued with keystrokes landing in wrong window; verified raise halts plan cleanly | [0037](../decisions/0037-focus-window-attachthreadinput-workaround.md) |
+| Focus tool `settle_ms` | `settle_ms = 200` on `focus_browser`, `focus_terminal`, `focus_window` | Extra 50 ms over previous 150 ms value accounts for Windows 11 paint latency after `AttachThreadInput`-based focus; only applied on success, never after `FocusWindowError` | [0037](../decisions/0037-focus-window-attachthreadinput-workaround.md), [0033](../decisions/0033-per-tool-settle-ms-plus-wait-primitive.md) |
 
 All ADRs live in [`../decisions/`](../decisions/). Add a new row here whenever you add a new ADR.

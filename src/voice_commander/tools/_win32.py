@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from subprocess import Popen
@@ -17,16 +19,112 @@ COMET_LAUNCH_PATH = (
     / "comet.exe"
 )
 
+# SW_RESTORE value — same constant used by win32con; duplicated here so it's
+# available even before pywin32 is imported, and for ctypes-only fallback paths.
+_SW_RESTORE = 9
+
+# AllowSetForegroundWindow(ASFW_ANY) — allows any process to set foreground.
+_ASFW_ANY = 0xFFFFFFFF
+
+
+class FocusWindowError(RuntimeError):
+    """Raised when focus_window_by_exe cannot reliably place a window in the foreground."""
+
+
+def _allow_set_foreground() -> None:
+    """Belt-and-suspenders: grant ASFW_ANY so our process can claim foreground."""
+    try:
+        user32 = ctypes.windll.user32
+        # argtypes/restype for AllowSetForegroundWindow
+        allow_fn = user32.AllowSetForegroundWindow
+        allow_fn.argtypes = [ctypes.c_uint]
+        allow_fn.restype = ctypes.c_bool
+        allow_fn(_ASFW_ANY)
+    except Exception:
+        logger.debug("AllowSetForegroundWindow unavailable", exc_info=True)
+
+
+def _get_current_thread_id() -> int:
+    """Return the calling thread's OS thread ID via kernel32."""
+    try:
+        kernel32 = ctypes.windll.kernel32
+        return int(kernel32.GetCurrentThreadId())
+    except Exception:
+        return 0
+
+
+def _attach_thread_input(attach_from: int, attach_to: int, attach: bool) -> None:
+    """Wrapper around user32.AttachThreadInput with explicit argtypes."""
+    try:
+        user32 = ctypes.windll.user32
+        fn = user32.AttachThreadInput
+        fn.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_bool]
+        fn.restype = ctypes.c_bool
+        fn(attach_from, attach_to, attach)
+    except Exception:
+        logger.debug("AttachThreadInput failed attach=%s", attach, exc_info=True)
+
+
+def _verify_foreground(target_hwnd: int, polls: int = 3, interval_ms: int = 20) -> bool:
+    """Poll GetForegroundWindow up to *polls* times; return True if it equals target_hwnd."""
+    try:
+        import win32gui
+    except ImportError:
+        return False
+    for _ in range(polls):
+        if win32gui.GetForegroundWindow() == target_hwnd:
+            return True
+        time.sleep(interval_ms / 1000.0)
+    return False
+
+
+def _do_focus(hwnd: int, foreground_tid: int, target_tid: int) -> None:
+    """Core focus sequence: optionally attach threads, BringWindowToTop, SetForegroundWindow."""
+    import win32gui
+
+    _allow_set_foreground()
+
+    same_thread = foreground_tid == target_tid or foreground_tid == 0
+
+    if not same_thread:
+        _attach_thread_input(foreground_tid, target_tid, True)
+    try:
+        win32gui.BringWindowToTop(hwnd)
+        win32gui.SetForegroundWindow(hwnd)
+    finally:
+        if not same_thread:
+            _attach_thread_input(foreground_tid, target_tid, False)
+
 
 def focus_window_by_exe(
     exe_name: str, launch_path: str | Sequence[str] | None = None
 ) -> bool:
-    """Cycles Alt+Tab-less focus to a window whose process exe matches. Returns True on success.
+    """Focus the foreground window to a process whose exe name matches *exe_name*.
 
-    If the pywin32/psutil imports fail, or if no running process matches
-    ``exe_name``, the function falls back to launching the application via
-    ``subprocess.Popen``. ``launch_path`` overrides the spawn argv (useful when
-    ``exe_name`` is not on PATH); defaults to ``[exe_name]``.
+    Algorithm
+    ---------
+    1. Enumerate top-level visible windows; pick the first whose owning process
+       has ``exe_name`` as its image name.
+    2. If the window is minimized (``IsIconic``), restore it via ``ShowWindow``.
+    3. Call ``AllowSetForegroundWindow(ASFW_ANY)`` as belt-and-suspenders.
+    4. Obtain the current foreground window's thread ID.
+    5. If the foreground thread differs from the target window's thread, use
+       ``AttachThreadInput(fg_tid, target_tid, TRUE)`` around the focus call,
+       with a guaranteed ``AttachThreadInput(..., FALSE)`` detach in a finally block.
+    6. Call ``BringWindowToTop(hwnd)`` then ``SetForegroundWindow(hwnd)``.
+    7. Poll ``GetForegroundWindow()`` up to ~60 ms (3 × 20 ms) to verify success.
+
+    Returns
+    -------
+    bool
+        ``True`` on verified success.
+
+    Raises
+    ------
+    FocusWindowError
+        On any failure — window not found, SetForegroundWindow denied, or
+        verification timeout. Callers should let this propagate so ``Dispatcher``
+        halts the plan chain instead of sending keystrokes to the wrong window.
     """
     spawn_argv: Sequence[str]
     if launch_path is None:
@@ -41,14 +139,18 @@ def focus_window_by_exe(
         import win32con
         import win32gui
         import win32process
-    except ImportError:
+    except ImportError as exc:
         Popen(spawn_argv)
-        return False
+        raise FocusWindowError(
+            f"pywin32/psutil not available; launched '{exe_name}' instead"
+        ) from exc
 
     target_pids = {p.pid for p in psutil.process_iter(["name"]) if p.info["name"] == exe_name}
     if not target_pids:
         Popen(spawn_argv)
-        return False
+        raise FocusWindowError(
+            f"No running process named '{exe_name}'; launched it instead"
+        )
 
     found: list[int] = []
 
@@ -62,12 +164,36 @@ def focus_window_by_exe(
 
     win32gui.EnumWindows(_enum, None)
     if not found:
-        return False
+        raise FocusWindowError(
+            f"Process '{exe_name}' is running but has no visible top-level window"
+        )
+
     hwnd = found[0]
-    try:
+
+    # Restore if minimized.
+    if win32gui.IsIconic(hwnd):
         win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-        win32gui.SetForegroundWindow(hwnd)
-    except Exception:
-        logger.exception("SetForegroundWindow failed")
-        return False
+
+    # Get thread IDs for AttachThreadInput.
+    fg_hwnd = win32gui.GetForegroundWindow()
+    foreground_tid: int
+    if fg_hwnd:
+        foreground_tid, _ = win32process.GetWindowThreadProcessId(fg_hwnd)
+    else:
+        foreground_tid = 0
+    target_tid, _ = win32process.GetWindowThreadProcessId(hwnd)
+
+    try:
+        _do_focus(hwnd, foreground_tid, target_tid)
+    except Exception as exc:
+        raise FocusWindowError(
+            f"SetForegroundWindow failed for '{exe_name}' hwnd={hwnd}: {exc}"
+        ) from exc
+
+    if not _verify_foreground(hwnd):
+        raise FocusWindowError(
+            f"Focus verification failed for '{exe_name}' hwnd={hwnd} "
+            "(GetForegroundWindow did not match after 60 ms)"
+        )
+
     return True
