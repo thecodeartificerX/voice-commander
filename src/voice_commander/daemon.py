@@ -129,7 +129,10 @@ class StreamingDaemon:
                 self._feedback.on_error("recorder.open_session", e)
         else:
             # Mute: close stream, drain queue
-            self._recorder.close_session()
+            try:
+                self._recorder.close_session()
+            except Exception:
+                logger.exception("close_session() failed during mute; treating as muted")
             self._drain_utt_q()
             self._muted = True
             logger.info("Session muted")

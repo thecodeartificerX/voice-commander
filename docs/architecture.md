@@ -42,7 +42,7 @@ This document is the canonical reference for Voice Commander's subsystem design 
 | VAD worker thread | `Resampler` + `VADGate` | Drains `raw_q`; resamples 48k→16k; runs silero-vad; emits complete utterances to `utt_q` |
 | Pipeline worker thread | `Transcriber` + `Matcher` + `Dispatcher` | Drains `utt_q`; runs full inference + match + dispatch pipeline |
 
-**Session model:** Scroll Lock opens a session; a second press closes it. While a session is open, VAD auto-segments the audio stream. Each detected utterance fires the pipeline worker immediately — no keypresses required between commands.
+**Session model:** Scroll Lock opens a session; a second press closes it. An optional mute key (configurable, disabled by default) suspends the audio stream within a session without ending it — two independent flags (`session_active`, `muted`). See ADR 0025. While a session is open, VAD auto-segments the audio stream. Each detected utterance fires the pipeline worker immediately — no keypresses required between commands.
 
 ---
 
@@ -52,7 +52,7 @@ Eight subsystems connected by the `StreamingDaemon` orchestrator. Each is indepe
 
 | Subsystem | Responsibility | Key dependency |
 |---|---|---|
-| `HotkeyController` | Listen for Scroll Lock, fire `on_toggle` | `pynput` |
+| `HotkeyController` | Listen for configurable keys, dispatch to registered callbacks | `pynput` |
 | `Resampler` | Stream device-native PCM → 16 kHz float32 chunks | `soxr` |
 | `VADGate` | Detect speech onset/offset; accumulate utterance ndarrays with pre-roll | `silero-vad`, `onnxruntime` |
 | `StreamingRecorder` | Own `sd.InputStream` + VAD worker thread; call `utterance_sink` on speech-end | `sounddevice`, `Resampler`, `VADGate` |
@@ -92,12 +92,12 @@ Rationale: the PortAudio callback has a real-time deadline (10–20 ms) — any 
 
 ```python
 class HotkeyController:
-    def __init__(self, key: str, on_toggle: Callable[[], None]) -> None: ...
+    def __init__(self, bindings: dict[str, Callable[[], None]]) -> None: ...
     def start(self) -> None: ...   # non-blocking; spawns pynput listener
     def stop(self) -> None: ...
 ```
 
-**What it does:** Listens for a single configurable key (default `"scroll_lock"`) using `pynput`'s global keyboard listener. Each key-release event fires `on_toggle` exactly once. It resolves the string key name to a `pynput.keyboard.Key` member at construction time and validates it; invalid keys raise `ValueError` before the daemon starts.
+**What it does:** Listens for one or more configurable keys using `pynput`'s global keyboard listener (single `Listener` instance, `suppress=False`). Each key-release event dispatches to the registered callback for that key via a `bindings` dict. It resolves each string key name to a `pynput.keyboard.Key` member at construction time and validates them; invalid keys raise `ValueError` before the daemon starts.
 
 **Who calls it:** `Daemon.__init__` constructs it; `Daemon.run()` calls `start()`; `Daemon.shutdown()` calls `stop()`.
 
