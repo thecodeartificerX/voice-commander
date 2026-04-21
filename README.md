@@ -1,137 +1,296 @@
 # Voice Commander
 
-A Windows voice-command launcher: press Scroll Lock, speak a command, and the matching keyboard action fires instantly — no cloud, no latency, fully offline on your GPU.
+> Press a key. Say the command. Ship.
+
+A **local-first, GPU-accelerated voice-command launcher for Windows.** You say the actual command — "copy", "new tab", "focus browser", "click" — and Voice Commander fires the matching keystroke or action instantly. No cloud. No latency. No wake word. No memorizing cryptic shortcuts.
+
+It is to Talon Voice what a utility knife is to a Swiss Army knife: smaller, sharper, and entirely yours to reshape.
+
+![MIT License](https://img.shields.io/badge/license-MIT-blue.svg) ![Platform Windows](https://img.shields.io/badge/platform-Windows-lightgrey) ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue) ![CUDA](https://img.shields.io/badge/CUDA-12.x-green)
 
 ---
 
-## Features (MVP Toolset)
+## Why this exists
 
-| Command phrase | Action |
-|---|---|
-| "copy" | Ctrl+C |
-| "paste" | Ctrl+V |
-| "cut" | Ctrl+X |
-| "select all" | Ctrl+A |
-| "focus browser" | Raise browser window |
-| "focus terminal" | Raise terminal window |
-| "minimize" | Minimize active window |
-| "maximize" | Maximize active window |
-| "new tab" | Ctrl+T |
-| "close tab" | Ctrl+W |
-| "reopen tab" | Ctrl+Shift+T |
-| "reload" | Ctrl+R |
-| "lock screen" | Win+L |
-| "take screenshot" | Win+Shift+S |
+Most voice tools fall into two camps:
+
+- **Cloud dictation** (Google, Siri, Dragon). Fast, accurate, and a hot mic sent to someone else's server.
+- **Programmable voice frameworks** (Talon, Dragonfly). Powerful, but you learn a whole grammar before you say your first word.
+
+Voice Commander is the boring middle ground. Push-to-talk, speak plain English, get a keystroke. Everything runs on your GPU. Adding a new command is a six-line Python file. The entire codebase is small enough to read in an afternoon and fork in a weekend.
 
 ---
 
-## Prerequisites
+## Features
 
-| Requirement | Minimum version |
+- **Push-to-talk session model.** Tap Scroll Lock to open a session → speak one or many commands back-to-back → tap again to close. Silero VAD auto-segments utterances on silence, so you never press a key between commands.
+- **Sub-second latency.** `faster-whisper small.en` on CUDA plus an ndarray hand-off (no temp-file I/O on the hot path) puts the speech-end → keystroke budget at ~700 ms.
+- **Fuzzy phrase matching.** Multiple spoken phrases can trigger the same tool (`"copy"`, `"copy that"`, `"copy selection"`). `rapidfuzz` handles homophones and mis-transcriptions gracefully.
+- **Mute hotkey for dictation coexistence.** Secondary key (default Right Ctrl) suspends the mic so Voice Commander does not fight your other dictation software. See [ADR 0025](docs/decisions/0025-mute-hotkey-for-external-dictation.md).
+- **Web UI.** Open `http://127.0.0.1:8765` while the daemon runs to edit phrases, toggle tools, and hot-reload without restarting. HTMX + FastAPI, no SPA build step. See [ADR 0022](docs/decisions/0022-htmx-over-spa.md).
+- **Sidecar TOML metadata.** Phrases and descriptions live in `.toml` files beside each tool module, so config and code evolve independently. See [ADR 0021](docs/decisions/0021-sidecar-toml-per-tool.md).
+- **Audio-only feedback.** A miss chime on low confidence, silence on success. No toast notifications ever. See [ADR 0013](docs/decisions/0013-drop-winrt-toasts-audio-only-feedback.md).
+- **Self-contained CUDA.** cuBLAS and cuDNN ship as pip wheels and are preloaded via `ctypes` before `faster_whisper` imports — no system CUDA install required. See [ADR 0012](docs/decisions/0012-cuda-dll-bundling.md).
+
+---
+
+## Built-in command set
+
+| Group | Commands |
 |---|---|
-| Python | 3.11+ |
-| [uv](https://docs.astral.sh/uv/) | latest |
-| CUDA Toolkit | 12.x |
-| cuDNN | 9.x |
-| NVIDIA GPU | Any CUDA-capable card (6 GB VRAM recommended for `small.en`) |
+| Clipboard | `copy`, `paste`, `cut`, `select all` |
+| Window | `focus browser`, `focus terminal`, `minimize`, `maximize` |
+| Browser | `new tab`, `close tab`, `reopen tab`, `reload`, `email` (Gmail), `messenger` (FB) |
+| System | `lock screen`, `take screenshot`, `cancel` |
+| Mouse | `click`, `right click` |
 
-> **Windows only.** Voice Commander uses `pynput`, `pyautogui`, and `winsound` for audio chimes — it does not run on Linux or macOS.
+Every phrase is editable in the web UI or the sidecar TOML next to the tool.
+
+> **Note.** The browser-focus group currently targets [Comet](https://comet.perplexity.ai) specifically (my daily driver). If you use a different browser, change two lines in `src/voice_commander/tools/_win32.py` or open an issue and we will land a config-driven lookup.
+
+---
+
+## Requirements
+
+| Requirement | Minimum | Notes |
+|---|---|---|
+| OS | **Windows 10/11** | Linux/macOS will not run — we use `pynput`, `pyautogui`, `winsound`, `pywin32`. |
+| Python | 3.11+ | 3.11 is the floor; 3.12 tested. |
+| [uv](https://docs.astral.sh/uv/) | latest | Replaces `pip`/`venv`/`poetry`. |
+| NVIDIA GPU | any CUDA-capable card | 6 GB VRAM recommended for `small.en`. CPU inference works but is ~5× slower. |
+| CUDA / cuDNN | 12.x / 9.x | Shipped as pip wheels — no system install needed. |
+| Microphone | any input device | The start script ships a device picker. |
 
 ---
 
 ## Install
 
-```bash
-# 1. Clone the repo
-git clone https://github.com/sakib/voice-commander.git
+```powershell
+# 1. Clone
+git clone https://github.com/thecodeartificerX/voice-commander.git
 cd voice-commander
 
-# 2. Install all dependencies (creates an isolated venv automatically)
+# 2. Let uv build the venv and pull every dependency
 uv sync
+
+# 3. Pick your microphone (writes to config.local.toml)
+uv run python scripts/set-audio-device.py
+
+# 4. Launch
+uv run voice-commander
+# — or, on Windows, use the bundled wrapper with device-picker
+.\start.ps1
 ```
 
-Ensure your CUDA 12 DLLs are on `PATH` and that `nvidia-smi` reports a visible GPU before running.
+**CPU-only install.** Edit `config.toml`:
+
+```toml
+[transcription]
+device = "cpu"
+compute_type = "int8"
+```
 
 ---
 
 ## Quickstart
 
-```bash
-uv run voice-commander
-```
+1. Run `uv run voice-commander`. The daemon loads Whisper into VRAM and arms Scroll Lock. First boot downloads the `small.en` model (~500 MB, cached).
+2. Press **Scroll Lock**. *(No chime — by design; see [ADR 0014](docs/decisions/0014-miss-only-chimes.md).)*
+3. Speak one or more commands: *"copy... new tab... paste..."* The VAD splits them on silence.
+4. Press **Scroll Lock** again to close the session.
+5. You only hear audio when something goes wrong — a miss chime on low-confidence transcripts or no-match phrases. Success is silent.
 
-1. The daemon starts, loads the Whisper model onto your GPU, and arms the hotkey.
-2. Press **Scroll Lock** — you will hear a start chime.
-3. Speak a command (e.g. "copy").
-4. Press **Scroll Lock** again — you will hear a stop chime.
-5. The matched tool fires. If nothing matches you will hear a miss chime.
+**Optional mute:** press **Right Ctrl** during a session to suspend the mic without ending the session. Press again to resume. Useful when another app (Windows Voice Access, browser dictation) also wants Right Ctrl.
 
 ---
 
 ## Configuration
 
-All tuneable values live in [`config.toml`](config.toml) at the project root. Missing keys fall back to built-in defaults defined in `src/voice_commander/config.py`. Unknown keys or wrong types raise at load time — typos are caught before the daemon starts.
-
-**Machine-local overrides.** Create `config.local.toml` next to `config.toml` for per-machine tweaks (audio device index, GPU compute type, etc.). It is gitignored and deep-merged over the tracked defaults on load, so only override the keys you need. `start.ps1` and `scripts/set-audio-device.py` write the chosen audio device to `config.local.toml` automatically.
-
-### Sections
+All runtime settings live in [`config.toml`](config.toml). Create `config.local.toml` next to it for per-machine overrides (audio device index, GPU compute type) — it is gitignored and deep-merged over the tracked file.
 
 | Section | Key | Default | Purpose |
 |---|---|---|---|
-| `[hotkey]` | `key` | `"scroll_lock"` | Toggle key. Any `pynput.keyboard.Key` name. |
-| `[audio]` | `channels` | `1` | Mono capture. |
-| | `device` | `-1` (= default) | PortAudio device index. Run `start.ps1 -ListDevices` to pick. |
-| | `output_dir` | `"outputs"` | Where `recorded.wav` is written. |
-| `[transcription]` | `model_size` | `"small.en"` | faster-whisper model. `tiny.en` / `base.en` / `small.en` / `medium.en`. |
-| | `device` | `"cuda"` | `"cuda"` or `"cpu"`. |
-| | `compute_type` | `"float16"` | CUDA: `"float16"` or `"int8_float16"`. CPU: `"int8"`. |
-| | `min_confidence` | `0.30` | Transcripts below this score are routed to miss (no tool fires). |
-| `[matching]` | `threshold` | `85.0` | rapidfuzz score floor (0-100). Lower = more lenient. |
-| | `scorer` | `"WRatio"` | rapidfuzz scorer name. |
-| `[feedback]` | `sounds_dir` | `"assets/sounds"` | Where chime WAVs live. |
-| | `start_sound` / `stop_sound` | — | Files exist but are not played (ADR 0014: miss-only feedback). |
-| | `miss_sound` | `"miss.wav"` | Chime on low-confidence or no-match. |
-| `[logging]` | `level` | `"INFO"` | Python log level. Override via `$VC_LOG_LEVEL`. |
-| | `file` | `"voice-commander.log"` | Rolling log path. |
+| `[hotkey]` | `key` | `"scroll_lock"` | Session toggle. Any `pynput.keyboard.Key` name. |
+| `[hotkey]` | `mute_key` | `"ctrl_r"` | Mute-within-session toggle. Set `""` to disable. |
+| `[audio]` | `device` | `-1` | PortAudio device index. `-1` = system default. |
+| `[transcription]` | `model_size` | `"small.en"` | `tiny.en` / `base.en` / `small.en` / `medium.en`. |
+| `[transcription]` | `device` | `"cuda"` | `"cuda"` or `"cpu"`. |
+| `[transcription]` | `min_confidence` | `0.30` | Transcripts below this score fire a miss chime. |
+| `[matching]` | `threshold` | `85.0` | rapidfuzz score floor (0–100). Lower = looser. |
+| `[vad]` | `threshold` | `0.4` | Silero speech-probability floor. |
+| `[vad.gates]` | `min_word_count` | `1` | Drop transcripts shorter than N words. |
+| `[web]` | `enabled` | `true` | Start the management UI on port 8765. |
 
-Full field-level reasoning: **§5 — Configuration** in the design spec at [`docs/superpowers/specs/2026-04-19-voice-commander-design.md`](docs/superpowers/specs/2026-04-19-voice-commander-design.md).
+Full schema + rationale: [`docs/superpowers/specs/2026-04-19-voice-commander-design.md`](docs/superpowers/specs/2026-04-19-voice-commander-design.md) §5.
 
 ---
 
-## Project Layout
+## Architecture at a glance
 
-For a guided reading order and links to every documentation file see:
-[`docs/index.md`](docs/index.md)
+```
+HotkeyCtrl ─toggle─▶ StreamingRecorder ─ndarray─▶ Transcriber ─text─▶ Matcher ─▶ Dispatcher ─▶ tool fn
+  pynput            sounddevice + soxr +          faster-whisper       rapidfuzz      invokes
+                    silero-vad (48k→16k)          (CUDA, small.en)                  + FeedbackSink
+```
+
+Four long-lived threads (PortAudio callback → VAD worker → pipeline worker, plus hotkey listener) connected by thread-safe queues. Every subsystem is independently unit-testable with no hardware.
+
+Read [`docs/architecture.md`](docs/architecture.md) for the full component contracts. Every big decision has an ADR in [`docs/decisions/`](docs/decisions/).
 
 ---
 
-## How to Add a New Tool
+## Adding a new command
 
-New tools follow the TDD pattern described in **Phase 4** of the implementation plan:
-[`docs/superpowers/plans/2026-04-19-voice-commander-plan.md`](docs/superpowers/plans/2026-04-19-voice-commander-plan.md)
+The fastest path is the `commander` Claude skill shipped in this repo — it walks you through a seven-question interview and writes the Python, TOML, and tests for you. To do it by hand:
 
-The short version:
-1. Add a failing test in `tests/unit/test_tools_<category>.py`.
-2. Implement the tool function in `src/voice_commander/tools/<category>.py`.
-3. Register the tool with its trigger phrases in the `ToolRegistry`.
-4. Add a fixture WAV and an integration test.
+**1. Write the tool function** — `src/voice_commander/tools/<group>.py`
+
+```python
+from ..registry import tool
+
+@tool
+def my_command() -> None:
+    """One-line description shown in the web UI."""
+    # do the thing
+    ...
+```
+
+**2. Register phrases** — `src/voice_commander/tools/<group>.toml`
+
+```toml
+[tools.my_command]
+phrases = ["my command", "do the thing", "go"]
+description = "One-line description shown in the web UI."
+enabled = true
+```
+
+**3. Write a unit test** — `tests/unit/test_tools_<group>.py`
+
+```python
+def test_my_command_fires_expected_side_effect(monkeypatch):
+    called = []
+    monkeypatch.setattr("voice_commander.tools.<group>.the_lib", lambda: called.append(1))
+    from voice_commander.tools.<group> import my_command
+    my_command()
+    assert called == [1]
+```
+
+**4. Verify**
+
+```powershell
+uv run pytest tests/unit/test_tools_<group>.py -q
+```
+
+That is it. The registry auto-discovers every module under `voice_commander.tools`, so there is nothing else to wire up.
 
 ---
 
 ## Contributing
 
-See [`CLAUDE.md`](CLAUDE.md) for project conventions, architectural decisions, and the agent-collaboration workflow used on this codebase.
+Pull requests welcome. This is a small, opinionated codebase — but the surface for useful contributions is huge:
+
+### Easy first PRs
+- Add a new tool (see above). Every new phrase is valuable.
+- Broaden an existing tool's phrases. Speech recognition is fuzzy; more synonyms = fewer misses.
+- Fix a miss that you actually hit. Reproduce with the fixture, tighten the matcher.
+
+### Meatier contributions
+- **Cross-browser support.** Replace the Comet-only `focus_browser` with a config-driven lookup (ProgID → EXE, or just a user-supplied path).
+- **Per-app command sets.** Activate different tools when Chrome vs VS Code is focused (Phase 6 roadmap).
+- **Wake-word mode.** Drop the push-to-talk hotkey for an always-on wake phrase. Porcupine or OpenWakeWord are the obvious choices.
+- **Argument-bearing commands.** "Open readme in the projects folder" routed via a local LLM doing tool-calling. Design is already sketched in [`docs/superpowers/specs/`](docs/superpowers/specs/).
+- **Tray icon + systray controls.** Stub exists in `pyproject.toml` (optional `tray` extra); nobody has wired it up yet.
+
+### House rules
+1. **Docs before code.** Architectural decisions land in `docs/decisions/` as an ADR **at the time of the decision**, not retroactively. Look at any existing ADR for the template.
+2. **Tests before claims.** No PR is merged until `uv run pytest` is green. Every new tool ships a unit test; every new subsystem ships its own test file.
+3. **Narrow interfaces.** Each module has one job. If your PR crosses more than three files outside `tools/`, split it.
+4. **Audio-only feedback.** No toast notifications, no popups, no focus stealing. See ADR 0013 for the reasoning.
+5. **No AI-generated commit messages that fib.** If Claude wrote the code, keep the `Co-Authored-By` trailer; if you wrote it, drop the trailer. Honesty over optics.
+6. **Conventional commits.** `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`. Scope the feature where useful: `feat(tools): add volume up/down`.
+
+### Dev setup
+
+```powershell
+# Install dev deps
+uv sync
+
+# Full suite
+uv run pytest
+
+# Lint + type-check
+uv run ruff check .
+uv run mypy src
+
+# Fast iteration (skip integration tests)
+uv run pytest -m "not integration"
+
+# Run with live debug logs
+$env:VC_LOG_LEVEL="DEBUG"; uv run voice-commander
+```
+
+Coverage floor is 80% (enforced in `pyproject.toml`). Hardware-dependent modules (`_cuda_setup.py`, `hotkey.py`, `transcriber.py`, `tools/_win32.py`) are excluded from the unit coverage target and validated via `@pytest.mark.hardware` tests + manual phase gates documented in [`docs/testing-strategy.md`](docs/testing-strategy.md).
+
+### Filing an issue
+
+Bugs: include `voice-commander.log`, your `config.toml`, output of `uv run python scripts/list-input-devices.py`, and `nvidia-smi`.
+
+Feature requests: describe the utterance you want to say and what should happen when you say it. "Voice Commander should…" is a better opener than "I want a button that…".
+
+---
+
+## Documentation map
+
+| File | What it is |
+|---|---|
+| [`CLAUDE.md`](CLAUDE.md) | Canonical project rules for humans and AI agents |
+| [`docs/architecture.md`](docs/architecture.md) | Subsystem diagram + component contracts |
+| [`docs/libraries.md`](docs/libraries.md) | Every dependency and why it is here |
+| [`docs/gotchas.md`](docs/gotchas.md) | Windows traps, CUDA DLL quirks, threading pitfalls |
+| [`docs/testing-strategy.md`](docs/testing-strategy.md) | Four-layer test pyramid + per-phase validation |
+| [`docs/decisions/`](docs/decisions/) | ADRs 0001–0025 — one per locked decision |
+| [`docs/references/`](docs/references/) | Vendored framework docs (faster-whisper, silero-vad, etc.) |
+| [`docs/superpowers/specs/`](docs/superpowers/specs/) | Design docs from brainstorming |
+| [`docs/superpowers/plans/`](docs/superpowers/plans/) | Implementation plans |
+
+Start at [`docs/index.md`](docs/index.md) for a guided reading order.
+
+---
+
+## Roadmap
+
+- ✅ Phases 0–5 complete (scaffolding → MVP toolset → hardening)
+- ✅ Web UI for command management
+- ✅ VAD streaming (session-based, auto-segmented)
+- ✅ Mute hotkey for dictation coexistence
+- 🔜 Per-app command sets
+- 🔜 Wake-word mode (opt-in)
+- 🔜 Local LLM intent router for argument-bearing commands
+
+---
+
+## Acknowledgements
+
+Built on the shoulders of:
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — CTranslate2-accelerated Whisper
+- [silero-vad](https://github.com/snakers4/silero-vad) — ONNX voice activity detection
+- [rapidfuzz](https://github.com/rapidfuzz/RapidFuzz) — fast fuzzy string matching
+- [sounddevice](https://python-sounddevice.readthedocs.io/) / [soxr](https://pypi.org/project/soxr/) — audio I/O and resampling
+- [pynput](https://pynput.readthedocs.io/) / [pyautogui](https://pyautogui.readthedocs.io/) — hotkey and keystroke emulation
+- [FastAPI](https://fastapi.tiangolo.com/) / [HTMX](https://htmx.org/) — the web UI
+
+Inspired in equal parts by [Talon Voice](https://talonvoice.com/) and the desire to never learn Talon Voice.
 
 ---
 
 ## License
 
-MIT License
+MIT. See [LICENSE](LICENSE) (or the inline notice below).
 
-Copyright (c) 2026 Sakib
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+> Copyright (c) 2026 Sakib
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
