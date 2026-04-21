@@ -37,6 +37,9 @@ Rules
   `minimize()` (focused window) or `minimize(target="X")` for a named
   window. NEVER emit `press(combo="win+d")` or `press(combo="win+m")`
   — those minimize every window.
+- "maximize", "maximise", "maximize this", "maximize X" → call
+  `maximize()` (focused window) or `maximize(target="X")`. NEVER emit
+  `press(combo="win+up")`.
 - Call `no_match(reason)` only when the utterance is not an
   executable command (casual speech, nonsense).
 

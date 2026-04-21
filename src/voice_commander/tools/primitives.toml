@@ -62,6 +62,18 @@ description = "Optional process name or window title (fuzzy-matched). Omit to mi
 required = false
 type = "string"
 
+[tools.maximize]
+phrases = []
+description = "Maximize a single window (defaults to the currently focused window). ALWAYS use this tool for 'maximize' utterances. NEVER emit press(combo='win+up')."
+enabled = true
+settle_ms = 100
+llm_only = true
+
+[tools.maximize.args.target]
+description = "Optional process name or window title (fuzzy-matched). Omit to maximize the focused window only."
+required = false
+type = "string"
+
 [tools.press]
 phrases = []
 description = "Press a key combination like 'ctrl+c', 'alt+tab', 'win+l'."

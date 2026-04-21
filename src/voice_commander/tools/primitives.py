@@ -250,22 +250,44 @@ def minimize(target: str | None = None) -> None:
         :func:`resolver.resolve_window`). Omit to minimize the focused
         window.
     """
+    _show_window(target, action="minimize")
+
+
+@tool
+def maximize(target: str | None = None) -> None:
+    """Maximize a single window. Defaults to the currently focused window.
+
+    Do NOT emit ``press(combo="win+up")`` for "maximize" utterances —
+    use this tool.
+
+    Parameters
+    ----------
+    target:
+        Optional process name or window title (fuzzy-matched via
+        :func:`resolver.resolve_window`). Omit to maximize the focused
+        window.
+    """
+    _show_window(target, action="maximize")
+
+
+def _show_window(target: str | None, *, action: str) -> None:
     try:
         import win32con
         import win32gui
     except ImportError:
-        logger.warning("pywin32 not available, cannot minimize window")
+        logger.warning("pywin32 not available, cannot %s window", action)
         return
 
     if target is None:
         hwnd = win32gui.GetForegroundWindow()
         if not hwnd:
-            logger.warning("minimize: no foreground window to minimize")
+            logger.warning("%s: no foreground window", action)
             return
     else:
         hwnd = resolver.resolve_window(target)
 
-    win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
+    sw_cmd = win32con.SW_MINIMIZE if action == "minimize" else win32con.SW_MAXIMIZE
+    win32gui.ShowWindow(hwnd, sw_cmd)
 
 
 def _close_with_verify(combo: tuple[str, ...], *, verb: str) -> None:
