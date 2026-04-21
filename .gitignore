@@ -21,6 +21,9 @@ voice-commander.log
 # Local config overrides (device index, per-machine tweaks)
 config.local.toml
 
+# start.ps1 last-choice persistence
+.last-router-mode
+
 # Claude Code ephemeral state
 .claude/scheduled_tasks.lock
 
