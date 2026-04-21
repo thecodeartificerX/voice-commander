@@ -288,29 +288,29 @@ def test_mute_unmute_lifecycle(tmp_path: Any) -> None:
 
     from voice_commander.daemon import StreamingDaemon
     from voice_commander.feedback import CapturingFeedbackSink
+    from voice_commander.llm_router import LLMRouter
     from voice_commander.plan import Plan, ToolCall
-    from voice_commander.resolver import Resolver
     from voice_commander.transcriber import TranscriptionResult
 
     feedback = CapturingFeedbackSink()
     recorder = MagicMock()
     recorder.is_open = False
     transcriber = MagicMock()
-    resolver = MagicMock(spec=Resolver)
+    llm_router = MagicMock(spec=LLMRouter)
     dispatcher = MagicMock()
 
     result = TranscriptionResult(
         text="copy", confidence=0.95, language="en", duration_ms=500, no_speech_prob=0.05,
     )
     transcriber.transcribe.return_value = result
-    plan = Plan(steps=(ToolCall(name="copy", kwargs={}),), raw_response={})
-    resolver.resolve.return_value = plan
+    plan = Plan(steps=(ToolCall(name="press", kwargs={"combo": "ctrl+c"}),), raw_response={})
+    llm_router.route.return_value = plan
 
     daemon = StreamingDaemon(
         feedback=feedback,
         recorder=recorder,
         transcriber=transcriber,
-        resolver=resolver,
+        llm_router=llm_router,
         dispatcher=dispatcher,
         registry=MagicMock(),
         output_dir=str(tmp_path / "outputs"),

@@ -4,7 +4,7 @@ Gates (in order):
   1. word-count  — drop if fewer than min_word_count words
   2. no_speech_prob — drop if above max_no_speech_prob
   3. confidence  — on_miss if below min_confidence
-  4. all-pass    — matcher.match → dispatcher.dispatch
+  4. all-pass    — llm_router.route → (None → on_miss | Plan → dispatcher.run_plan)
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ import numpy as np
 
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.plan import Plan, ToolCall
-from voice_commander.resolver import Resolver
 from voice_commander.transcriber import TranscriptionResult
 
 # ---------------------------------------------------------------------------
@@ -63,12 +62,12 @@ def _make_daemon(
     transcriber = MagicMock()
     transcriber.transcribe.return_value = transcription_result
 
-    resolver = MagicMock(spec=Resolver)
-    # Default: resolver returns a plan so dispatch proceeds when all gates pass.
+    llm_router = MagicMock()
+    # Default: router returns a plan so dispatch proceeds when all gates pass.
     _default_plan = Plan(
-        steps=(ToolCall(name="copy", kwargs={}),), raw_response={}
+        steps=(ToolCall(name="press", kwargs={"combo": "ctrl+c"}),), raw_response={}
     )
-    resolver.resolve.return_value = _default_plan
+    llm_router.route.return_value = _default_plan
 
     dispatcher = MagicMock()
 
@@ -81,7 +80,7 @@ def _make_daemon(
         feedback=fb,
         recorder=recorder,
         transcriber=transcriber,
-        resolver=resolver,
+        llm_router=llm_router,
         dispatcher=dispatcher,
         registry=MagicMock(),
         min_confidence=min_confidence,
@@ -89,7 +88,7 @@ def _make_daemon(
         max_no_speech_prob=max_no_speech_prob,
         output_dir=output_dir,
     )
-    return daemon, transcriber, resolver, dispatcher, fb
+    return daemon, transcriber, llm_router, dispatcher, fb
 
 
 _DUMMY_AUDIO = np.zeros(16000, dtype=np.float32)
@@ -101,24 +100,28 @@ _DUMMY_AUDIO = np.zeros(16000, dtype=np.float32)
 
 
 def test_word_count_gate_drops_empty(tmp_path):
-    """Empty transcript (0 words) must not reach the resolver."""
+    """Empty transcript (0 words) must not reach the llm_router."""
     result = _make_result(text="", confidence=0.9, no_speech_prob=0.1)
-    daemon, _, resolver, dispatcher, fb = _make_daemon(result, min_word_count=1, tmp_path=tmp_path)
+    daemon, _, llm_router, dispatcher, fb = _make_daemon(
+        result, min_word_count=1, tmp_path=tmp_path
+    )
 
     daemon._process_utterance(_DUMMY_AUDIO)
 
-    resolver.resolve.assert_not_called()
+    llm_router.route.assert_not_called()
     dispatcher.run_plan.assert_not_called()
 
 
 def test_word_count_gate_passes_single_word(tmp_path):
     """A single-word transcript passes the word-count gate."""
     result = _make_result(text="copy", confidence=0.9, no_speech_prob=0.1)
-    daemon, _, resolver, dispatcher, _ = _make_daemon(result, min_word_count=1, tmp_path=tmp_path)
+    daemon, _, llm_router, dispatcher, _ = _make_daemon(
+        result, min_word_count=1, tmp_path=tmp_path
+    )
 
     daemon._process_utterance(_DUMMY_AUDIO)
 
-    resolver.resolve.assert_called_once()
+    llm_router.route.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -127,28 +130,28 @@ def test_word_count_gate_passes_single_word(tmp_path):
 
 
 def test_no_speech_prob_gate_drops_high_prob(tmp_path):
-    """no_speech_prob=0.8 > max 0.6 → transcript dropped before resolver."""
+    """no_speech_prob=0.8 > max 0.6 → transcript dropped before llm_router."""
     result = _make_result(text="copy", confidence=0.9, no_speech_prob=0.8)
-    daemon, _, resolver, dispatcher, _ = _make_daemon(
+    daemon, _, llm_router, dispatcher, _ = _make_daemon(
         result, max_no_speech_prob=0.6, tmp_path=tmp_path
     )
 
     daemon._process_utterance(_DUMMY_AUDIO)
 
-    resolver.resolve.assert_not_called()
+    llm_router.route.assert_not_called()
     dispatcher.run_plan.assert_not_called()
 
 
 def test_no_speech_prob_gate_passes_low_prob(tmp_path):
-    """no_speech_prob=0.3 < max 0.6 → passes to resolver."""
+    """no_speech_prob=0.3 < max 0.6 → passes to llm_router."""
     result = _make_result(text="copy", confidence=0.9, no_speech_prob=0.3)
-    daemon, _, resolver, dispatcher, _ = _make_daemon(
+    daemon, _, llm_router, dispatcher, _ = _make_daemon(
         result, max_no_speech_prob=0.6, tmp_path=tmp_path
     )
 
     daemon._process_utterance(_DUMMY_AUDIO)
 
-    resolver.resolve.assert_called_once()
+    llm_router.route.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -157,10 +160,10 @@ def test_no_speech_prob_gate_passes_low_prob(tmp_path):
 
 
 def test_confidence_gate_triggers_miss(tmp_path):
-    """Low confidence fires on_miss; resolver and dispatcher are not called."""
+    """Low confidence fires on_miss; llm_router and dispatcher are not called."""
     fb = CapturingFeedbackSink()
     result = _make_result(text="copy", confidence=0.2, no_speech_prob=0.1)
-    daemon, _, resolver, dispatcher, _ = _make_daemon(
+    daemon, _, llm_router, dispatcher, _ = _make_daemon(
         result, feedback=fb, min_confidence=0.3, tmp_path=tmp_path
     )
 
@@ -169,29 +172,26 @@ def test_confidence_gate_triggers_miss(tmp_path):
     assert any(c[0] == "on_miss" for c in fb.calls), (
         "on_miss should be fired when confidence < min_confidence"
     )
-    resolver.resolve.assert_not_called()
+    llm_router.route.assert_not_called()
     dispatcher.run_plan.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# All gates pass → dispatch
+# LLM returns None → on_miss
 # ---------------------------------------------------------------------------
 
 
 def test_llm_returns_none_triggers_miss(tmp_path):
-    """When llm_router.route() returns None, the real Resolver fires on_miss
-    and the daemon short-circuits before ever calling dispatcher.run_plan."""
+    """When llm_router.route() returns None, the daemon pipeline fires
+    on_miss and short-circuits before ever calling dispatcher.run_plan."""
     fb = CapturingFeedbackSink()
     result = _make_result(text="copy", confidence=0.9, no_speech_prob=0.1)
 
     _stub_heavy_imports()
     from voice_commander.daemon import StreamingDaemon
-    from voice_commander.resolver import Resolver
 
-    # Real resolver, fake LLMRouter whose .route() returns None.
     llm_router = MagicMock()
     llm_router.route.return_value = None
-    resolver = Resolver(llm_router=llm_router, feedback=fb)
 
     transcriber = MagicMock()
     transcriber.transcribe.return_value = result
@@ -204,7 +204,7 @@ def test_llm_returns_none_triggers_miss(tmp_path):
         feedback=fb,
         recorder=recorder,
         transcriber=transcriber,
-        resolver=resolver,
+        llm_router=llm_router,
         dispatcher=dispatcher,
         registry=MagicMock(),
         min_confidence=0.3,
@@ -217,7 +217,7 @@ def test_llm_returns_none_triggers_miss(tmp_path):
 
     # LLM was consulted
     llm_router.route.assert_called_once_with("copy")
-    # on_miss fired (by Resolver)
+    # on_miss fired (by daemon pipeline)
     miss_calls = [c for c in fb.calls if c[0] == "on_miss"]
     assert len(miss_calls) == 1, (
         f"Expected exactly one on_miss event, got {len(miss_calls)}: {fb.calls}"
@@ -226,11 +226,16 @@ def test_llm_returns_none_triggers_miss(tmp_path):
     dispatcher.run_plan.assert_not_called()
 
 
+# ---------------------------------------------------------------------------
+# All gates pass → dispatch
+# ---------------------------------------------------------------------------
+
+
 def test_all_gates_pass_calls_dispatch(tmp_path):
     """When confidence, no_speech_prob, and word_count are all acceptable,
-    resolver.resolve and dispatcher.run_plan must both be called."""
+    llm_router.route and dispatcher.run_plan must both be called."""
     result = _make_result(text="copy", confidence=0.5, no_speech_prob=0.2)
-    daemon, transcriber, resolver, dispatcher, fb = _make_daemon(
+    daemon, transcriber, llm_router, dispatcher, fb = _make_daemon(
         result,
         min_confidence=0.3,
         min_word_count=1,
@@ -241,7 +246,7 @@ def test_all_gates_pass_calls_dispatch(tmp_path):
     daemon._process_utterance(_DUMMY_AUDIO)
 
     transcriber.transcribe.assert_called_once()
-    resolver.resolve.assert_called_once_with(result.text)
+    llm_router.route.assert_called_once_with(result.text)
     dispatcher.run_plan.assert_called_once()
 
     # on_transcript must have been called (with text + confidence)

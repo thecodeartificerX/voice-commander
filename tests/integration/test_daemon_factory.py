@@ -6,12 +6,11 @@ monkeypatched out so the tests run without a microphone, CUDA, or LM Studio.
 
 Covered scenarios
 -----------------
-1. Default config → daemon._resolver is wired; all other components are present.
-2. Custom LLMConfig values propagate to LLMRouter (e.g. timeout_ms).
-3. Config values propagate correctly to components (model_size,
+1. Default config → daemon._llm_router is wired; all other components are present.
+2. Config values propagate correctly to components (model_size,
    recorder device, llm.timeout_ms).
-4. Factory is idempotent — two calls with identical config yield two
-   independent daemons (distinct _utt_q, distinct _registry, distinct
+3. Factory is idempotent — two calls with identical config yield two
+   independent daemons (distinct _utt_q, distinct _llm_router, distinct
    _recorder, distinct _shutdown).
 
 Notes on patching strategy
@@ -119,21 +118,21 @@ def _full_patches(**daemon_kwargs: Any) -> Generator[None, None, None]:
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — Default config: daemon is built; _resolver is wired; all other
+# Test 1 — Default config: daemon is built; _llm_router is wired; all other
 #           components are present.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
-def test_factory_resolver_always_wired(base_cfg: Config) -> None:
-    """build_streaming_daemon always wires _resolver regardless of config."""
+def test_factory_llm_router_always_wired(base_cfg: Config) -> None:
+    """build_streaming_daemon always wires _llm_router regardless of config."""
     with _full_patches(**_base_patch_kwargs()):
         daemon = build_streaming_daemon(base_cfg)
 
     assert isinstance(daemon, StreamingDaemon)
 
-    # Resolver must always be present.
-    assert daemon._resolver is not None, "Expected _resolver to be wired"
+    # LLM router must always be present (sole routing path post-ADR 0040).
+    assert daemon._llm_router is not None, "Expected _llm_router to be wired"
 
     # All other required components must be wired.
     assert daemon._transcriber is not None, "transcriber missing"
@@ -144,30 +143,6 @@ def test_factory_resolver_always_wired(base_cfg: Config) -> None:
 
     # Pipeline queue must be a real queue.
     assert isinstance(daemon._utt_q, queue.Queue)
-
-
-# ---------------------------------------------------------------------------
-# Test 2 — LLMRouter is always created and wired into _resolver.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.integration
-def test_factory_llm_router_always_created(base_cfg: Config) -> None:
-    """build_streaming_daemon always creates an LLMRouter and passes it to Resolver."""
-    mock_router_instance = MagicMock(name="llm_router_instance", spec=LLMRouter)
-    mock_router_cls = MagicMock(return_value=mock_router_instance)
-
-    with _full_patches(**_base_patch_kwargs(llm_router_cls=mock_router_cls)):
-        daemon = build_streaming_daemon(base_cfg)
-
-    # LLMRouter constructor must have been called.
-    mock_router_cls.assert_called_once()
-
-    # _resolver must be wired (it holds the LLMRouter internally).
-    assert daemon._resolver is not None, "Expected _resolver to be wired"
-    assert daemon._resolver._llm_router is mock_router_instance, (
-        "Expected _resolver._llm_router to be the mocked LLMRouter instance"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -250,13 +225,13 @@ def test_factory_idempotent_independent_state(base_cfg: Config, tmp_path: Path) 
     - Enqueuing to daemon1 does not affect daemon2.
     - Distinct _shutdown Events (setting daemon1's does not affect daemon2).
     - Distinct _recorder objects.
-    - Distinct _resolver instances (each daemon has its own Resolver).
+    - Distinct _llm_router instances (each daemon has its own LLMRouter).
 
     Note on _registry: ``discover()`` intentionally returns the module-level
     ``_GLOBAL_REGISTRY`` singleton, so both daemons will reference the same
     registry object.  This is by design — the global registry is read-only at
     runtime after startup.  We therefore do NOT assert registry identity here;
-    we assert that per-daemon mutable state (queues, events, threads, resolvers)
+    we assert that per-daemon mutable state (queues, events, threads, routers)
     is independent.
     """
     cfg1 = replace(base_cfg, audio=replace(base_cfg.audio, output_dir=str(tmp_path / "d1")))
@@ -290,6 +265,6 @@ def test_factory_idempotent_independent_state(base_cfg: Config, tmp_path: Path) 
     # --- Recorder independence ---
     assert daemon1._recorder is not daemon2._recorder, "_recorder must be distinct per daemon"
 
-    # --- Resolver independence ---
-    # Each daemon gets its own Resolver, even though they share the global registry.
-    assert daemon1._resolver is not daemon2._resolver, "_resolver must be distinct per daemon"
+    # --- LLMRouter independence ---
+    # Each daemon gets its own LLMRouter instance, even though they share the global registry.
+    assert daemon1._llm_router is not daemon2._llm_router, "_llm_router must be distinct per daemon"

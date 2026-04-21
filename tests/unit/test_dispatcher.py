@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import patch
 
 from voice_commander.dispatcher import Dispatcher
@@ -168,3 +169,36 @@ def test_run_plan_multi_step_all_succeed():
     assert log == ["alpha", "beta"], f"Expected ordered execution, got {log}"
     complete_call = next(c for c in sink.calls if c[0] == "on_plan_complete")
     assert complete_call[1][1] == 2, f"Expected 2 steps executed, got {complete_call[1][1]}"
+
+
+def test_run_plan_logs_per_step(caplog):
+    """Dispatcher emits an INFO line per step like 'plan step 1/3: focus(target=...)'."""
+    log: list[str] = []
+    entry_f = ToolEntry(
+        "focus", (), lambda target=None: log.append(f"focus:{target}"), "m", None,
+    )
+    entry_p = ToolEntry(
+        "press", (), lambda combo=None: log.append(f"press:{combo}"), "m", None,
+    )
+    entry_t = ToolEntry(
+        "type", (), lambda text=None: log.append(f"type:{text}"), "m", None,
+    )
+    registry = _make_registry(entry_f, entry_p, entry_t)
+    sink = CapturingFeedbackSink()
+    d = Dispatcher(feedback=sink)
+    plan = Plan(
+        steps=(
+            ToolCall(name="focus", kwargs={"target": "notepad"}),
+            ToolCall(name="press", kwargs={"combo": "ctrl+a"}),
+            ToolCall(name="type", kwargs={"text": "hi"}),
+        ),
+        raw_response={},
+    )
+
+    with caplog.at_level(logging.INFO, logger="voice_commander.dispatcher"):
+        d.run_plan("chain", plan, registry)
+
+    text = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert "plan step 1/3: focus" in text, f"Missing step-1 log line; got:\n{text}"
+    assert "plan step 2/3: press" in text, f"Missing step-2 log line; got:\n{text}"
+    assert "plan step 3/3: type" in text, f"Missing step-3 log line; got:\n{text}"

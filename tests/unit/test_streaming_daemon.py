@@ -1,6 +1,6 @@
 """Unit tests for voice_commander.daemon.StreamingDaemon.
 
-All hardware subsystems (recorder, transcriber, matcher, dispatcher) are
+All hardware subsystems (recorder, transcriber, llm_router, dispatcher) are
 replaced with MagicMocks.  Utterance ndarrays are injected directly into the
 pipeline queue so no real audio or GPU work occurs.
 
@@ -17,8 +17,8 @@ import numpy as np
 
 from voice_commander.daemon import StreamingDaemon
 from voice_commander.feedback import CapturingFeedbackSink
+from voice_commander.llm_router import LLMRouter
 from voice_commander.plan import Plan, ToolCall
-from voice_commander.resolver import Resolver
 from voice_commander.transcriber import TranscriptionResult
 
 # ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ def _make_daemon(
     CapturingFeedbackSink,
     MagicMock,  # recorder
     MagicMock,  # transcriber
-    MagicMock,  # resolver
+    MagicMock,  # llm_router
     MagicMock,  # dispatcher
 ]:
     feedback = CapturingFeedbackSink()
@@ -42,19 +42,19 @@ def _make_daemon(
     recorder.is_open = False
 
     transcriber = MagicMock()
-    resolver = MagicMock(spec=Resolver)
+    llm_router = MagicMock(spec=LLMRouter)
     dispatcher = MagicMock()
 
     daemon = StreamingDaemon(
         feedback=feedback,
         recorder=recorder,
         transcriber=transcriber,
-        resolver=resolver,
+        llm_router=llm_router,
         dispatcher=dispatcher,
         registry=MagicMock(),
         output_dir=output_dir,
     )
-    return daemon, feedback, recorder, transcriber, resolver, dispatcher
+    return daemon, feedback, recorder, transcriber, llm_router, dispatcher
 
 
 def _fake_utterance(n: int = 1600) -> np.ndarray:
@@ -117,16 +117,16 @@ def test_on_scroll_lock_reports_error_when_open_session_raises(tmp_path):
 
 
 def test_pipeline_processes_utterance(tmp_path):
-    """Utterance placed in _utt_q flows through transcribe → resolve → run_plan."""
-    daemon, feedback, recorder, transcriber, resolver, dispatcher = _make_daemon(
+    """Utterance placed in _utt_q flows through transcribe → route → run_plan."""
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
     result = _fake_transcription_result("copy", confidence=0.95)
     transcriber.transcribe.return_value = result
 
-    plan = Plan(steps=(ToolCall(name="copy", kwargs={}),), raw_response={})
-    resolver.resolve.return_value = plan
+    plan = Plan(steps=(ToolCall(name="press", kwargs={"combo": "ctrl+c"}),), raw_response={})
+    llm_router.route.return_value = plan
 
     # Start pipeline thread.
     pipeline_done = threading.Event()
@@ -156,7 +156,7 @@ def test_pipeline_processes_utterance(tmp_path):
 def test_pipeline_handles_transcribe_error(tmp_path):
     """RuntimeError from transcriber.transcribe is caught; on_error is called;
     the pipeline thread exits cleanly after receiving the poison pill."""
-    daemon, feedback, recorder, transcriber, resolver, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
@@ -332,15 +332,15 @@ def test_mute_drains_utt_q(tmp_path):
 
 def test_pipeline_mute_guard_drops_utterance(tmp_path):
     """Utterance mid-transcription when mute fires must NOT dispatch."""
-    daemon, feedback, recorder, transcriber, resolver, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
     result = _fake_transcription_result("copy", confidence=0.95)
     transcriber.transcribe.return_value = result
 
-    plan = Plan(steps=(ToolCall(name="copy", kwargs={}),), raw_response={})
-    resolver.resolve.return_value = plan
+    plan = Plan(steps=(ToolCall(name="press", kwargs={"combo": "ctrl+c"}),), raw_response={})
+    llm_router.route.return_value = plan
 
     # Set muted BEFORE pipeline processes the utterance.
     daemon._muted = True

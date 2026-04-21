@@ -159,9 +159,12 @@ def test_llm_section_absent_returns_all_defaults(tmp_path):
     r = cfg.llm
     assert r.endpoint_url == "http://localhost:1234/v1"
     assert r.model_id == "google/gemma-4-e4b"
-    assert r.timeout_ms == 600
-    assert r.max_plan_steps == 8
+    assert r.timeout_ms == 1200
+    assert r.max_plan_steps == 12
     assert r.warmup_on_startup is True
+    assert r.default_browser == "chrome"
+    assert r.focus_fuzzy_threshold == 70
+    assert r.open_fuzzy_threshold == 70
 
 
 def test_llm_all_fields_round_trip(tmp_path):
@@ -201,8 +204,11 @@ def test_llm_partial_section_respects_set_fields_and_defaults(tmp_path):
     # unset fields stay at defaults
     assert r.endpoint_url == "http://localhost:1234/v1"
     assert r.model_id == "google/gemma-4-e4b"
-    assert r.timeout_ms == 600
+    assert r.timeout_ms == 1200
     assert r.warmup_on_startup is True
+    assert r.default_browser == "chrome"
+    assert r.focus_fuzzy_threshold == 70
+    assert r.open_fuzzy_threshold == 70
 
 
 def test_llm_timeout_ms_string_raises(tmp_path):

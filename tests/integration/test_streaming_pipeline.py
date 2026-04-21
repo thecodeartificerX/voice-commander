@@ -242,15 +242,14 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
     from voice_commander.feedback import CapturingFeedbackSink
     from voice_commander.llm_router import LLMRouter
     from voice_commander.registry import ToolEntry, ToolRegistry
-    from voice_commander.resolver import Resolver
 
-    # Build a minimal registry with one known phrase.
+    # Build a minimal registry with one known tool.
     registry = ToolRegistry()
     registry.register(
         ToolEntry(
-            name="copy",
-            phrases=("copy",),
-            func=lambda: None,
+            name="press",
+            phrases=(),
+            func=lambda **_: None,
             module="test",
             docstring=None,
         )
@@ -260,7 +259,6 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
     # the miss path without requiring LM Studio.
     stub_router = MagicMock(spec=LLMRouter)
     stub_router.route.return_value = None
-    resolver = Resolver(stub_router, feedback)
     dispatcher = Dispatcher(feedback)
 
     # Generate noisy audio that silero may detect as speech.
@@ -295,8 +293,10 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
         if result.no_speech_prob > 0.6:
             continue
 
-        plan = resolver.resolve(result.text)
-        if plan is not None:
+        plan = stub_router.route(result.text)
+        if plan is None:
+            feedback.on_miss(result.text, ())
+        else:
             dispatcher.run_plan(result.text, plan, registry)
 
     # At minimum, on_transcript must have been called.
