@@ -95,13 +95,19 @@ def test_focus_calls_resolver_and_routes_hwnd(monkeypatch: pytest.MonkeyPatch) -
         "voice_commander.tools.primitives.resolver.resolve_window",
         lambda target: _TARGET_HWND,
     )
+
+    # primitives.focus delegates foreground-claim mechanics to _do_focus
+    # (in _win32.py). Stub it to invoke the mocked win32gui calls the
+    # assertions below verify, without running the real Alt-tap /
+    # AttachThreadInput sequence.
+    def _fake_do_focus(hwnd: int, _fg_tid: int, _target_tid: int) -> None:
+        import win32gui as _wg  # resolves to mock_win32gui under the sys.modules patch
+        _wg.BringWindowToTop(hwnd)
+        _wg.SetForegroundWindow(hwnd)
+
     monkeypatch.setattr(
-        "voice_commander.tools.primitives._attach_thread_input",
-        MagicMock(),
-    )
-    monkeypatch.setattr(
-        "voice_commander.tools.primitives._allow_set_foreground",
-        lambda: None,
+        "voice_commander.tools.primitives._do_focus",
+        _fake_do_focus,
     )
     monkeypatch.setattr(
         "voice_commander.tools.primitives._verify_foreground",

@@ -44,6 +44,40 @@ def _allow_set_foreground() -> None:
         logger.debug("AllowSetForegroundWindow unavailable", exc_info=True)
 
 
+# Alt-tap trick: briefly synthesize Alt key down+up. Windows treats the
+# calling thread as having just received input from the user, which
+# lifts the foreground-lockout restriction for the immediately following
+# SetForegroundWindow call. The Alt key is chosen because a bare tap
+# does nothing visible on Windows (it only activates the menu bar if
+# held, and even that requires a focused window that has a menu).
+_VK_MENU = 0x12  # Alt
+_KEYEVENTF_KEYUP = 0x0002
+
+
+def _grant_foreground_privilege() -> None:
+    """Synthesize a brief Alt keypress to satisfy Windows' foreground lockout.
+
+    On Windows 10/11, ``SetForegroundWindow`` silently fails unless the
+    calling thread has received input from the user in the last few
+    hundred milliseconds (or other conditions from
+    `SetForegroundWindow`_ MSDN page). For a background daemon driven by
+    VAD-triggered speech, no such input exists. Faking an Alt tap via
+    ``keybd_event`` fools the foreground-lockout check without any
+    user-visible side effect on Windows.
+
+    .. _SetForegroundWindow: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow
+    """
+    try:
+        user32 = ctypes.windll.user32
+        keybd = user32.keybd_event
+        keybd.argtypes = [ctypes.c_ubyte, ctypes.c_ubyte, ctypes.c_uint, ctypes.c_void_p]
+        keybd.restype = None
+        keybd(_VK_MENU, 0, 0, None)                  # Alt down
+        keybd(_VK_MENU, 0, _KEYEVENTF_KEYUP, None)   # Alt up
+    except Exception:
+        logger.debug("keybd_event(Alt tap) failed", exc_info=True)
+
+
 def _get_current_thread_id() -> int:
     """Return the calling thread's OS thread ID via kernel32."""
     try:
@@ -65,8 +99,15 @@ def _attach_thread_input(attach_from: int, attach_to: int, attach: bool) -> None
         logger.debug("AttachThreadInput failed attach=%s", attach, exc_info=True)
 
 
-def _verify_foreground(target_hwnd: int, polls: int = 3, interval_ms: int = 20) -> bool:
-    """Poll GetForegroundWindow up to *polls* times; return True if it equals target_hwnd."""
+def _verify_foreground(target_hwnd: int, polls: int = 10, interval_ms: int = 20) -> bool:
+    """Poll GetForegroundWindow up to *polls* times; return True if it equals target_hwnd.
+
+    Defaults to ~200 ms total (10 × 20 ms). Windows' foreground state can
+    lag behind the SetForegroundWindow call, especially for Chromium-based
+    apps (Comet, Chrome, Edge, Slack, VS Code) which do their own window
+    management between the kernel notification and the foreground change
+    becoming observable.
+    """
     try:
         import win32gui
     except ImportError:
@@ -83,6 +124,11 @@ def _do_focus(hwnd: int, foreground_tid: int, target_tid: int) -> None:
     import win32gui
 
     _allow_set_foreground()
+
+    # Grant ourselves foreground-change privilege. Without this, Windows
+    # 10/11 silently refuses SetForegroundWindow calls from a background
+    # daemon that has not received recent user input.
+    _grant_foreground_privilege()
 
     same_thread = foreground_tid == target_tid or foreground_tid == 0
 
@@ -193,7 +239,7 @@ def focus_window_by_exe(
     if not _verify_foreground(hwnd):
         raise FocusWindowError(
             f"Focus verification failed for '{exe_name}' hwnd={hwnd} "
-            "(GetForegroundWindow did not match after 60 ms)"
+            "(GetForegroundWindow did not match after 200 ms)"
         )
 
     return True

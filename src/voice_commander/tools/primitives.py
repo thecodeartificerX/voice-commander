@@ -23,8 +23,7 @@ from .. import resolver
 from ..registry import tool
 from ._win32 import (
     FocusWindowError,
-    _allow_set_foreground,
-    _attach_thread_input,
+    _do_focus,
     _verify_foreground,
 )
 
@@ -116,27 +115,18 @@ def focus(target: str) -> None:
         foreground_tid = 0
     target_tid, _ = win32process.GetWindowThreadProcessId(target_hwnd)
 
-    _allow_set_foreground()
-
-    same_thread = foreground_tid == target_tid or foreground_tid == 0
-    if not same_thread:
-        _attach_thread_input(foreground_tid, target_tid, True)
     try:
-        win32gui.BringWindowToTop(target_hwnd)
-        win32gui.SetForegroundWindow(target_hwnd)
+        _do_focus(target_hwnd, foreground_tid, target_tid)
     except Exception as exc:
         raise FocusWindowError(
             f"SetForegroundWindow failed for target={target!r} "
             f"hwnd={target_hwnd}: {exc}"
         ) from exc
-    finally:
-        if not same_thread:
-            _attach_thread_input(foreground_tid, target_tid, False)
 
     if not _verify_foreground(target_hwnd):
         raise FocusWindowError(
             f"Focus verification failed for target={target!r} "
-            f"hwnd={target_hwnd} (GetForegroundWindow did not match after 60 ms)"
+            f"hwnd={target_hwnd} (GetForegroundWindow did not match after 200 ms)"
         )
 
 
