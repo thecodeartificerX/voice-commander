@@ -108,7 +108,7 @@ def on_press(key):
 
 **Explanation:** There is no OS-level exclusion preventing multiple copies of the same Python script from running simultaneously. The symptom is subtle: commands appear to execute twice, or two daemons compete for the same hotkey and audio device.
 
-**Mitigation (Phase 5):** Implement a named OS mutex at startup using `win32event.CreateMutex(None, True, "VoiceCommanderDaemon")`. If `GetLastError()` returns `ERROR_ALREADY_EXISTS`, log the conflict and exit cleanly. As a simpler fallback, write a lock file to `outputs/.daemon.lock` containing the current PID, and check for its existence at launch (with stale-PID detection). This is explicitly deferred to Phase 5 alongside the system-tray icon.
+**Mitigation:** Lock-file-based single-instance enforcement with OS-level locking is implemented in `src/voice_commander/single_instance.py`. On startup the daemon acquires an exclusive advisory lock on `outputs/.daemon.lock` using `msvcrt.locking` (Windows) or `fcntl.flock` (POSIX), and writes the current PID + GUID to the file. If the lock is already held by a live process the daemon logs the conflict and exits cleanly. The OS automatically releases the lock on process death, so stale locks from crashes are reclaimed without PID-alive polling. See ADR 0039.
 
 ---
 
@@ -278,3 +278,23 @@ This forces LM Studio to execute a full prompt prefill, populate the KV cache, a
 **Rule for future agents:** a warmup that does not POST the same request shape as the real calls will not seed the prefix KV cache. `GET /v1/models` only confirms the HTTP server is alive; it does not confirm inference readiness. Always POST a minimal chat-completion request to genuinely warm the cache.
 
 See ADR 0038 for the full rationale and alternatives considered.
+
+---
+
+## 20. ctypes HANDLE Truncation on 64-bit Windows
+
+**Problem:** `_pid_alive()` in `single_instance.py` always returned `True` for dead PIDs on 64-bit Windows, preventing stale-lock reclamation after a daemon crash.
+
+**Explanation:** `ctypes.windll.kernel32.OpenProcess` has a default `restype` of `c_int` (32-bit signed integer). On 64-bit Windows, `HANDLE` is a pointer-sized value (64-bit). When `OpenProcess` returns a valid handle, the 64-bit value is truncated to 32 bits. Even for dead PIDs where `OpenProcess` should return `NULL` (0), the truncated value could be non-zero — producing a bogus truthy result. The subsequent `if handle:` check then concludes the process is alive when it is not.
+
+This is a general ctypes pitfall: any Windows API function that returns `HANDLE`, `HMODULE`, `HWND`, or any pointer-sized type **must** have its `restype` explicitly set to `ctypes.c_void_p`. The default `c_int` is only safe for functions returning 32-bit integers (e.g. `BOOL`, `DWORD`).
+
+**Mitigation:** All ctypes bindings in `single_instance.py` now declare explicit `restype` and `argtypes`:
+
+```python
+OpenProcess = ctypes.windll.kernel32.OpenProcess
+OpenProcess.restype = ctypes.c_void_p        # HANDLE is pointer-sized
+OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+```
+
+Additionally, `GetExitCodeProcess` is called after a successful `OpenProcess` — a handle to a zombie process is truthy but its exit code ≠ `STILL_ACTIVE` (259). See ADR 0039.
