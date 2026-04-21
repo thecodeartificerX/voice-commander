@@ -24,13 +24,13 @@ Voice Commander is the boring middle ground. Push-to-talk, speak plain English, 
 ## Features
 
 - **Push-to-talk session model.** Tap Scroll Lock to open a session → speak one or many commands back-to-back → tap again to close. Silero VAD auto-segments utterances on silence, so you never press a key between commands.
-- **Sub-second latency.** `faster-whisper small.en` on CUDA plus an ndarray hand-off (no temp-file I/O on the hot path) puts the speech-end → keystroke budget at ~700 ms.
+- **Sub-second latency.** [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper) running `small.en` on CUDA, with an ndarray hand-off (no temp-file I/O on the hot path), puts the speech-end → keystroke budget at ~700 ms.
 - **Fuzzy phrase matching.** Multiple spoken phrases can trigger the same tool (`"copy"`, `"copy that"`, `"copy selection"`). `rapidfuzz` handles homophones and mis-transcriptions gracefully.
 - **Mute hotkey for dictation coexistence.** Secondary key (default Right Ctrl) suspends the mic so Voice Commander does not fight your other dictation software. See [ADR 0025](docs/decisions/0025-mute-hotkey-for-external-dictation.md).
 - **Web UI.** Open `http://127.0.0.1:8765` while the daemon runs to edit phrases, toggle tools, and hot-reload without restarting. HTMX + FastAPI, no SPA build step. See [ADR 0022](docs/decisions/0022-htmx-over-spa.md).
 - **Sidecar TOML metadata.** Phrases and descriptions live in `.toml` files beside each tool module, so config and code evolve independently. See [ADR 0021](docs/decisions/0021-sidecar-toml-per-tool.md).
 - **Audio-only feedback.** A miss chime on low confidence, silence on success. No toast notifications ever. See [ADR 0013](docs/decisions/0013-drop-winrt-toasts-audio-only-feedback.md).
-- **Self-contained CUDA.** cuBLAS and cuDNN ship as pip wheels and are preloaded via `ctypes` before `faster_whisper` imports — no system CUDA install required. See [ADR 0012](docs/decisions/0012-cuda-dll-bundling.md).
+- **CUDA preloading shim.** cuBLAS and cuDNN are preloaded via `ctypes` before `faster_whisper` imports, so venv-local pip wheels resolve cleanly regardless of shell `PATH` state. You still need CUDA Toolkit and cuDNN installed system-wide (see [CUDA setup](#cuda-setup) below). See [ADR 0012](docs/decisions/0012-cuda-dll-bundling.md).
 
 ---
 
@@ -58,7 +58,8 @@ Every phrase is editable in the web UI or the sidecar TOML next to the tool.
 | Python | 3.11+ | 3.11 is the floor; 3.12 tested. |
 | [uv](https://docs.astral.sh/uv/) | latest | Replaces `pip`/`venv`/`poetry`. |
 | NVIDIA GPU | any CUDA-capable card | 6 GB VRAM recommended for `small.en`. CPU inference works but is ~5× slower. |
-| CUDA / cuDNN | 12.x / 9.x | Shipped as pip wheels — no system install needed. |
+| CUDA Toolkit | 12.x | Install via NVIDIA's official MSI, add to `PATH`. See [CUDA setup](#cuda-setup). |
+| cuDNN | 9.x | Install via NVIDIA's official MSI, add to `PATH`. See [CUDA setup](#cuda-setup). |
 | Microphone | any input device | The start script ships a device picker. |
 
 ---
@@ -89,6 +90,48 @@ uv run voice-commander
 device = "cpu"
 compute_type = "int8"
 ```
+
+---
+
+## CUDA setup
+
+Voice Commander's transcription layer is [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper), which wraps [CTranslate2](https://github.com/OpenNMT/CTranslate2) and expects real CUDA + cuDNN libraries available at load time. The one-time setup is where **every** install headache lives — nail this and everything else is just `uv sync`.
+
+### The happy path
+
+1. **Install CUDA Toolkit 12.x** from NVIDIA's official MSI: <https://developer.nvidia.com/cuda-downloads>. Pick the Windows installer, run it, accept the defaults. This puts `nvcc`, driver runtime, and core CUDA DLLs in `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\bin`.
+2. **Install cuDNN 9.x** from NVIDIA's cuDNN downloads page: <https://developer.nvidia.com/cudnn-downloads>. Use the **MSI installer for Windows** (not the zip). It registers cuDNN into the same Toolkit layout automatically.
+3. **Verify both are on `PATH`.** The CUDA MSI adds its `bin` directory automatically; cuDNN's MSI places its DLLs alongside. Open a fresh PowerShell and confirm:
+
+   ```powershell
+   nvcc --version        # should print CUDA 12.x
+   nvidia-smi            # should show your GPU and a CUDA 12.x runtime version
+   where cudnn_ops64_9.dll   # should resolve to a real path
+   ```
+
+   If any command fails, re-run the installer or append the CUDA `bin` folder to your system `PATH` environment variable and start a new shell.
+4. **Install Voice Commander.**
+
+   ```powershell
+   uv sync
+   uv run voice-commander
+   ```
+
+   `uv` pulls `faster-whisper` (and the `nvidia-cublas-cu12` / `nvidia-cudnn-cu12` wheels the shim uses) into the venv. On first run, the Whisper `small.en` weights download (~500 MB, cached under `%USERPROFILE%\.cache\huggingface`).
+
+### If it breaks
+
+The failure mode is almost always a CUDA / cuDNN loading issue surfacing inside `CTranslate2`. Read [the faster-whisper README](https://github.com/SYSTRAN/faster-whisper) end-to-end — especially the *"GPU support"* and *"Installation"* sections — because the library's own docs cover the Windows gotchas in more detail than this README can.
+
+Common symptoms and fixes:
+
+- `Library cublas64_12.dll is not found` → CUDA Toolkit not on `PATH`. Reinstall or fix `PATH`, new shell.
+- `Could not load library cudnn_ops_infer64_9.dll` → cuDNN 9.x not installed, or mismatched major version (9.x required, not 8.x).
+- `CUDA driver version is insufficient for CUDA runtime version` → upgrade your NVIDIA GPU driver.
+- `Cuda failure at … out of memory` → model too large for your VRAM. Switch `model_size = "base.en"` or `"tiny.en"` in `config.toml`, or drop to `compute_type = "int8_float16"`.
+- All else fails → set `device = "cpu"` in `config.toml` to rule out GPU issues, confirm the daemon runs, then debug CUDA separately.
+
+Once `uv run voice-commander` prints `Model loaded on cuda` and you get a successful command dispatch, you are done — the CUDA chapter of your life is closed.
 
 ---
 
