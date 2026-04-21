@@ -34,7 +34,10 @@ Principles
   minimize, maximize, close, close_window, open), use it. Fall back
   to `press` only for key combos without a dedicated verb.
 - Use '{default_browser}' when the intent involves the user's
-  default browser.
+  default browser. "browser" on its own (as in "focus browser",
+  "close browser", "minimize browser", "maximize browser") is the
+  user's default browser — pass `target="{default_browser}"` to the
+  window verb. Do NOT pass the literal word "browser".
 - Web services are not installed apps. For names like facebook,
   gmail, email, youtube, reddit, twitter, linkedin, chatgpt →
   `open(target="https://<canonical-domain>")`. Do NOT pass the bare
@@ -96,6 +99,9 @@ Tools: press(combo="enter")
 
 User: "escape"
 Tools: press(combo="escape")
+
+User: "focus browser"
+Tools: focus(target="{default_browser}")
 """
 
 

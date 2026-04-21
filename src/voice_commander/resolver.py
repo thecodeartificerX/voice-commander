@@ -158,9 +158,25 @@ def resolve_window(target: str) -> int:
 
 
 def _get_process_name(pid: int) -> str:
-    """Return the image-base-name for *pid*, or empty string on any failure."""
+    """Return the image-base-name for *pid*, or empty string on any failure.
+
+    Prefers :mod:`psutil` (robust, cross-version) and falls back to the
+    raw Win32 ``GetModuleBaseName`` path when psutil is unavailable.
+    """
     if pid == 0:
         return ""
+    # Primary path: psutil.
+    try:
+        import psutil
+    except ImportError:
+        psutil = None  # type: ignore[assignment]
+    if psutil is not None:
+        try:
+            return str(psutil.Process(pid).name())
+        except Exception:
+            return ""
+    # Fallback: Win32 GetModuleBaseName. Requires a non-zero hModule — pass
+    # ``None`` for pywin32 to substitute the process's main module.
     try:
         import win32api
         import win32process
@@ -171,7 +187,7 @@ def _get_process_name(pid: int) -> str:
     except Exception:
         return ""
     try:
-        name = win32process.GetModuleBaseName(handle, 0)
+        name = win32process.GetModuleBaseName(handle, None)  # type: ignore[arg-type]
     except Exception:
         return ""
     finally:

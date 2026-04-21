@@ -89,10 +89,11 @@ def _install_fake_win32(
     windows: list[tuple[int, str, int, str]],  # (hwnd, title, pid, proc_name)
     denied_pids: set[int] | None = None,
 ) -> None:
-    """Install fake win32gui / win32process / win32api / win32con into sys.modules.
+    """Install fake win32gui / win32process / win32api / win32con / psutil.
 
     *windows*: visible, titled windows.
-    *denied_pids*: pids for which OpenProcess raises (simulating permission denial).
+    *denied_pids*: pids for which OpenProcess raises and psutil.Process()
+    raises (simulating permission denial / dead process).
     """
     denied_pids = denied_pids or set()
 
@@ -112,6 +113,27 @@ def _install_fake_win32(
     monkeypatch.setitem(sys.modules, "win32process", fake_process)
     monkeypatch.setitem(sys.modules, "win32api", fake_api)
     monkeypatch.setitem(sys.modules, "win32con", fake_con)
+
+    # Fake psutil. Resolver prefers psutil for process names; tests must
+    # match that path or the Win32 fallback never runs.
+    class _FakePsutilProcess:
+        def __init__(self, pid: int) -> None:
+            if pid not in proc_name_by_pid:
+                raise _FakePsutilNoSuchProcess(pid)
+            self._name = proc_name_by_pid[pid]
+
+        def name(self) -> str:
+            return self._name
+
+    class _FakePsutilNoSuchProcess(Exception):
+        pass
+
+    fake_psutil = types.SimpleNamespace(
+        Process=_FakePsutilProcess,
+        NoSuchProcess=_FakePsutilNoSuchProcess,
+        AccessDenied=_FakePsutilNoSuchProcess,
+    )
+    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
 
 
 # ---------------------------------------------------------------------------
