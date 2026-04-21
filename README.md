@@ -195,6 +195,20 @@ threshold = 95
 
 Full design: [`docs/superpowers/specs/2026-04-21-llm-router-design.md`](docs/superpowers/specs/2026-04-21-llm-router-design.md).
 
+### Router mode flag (for isolated testing)
+
+Force a specific routing strategy at launch without editing `config.toml`:
+
+```
+uv run python -m voice_commander --router-mode hybrid   # default: rapidfuzz first, LLM fallback
+uv run python -m voice_commander --router-mode fuzzy    # rapidfuzz only, LLM disabled
+uv run python -m voice_commander --router-mode llm      # LLM only, fuzzy threshold set above 100
+```
+
+`--router-mode llm` requires a valid `[llm_router]` section in `config.toml` with
+`endpoint_url` and `model_id` set; it will raise an error if they are absent.
+The flag works with `--validate` too: `uv run python -m voice_commander --validate --router-mode fuzzy`.
+
 ---
 
 ## Architecture at a glance

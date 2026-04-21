@@ -430,10 +430,19 @@ function Start-VoiceDaemon {
 
     .DESCRIPTION
         Stdin/stdout are NOT redirected so Ctrl+C reaches the process directly.
+        Accepts an optional RouterMode ('hybrid', 'fuzzy', 'llm') which is
+        forwarded as --router-mode <value> to the daemon. Defaults to 'hybrid'.
         Returns the process exit code as [int].
+
+    .PARAMETER RouterMode
+        Router mode to pass to the daemon. One of: hybrid, fuzzy, llm.
     #>
-    Write-Verbose 'Launching daemon: uv run voice-commander'
-    uv run voice-commander
+    param(
+        [ValidateSet('hybrid', 'fuzzy', 'llm')]
+        [string]$RouterMode = 'hybrid'
+    )
+    Write-Verbose "Launching daemon: uv run voice-commander --router-mode $RouterMode"
+    uv run voice-commander --router-mode $RouterMode
     return $LASTEXITCODE
 }
 
@@ -447,8 +456,17 @@ function Start-VoiceWithUI {
         the -NoUI and -UIPort parameters before calling Start-VoiceDaemon.
         When the web UI is enabled and -NoOpenBrowser is not set, a background
         job opens the browser 1.5 s after this function is called (giving the
-        daemon time to bind its port). Returns the daemon's exit code as [int].
+        daemon time to bind its port). Forwards RouterMode to Start-VoiceDaemon.
+        Returns the daemon's exit code as [int].
+
+    .PARAMETER RouterMode
+        Router mode to pass to the daemon. One of: hybrid, fuzzy, llm.
     #>
+    param(
+        [ValidateSet('hybrid', 'fuzzy', 'llm')]
+        [string]$RouterMode = 'hybrid'
+    )
+
     # Apply web UI environment overrides
     if ($NoUI) {
         $env:VOICE_COMMANDER_WEB_DISABLED = '1'
@@ -468,7 +486,134 @@ function Start-VoiceWithUI {
         } | Out-Null
     }
 
-    return Start-VoiceDaemon
+    return Start-VoiceDaemon -RouterMode $RouterMode
+}
+
+# ---------------------------------------------------------------------------
+# Router-mode persistence helpers
+# ---------------------------------------------------------------------------
+
+# Path for the last-used router mode (sits alongside start.ps1 in the project root).
+$RouterModeFile = Join-Path $PSScriptRoot '.last-router-mode'
+
+function Get-VoiceLastRouterMode {
+    <#
+    .SYNOPSIS
+        Read the last-chosen router mode from .last-router-mode, or return $null.
+    #>
+    if (Test-Path $RouterModeFile) {
+        $raw = (Get-Content $RouterModeFile -Raw).Trim().ToLower()
+        if ($raw -in @('hybrid', 'fuzzy', 'llm')) {
+            Write-Verbose "Last router mode from file: $raw"
+            return $raw
+        }
+    }
+    return $null
+}
+
+function Save-VoiceRouterMode {
+    <#
+    .SYNOPSIS
+        Persist the chosen router mode to .last-router-mode.
+
+    .PARAMETER Mode
+        One of: hybrid, fuzzy, llm.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('hybrid', 'fuzzy', 'llm')]
+        [string]$Mode
+    )
+    Write-Verbose "Persisting router mode '$Mode' to $RouterModeFile"
+    Set-Content -LiteralPath $RouterModeFile -Value $Mode -Encoding UTF8
+}
+
+function Select-VoiceRouterMode {
+    <#
+    .SYNOPSIS
+        Interactive router-mode prompt. Returns the chosen mode string.
+
+    .DESCRIPTION
+        Displays the == Router Mode == menu, respects last-saved mode, and
+        supports [Enter] to accept default, [1] hybrid, [2] fuzzy, [3] llm,
+        [B] back (returns $null), [Q] quit (exits script with code 0).
+        Persists the selection to .last-router-mode on a valid choice.
+        Returns $null when the user presses B so the caller can navigate back.
+    #>
+    $lastMode = Get-VoiceLastRouterMode
+
+    while ($true) {
+        Write-Host ''
+        Write-VoiceHeader '== Router Mode =='
+        Write-Host ''
+
+        # Show last-used mode hint so the user knows what [Enter] will pick
+        if ($null -ne $lastMode) {
+            Write-VoiceSecondary "  Last mode: $lastMode"
+            Write-Host ''
+        }
+
+        Write-VoicePrompt '  [1] Hybrid (rapidfuzz + LLM fallback)  [default]'
+        Write-VoicePrompt '  [2] Rapidfuzz only  (LLM disabled)'
+        Write-VoicePrompt '  [3] LLM only        (rapidfuzz disabled)'
+        Write-VoicePrompt '  [B] Back  [Q] Quit'
+        Write-Host ''
+
+        # Read a single keypress; also accept bare Enter (empty string) as default
+        Write-VoicePrompt -Text '> ' -NoNewline
+
+        $keyChar = $null
+        if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+            try {
+                $key = [Console]::ReadKey($true)
+                $keyChar = $key.KeyChar.ToString()
+                # Enter key returns char 13 (CR); treat empty/whitespace as default
+                if ($key.Key -eq [ConsoleKey]::Enter) { $keyChar = '' }
+            }
+            catch {
+                $keyChar = (Read-Host).Trim()
+            }
+        }
+        else {
+            $keyChar = (Read-Host).Trim()
+        }
+
+        # Echo the pressed key (or a blank line for Enter)
+        Write-Host $keyChar
+
+        $upper = $keyChar.ToUpperInvariant()
+
+        switch ($upper) {
+            'Q' {
+                Write-Host ''
+                Write-VoiceSecondary 'Goodbye.'
+                exit 0
+            }
+            'B' {
+                # Signal caller to navigate back to device picker
+                return $null
+            }
+            { $_ -eq '1' -or $_ -eq '' } {
+                # [1] or bare Enter → hybrid (default)
+                $chosen = 'hybrid'
+                Save-VoiceRouterMode -Mode $chosen
+                return $chosen
+            }
+            '2' {
+                $chosen = 'fuzzy'
+                Save-VoiceRouterMode -Mode $chosen
+                return $chosen
+            }
+            '3' {
+                $chosen = 'llm'
+                Save-VoiceRouterMode -Mode $chosen
+                return $chosen
+            }
+            default {
+                Write-VoiceFailure '  Invalid key. Press 1, 2, 3, B, or Q (Enter = hybrid).'
+            }
+        }
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -523,7 +668,9 @@ if ($PSCmdlet.ParameterSetName -eq 'DirectDevice') {
     }
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander (Phase 5: hardened)...'
-    $ExitCode = Start-VoiceWithUI
+    # Non-interactive path: use last saved router mode, or default to hybrid
+    $DirectRouterMode = if ($null -ne (Get-VoiceLastRouterMode)) { Get-VoiceLastRouterMode } else { 'hybrid' }
+    $ExitCode = Start-VoiceWithUI -RouterMode $DirectRouterMode
     if ($ExitCode -eq 0) {
         Write-VoiceSuccess "Voice Commander exited cleanly (code 0)."
     }
@@ -551,7 +698,9 @@ if ($NoMenu) {
     Write-VoiceSuccess "Using saved device [$SavedNoMenu]."
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander (Phase 5: hardened)...'
-    $ExitCode = Start-VoiceWithUI
+    # Non-interactive path: use last saved router mode, or default to hybrid
+    $NoMenuRouterMode = if ($null -ne (Get-VoiceLastRouterMode)) { Get-VoiceLastRouterMode } else { 'hybrid' }
+    $ExitCode = Start-VoiceWithUI -RouterMode $NoMenuRouterMode
     if ($ExitCode -eq 0) {
         Write-VoiceSuccess "Voice Commander exited cleanly (code 0)."
     }
@@ -578,7 +727,9 @@ if (-not $IsInteractive) {
     Write-VoiceSuccess "Non-interactive session -- using saved device [$SavedAuto]."
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander (Phase 5: hardened)...'
-    $ExitCode = Start-VoiceWithUI
+    # Non-interactive path: use last saved router mode, or default to hybrid
+    $AutoRouterMode = if ($null -ne (Get-VoiceLastRouterMode)) { Get-VoiceLastRouterMode } else { 'hybrid' }
+    $ExitCode = Start-VoiceWithUI -RouterMode $AutoRouterMode
     exit $ExitCode
 }
 
@@ -700,21 +851,104 @@ if ($null -eq $PickedIndex) {
 }
 
 # ---------------------------------------------------------------------------
+# Router mode selection (interactive path only)
+# Runs after device is confirmed. [B] navigates back to the device picker.
+# ---------------------------------------------------------------------------
+
+# Outer loop allows [B] in the router-mode prompt to re-enter the device picker.
+$ChosenRouterMode = $null
+:RouterModeOuter while ($true) {
+    # --- Confirmation of chosen device (re-shown after a [B] from router menu) ---
+    $FinalDevice = $Devices | Where-Object { $_.Index -eq $PickedIndex } | Select-Object -First 1
+    Write-Host ''
+    if ($null -ne $FinalDevice) {
+        Write-VoiceSuccess ("Using device [{0}]: {1}." -f $PickedIndex, $FinalDevice.Name)
+    }
+    else {
+        Write-VoiceSuccess "Using device [$PickedIndex]."
+    }
+
+    # --- Router mode prompt ---
+    $ChosenRouterMode = Select-VoiceRouterMode
+
+    if ($null -ne $ChosenRouterMode) {
+        # Valid mode selected — break out and proceed to launch
+        break RouterModeOuter
+    }
+
+    # User pressed [B] in router mode menu — go back to device picker so they
+    # can change the device before reconsidering the router mode.
+    :DevicePickerBack while ($true) {
+        Write-Host ''
+        Write-VoiceHeader 'Available input devices:'
+        $highlightBack = if ($null -ne $CurrentDevice) { $CurrentDevice } else { -1 }
+        Show-VoiceDeviceTable -DeviceList $Devices -CurrentIndex $highlightBack
+        Write-VoicePrompt '  Type the device index to select it.'
+        Write-VoiceSecondary '  [B] Back  [Q] Quit'
+        Write-Host ''
+
+        $ReChosenDevice = Read-VoiceDeviceIndex -DeviceList $Devices
+
+        if ($null -eq $ReChosenDevice) {
+            # [B] from device picker with no saved device has nowhere to go —
+            # treat as "stay in device picker". If there IS a saved device,
+            # show the "Use last / Choose new" view.
+            if ($null -ne $SavedDevice) {
+                Write-Host ''
+                Write-VoiceHeader '== Voice Commander =='
+                Write-Host ''
+                Write-VoiceHeader 'Last device:'
+                Write-VoiceSuccess ("  [{0}] {1}" -f $SavedDevice.Index, $SavedDevice.Name)
+                Write-VoiceSecondary ("       ({0}, {1} ch)" -f $SavedDevice.HostApi, $SavedDevice.MaxInputChannels)
+                Write-Host ''
+                Write-VoicePrompt '  [1] Use last'
+                Write-VoicePrompt '  [2] Choose new'
+                Write-VoicePrompt '  [Q] Quit'
+                Write-Host ''
+
+                $BackBack = Read-VoiceMenuChoice -ValidKeys @('1', '2', 'Q') -Prompt '> '
+
+                if ($BackBack -eq 'Q') {
+                    Write-Host ''
+                    Write-VoiceSecondary 'Goodbye.'
+                    exit 0
+                }
+                if ($BackBack -eq '1') {
+                    $PickedIndex = $CurrentDevice
+                    break DevicePickerBack  # re-enter router mode prompt
+                }
+                # '2' — loop back to device picker
+                continue DevicePickerBack
+            }
+            else {
+                Write-VoiceFailure '  No previous device to go back to.'
+                continue DevicePickerBack
+            }
+        }
+
+        # Valid device chosen — persist and update PickedIndex
+        $SaveOkBack = Save-VoiceDeviceChoice -Index $ReChosenDevice
+        if (-not $SaveOkBack) {
+            Write-VoiceFailure "  Failed to save device $ReChosenDevice to config.toml."
+            Write-VoiceSecondary '  Check that config.toml exists and is writable, then try again.'
+            continue DevicePickerBack
+        }
+        $PickedIndex = $ReChosenDevice
+        break DevicePickerBack  # re-enter router mode prompt
+    }
+    # Continue outer loop to re-show router mode menu with updated device confirmation
+}
+
+# ---------------------------------------------------------------------------
 # Confirmation + launch
 # ---------------------------------------------------------------------------
 
-$FinalDevice = $Devices | Where-Object { $_.Index -eq $PickedIndex } | Select-Object -First 1
 Write-Host ''
-if ($null -ne $FinalDevice) {
-    Write-VoiceSuccess ("Using device [{0}]: {1}." -f $PickedIndex, $FinalDevice.Name)
-}
-else {
-    Write-VoiceSuccess "Using device [$PickedIndex]."
-}
+Write-VoiceSuccess ("Router mode: $ChosenRouterMode")
 Write-Host ''
 Write-VoicePrompt 'Starting Voice Commander (Phase 5: hardened)...'
 
-$DaemonExitCode = Start-VoiceWithUI
+$DaemonExitCode = Start-VoiceWithUI -RouterMode $ChosenRouterMode
 
 Write-Host ''
 if ($DaemonExitCode -eq 0) {
