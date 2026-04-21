@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 
 import pyautogui
@@ -10,6 +11,11 @@ import pyautogui
 from ..registry import tool
 
 logger = logging.getLogger(__name__)
+
+_LAUNCH_BLOCKLIST = re.compile(
+    r"(\\\\|[A-Za-z]:\\|/|cmd|powershell|wscript|cscript)", re.IGNORECASE
+)
+_MAX_TYPE_TEXT_LEN = 500
 
 
 @tool
@@ -28,6 +34,9 @@ def press_keys(combo: str) -> None:
 @tool
 def type_text(text: str) -> None:
     """Type arbitrary text via keystroke synthesis."""
+    if len(text) > _MAX_TYPE_TEXT_LEN:
+        logger.warning("type_text truncated: %d chars > %d max", len(text), _MAX_TYPE_TEXT_LEN)
+        text = text[:_MAX_TYPE_TEXT_LEN]
     pyautogui.write(text, interval=0.02)
 
 
@@ -67,7 +76,13 @@ def focus_window(title_substring: str) -> None:
 @tool
 def launch(app: str) -> None:
     """Launch an application, file, or URI via the system handler."""
-    os.startfile(app)
+    if _LAUNCH_BLOCKLIST.search(app):
+        logger.warning("launch blocked suspicious input: %r", app)
+        return
+    try:
+        os.startfile(app)
+    except OSError:
+        logger.exception("launch() failed for app=%r", app)
 
 
 @tool

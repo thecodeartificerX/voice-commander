@@ -10,6 +10,7 @@ llm_only = true
 [tools.wait.args.ms]
 description = "Duration to wait in milliseconds."
 required = true
+type = "integer"
 
 [tools.press_keys]
 phrases = []
@@ -21,6 +22,7 @@ llm_only = true
 [tools.press_keys.args.combo]
 description = "Key combination string with + separator (e.g. 'ctrl+c', 'alt+tab')."
 required = true
+type = "string"
 
 [tools.type_text]
 phrases = []
@@ -32,6 +34,7 @@ llm_only = true
 [tools.type_text.args.text]
 description = "The text to type."
 required = true
+type = "string"
 
 [tools.focus_window]
 phrases = []
@@ -43,6 +46,7 @@ llm_only = true
 [tools.focus_window.args.title_substring]
 description = "Case-insensitive substring to match against window titles."
 required = true
+type = "string"
 
 [tools.launch]
 phrases = []
@@ -54,6 +58,7 @@ llm_only = true
 [tools.launch.args.app]
 description = "Application name, file path, or URI to open."
 required = true
+type = "string"
 
 [tools.no_match]
 phrases = []
@@ -65,3 +70,4 @@ llm_only = true
 [tools.no_match.args.reason]
 description = "Brief explanation of why no tool matched."
 required = true
+type = "string"

@@ -106,7 +106,7 @@ class LLMRouter:
             data = resp.json()
         except (json.JSONDecodeError, ValueError):
             self._total_errors += 1
-            logger.warning("LLM router: malformed JSON response")
+            logger.warning("LLM router: malformed JSON response body=%s", resp.text[:200])
             return None
 
         logger.debug("LLM router response: %s", json.dumps(data, default=str))
@@ -128,7 +128,7 @@ class LLMRouter:
             tool_calls = message.get("tool_calls", [])
             if not tool_calls:
                 return None
-        except (KeyError, IndexError, TypeError):
+        except (KeyError, IndexError, TypeError, AttributeError):
             logger.warning("LLM router: unexpected response structure")
             return None
 

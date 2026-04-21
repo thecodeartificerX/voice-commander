@@ -37,19 +37,24 @@ voice-commander/
 │   ├── transcriber.py              # faster-whisper wrapper (imports _cuda_setup first)
 │   ├── _cuda_setup.py              # ctypes DLL preloading shim (Windows-only)
 │   ├── matcher.py                  # rapidfuzz phrase matcher
+│   ├── plan.py                     # Plan + ToolCall value objects for LLM router
 │   ├── dispatcher.py               # runs matched tool, reports to feedback sink
 │   ├── feedback.py                 # Windows / Null / Capturing feedback sinks
+│   ├── llm_router.py               # LM Studio tool-call planner (httpx client)
 │   ├── registry.py                 # @tool decorator + auto-discovery
 │   ├── tool_metadata.py            # sidecar TOML read/write + per-tool file locking
+│   ├── tool_schema.py              # Python sig → OpenAI JSON Schema generator
 │   ├── config.py                   # config loader + deep-merge + validation
 │   ├── single_instance.py          # one-daemon guard
+│   ├── validator.py                # startup sig/TOML drift checker (7 rules)
 │   ├── tools/                      # @tool groups (auto-discovered at import)
 │   │   ├── _win32.py               # Windows-specific helpers (focus_window_by_exe, etc.)
 │   │   ├── clipboard.py + .toml
 │   │   ├── window.py    + .toml
 │   │   ├── browser.py   + .toml
 │   │   ├── system.py    + .toml
-│   │   └── mouse.py     + .toml
+│   │   ├── mouse.py     + .toml
+│   │   └── primitives.py + .toml
 │   └── web/                        # embedded FastAPI management UI
 │       ├── app.py                  # routes
 │       ├── server.py               # uvicorn daemon thread

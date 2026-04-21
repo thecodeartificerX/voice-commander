@@ -48,7 +48,7 @@ This document is the canonical reference for Voice Commander's subsystem design 
 
 ## 2. Subsystem Boundaries
 
-Eight subsystems connected by the `StreamingDaemon` orchestrator. Each is independently unit-testable:
+Ten subsystems connected by the `StreamingDaemon` orchestrator. Each is independently unit-testable:
 
 | Subsystem | Responsibility | Key dependency |
 |---|---|---|
@@ -61,6 +61,8 @@ Eight subsystems connected by the `StreamingDaemon` orchestrator. Each is indepe
 | `Matcher` | Fuzzy-match transcript → tool | `rapidfuzz` |
 | `Dispatcher` | Invoke tool function, report outcome | (no external) |
 | `FeedbackSink` | Chimes + log | `winsound` |
+| `LLMRouter` | Escalate unmatched transcripts to local LM Studio for tool-call planning | `httpx` |
+| `Validator` | Startup checks: sig/TOML drift, type support, range checks | stdlib (`inspect`, `typing`) |
 
 ---
 
@@ -231,6 +233,9 @@ class ToolEntry:
     func: Callable[[], None]
     module: str           # e.g. "voice_commander.tools.clipboard"
     docstring: str | None
+    settle_ms: int            # ms to sleep after execution
+    llm_only: bool            # True → invisible to fuzzy matcher
+    params_schema: dict | None  # OpenAI tool JSON schema (built by tool_schema)
 
 class ToolRegistry:
     def register(self, entry: ToolEntry) -> None: ...
@@ -238,6 +243,8 @@ class ToolRegistry:
     def by_name(self, name: str) -> ToolEntry | None: ...
     def flat_phrases(self) -> list[tuple[str, str]]: ...
         # [(phrase, tool_name), ...] for rapidfuzz
+    def all_llm_visible(self) -> list[ToolEntry]: ...
+        # All entries where llm_only=True OR has phrases (visible to LLM)
 
 def tool(phrases: list[str]) -> Callable[[Callable], Callable]:
     """Decorator. Registers the function on the module-global registry."""
@@ -287,9 +294,10 @@ class Matcher:
 class Dispatcher:
     def __init__(self, feedback: FeedbackSink) -> None: ...
     def dispatch(self, transcript: str, match: MatchResult) -> None: ...
+    def run_plan(self, transcript: str, plan: Plan, registry: ToolRegistry) -> None: ...
 ```
 
-**What it does:** The final step in the pipeline. If `match.tool is None`, it calls `feedback.on_miss(transcript, match.candidates)` and returns. If a tool matched, it calls `feedback.on_match(tool_name, phrase, score)` and then invokes `match.tool.func()` inside a `try/except BaseException`. On any exception it calls `feedback.on_error("dispatcher", err)` and logs the full traceback — the daemon continues running. Tool functions run on the worker thread and must complete in a few hundred milliseconds (they perform keystroke sends via `pyautogui`).
+**What it does:** The final step in the pipeline. If `match.tool is None`, it calls `feedback.on_miss(transcript, match.candidates)` and returns. If a tool matched, it calls `feedback.on_match(tool_name, phrase, score)` and then invokes `match.tool.func()` inside a `try/except BaseException`. On any exception it calls `feedback.on_error("dispatcher", err)` and logs the full traceback — the daemon continues running. Tool functions run on the worker thread and must complete in a few hundred milliseconds (they perform keystroke sends via `pyautogui`). `run_plan()` executes a multi-step `Plan` from the LLM router. It calls `feedback.on_plan_start()`, iterates through plan steps looking up each tool by name in the registry, invokes `tool.func(**step.kwargs)`, sleeps `settle_ms` between steps, and calls `feedback.on_plan_complete()`. If a step fails or a tool is unknown, `on_error` fires and the chain stops.
 
 **Who calls it:** The worker thread in `Daemon`, after `Matcher.match()` returns.
 
@@ -309,6 +317,8 @@ class FeedbackSink(Protocol):
     def on_match(self, tool: str, phrase: str, score: float) -> None: ...
     def on_miss(self, transcript: str, candidates: Sequence[tuple[str, str, float]]) -> None: ...
     def on_error(self, subsystem: str, err: BaseException) -> None: ...
+    def on_plan_start(self, transcript: str, step_count: int) -> None: ...
+    def on_plan_complete(self, transcript: str, steps_executed: int) -> None: ...
 ```
 
 **What it does:** A `Protocol` (structural subtype) that decouples all user-visible feedback from the pipeline logic. Concrete implementations:
@@ -336,6 +346,7 @@ class StreamingDaemon:
         transcriber: Transcriber,
         matcher: Matcher,
         dispatcher: Dispatcher,
+        llm_router: LLMRouter | None = None,
         *,
         min_confidence: float = 0.30,
         min_word_count: int = 1,
@@ -347,13 +358,68 @@ class StreamingDaemon:
     def on_toggle(self) -> None: ...             # hotkey callback
 ```
 
-**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_toggle()` is the hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → match → dispatch`. Async WAV write (`outputs/last_utterance.wav`) is submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` does exactly one thing: `build_streaming_daemon(Config.load()).run(cfg.hotkey.key)`.
+**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_toggle()` is the hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → match → dispatch`. Async WAV write (`outputs/last_utterance.wav`) is submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` does exactly one thing: `build_streaming_daemon(Config.load()).run(cfg.hotkey.key)`. When `llm_router` is not None and the Matcher returns a miss, the pipeline worker escalates to `LLMRouter.route(transcript)`. If the router returns a `Plan`, `Dispatcher.run_plan()` executes it. If the router returns `None`, the miss falls through to `FeedbackSink.on_miss()`.
 
 **Who calls it:** `__main__.py` (the process entry point), signal handlers, and `on_toggle` (hotkey-listener thread).
 
 **Who it calls:** All other subsystems. It is the only place where concrete implementations are wired to interfaces.
 
 **How it is tested:** Integration tests bypass `HotkeyController` and `StreamingRecorder` entirely — they inject utterance ndarrays directly into `utt_q` and assert that the right tool function was called end-to-end. Unit tests for individual subsystems do not involve `StreamingDaemon`.
+
+---
+
+### 4.9 `LLMRouter`
+
+```python
+class LLMRouter:
+    def __init__(self, config: LLMRouterConfig, registry: ToolRegistry) -> None: ...
+    def route(self, transcript: str) -> Plan | None: ...
+    def warmup(self) -> bool: ...
+    def close(self) -> None: ...
+    @property
+    def metrics(self) -> dict[str, Any]: ...
+```
+
+**What it does:** One-shot tool-call planner via local LM Studio. `route()` sends the transcript to the configured LM Studio endpoint as an OpenAI-compatible chat completion with `tool_choice="required"`. It parses the response into a `Plan` of `ToolCall` steps. Returns `None` on timeout, connection error, HTTP error, malformed response, or if the LLM calls `no_match`. `warmup()` pings `/models` to verify the server is reachable. `close()` shuts down the underlying `httpx.Client`. Tracks simple metrics (total calls, timeouts, errors, avg latency).
+
+**Who calls it:** `StreamingDaemon` pipeline worker, only when Matcher returns a miss and `llm_router` is not None.
+
+**Who it calls:** `httpx.Client` for HTTP, `ToolRegistry.all_llm_visible()` to build the tools array.
+
+**How it is tested:** Unit tests with `httpx`-mocked responses covering: happy path single/multi-step plans, timeout, connection error, HTTP errors, malformed JSON, no tool_calls, no_match sentinel, max_plan_steps cap, metrics counters.
+
+---
+
+### 4.10 `Plan` / `ToolCall`
+
+```python
+@dataclass(frozen=True)
+class ToolCall:
+    name: str
+    kwargs: dict[str, Any]
+
+@dataclass(frozen=True)
+class Plan:
+    steps: tuple[ToolCall, ...]
+    raw_response: dict[str, Any]
+```
+
+**What it does:** Immutable value objects representing the LLM router's output. `Plan` holds an ordered tuple of `ToolCall` steps. `raw_response` preserves the full LLM JSON for debugging.
+
+---
+
+### 4.11 `Validator`
+
+```python
+def validate(registry: ToolRegistry, store: ToolMetadataStore) -> list[str]: ...
+def validate_or_die(registry: ToolRegistry, store: ToolMetadataStore) -> None: ...
+```
+
+**What it does:** Startup validator catching drift between Python tool signatures and TOML metadata. Seven rules: (1) every tool has TOML, (2) every sig param has TOML arg description, (3) no orphan TOML args, (4) all params use supported types, (5) settle_ms in [0, 5000], (6) llm_only tools have no phrases, (7) required primitives (no_match, wait) are registered and llm_only. `validate_or_die()` prints errors and exits if any fail.
+
+**Who calls it:** `build_streaming_daemon()` factory at startup, after discovery and metadata binding.
+
+**How it is tested:** Unit tests with crafted registries/metadata triggering each rule individually. Happy path returns empty error list.
 
 ---
 
@@ -376,9 +442,12 @@ class StreamingDaemon:
 12. `no_speech_prob` gate: drop if above `max_no_speech_prob`.
 13. Confidence gate: `on_miss()` if below `min_confidence`.
 14. `Matcher.match(result.text)` → `MatchResult`.
+14a. **LLM escalation (if Matcher misses and `llm_router` is not None):** `LLMRouter.route(text)` → `Plan | None`.
+14b. If `Plan` returned: `Dispatcher.run_plan(text, plan, registry)` executes multi-step plan. Continue to step 16.
+14c. If `None` returned: fall through to step 15 (miss).
 15. `Dispatcher.dispatch(text, match)`:
     - Match above threshold → logs match + tool function executes.
-    - Below threshold → miss beep + logs miss.
+    - Below threshold (and LLM router returned None or disabled) → miss beep + logs miss.
 16. Pipeline worker loops back to `utt_q`.
 
 **Session close:**

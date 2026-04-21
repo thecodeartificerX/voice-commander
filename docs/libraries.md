@@ -341,6 +341,23 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 
 ---
 
+## `httpx` — HTTP client for LLM router
+
+**Purpose in this project:** `httpx` powers the `LLMRouter` subsystem's communication with local LM Studio. It sends OpenAI-compatible chat completion requests to `localhost:1234/v1/chat/completions` and parses the JSON responses. Used instead of `requests` for modern async support and configurable timeouts (separate connect/read/write/pool deadlines).
+
+**Alternatives considered:**
+- `requests` — the classic Python HTTP library. Functional, but lacks fine-grained timeout control (only a single timeout value, not split connect/read/write).
+- `urllib3` — lower-level, more boilerplate for JSON request/response handling.
+- `aiohttp` — async-only, overkill for synchronous pipeline worker thread usage.
+
+**Why `httpx` won:** `httpx` provides a `requests`-like API with per-phase timeout configuration (`httpx.Timeout(connect=..., read=..., write=..., pool=...)`), which is critical for the LLM router's latency budget. The synchronous `httpx.Client` runs cleanly on the pipeline worker thread. Connection pooling and keep-alive are built in.
+
+**Pin reason:** `>=0.27.0` for stable `httpx.Timeout` and `httpx.Client` APIs. Runtime dependency (moved from dev to runtime when LLM router shipped).
+
+**ADR:** No dedicated ADR yet (LLM router decisions tracked in ADRs 0026+).
+
+---
+
 ## Cross-reference index
 
 | Library | ADR |
@@ -362,3 +379,4 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 | `@tool` decorator / registry | [`0006-tool-decorator-registry.md`](decisions/0006-tool-decorator-registry.md) |
 | Threading model | [`0010-threading-model.md`](decisions/0010-threading-model.md) |
 | Scroll Lock hotkey | [`0001-scroll-lock-hotkey.md`](decisions/0001-scroll-lock-hotkey.md) |
+| `httpx` | No dedicated ADR yet |

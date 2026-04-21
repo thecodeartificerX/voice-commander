@@ -176,3 +176,30 @@ def test_run_plan_feedback_events():
     # on_plan_complete args: (transcript, steps_executed)
     complete_args = sink.calls[-1][1]
     assert complete_args == (transcript, 2)
+
+
+def test_run_plan_extra_kwargs_fires_error():
+    """Extra kwargs from LLM hallucination trigger on_error (TypeError caught)."""
+    def strict_fn(combo: str) -> None:
+        pass
+
+    reg = _make_registry(
+        _entry("press_keys", func=strict_fn),
+    )
+    sink = CapturingFeedbackSink()
+    d = Dispatcher(feedback=sink)
+    # LLM hallucinates an extra kwarg "force"
+    plan = _plan(("press_keys", {"combo": "ctrl+c", "force": True}))
+
+    d.run_plan("press ctrl c", plan, reg)
+
+    # on_error should have fired with TypeError
+    error_calls = [c for c in sink.calls if c[0] == "on_error"]
+    assert len(error_calls) == 1
+    subsystem, exc = error_calls[0][1]
+    assert subsystem == "plan:step:press_keys"
+    assert isinstance(exc, TypeError)
+
+    # Chain stopped; executed == 0
+    complete_calls = [c for c in sink.calls if c[0] == "on_plan_complete"]
+    assert complete_calls[0][1][1] == 0

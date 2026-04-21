@@ -8,7 +8,7 @@ A voice-driven command launcher for Windows — like Talon Voice, but you say th
 
 **One-line flow:** press Scroll Lock → speak → VAD auto-segments on silence → command fires → Scroll Lock to end session.
 
-**End-state vision (post-MVP):** natural utterances with arguments ("open readme in the projects folder") routed via a small local LLM doing tool-calling. Fuzzy-match MVP first; LLM layer later.
+**End-state vision (post-MVP):** natural utterances with arguments ("open readme in the projects folder") routed via a small local LLM doing tool-calling. The hybrid router (fuzzy-match first, LLM escalation on miss) ships in this branch.
 
 ## Core principles (non-negotiable)
 
@@ -20,10 +20,13 @@ A voice-driven command launcher for Windows — like Talon Voice, but you say th
 ## Architecture at a glance
 
 ```
-HotkeyCtrl ──toggle──▶ StreamingRecorder ──NDArray──▶ Transcriber ──text──▶ Matcher ──▶ Dispatcher ──▶ tool fn
-   pynput             sounddevice+Resampler+VADGate   faster-whisper       rapidfuzz       invokes      tools/*
-                      (device-native→16kHz, silero)    (CUDA, small.en)                  + FeedbackSink
-                                                                                          (chime + log)
+HotkeyCtrl ──toggle──▶ StreamingRecorder ──NDArray──▶ Transcriber ──text──▶ Matcher ─match─▶ Dispatcher ──▶ tool fn
+   pynput             sounddevice+Resampler+VADGate   faster-whisper       rapidfuzz          invokes      tools/*
+                      (device-native→16kHz, silero)    (CUDA, small.en)        │             + FeedbackSink
+                                                                               │miss          (chime + log)
+                                                                               ▼
+                                                                          LLMRouter ──Plan──▶ Dispatcher.run_plan()
+                                                                          (httpx→LM Studio)   multi-step execution
 ```
 
 Four long-lived threads (PortAudio callback → VAD worker → pipeline worker, plus hotkey listener) connected by thread-safe queues. Feedback is audio-only (`winsound` miss chimes, no toasts). Tools live under `src/voice_commander/tools/` and register via a bare `@tool` decorator + sidecar `.toml`; the registry auto-discovers them on daemon start.

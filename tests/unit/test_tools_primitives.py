@@ -113,3 +113,69 @@ def test_launch():
 def test_no_match_noop():
     result = no_match("nothing matched the utterance")
     assert result is None
+
+
+def test_launch_blocks_unc_path(caplog):
+    """UNC paths are blocked by the launch blocklist."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="voice_commander.tools.primitives"):
+        launch("\\\\evil-server\\share\\payload.exe")
+
+    assert "blocked" in caplog.text
+
+
+def test_launch_blocks_cmd(caplog):
+    """cmd.exe invocations are blocked."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="voice_commander.tools.primitives"):
+        launch("cmd.exe /c del *")
+
+    assert "blocked" in caplog.text
+
+
+def test_launch_blocks_absolute_path(caplog):
+    """Absolute Windows paths are blocked."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="voice_commander.tools.primitives"):
+        launch("C:\\Windows\\System32\\cmd.exe")
+
+    assert "blocked" in caplog.text
+
+
+def test_launch_allows_app_name():
+    """Simple app names like 'notepad.exe' are allowed."""
+    with patch("voice_commander.tools.primitives.os.startfile") as mock_startfile:
+        launch("notepad.exe")
+    mock_startfile.assert_called_once_with("notepad.exe")
+
+
+def test_launch_oserror_handled(caplog):
+    """OSError from startfile is caught and logged."""
+    import logging
+
+    with (
+        patch("voice_commander.tools.primitives.os.startfile", side_effect=OSError("not found")),
+        caplog.at_level(logging.ERROR, logger="voice_commander.tools.primitives"),
+    ):
+        launch("nonexistent_app")
+
+    assert "launch() failed" in caplog.text
+
+
+def test_type_text_truncates_long_input():
+    """Text longer than 500 chars is truncated."""
+    with patch("voice_commander.tools.primitives.pyautogui.write") as mock_write:
+        type_text("a" * 600)
+    # Should be called with truncated text
+    args = mock_write.call_args[0]
+    assert len(args[0]) == 500
+
+
+def test_type_text_short_input_passes_through():
+    """Text shorter than limit passes through unchanged."""
+    with patch("voice_commander.tools.primitives.pyautogui.write") as mock_write:
+        type_text("hello")
+    mock_write.assert_called_once_with("hello", interval=0.02)
