@@ -73,36 +73,37 @@ def _fake_transcription_result(
 
 
 # ---------------------------------------------------------------------------
-# on_toggle tests
+# on_scroll_lock tests
 # ---------------------------------------------------------------------------
 
 
-def test_on_toggle_opens_session_when_idle(tmp_path):
+def test_on_scroll_lock_opens_session_when_idle(tmp_path):
     daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     recorder.is_open = False
 
-    daemon.on_toggle()
+    daemon.on_scroll_lock()
 
     recorder.open_session.assert_called_once()
     assert any(c[0] == "on_recording_start" for c in feedback.calls)
 
 
-def test_on_toggle_closes_session_when_open(tmp_path):
+def test_on_scroll_lock_closes_session_when_open(tmp_path):
     daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     recorder.is_open = True
+    daemon._session_active = True
 
-    daemon.on_toggle()
+    daemon.on_scroll_lock()
 
     recorder.close_session.assert_called_once()
     assert any(c[0] == "on_recording_stop" for c in feedback.calls)
 
 
-def test_on_toggle_reports_error_when_open_session_raises(tmp_path):
+def test_on_scroll_lock_reports_error_when_open_session_raises(tmp_path):
     daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     recorder.is_open = False
     recorder.open_session.side_effect = RuntimeError("device unavailable")
 
-    daemon.on_toggle()  # must not propagate
+    daemon.on_scroll_lock()  # must not propagate
 
     assert any(c[0] == "on_error" for c in feedback.calls)
 
@@ -205,6 +206,7 @@ def test_shutdown_closes_open_session(tmp_path):
     """If a session is open when shutdown() is called, close_session() is invoked."""
     daemon, _, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     recorder.is_open = True
+    daemon._session_active = True
 
     # Start the pipeline thread so shutdown can join it.
     daemon._pipeline_thread = threading.Thread(target=daemon._pipeline_loop, daemon=True)
@@ -238,3 +240,126 @@ def test_utt_q_overflow_calls_on_miss(tmp_path):
     )
     # The queue size must remain at maxsize — no extra item was added.
     assert daemon._utt_q.qsize() == 8
+
+
+# ---------------------------------------------------------------------------
+# Mute state-transition tests
+# ---------------------------------------------------------------------------
+
+
+def test_scroll_lock_opens_from_inactive(tmp_path):
+    """State transition: inactive + Scroll Lock → active, unmuted."""
+    daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
+    recorder.is_open = False
+    daemon.on_scroll_lock()
+    recorder.open_session.assert_called_once()
+    assert daemon._session_active is True
+    assert daemon._muted is False
+    assert any(c[0] == "on_recording_start" for c in feedback.calls)
+
+
+def test_scroll_lock_closes_from_active_unmuted(tmp_path):
+    """State transition: active+unmuted + Scroll Lock → inactive."""
+    daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._session_active = True
+    daemon._muted = False
+    daemon.on_scroll_lock()
+    recorder.close_session.assert_called_once()
+    assert daemon._session_active is False
+    assert daemon._muted is False
+    assert any(c[0] == "on_recording_stop" for c in feedback.calls)
+
+
+def test_scroll_lock_closes_from_active_muted(tmp_path):
+    """State transition: active+muted + Scroll Lock → inactive."""
+    daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._session_active = True
+    daemon._muted = True
+    daemon.on_scroll_lock()
+    recorder.close_session.assert_not_called()  # stream already closed by mute
+    assert daemon._session_active is False
+    assert daemon._muted is False
+    assert any(c[0] == "on_recording_stop" for c in feedback.calls)
+
+
+def test_mute_noop_when_inactive(tmp_path):
+    """State transition: inactive + Mute key → silent no-op."""
+    daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._session_active = False
+    daemon.on_mute_toggle()
+    recorder.open_session.assert_not_called()
+    recorder.close_session.assert_not_called()
+    assert feedback.calls == []  # truly silent
+
+
+def test_mute_from_active_unmuted(tmp_path):
+    """State transition: active+unmuted + Mute key → active+muted."""
+    daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._session_active = True
+    daemon._muted = False
+    daemon.on_mute_toggle()
+    recorder.close_session.assert_called_once()
+    assert daemon._session_active is True
+    assert daemon._muted is True
+
+
+def test_unmute_from_active_muted(tmp_path):
+    """State transition: active+muted + Mute key → active+unmuted."""
+    daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._session_active = True
+    daemon._muted = True
+    daemon.on_mute_toggle()
+    recorder.open_session.assert_called_once()
+    assert daemon._session_active is True
+    assert daemon._muted is False
+
+
+def test_mute_drains_utt_q(tmp_path):
+    """Muting drains all pending utterances from the queue."""
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._session_active = True
+    daemon._muted = False
+    # Pre-fill queue
+    daemon._utt_q.put(_fake_utterance())
+    daemon._utt_q.put(_fake_utterance())
+    assert daemon._utt_q.qsize() == 2
+    daemon.on_mute_toggle()
+    assert daemon._utt_q.qsize() == 0  # drained
+
+
+def test_pipeline_mute_guard_drops_utterance(tmp_path):
+    """Utterance mid-transcription when mute fires must NOT dispatch."""
+    daemon, feedback, recorder, transcriber, matcher, dispatcher = _make_daemon(
+        output_dir=str(tmp_path)
+    )
+
+    result = _fake_transcription_result("copy", confidence=0.95)
+    transcriber.transcribe.return_value = result
+
+    match_result = MagicMock()
+    matcher.match.return_value = match_result
+
+    # Set muted BEFORE pipeline processes the utterance.
+    daemon._muted = True
+
+    pipeline_done = threading.Event()
+    original_process = daemon._process_utterance
+
+    def _patched_process(utt):
+        original_process(utt)
+        pipeline_done.set()
+
+    daemon._process_utterance = _patched_process
+
+    thread = threading.Thread(target=daemon._pipeline_loop, daemon=True)
+    thread.start()
+
+    daemon._utt_q.put(_fake_utterance())
+    triggered = pipeline_done.wait(timeout=5.0)
+
+    daemon._utt_q.put(None)
+    thread.join(timeout=3.0)
+
+    assert triggered, "pipeline did not process utterance within 5 s"
+    transcriber.transcribe.assert_called_once()  # transcription still runs
+    dispatcher.dispatch.assert_not_called()  # but dispatch is blocked by mute guard

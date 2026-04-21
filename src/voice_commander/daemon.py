@@ -6,6 +6,7 @@ import os
 import queue
 import signal
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -78,26 +79,75 @@ class StreamingDaemon:
         self._wav_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="wav-writer",
         )
+        self._session_active: bool = False
+        self._muted: bool = False
 
     # ------------------------------------------------------------------
-    # Hotkey callback
+    # Hotkey callbacks
     # ------------------------------------------------------------------
 
-    def on_toggle(self) -> None:
+    def on_scroll_lock(self) -> None:
+        """Toggle session on/off. Clears muted flag on both open and close."""
         if self._recorder is None:
-            logger.warning("on_toggle called but recorder is not yet initialised; ignoring")
+            logger.warning("on_scroll_lock called but recorder is not yet initialised; ignoring")
             return
-        if self._recorder.is_open:
-            self._recorder.close_session()
+        if self._session_active:
+            # Close session from any sub-state (muted or unmuted).
+            if not self._muted:
+                self._recorder.close_session()
+            # else: stream already closed by mute
+            self._drain_utt_q()
+            self._session_active = False
+            self._muted = False
             self._feedback.on_recording_stop()
             logger.info("Session closed")
         else:
             try:
                 self._recorder.open_session()
+                self._session_active = True
+                self._muted = False
                 self._feedback.on_recording_start()
                 logger.info("Session opened")
             except Exception as e:
+                self._session_active = False
+                self._muted = False
                 self._feedback.on_error("recorder.open_session", e)
+
+    def on_mute_toggle(self) -> None:
+        """Toggle mute within an active session. No-op when session is inactive."""
+        if not self._session_active:
+            return  # Silent no-op (requirement 4)
+        if self._recorder is None:
+            return
+        if self._muted:
+            # Unmute: reopen stream
+            try:
+                self._recorder.open_session()
+                self._muted = False
+                logger.info("Session unmuted")
+            except Exception as e:
+                self._feedback.on_error("recorder.open_session", e)
+        else:
+            # Mute: close stream, drain queue
+            try:
+                self._recorder.close_session()
+            except Exception:
+                logger.exception("close_session() failed during mute; treating as muted")
+            self._drain_utt_q()
+            self._muted = True
+            logger.info("Session muted")
+
+    def _drain_utt_q(self) -> None:
+        """Discard all pending utterances from the queue."""
+        drained = 0
+        while True:
+            try:
+                self._utt_q.get_nowait()
+                drained += 1
+            except queue.Empty:
+                break
+        if drained:
+            logger.debug("Drained %d utterance(s) from utt_q", drained)
 
     # ------------------------------------------------------------------
     # Pipeline worker (transcribe → gate → match → dispatch)
@@ -140,6 +190,11 @@ class StreamingDaemon:
             self._feedback.on_miss(result.text, ())
             return
 
+        # Mute guard: utterance may have been mid-transcription when mute fired.
+        if self._muted:
+            logger.debug("Mute guard: dropping utterance '%s' (muted during pipeline)", result.text)
+            return
+
         match = self._matcher.match(result.text)
         self._dispatcher.dispatch(result.text, match)
 
@@ -169,7 +224,7 @@ class StreamingDaemon:
     # Run / shutdown
     # ------------------------------------------------------------------
 
-    def run(self, hotkey_key: str) -> None:
+    def run(self, hotkey_key: str, mute_key: str = "") -> None:
         # Load models before accepting hotkey presses.
         try:
             self._transcriber.load()
@@ -198,7 +253,10 @@ class StreamingDaemon:
 
         # Start hotkey listener.
         try:
-            self._hotkey = HotkeyController(hotkey_key, self.on_toggle)
+            bindings: dict[str, Callable[[], None]] = {hotkey_key: self.on_scroll_lock}
+            if mute_key:
+                bindings[mute_key] = self.on_mute_toggle
+            self._hotkey = HotkeyController(bindings)
             self._hotkey.start()
         except Exception as e:
             logger.exception("HotkeyController.start() failed; aborting startup")
@@ -235,11 +293,14 @@ class StreamingDaemon:
                 logger.exception("Error stopping web server during shutdown")
 
         # Close any open session.
-        if self._recorder is not None and self._recorder.is_open:
-            try:
-                self._recorder.close_session()
-            except Exception:
-                logger.exception("Error closing session during shutdown")
+        if self._recorder is not None and self._session_active:
+            if not self._muted:
+                try:
+                    self._recorder.close_session()
+                except Exception:
+                    logger.exception("Error closing session during shutdown")
+            self._session_active = False
+            self._muted = False
 
         # Stop hotkey listener.
         if self._hotkey is not None:

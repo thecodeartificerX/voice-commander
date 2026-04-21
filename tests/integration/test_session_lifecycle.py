@@ -274,3 +274,91 @@ def test_double_open_no_error() -> None:
         ctx.recorder.close_session()
 
     assert not ctx.recorder.is_open
+
+
+# ---------------------------------------------------------------------------
+# Test 5 — mute/unmute lifecycle within an active session
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_mute_unmute_lifecycle(tmp_path: Any) -> None:
+    """Full mute/unmute lifecycle within an active session."""
+    from unittest.mock import MagicMock
+
+    from voice_commander.daemon import StreamingDaemon
+    from voice_commander.feedback import CapturingFeedbackSink
+    from voice_commander.transcriber import TranscriptionResult
+
+    feedback = CapturingFeedbackSink()
+    recorder = MagicMock()
+    recorder.is_open = False
+    transcriber = MagicMock()
+    matcher = MagicMock()
+    dispatcher = MagicMock()
+
+    result = TranscriptionResult(
+        text="copy", confidence=0.95, language="en", duration_ms=500, no_speech_prob=0.05,
+    )
+    transcriber.transcribe.return_value = result
+    match_result = MagicMock()
+    matcher.match.return_value = match_result
+
+    daemon = StreamingDaemon(
+        feedback=feedback,
+        recorder=recorder,
+        transcriber=transcriber,
+        matcher=matcher,
+        dispatcher=dispatcher,
+        output_dir=str(tmp_path / "outputs"),
+    )
+
+    # Start pipeline thread
+    pipeline_thread = threading.Thread(target=daemon._pipeline_loop, daemon=True)
+    pipeline_thread.start()
+
+    try:
+        # 1. Open session
+        daemon.on_scroll_lock()
+        assert daemon._session_active is True
+        assert daemon._muted is False
+
+        # 2. Mute
+        daemon.on_mute_toggle()
+        assert daemon._muted is True
+
+        # 3. Inject utterance while muted — should NOT dispatch
+        done1 = threading.Event()
+        original = daemon._process_utterance
+
+        def _p1(utt: Any) -> None:
+            original(utt)
+            done1.set()
+
+        daemon._process_utterance = _p1  # type: ignore[assignment]
+        daemon._utt_q.put(np.zeros(1600, dtype=np.float32))
+        assert done1.wait(timeout=5.0), "pipeline did not process utterance"
+        assert dispatcher.dispatch.call_count == 0
+
+        # 4. Unmute
+        daemon.on_mute_toggle()
+        assert daemon._muted is False
+
+        # 5. Inject utterance while unmuted — SHOULD dispatch
+        done2 = threading.Event()
+
+        def _p2(utt: Any) -> None:
+            original(utt)
+            done2.set()
+
+        daemon._process_utterance = _p2  # type: ignore[assignment]
+        daemon._utt_q.put(np.zeros(1600, dtype=np.float32))
+        assert done2.wait(timeout=5.0), "pipeline did not process utterance"
+        assert dispatcher.dispatch.call_count == 1
+
+        # 6. Close session
+        daemon.on_scroll_lock()
+        assert daemon._session_active is False
+    finally:
+        daemon._utt_q.put(None)
+        pipeline_thread.join(timeout=3.0)

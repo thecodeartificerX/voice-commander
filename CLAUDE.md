@@ -42,7 +42,7 @@ Tools live in `src/voice_commander/tools/*.py` and register themselves via a `@t
 | Resampler | `soxr.ResampleStream`, device-native → 16 kHz, HQ | True streaming resampler with internal filter state; one instance per session. ADR 0017. |
 | VAD engine | `silero-vad` ONNX, 512-sample 16 kHz frames, `onnxruntime` on CPU | Neural VAD, float confidence score, configurable threshold; robust to keyboard/fan noise. ADR 0016. |
 | VAD gate | `VADGate` — pre-roll buffering + utterance accumulation + max-utterance guard | Pre-roll captures audio before speech-start; max-utterance guard prevents unbounded buffers |
-| Session model | Toggle: Scroll Lock opens session, second press closes it | While open, VAD auto-segments; zero keypresses between commands. ADR 0015. |
+| Session model | Toggle: Scroll Lock opens session, second press closes it; optional mute key suspends/resumes stream within a session (two independent flags: `session_active`, `muted`) | While open, VAD auto-segments; zero keypresses between commands. ADR 0015, 0025. |
 | Transcription | `faster-whisper` `small.en` on **CUDA**; utterance ndarray passed directly | Sub-second latency on NVIDIA GPU; ndarray handoff skips temp-file I/O. ADR 0018. |
 | Fuzzy match | `rapidfuzz`, threshold ~85 | Fast, no ML deps, good-enough for Phase 1 |
 | Tool registry | `@tool` decorator + auto-discovery | Phrases live next to code; zero boilerplate to add tools |
@@ -118,7 +118,7 @@ voice-commander/
 
 ## Subsystem contracts (summary — full details in `docs/architecture.md`)
 
-- `HotkeyController(key, on_toggle)` — pynput listener, fires callback on toggle.
+- `HotkeyController(bindings: dict[str, Callable])` — pynput listener with multi-binding dispatch table; single Listener, one callback per registered key. An optional mute key (configurable, disabled by default) suspends the audio stream within a session without ending it — two independent flags (`session_active`, `muted`). See ADR 0025.
 - `Resampler(src_rate, dst_rate)` — streaming soxr resampler; `process(chunk) -> ndarray`; `flush() -> ndarray`; `reset()`. One instance per session; not shared across threads.
 - `VADGate(model, threshold, ...)` — silero-vad + pre-roll ring buffer + utterance accumulation; `process(frame_16k) -> ndarray|None`; returns completed utterance on speech-end or max-utterance guard; `reset()` for clean session start.
 - `StreamingRecorder(device, channels, vad_gate, utterance_sink)` — owns `sd.InputStream`; `open_session()` starts stream + VAD worker thread; `close_session()` stops stream and joins VAD worker; calls `utterance_sink(ndarray)` on the VAD worker thread when a complete utterance is detected.

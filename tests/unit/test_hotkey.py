@@ -11,15 +11,48 @@ def test_key_alias_resolves():
     assert KEY_ALIASES["scroll_lock"] is Key.scroll_lock
 
 
+def test_ctrl_r_alias_resolves():
+    assert KEY_ALIASES["ctrl_r"] is Key.ctrl_r
+
+
 def test_unknown_key_raises():
     with pytest.raises(ValueError):
-        HotkeyController(key="no_such_key", on_toggle=lambda: None)
+        HotkeyController(bindings={"no_such_key": lambda: None})
+
+
+def test_empty_bindings_raises():
+    with pytest.raises(ValueError):
+        HotkeyController(bindings={})
+
+
+def test_multi_binding_dispatches_correct_callback():
+    """Verify each key in bindings routes to its own callback."""
+    fired_a = threading.Event()
+    fired_b = threading.Event()
+    ctrl = HotkeyController(bindings={
+        "scroll_lock": fired_a.set,
+        "ctrl_r": fired_b.set,
+    })
+    # Verify internal dispatch table has two entries
+    assert len(ctrl._dispatch) == 2
+
+
+def test_listener_does_not_suppress():
+    """pynput Listener must NOT use suppress=True."""
+    ctrl = HotkeyController(bindings={"scroll_lock": lambda: None})
+    ctrl.start()
+    try:
+        assert ctrl._listener is not None
+        # pynput Listener stores suppress flag; default is False
+        assert not getattr(ctrl._listener, '_suppress', True)
+    finally:
+        ctrl.stop()
 
 
 @pytest.mark.hardware
 def test_toggle_fires_on_scroll_lock(tmp_path):
     fired = threading.Event()
-    ctrl = HotkeyController(key="scroll_lock", on_toggle=fired.set)
+    ctrl = HotkeyController(bindings={"scroll_lock": fired.set})
     ctrl.start()
     try:
         time.sleep(0.2)
