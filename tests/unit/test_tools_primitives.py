@@ -196,17 +196,13 @@ def test_launch_allows_app_name():
     mock_startfile.assert_called_once_with("notepad.exe")
 
 
-def test_launch_oserror_handled(caplog):
-    """OSError from startfile is caught and logged."""
-    import logging
-
+def test_launch_oserror_propagates():
+    """OSError from startfile propagates to caller (dispatcher handles it)."""
     with (
         patch("voice_commander.tools.primitives.os.startfile", side_effect=OSError("not found")),
-        caplog.at_level(logging.ERROR, logger="voice_commander.tools.primitives"),
+        pytest.raises(OSError, match="not found"),
     ):
         launch("nonexistent_app")
-
-    assert "launch() failed" in caplog.text
 
 
 def test_type_text_truncates_long_input():

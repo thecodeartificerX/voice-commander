@@ -128,10 +128,7 @@ def launch(app: str) -> None:
     if _LAUNCH_BLOCKLIST.search(app):
         logger.warning("launch blocked suspicious input: %r", app)
         return
-    try:
-        os.startfile(app)
-    except OSError:
-        logger.exception("launch() failed for app=%r", app)
+    os.startfile(app)
 
 
 @tool
