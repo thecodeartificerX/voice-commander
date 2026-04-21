@@ -253,19 +253,46 @@ def resolve_app(target: str) -> str:
     return best_token
 
 
+_DANGEROUS_DISPLAY_PATTERNS = re.compile(
+    r"\b(uninstall|uninstaller|repair|reset|crash|setup|installer)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_dangerous_candidate(display: str) -> bool:
+    """Filter out uninstallers / repairers / setup shortcuts from the app catalog.
+
+    The resolver fuzzy-matches utterances to display names; without this
+    filter, saying "facebook" (no Facebook app installed) could score an
+    "Uninstall Zoom Workplace" entry highly enough to launch it. That is
+    a destructive action the user did not intend.
+    """
+    return bool(_DANGEROUS_DISPLAY_PATTERNS.search(display))
+
+
 def _get_app_cache() -> list[tuple[str, str]]:
     """Return the cached (display_name, launch_token) list, enumerating on first call."""
     cached = _cache["apps"]
     if cached is not None:
         return cached
 
+    raw: list[tuple[str, str]] = []
+    raw.extend(_enumerate_start_menu())
+    raw.extend(_enumerate_apps_folder())
+
     apps: list[tuple[str, str]] = []
-    apps.extend(_enumerate_start_menu())
-    apps.extend(_enumerate_apps_folder())
+    dropped = 0
+    for display, token in raw:
+        if _is_dangerous_candidate(display):
+            dropped += 1
+            continue
+        apps.append((display, token))
+
     _cache["apps"] = apps
     logger.info(
-        "resolve_app cache populated: %d Start Menu + AppsFolder entries",
+        "resolve_app cache populated: %d entries (dropped %d dangerous)",
         len(apps),
+        dropped,
     )
     return apps
 

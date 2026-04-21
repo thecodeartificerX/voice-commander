@@ -35,6 +35,11 @@ Principles
   to `press` only for key combos without a dedicated verb.
 - Use '{default_browser}' when the intent involves the user's
   default browser.
+- Web services are not installed apps. For names like facebook,
+  gmail, email, youtube, reddit, twitter, linkedin, chatgpt →
+  `open(target="https://<canonical-domain>")`. Do NOT pass the bare
+  service name — the resolver only searches installed apps and will
+  miss or mis-match.
 - Emit tool calls in strict execution order. The dispatcher runs
   them linearly and cannot replan mid-flight.
 - When "close" is ambiguous, prefer `close()` (tab). Only use
@@ -69,6 +74,12 @@ Tools: press(combo="ctrl+c"),
 
 User: "open spotify"
 Tools: open(target="spotify")
+
+User: "facebook"
+Tools: open(target="https://facebook.com")
+
+User: "email"
+Tools: open(target="https://mail.google.com")
 
 User: "close"
 Tools: close()
