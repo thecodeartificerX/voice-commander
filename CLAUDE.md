@@ -49,7 +49,7 @@ Tools live in `src/voice_commander/tools/*.py` and register themselves via a `@t
 | Feedback | Windows `.wav` chimes via `winsound` only (no visual toasts) | Fire-and-forget, non-interruptive. Toasts dropped in ADR 0013 (UX + CUDA-init fragility). |
 | Debug artifact | `outputs/last_utterance.wav` — async overwrite per utterance | Written fire-and-forget after enqueuing for transcription; for post-mortem inspection only. ADR 0018, 0019. |
 | Config | `config.toml` at project root | Tweak threshold/hotkey/model/VAD params without editing code |
-| CUDA DLL loading | `nvidia-cublas-cu12` + `nvidia-cudnn-cu12` pip packages + `_cuda_setup.register()` preloads DLLs via `ctypes.WinDLL` before `faster_whisper` import | Venv self-contained; no system CUDA install needed; sidesteps Windows native DLL-search quirks. ADR 0012. |
+| CUDA DLL loading | `nvidia-cublas-cu12` + `nvidia-cudnn-cu12` pip packages + `_cuda_setup.register()` preloads DLLs via `ctypes.WinDLL` before `faster_whisper` import | Sidesteps Windows DLL-search / stale-PATH quirks so every entry point loads the same DLLs. Requires system CUDA Toolkit 12.x + cuDNN 9.x MSI install on `PATH` (pip wheels supplement, do not replace). ADR 0012 (amended). |
 
 Every one of these has (or will have) a full ADR in `docs/decisions/`.
 

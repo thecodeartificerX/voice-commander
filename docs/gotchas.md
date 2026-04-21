@@ -24,11 +24,12 @@ Windows-specific traps, threading pitfalls, and hardware quirks discovered durin
 2. **`os.add_dll_directory()` only affects Python-level DLL loading.** It does not help third-party native code. PATH from the launching shell is the only thing Windows consults for native `LoadLibrary`.
 3. **CTranslate2 4.x bundles its own `cudnn64_9.dll` dispatcher shim** inside the package dir. That shim delegates to full cuDNN kernel libraries (`cudnn_ops64_9.dll`, `cudnn_graph64_9.dll`, etc.) which are NOT bundled. Those kernels must come from somewhere reachable.
 
-**Mitigation (chosen):** Bundle the CUDA runtime directly in the venv via pip packages, then preload the DLLs by absolute path at import time. See ADR 0012 for the full reasoning.
+**Mitigation (chosen):** Pin the CUDA runtime via pip wheels **and** preload the DLLs by absolute path at import time. See ADR 0012 (amended 2026-04-21) for the full reasoning.
 
-- `pyproject.toml` depends on `nvidia-cublas-cu12` + `nvidia-cudnn-cu12`. These install into `.venv/Lib/site-packages/nvidia/*/bin` and travel with the venv — no system CUDA install required.
-- `src/voice_commander/_cuda_setup.py` is imported before `faster_whisper` inside `transcriber.py`. Its `register()` function walks the nvidia packages and calls `ctypes.WinDLL(abs_path)` on every DLL. Once mapped into the process, subsequent short-name `LoadLibrary` calls from CTranslate2 resolve to the preloaded handles.
+- `pyproject.toml` depends on `nvidia-cublas-cu12` + `nvidia-cudnn-cu12`. These install into `.venv/Lib/site-packages/nvidia/*/bin` and pin the exact ABI CTranslate2 was built against.
+- `src/voice_commander/_cuda_setup.py` is imported before `faster_whisper` inside `transcriber.py`. Its `register()` function walks the nvidia packages and calls `ctypes.WinDLL(abs_path)` on every DLL. Once mapped into the process, subsequent short-name `LoadLibrary` calls from CTranslate2 resolve to the preloaded handles regardless of stale shell `PATH`.
 - No-op on non-Windows; idempotent.
+- **Users still need a system CUDA Toolkit 12.x + cuDNN 9.x MSI install on `PATH`.** The pip wheels + ctypes preload solve the stale-`PATH` problem when a system install exists; they do not substitute for one. See the README's *CUDA setup* section for the user-facing install steps.
 
 **Diagnostic commands:**
 ```powershell

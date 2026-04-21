@@ -1,6 +1,6 @@
 # ADR 0012: Bundle CUDA runtime via pip packages, preload DLLs from Python
 
-**Status:** Accepted
+**Status:** Amended 2026-04-21 — the "self-contained venv" claim was wrong. See *Amendment* at the bottom.
 **Date:** 2026-04-20
 
 ## Context
@@ -60,3 +60,26 @@ Maximally robust but requires a C++ toolchain and adds minutes to every build. C
 - CTranslate2 Windows wheel: https://pypi.org/project/ctranslate2/
 - Windows DLL search order: https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order
 - Python `os.add_dll_directory` semantics: https://docs.python.org/3/library/os.html#os.add_dll_directory
+
+---
+
+## Amendment — 2026-04-21
+
+The original *Decision* bullet 1 claimed "users do not need a system CUDA install." **This is incorrect in practice and should not be relied upon.**
+
+### What changed
+
+- faster-whisper's own documentation lists **cuBLAS for CUDA 12** and **cuDNN 9 for CUDA 12** as prerequisites that must be installed on the system (<https://github.com/SYSTRAN/faster-whisper#gpu>).
+- Real-world installs on clean Windows machines fail without the CUDA Toolkit 12.x and cuDNN 9.x MSI packages registered system-wide — the pip wheels (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`) ship the headline DLLs but not the full set of transitive dependencies CTranslate2 ends up resolving (NVIDIA driver runtime shim, `cudart`, `nvrtc`, etc.).
+- The NVIDIA driver itself is obviously not pip-installable; that was always implicit but was not surfaced in the original ADR.
+
+### Revised decision
+
+1. **Users must install CUDA Toolkit 12.x and cuDNN 9.x via NVIDIA's official MSI installers, and both must be on `PATH`.** The README's *CUDA setup* section walks through this.
+2. The `nvidia-cublas-cu12` / `nvidia-cudnn-cu12` pip deps **stay** — they pin the exact ABI CTranslate2 was built against and make the venv reproducible — but they supplement the system install, they do not replace it.
+3. The `_cuda_setup.register()` ctypes preloading shim **stays** — it still solves the original stale-`PATH` / process-env-snapshot problem that motivated this ADR. When a system install is present but a shell session carries a stale `PATH`, the shim makes `uv run voice-commander`, `pytest`, and IDE run configurations all load the correct DLLs from the venv.
+4. CPU-only users can skip the system install entirely by setting `[transcription] device = "cpu"` in `config.toml`. No code change required.
+
+### Lesson learned
+
+The "self-contained venv" framing survived because we tested exclusively on machines that already had CUDA installed from a prior project. A clean-machine validation was never run during Phase 2. Future ADRs making portability claims must include a clean-machine smoke test as part of the acceptance criteria.
