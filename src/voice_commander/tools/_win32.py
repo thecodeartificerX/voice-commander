@@ -1,56 +1,53 @@
 from __future__ import annotations
 
 import logging
-import winreg
+import os
+from collections.abc import Sequence
+from pathlib import Path
 from subprocess import Popen
 
 logger = logging.getLogger(__name__)
 
-
-def default_browser_progid() -> str | None:
-    """Returns the ProgID of the default browser from the Windows registry, or None."""
-    path = r"SOFTWARE\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice"
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
-            progid, _ = winreg.QueryValueEx(key, "ProgId")
-            return str(progid)
-    except OSError:
-        return None
+COMET_EXE = "comet.exe"
+COMET_LAUNCH_PATH = (
+    Path(os.environ.get("LOCALAPPDATA", ""))
+    / "Perplexity"
+    / "Comet"
+    / "Application"
+    / "comet.exe"
+)
 
 
-def progid_to_exe(progid: str) -> str | None:
-    mapping = {
-        "ChromeHTML": "chrome.exe",
-        "MSEdgeHTM": "msedge.exe",
-        "FirefoxURL": "firefox.exe",
-        "BraveHTML": "brave.exe",
-    }
-    for prefix, exe in mapping.items():
-        if progid.startswith(prefix):
-            return exe
-    return None
-
-
-def focus_window_by_exe(exe_name: str) -> bool:
+def focus_window_by_exe(
+    exe_name: str, launch_path: str | Sequence[str] | None = None
+) -> bool:
     """Cycles Alt+Tab-less focus to a window whose process exe matches. Returns True on success.
 
     If the pywin32/psutil imports fail, or if no running process matches
     ``exe_name``, the function falls back to launching the application via
-    ``subprocess.Popen([exe_name])`` and returns False (the window is not yet
-    focused — the OS will raise it once the process initialises).
+    ``subprocess.Popen``. ``launch_path`` overrides the spawn argv (useful when
+    ``exe_name`` is not on PATH); defaults to ``[exe_name]``.
     """
+    spawn_argv: Sequence[str]
+    if launch_path is None:
+        spawn_argv = [exe_name]
+    elif isinstance(launch_path, str):
+        spawn_argv = [launch_path]
+    else:
+        spawn_argv = launch_path
+
     try:
         import psutil
         import win32con
         import win32gui
         import win32process
     except ImportError:
-        Popen([exe_name])
+        Popen(spawn_argv)
         return False
 
     target_pids = {p.pid for p in psutil.process_iter(["name"]) if p.info["name"] == exe_name}
     if not target_pids:
-        Popen([exe_name])
+        Popen(spawn_argv)
         return False
 
     found: list[int] = []

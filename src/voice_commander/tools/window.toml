@@ -12,7 +12,7 @@ enabled = true
 
 [tools.focus_browser]
 phrases = ["focus browser", "switch to browser", "bring up browser"]
-description = "Focuses the default browser window."
+description = "Focuses the Comet browser window."
 enabled = true
 
 [tools.focus_terminal]

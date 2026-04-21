@@ -5,7 +5,7 @@ import logging
 import pyautogui
 
 from ..registry import tool
-from ._win32 import default_browser_progid, focus_window_by_exe, progid_to_exe
+from ._win32 import COMET_EXE, COMET_LAUNCH_PATH, focus_window_by_exe
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +22,11 @@ def maximize() -> None:
 
 @tool
 def focus_browser() -> None:
-    _focus_default_browser()
+    _focus_comet()
 
 
-def _focus_default_browser() -> None:
-    progid = default_browser_progid()
-    exe = progid_to_exe(progid) if progid else None
-    if exe is None:
-        logger.warning("No default browser detected; falling back to chrome.exe")
-        exe = "chrome.exe"
-    focus_window_by_exe(exe)
+def _focus_comet() -> None:
+    focus_window_by_exe(COMET_EXE, launch_path=str(COMET_LAUNCH_PATH))
 
 
 @tool

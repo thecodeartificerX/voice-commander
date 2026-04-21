@@ -16,3 +16,15 @@ def test_reload_sends_f5():
     with patch("voice_commander.tools.browser.pyautogui.press") as pr:
         browser.reload()
     pr.assert_called_once_with("f5")
+
+
+def test_email_launches_comet_with_gmail():
+    with patch("voice_commander.tools.browser.subprocess.Popen") as popen:
+        browser.email()
+    popen.assert_called_once_with([str(browser.COMET_LAUNCH_PATH), browser.GMAIL_URL])
+
+
+def test_messenger_launches_comet_with_messages_url():
+    with patch("voice_commander.tools.browser.subprocess.Popen") as popen:
+        browser.messenger()
+    popen.assert_called_once_with([str(browser.COMET_LAUNCH_PATH), browser.MESSENGER_URL])

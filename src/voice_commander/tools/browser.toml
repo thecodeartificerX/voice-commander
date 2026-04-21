@@ -19,3 +19,13 @@ enabled = true
 phrases = ["reload", "refresh", "reload page"]
 description = "Reloads the current page with F5."
 enabled = true
+
+[tools.email]
+phrases = ["email", "open email", "open gmail", "check email"]
+description = "Opens Gmail in Comet."
+enabled = true
+
+[tools.messenger]
+phrases = ["messenger", "open messenger", "facebook messenger", "check messenger"]
+description = "Opens Facebook Messenger in Comet."
+enabled = true

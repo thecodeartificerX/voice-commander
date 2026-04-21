@@ -15,7 +15,7 @@ def test_maximize():
 
 
 def test_focus_browser_calls_helper():
-    with patch("voice_commander.tools.window._focus_default_browser") as f:
+    with patch("voice_commander.tools.window._focus_comet") as f:
         window.focus_browser()
     f.assert_called_once()
 
