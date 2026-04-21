@@ -1,4 +1,5 @@
 """Tests for Dispatcher.run_plan() — multi-step LLM plan execution."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -11,6 +12,7 @@ from voice_commander.registry import ToolEntry, ToolRegistry
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_registry(*tools: ToolEntry) -> ToolRegistry:
     reg = ToolRegistry()
@@ -42,6 +44,7 @@ def _plan(*steps: tuple[str, dict]) -> Plan:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_run_plan_happy_path():
     """All three steps execute; sleep is called once per step with settle_ms > 0."""
     call_log: list[str] = []
@@ -61,8 +64,8 @@ def test_run_plan_happy_path():
     assert call_log == ["a", "b", "c"]
     # sleep called once per step (all have settle_ms > 0)
     assert mock_sleep.call_count == 3
-    mock_sleep.assert_any_call(0.05)   # 50 ms
-    mock_sleep.assert_any_call(0.1)    # 100 ms
+    mock_sleep.assert_any_call(0.05)  # 50 ms
+    mock_sleep.assert_any_call(0.1)  # 100 ms
     mock_sleep.assert_any_call(0.025)  # 25 ms
 
 
@@ -180,6 +183,7 @@ def test_run_plan_feedback_events():
 
 def test_run_plan_extra_kwargs_fires_error():
     """Extra kwargs from LLM hallucination trigger on_error (TypeError caught)."""
+
     def strict_fn(combo: str) -> None:
         pass
 

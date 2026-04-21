@@ -157,6 +157,7 @@ def test_mute_key_invalid_type_raises(tmp_path):
 # LLMRouterConfig parsing
 # ---------------------------------------------------------------------------
 
+
 def test_llm_router_section_absent_returns_all_defaults(tmp_path):
     """No [llm_router] section → all fields carry their documented defaults."""
     cfg = Config.load(tmp_path / "nope.toml")
@@ -215,7 +216,7 @@ def test_llm_router_partial_section_respects_set_fields_and_defaults(tmp_path):
 
 
 def test_llm_router_enabled_only_gets_default_endpoint_and_model(tmp_path):
-    """enabled = true with no other fields → router-enabled with all default endpoint/model/timeout values."""
+    """enabled = true with no other fields → router-enabled with all default values."""
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text("[llm_router]\nenabled = true\n")
     cfg = Config.load(cfg_file)

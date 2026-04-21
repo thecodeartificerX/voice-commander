@@ -9,9 +9,17 @@ def _test_hotkey(fn, keys):
     hk.assert_called_once_with(*keys)
 
 
-def test_new_tab():          _test_hotkey(browser.new_tab,    ("ctrl", "t"))
-def test_close_tab():        _test_hotkey(browser.close_tab,  ("ctrl", "w"))
-def test_reopen_tab():       _test_hotkey(browser.reopen_tab, ("ctrl", "shift", "t"))
+def test_new_tab():
+    _test_hotkey(browser.new_tab, ("ctrl", "t"))
+
+
+def test_close_tab():
+    _test_hotkey(browser.close_tab, ("ctrl", "w"))
+
+
+def test_reopen_tab():
+    _test_hotkey(browser.reopen_tab, ("ctrl", "shift", "t"))
+
 
 def test_reload_sends_f5():
     with patch("voice_commander.tools.browser.pyautogui.press") as pr:

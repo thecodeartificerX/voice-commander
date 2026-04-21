@@ -310,6 +310,5 @@ def test_ring_cleared_on_speech_start(monkeypatch):
 
     # After the utterance is returned the gate is IDLE and the ring must be empty.
     assert len(gate._ring) == 0, (
-        "Ring buffer was not cleared after speech-end; "
-        f"found {len(gate._ring)} frames remaining"
+        f"Ring buffer was not cleared after speech-end; found {len(gate._ring)} frames remaining"
     )

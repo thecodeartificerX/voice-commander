@@ -3,6 +3,7 @@
 Skipped unless LM_STUDIO_URL environment variable is set.
 Requires LM Studio running with a model loaded.
 """
+
 import os
 import time
 
@@ -46,25 +47,55 @@ def _make_router() -> LLMRouter:
     tools = [
         ("copy", copy, {}),
         ("paste", paste, {}),
-        ("press_keys", press_keys, {"combo": ArgMetadata(
-            name="combo", type_str="str",
-            description="Key combo like ctrl+c", required=True, default=None,
-        )}),
-        ("type_text", type_text, {"text": ArgMetadata(
-            name="text", type_str="str",
-            description="Text to type", required=True, default=None,
-        )}),
-        ("no_match", no_match, {"reason": ArgMetadata(
-            name="reason", type_str="str",
-            description="Why no tool matched", required=True, default=None,
-        )}),
+        (
+            "press_keys",
+            press_keys,
+            {
+                "combo": ArgMetadata(
+                    name="combo",
+                    type_str="str",
+                    description="Key combo like ctrl+c",
+                    required=True,
+                    default=None,
+                )
+            },
+        ),
+        (
+            "type_text",
+            type_text,
+            {
+                "text": ArgMetadata(
+                    name="text",
+                    type_str="str",
+                    description="Text to type",
+                    required=True,
+                    default=None,
+                )
+            },
+        ),
+        (
+            "no_match",
+            no_match,
+            {
+                "reason": ArgMetadata(
+                    name="reason",
+                    type_str="str",
+                    description="Why no tool matched",
+                    required=True,
+                    default=None,
+                )
+            },
+        ),
     ]
 
     for name, func, args_meta in tools:
         schema = sig_to_json_schema(func, args_meta, tool_name=name)
         entry = ToolEntry(
-            name=name, phrases=(), func=func,
-            module="test", docstring=func.__doc__,
+            name=name,
+            phrases=(),
+            func=func,
+            module="test",
+            docstring=func.__doc__,
             params_schema=schema,
             llm_only=(name in ("no_match",)),
         )
@@ -105,9 +136,7 @@ class TestLLMRouterLive:
         """Nonsense utterance should produce no_match (returns None)."""
         router = _make_router()
         try:
-            plan = router.route(
-                "flurble blorb zippity doo completely meaningless"
-            )
+            plan = router.route("flurble blorb zippity doo completely meaningless")
             # Should be None (no_match detected by router)
             assert plan is None
         finally:

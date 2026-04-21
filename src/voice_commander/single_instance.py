@@ -16,6 +16,7 @@ Bug fixed in this rewrite (2026-04-21):
     never reclaimed the lock file after a crash.  All ctypes bindings now
     declare explicit ``restype`` and ``argtypes``.
 """
+
 from __future__ import annotations
 
 import atexit
@@ -38,6 +39,7 @@ class AlreadyRunning(Exception):
 # ---------------------------------------------------------------------------
 # PID-alive check with correct ctypes bindings
 # ---------------------------------------------------------------------------
+
 
 def _pid_alive(pid: int) -> bool:
     """Return *True* if *pid* is a running process, *False* otherwise.
@@ -100,6 +102,7 @@ def _pid_alive(pid: int) -> bool:
 # OS-level file locking helpers
 # ---------------------------------------------------------------------------
 
+
 def _os_lock(fh: int) -> None:
     """Acquire a non-blocking exclusive lock on file descriptor *fh*.
 
@@ -137,6 +140,7 @@ def _os_unlock(fh: int) -> None:
 # SingleInstanceLock
 # ---------------------------------------------------------------------------
 
+
 class SingleInstanceLock:
     """Cross-platform single-instance lock using OS-level file locking + PID.
 
@@ -170,7 +174,9 @@ class SingleInstanceLock:
             pid = self._read_pid_from_fd(fh)
             os.close(fh)
             logger.warning(
-                "Lock held by another process (pid=%d, lock=%s)", pid, self._path,
+                "Lock held by another process (pid=%d, lock=%s)",
+                pid,
+                self._path,
             )
             raise AlreadyRunning(
                 f"Another instance is running (pid={pid}, lock={self._path})"
@@ -185,7 +191,9 @@ class SingleInstanceLock:
         self._fh = fh
         logger.debug(
             "Lock acquired (pid=%d, guid=%s, lock=%s)",
-            os.getpid(), self._guid, self._path,
+            os.getpid(),
+            self._guid,
+            self._path,
         )
 
         self._register_cleanup()

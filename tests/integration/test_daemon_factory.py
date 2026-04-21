@@ -30,10 +30,11 @@ imported at the top of ``daemon.py`` and is patchable via
 from __future__ import annotations
 
 import queue
-from contextlib import contextmanager, ExitStack
+from collections.abc import Generator
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -138,9 +139,7 @@ def test_factory_llm_router_disabled(base_cfg: Config) -> None:
     assert isinstance(daemon, StreamingDaemon)
 
     # LLM router must be absent.
-    assert daemon._llm_router is None, (
-        "Expected _llm_router=None when llm_router.enabled=False"
-    )
+    assert daemon._llm_router is None, "Expected _llm_router=None when llm_router.enabled=False"
 
     # All other required components must be wired.
     assert daemon._transcriber is not None, "transcriber missing"

@@ -21,10 +21,10 @@ from voice_commander.config import Config, LLMRouterConfig
 from voice_commander.registry import ToolEntry, ToolRegistry
 from voice_commander.tool_metadata import ArgMetadata, ToolMetadata, ToolMetadataStore
 
-
 # ---------------------------------------------------------------------------
 # Helpers (mirrors test_validator.py style)
 # ---------------------------------------------------------------------------
+
 
 def _make_store(tools: dict[str, ToolMetadata]) -> MagicMock:
     """Return a mock ToolMetadataStore whose load_all() yields *tools*."""
@@ -118,6 +118,7 @@ def _patch_infrastructure(registry: ToolRegistry, store: MagicMock):
 # Happy path: clean config + passing registry → returns normally, prints "OK"
 # ---------------------------------------------------------------------------
 
+
 class TestHappyPath:
     def test_returns_without_raising(self, capsys):
         """Clean config + valid tool registry → _run_validate returns normally (exit 0)."""
@@ -168,6 +169,7 @@ class TestHappyPath:
 # Config drift: timeout_ms below minimum → sys.exit(1)
 # ---------------------------------------------------------------------------
 
+
 class TestConfigDrift:
     def test_timeout_ms_too_low_causes_exit_1(self):
         """llm_router.timeout_ms=100 (< 200) → validate_config_or_die calls sys.exit(1)."""
@@ -211,6 +213,7 @@ class TestConfigDrift:
 # Tool drift: validate_or_die raises when registry/TOML disagree → sys.exit(1)
 # ---------------------------------------------------------------------------
 
+
 class TestToolDrift:
     def test_rule2_missing_toml_arg_causes_exit_1(self):
         """Function param with no matching TOML arg → validate_or_die exits 1."""
@@ -239,20 +242,22 @@ class TestToolDrift:
             pass
 
         registry = _make_registry(_entry("my_tool", my_tool))
-        store = _make_store({
-            "my_tool": _meta(
-                "my_tool",
-                args={
-                    "items": ArgMetadata(
-                        name="items",
-                        type_str="list",
-                        description="Items.",
-                        required=True,
-                        default=None,
-                    )
-                },
-            )
-        })
+        store = _make_store(
+            {
+                "my_tool": _meta(
+                    "my_tool",
+                    args={
+                        "items": ArgMetadata(
+                            name="items",
+                            type_str="list",
+                            description="Items.",
+                            required=True,
+                            default=None,
+                        )
+                    },
+                )
+            }
+        )
         cfg = Config()
 
         p_store_cls, p_discover = _patch_infrastructure(registry, store)
@@ -272,9 +277,7 @@ class TestToolDrift:
 
         entry = _entry("my_tool", my_tool, phrases=("foo",), llm_only=True)
         registry = _make_registry(entry)
-        store = _make_store({
-            "my_tool": _meta("my_tool", llm_only=True, phrases=("foo",))
-        })
+        store = _make_store({"my_tool": _meta("my_tool", llm_only=True, phrases=("foo",))})
         cfg = Config()
 
         p_store_cls, p_discover = _patch_infrastructure(registry, store)
@@ -297,17 +300,20 @@ class TestToolDrift:
         cfg = Config()
 
         p_store_cls, p_discover = _patch_infrastructure(registry, store)
-        with p_store_cls, p_discover:
-            # validate_or_die is imported from .validator inside _run_validate,
-            # so we patch it in its source module.
-            with patch(
+        # validate_or_die is imported from .validator inside _run_validate,
+        # so we patch it in its source module.
+        with (
+            p_store_cls,
+            p_discover,
+            patch(
                 "voice_commander.validator.validate_or_die",
                 side_effect=SystemExit(1),
-            ):
-                from voice_commander.__main__ import _run_validate
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            from voice_commander.__main__ import _run_validate
 
-                with pytest.raises(SystemExit) as exc_info:
-                    _run_validate(cfg)
+            _run_validate(cfg)
 
         assert exc_info.value.code == 1
 
@@ -315,6 +321,7 @@ class TestToolDrift:
 # ---------------------------------------------------------------------------
 # Stdout contract: "OK" only printed on success, not on failure
 # ---------------------------------------------------------------------------
+
 
 class TestOutputContract:
     def test_ok_not_printed_on_config_failure(self, capsys):

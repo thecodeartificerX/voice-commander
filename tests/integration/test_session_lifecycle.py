@@ -298,7 +298,11 @@ def test_mute_unmute_lifecycle(tmp_path: Any) -> None:
     dispatcher = MagicMock()
 
     result = TranscriptionResult(
-        text="copy", confidence=0.95, language="en", duration_ms=500, no_speech_prob=0.05,
+        text="copy",
+        confidence=0.95,
+        language="en",
+        duration_ms=500,
+        no_speech_prob=0.05,
     )
     transcriber.transcribe.return_value = result
     match_result = MagicMock()

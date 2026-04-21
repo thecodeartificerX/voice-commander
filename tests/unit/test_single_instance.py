@@ -11,6 +11,7 @@ Covers:
 - _stale() defence-in-depth method
 - _read_pid_from_fd static method
 """
+
 from __future__ import annotations
 
 import atexit
@@ -75,7 +76,8 @@ class TestPidAlivePosix:
         import voice_commander.single_instance as si
 
         monkeypatch.setattr(
-            si.os, "kill",
+            si.os,
+            "kill",
             lambda pid, sig: (_ for _ in ()).throw(PermissionError()),
         )
         assert _pid_alive(9999) is True
@@ -85,7 +87,8 @@ class TestPidAlivePosix:
         import voice_commander.single_instance as si
 
         monkeypatch.setattr(
-            si.os, "kill",
+            si.os,
+            "kill",
             lambda pid, sig: (_ for _ in ()).throw(ProcessLookupError()),
         )
         assert _pid_alive(9999) is False
@@ -95,7 +98,8 @@ class TestPidAlivePosix:
         import voice_commander.single_instance as si
 
         monkeypatch.setattr(
-            si.os, "kill",
+            si.os,
+            "kill",
             lambda pid, sig: (_ for _ in ()).throw(OSError("other")),
         )
         assert _pid_alive(9999) is False
@@ -159,9 +163,7 @@ class TestPidAliveWindows:
 
     def test_get_exit_code_failure_means_dead(self):
         """GetExitCodeProcess returning BOOL 0 (failure) → assume dead → False."""
-        kernel32 = self._make_kernel32(
-            open_return=0xDEADBEEF, exit_code=0, get_exit_ok=False
-        )
+        kernel32 = self._make_kernel32(open_return=0xDEADBEEF, exit_code=0, get_exit_ok=False)
         with patch("ctypes.windll") as mock_windll:
             mock_windll.kernel32 = kernel32
             result = _pid_alive(1234)
@@ -316,9 +318,10 @@ class TestSingleInstanceLockConflict:
         finally:
             a.release()
 
-    @pytest.mark.skipif(sys.platform == "win32", reason=(
-        "Windows msvcrt.locking prevents cross-fd reads; PID is -1 on conflict"
-    ))
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason=("Windows msvcrt.locking prevents cross-fd reads; PID is -1 on conflict"),
+    )
     def test_already_running_message_contains_pid_posix(self, tmp_path):
         """On POSIX, AlreadyRunning message includes the actual running PID."""
         lock_path = tmp_path / "daemon.lock"
@@ -587,9 +590,7 @@ class TestCleanupRegistration:
         lock.acquire()
         try:
             stored = lock._prev_handlers.get(signal.SIGINT)
-            assert stored is prev_handler, (
-                f"Expected prev handler {prev_handler!r}, got {stored!r}"
-            )
+            assert stored is prev_handler, f"Expected prev handler {prev_handler!r}, got {stored!r}"
         finally:
             signal.signal(signal.SIGINT, signal.SIG_DFL)
             lock.release()
@@ -650,6 +651,7 @@ class TestSignalHandler:
 
         killed_with: list[tuple[int, int]] = []
         import voice_commander.single_instance as si_mod
+
         monkeypatch.setattr(signal, "signal", lambda sig, handler: None)
         monkeypatch.setattr(si_mod.os, "kill", lambda pid, sig: killed_with.append((pid, sig)))
 
@@ -698,6 +700,7 @@ class TestSignalHandler:
 
         killed_with: list[tuple[int, int]] = []
         import voice_commander.single_instance as si_mod
+
         monkeypatch.setattr(signal, "signal", lambda sig, handler: None)
         monkeypatch.setattr(si_mod.os, "kill", lambda pid, sig: killed_with.append((pid, sig)))
 

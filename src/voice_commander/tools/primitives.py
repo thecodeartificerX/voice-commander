@@ -1,4 +1,5 @@
 """LLM-only primitive tools for the hybrid router."""
+
 from __future__ import annotations
 
 import logging
@@ -82,9 +83,7 @@ def focus_window(title_substring: str) -> None:
 
     win32gui.EnumWindows(_enum, None)
     if target_hwnd is None:
-        logger.error(
-            "focus_window: no visible window matching title_substring=%r", title_substring
-        )
+        logger.error("focus_window: no visible window matching title_substring=%r", title_substring)
         raise FocusWindowError(f"No window matching '{title_substring}'")
 
     # Restore if minimized.

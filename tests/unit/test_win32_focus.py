@@ -21,6 +21,7 @@ Test matrix
   correct hwnd → returns True (within poll budget).
 - verify_foreground_all_wrong: all polls return wrong hwnd → FocusWindowError.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, call, patch
@@ -131,6 +132,7 @@ def _patch_modules(mocks: dict):
 # Happy path: different threads → AttachThreadInput path
 # ---------------------------------------------------------------------------
 
+
 def test_happy_path_attach_thread_input(monkeypatch):
     """Different foreground/target threads → full AttachThreadInput dance → True returned."""
     mocks = _build_win32_mocks()
@@ -140,12 +142,8 @@ def test_happy_path_attach_thread_input(monkeypatch):
     def fake_attach(from_tid, to_tid, attach):
         attach_calls.append((from_tid, to_tid, attach))
 
-    monkeypatch.setattr(
-        "voice_commander.tools._win32._attach_thread_input", fake_attach
-    )
-    monkeypatch.setattr(
-        "voice_commander.tools._win32._allow_set_foreground", lambda: None
-    )
+    monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", fake_attach)
+    monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
 
     with _patch_modules(mocks):
         result = focus_window_by_exe("target.exe")
@@ -167,6 +165,7 @@ def test_happy_path_attach_thread_input(monkeypatch):
 # Happy path: same thread → AttachThreadInput skipped
 # ---------------------------------------------------------------------------
 
+
 def test_happy_path_same_thread_skips_attach(monkeypatch):
     """Same foreground/target thread → AttachThreadInput NOT called."""
     mocks = _build_win32_mocks(fg_tid=_TARGET_TID, target_tid=_TARGET_TID)
@@ -176,12 +175,8 @@ def test_happy_path_same_thread_skips_attach(monkeypatch):
     def fake_attach(from_tid, to_tid, attach):
         attach_calls.append((from_tid, to_tid, attach))
 
-    monkeypatch.setattr(
-        "voice_commander.tools._win32._attach_thread_input", fake_attach
-    )
-    monkeypatch.setattr(
-        "voice_commander.tools._win32._allow_set_foreground", lambda: None
-    )
+    monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", fake_attach)
+    monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
 
     with _patch_modules(mocks):
         result = focus_window_by_exe("target.exe")
@@ -193,6 +188,7 @@ def test_happy_path_same_thread_skips_attach(monkeypatch):
 # ---------------------------------------------------------------------------
 # Minimized window: ShowWindow(SW_RESTORE) called first
 # ---------------------------------------------------------------------------
+
 
 def test_minimized_window_restores_before_focus(monkeypatch):
     """IsIconic returns True → ShowWindow(SW_RESTORE) is called before the focus sequence."""
@@ -225,12 +221,18 @@ def test_non_minimized_window_does_not_restore(monkeypatch):
 # Lockout failure: SetForegroundWindow raises → FocusWindowError
 # ---------------------------------------------------------------------------
 
+
 def test_lockout_failure_raises_focus_window_error(monkeypatch):
     """SetForegroundWindow raises → FocusWindowError is raised (not swallowed)."""
+
     class FakePyWinError(OSError):
         pass
 
-    mocks = _build_win32_mocks(sfg_side_effect=FakePyWinError("(0, 'SetForegroundWindow', 'No error message is available')"))
+    mocks = _build_win32_mocks(
+        sfg_side_effect=FakePyWinError(
+            "(0, 'SetForegroundWindow', 'No error message is available')"
+        )
+    )
 
     monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", lambda *a: None)
     monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
@@ -245,8 +247,10 @@ def test_lockout_failure_raises_focus_window_error(monkeypatch):
 # AttachThreadInput detach guaranteed even on exception (try/finally)
 # ---------------------------------------------------------------------------
 
+
 def test_attach_detach_paired_on_exception(monkeypatch):
     """AttachThreadInput(FALSE) is called even when SetForegroundWindow raises."""
+
     class FakePyWinError(OSError):
         pass
 
@@ -260,9 +264,8 @@ def test_attach_detach_paired_on_exception(monkeypatch):
     monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", fake_attach)
     monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
 
-    with _patch_modules(mocks):
-        with pytest.raises(FocusWindowError):
-            focus_window_by_exe("target.exe")
+    with _patch_modules(mocks), pytest.raises(FocusWindowError):
+        focus_window_by_exe("target.exe")
 
     # Must have both TRUE and FALSE calls
     attaches = [c for c in attach_calls if c[2] is True]
@@ -275,6 +278,7 @@ def test_attach_detach_paired_on_exception(monkeypatch):
 # Target not found: no matching process
 # ---------------------------------------------------------------------------
 
+
 def test_target_not_found_no_pids_raises_and_launches(monkeypatch):
     """No running process with that exe name → FocusWindowError raised, Popen called."""
     mocks = _build_win32_mocks()
@@ -283,9 +287,12 @@ def test_target_not_found_no_pids_raises_and_launches(monkeypatch):
     monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", lambda *a: None)
     monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
 
-    with _patch_modules(mocks), patch("voice_commander.tools._win32.Popen") as mock_popen:
-        with pytest.raises(FocusWindowError) as exc_info:
-            focus_window_by_exe("target.exe", launch_path="C:/Apps/target.exe")
+    with (
+        _patch_modules(mocks),
+        patch("voice_commander.tools._win32.Popen") as mock_popen,
+        pytest.raises(FocusWindowError) as exc_info,
+    ):
+        focus_window_by_exe("target.exe", launch_path="C:/Apps/target.exe")
 
     mock_popen.assert_called_once_with(["C:/Apps/target.exe"])
     assert "target.exe" in str(exc_info.value)
@@ -294,6 +301,7 @@ def test_target_not_found_no_pids_raises_and_launches(monkeypatch):
 # ---------------------------------------------------------------------------
 # Target not found: process running but no visible window
 # ---------------------------------------------------------------------------
+
 
 def test_target_not_found_no_window_raises(monkeypatch):
     """Process running but EnumWindows yields no visible window → FocusWindowError."""
@@ -310,9 +318,8 @@ def test_target_not_found_no_window_raises(monkeypatch):
     monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", lambda *a: None)
     monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
 
-    with _patch_modules(mocks):
-        with pytest.raises(FocusWindowError) as exc_info:
-            focus_window_by_exe("target.exe")
+    with _patch_modules(mocks), pytest.raises(FocusWindowError) as exc_info:
+        focus_window_by_exe("target.exe")
 
     assert "no visible" in str(exc_info.value).lower() or "target.exe" in str(exc_info.value)
 
@@ -321,10 +328,14 @@ def test_target_not_found_no_window_raises(monkeypatch):
 # Import error: pywin32 unavailable
 # ---------------------------------------------------------------------------
 
+
 def test_import_error_raises_and_launches():
     """When pywin32/psutil is unavailable, FocusWindowError is raised and Popen called."""
     with (
-        patch.dict("sys.modules", {"win32gui": None, "win32con": None, "win32process": None, "psutil": None}),
+        patch.dict(
+            "sys.modules",
+            {"win32gui": None, "win32con": None, "win32process": None, "psutil": None},
+        ),
         patch("voice_commander.tools._win32.Popen") as mock_popen,
         pytest.raises(FocusWindowError),
     ):
@@ -337,13 +348,12 @@ def test_import_error_raises_and_launches():
 # Verification polling: succeeds on 3rd poll
 # ---------------------------------------------------------------------------
 
+
 def test_verify_foreground_succeeds_on_third_poll(monkeypatch):
     """Verification polls return wrong hwnd twice then correct → returns True."""
     # First call = get fg thread (returns fg_hwnd = 2002)
     # Then verification polls: wrong, wrong, correct
-    mocks = _build_win32_mocks(
-        get_fg_sequence=[9999, 9999, _TARGET_HWND, _TARGET_HWND]
-    )
+    mocks = _build_win32_mocks(get_fg_sequence=[9999, 9999, _TARGET_HWND, _TARGET_HWND])
 
     monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", lambda *a: None)
     monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
@@ -358,6 +368,7 @@ def test_verify_foreground_succeeds_on_third_poll(monkeypatch):
 # Verification polling: all wrong → FocusWindowError
 # ---------------------------------------------------------------------------
 
+
 def test_verify_foreground_all_wrong_raises(monkeypatch):
     """All verification polls return wrong hwnd → FocusWindowError raised."""
     mocks = _build_win32_mocks(
@@ -367,9 +378,12 @@ def test_verify_foreground_all_wrong_raises(monkeypatch):
     monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", lambda *a: None)
     monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
 
-    with _patch_modules(mocks), patch("voice_commander.tools._win32.time.sleep"):
-        with pytest.raises(FocusWindowError) as exc_info:
-            focus_window_by_exe("target.exe")
+    with (
+        _patch_modules(mocks),
+        patch("voice_commander.tools._win32.time.sleep"),
+        pytest.raises(FocusWindowError) as exc_info,
+    ):
+        focus_window_by_exe("target.exe")
 
     assert "verification" in str(exc_info.value).lower()
 
@@ -377,6 +391,7 @@ def test_verify_foreground_all_wrong_raises(monkeypatch):
 # ---------------------------------------------------------------------------
 # AllowSetForegroundWindow is called before the focus attempt
 # ---------------------------------------------------------------------------
+
 
 def test_allow_set_foreground_called(monkeypatch):
     """_allow_set_foreground() is called as part of the focus sequence."""
@@ -399,6 +414,7 @@ def test_allow_set_foreground_called(monkeypatch):
 # ---------------------------------------------------------------------------
 # FocusWindowError is exported from the module
 # ---------------------------------------------------------------------------
+
 
 def test_focus_window_error_is_runtime_error():
     """FocusWindowError is a RuntimeError subclass (for dispatcher compatibility)."""

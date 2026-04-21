@@ -36,9 +36,7 @@ class Resampler:
         filter delay.  After flushing, the stream is recreated so the resampler is
         ready for the next session.
         """
-        tail: np.ndarray = self._stream.resample_chunk(
-            np.array([], dtype=np.float32), last=True
-        )
+        tail: np.ndarray = self._stream.resample_chunk(np.array([], dtype=np.float32), last=True)
         self._stream = self._make_stream()
         return tail
 

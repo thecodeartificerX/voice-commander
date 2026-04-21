@@ -3,6 +3,7 @@
 All HTTP calls are intercepted via patch.object on the router's internal
 httpx.Client instance — no real network traffic is made.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,49 +20,54 @@ from voice_commander.registry import ToolEntry, ToolRegistry
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_registry() -> ToolRegistry:
     reg = ToolRegistry()
-    reg.register(ToolEntry(
-        name="copy",
-        phrases=("copy",),
-        func=lambda: None,
-        module="test",
-        docstring=None,
-        description="Copy",
-        params_schema={
-            "type": "function",
-            "function": {
-                "name": "copy",
-                "description": "Copy",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
+    reg.register(
+        ToolEntry(
+            name="copy",
+            phrases=("copy",),
+            func=lambda: None,
+            module="test",
+            docstring=None,
+            description="Copy",
+            params_schema={
+                "type": "function",
+                "function": {
+                    "name": "copy",
+                    "description": "Copy",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
                 },
             },
-        },
-    ))
-    reg.register(ToolEntry(
-        name="no_match",
-        phrases=(),
-        func=lambda reason: None,
-        module="test",
-        docstring=None,
-        description="No match",
-        llm_only=True,
-        params_schema={
-            "type": "function",
-            "function": {
-                "name": "no_match",
-                "description": "No match",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"reason": {"type": "string"}},
-                    "required": ["reason"],
+        )
+    )
+    reg.register(
+        ToolEntry(
+            name="no_match",
+            phrases=(),
+            func=lambda reason: None,
+            module="test",
+            docstring=None,
+            description="No match",
+            llm_only=True,
+            params_schema={
+                "type": "function",
+                "function": {
+                    "name": "no_match",
+                    "description": "No match",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"reason": {"type": "string"}},
+                        "required": ["reason"],
+                    },
                 },
             },
-        },
-    ))
+        )
+    )
     return reg
 
 
@@ -104,6 +110,7 @@ def _tool_call_dict(name: str, arguments: str | dict = "{}") -> dict:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestRouteHappyPath:
     def test_route_happy_path(self):
         """Single valid tool_call → Plan with one step."""
@@ -134,17 +141,13 @@ class TestRouteNetworkErrors:
     def test_route_timeout(self):
         """httpx.TimeoutException → None."""
         router = _make_router()
-        with patch.object(
-            router._client, "post", side_effect=httpx.TimeoutException("timed out")
-        ):
+        with patch.object(router._client, "post", side_effect=httpx.TimeoutException("timed out")):
             assert router.route("copy") is None
 
     def test_route_connect_error(self):
         """httpx.ConnectError → None."""
         router = _make_router()
-        with patch.object(
-            router._client, "post", side_effect=httpx.ConnectError("refused")
-        ):
+        with patch.object(router._client, "post", side_effect=httpx.ConnectError("refused")):
             assert router.route("copy") is None
 
     def test_route_http_status_error(self):
@@ -152,9 +155,7 @@ class TestRouteNetworkErrors:
         router = _make_router()
         raw_resp = MagicMock()
         raw_resp.status_code = 503
-        http_err = httpx.HTTPStatusError(
-            "503", request=MagicMock(), response=raw_resp
-        )
+        http_err = httpx.HTTPStatusError("503", request=MagicMock(), response=raw_resp)
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = http_err
 
@@ -183,9 +184,11 @@ class TestRouteMalformedResponse:
         matters here — the step is dropped and None is returned.
         """
         router = _make_router()
-        mock_resp = _mock_response([
-            _tool_call_dict("copy", "{not valid json"),
-        ])
+        mock_resp = _mock_response(
+            [
+                _tool_call_dict("copy", "{not valid json"),
+            ]
+        )
 
         with patch.object(router._client, "post", return_value=mock_resp):
             result = router.route("copy")
@@ -217,9 +220,11 @@ class TestRouteNoMatch:
     def test_route_no_match_first_step(self):
         """First tool_call is 'no_match' → None (signal: no tool fits)."""
         router = _make_router()
-        mock_resp = _mock_response([
-            _tool_call_dict("no_match", json.dumps({"reason": "unclear"})),
-        ])
+        mock_resp = _mock_response(
+            [
+                _tool_call_dict("no_match", json.dumps({"reason": "unclear"})),
+            ]
+        )
 
         with patch.object(router._client, "post", return_value=mock_resp):
             assert router.route("mumble mumble") is None
@@ -229,10 +234,12 @@ class TestRouteNoMatch:
         (router only suppresses when no_match leads)."""
         router = _make_router()
         # 'copy' first, then 'no_match' second — plan should still succeed
-        mock_resp = _mock_response([
-            _tool_call_dict("copy", "{}"),
-            _tool_call_dict("no_match", json.dumps({"reason": "second"})),
-        ])
+        mock_resp = _mock_response(
+            [
+                _tool_call_dict("copy", "{}"),
+                _tool_call_dict("no_match", json.dumps({"reason": "second"})),
+            ]
+        )
 
         with patch.object(router._client, "post", return_value=mock_resp):
             plan = router.route("copy then something weird")
@@ -245,11 +252,13 @@ class TestRouteMultiStepAndTruncation:
     def test_route_multi_step(self):
         """3 tool_calls → Plan with 3 steps."""
         router = _make_router()
-        mock_resp = _mock_response([
-            _tool_call_dict("copy", "{}"),
-            _tool_call_dict("copy", "{}"),
-            _tool_call_dict("copy", "{}"),
-        ])
+        mock_resp = _mock_response(
+            [
+                _tool_call_dict("copy", "{}"),
+                _tool_call_dict("copy", "{}"),
+                _tool_call_dict("copy", "{}"),
+            ]
+        )
 
         with patch.object(router._client, "post", return_value=mock_resp):
             plan = router.route("copy copy copy")
@@ -272,10 +281,12 @@ class TestRouteMultiStepAndTruncation:
     def test_route_max_plan_steps_one(self):
         """max_plan_steps=1 truncates to a single step."""
         router = _make_router(max_plan_steps=1)
-        mock_resp = _mock_response([
-            _tool_call_dict("copy", "{}"),
-            _tool_call_dict("copy", "{}"),
-        ])
+        mock_resp = _mock_response(
+            [
+                _tool_call_dict("copy", "{}"),
+                _tool_call_dict("copy", "{}"),
+            ]
+        )
 
         with patch.object(router._client, "post", return_value=mock_resp):
             plan = router.route("copy twice")
@@ -355,20 +366,16 @@ class TestWarmup:
         # not the per-call timeout_ms (600ms → ~0.5s).
         assert isinstance(timeout_arg, httpx.Timeout)
         assert timeout_arg.read > 1.0, (
-            f"warmup read timeout should be ~{3000/1000 - 0.1}s (from warmup_timeout_ms=3000), "
+            f"warmup read timeout should be ~{3000 / 1000 - 0.1}s (from warmup_timeout_ms=3000), "
             f"got: {timeout_arg.read}"
         )
         # Specifically must NOT be derived from the per-call timeout_ms=600
-        assert timeout_arg.read > 0.5, (
-            "warmup timeout must not be the per-call timeout_ms (600ms)"
-        )
+        assert timeout_arg.read > 0.5, "warmup timeout must not be the per-call timeout_ms (600ms)"
 
     def test_warmup_on_failure_returns_false_without_raising(self):
         """warmup() returns False on ConnectError — no exception bubbles up."""
         router = _make_router()
-        with patch.object(
-            router._client, "post", side_effect=httpx.ConnectError("refused")
-        ):
+        with patch.object(router._client, "post", side_effect=httpx.ConnectError("refused")):
             result = router.warmup()  # must not raise
 
         assert result is False
@@ -424,9 +431,7 @@ class TestWarmup:
     def test_warmup_timeout_error_returns_false(self):
         """httpx.TimeoutException during warmup → False, no exception."""
         router = _make_router()
-        with patch.object(
-            router._client, "post", side_effect=httpx.TimeoutException("timed out")
-        ):
+        with patch.object(router._client, "post", side_effect=httpx.TimeoutException("timed out")):
             assert router.warmup() is False
 
     def test_warmup_http_status_error_returns_false(self):
@@ -455,14 +460,16 @@ class TestBuildToolsArray:
     def test_tools_array_excludes_entries_without_schema(self):
         """_build_tools_array() skips entries with empty/falsy params_schema."""
         reg = ToolRegistry()
-        reg.register(ToolEntry(
-            name="schemaless",
-            phrases=("schemaless",),
-            func=lambda: None,
-            module="test",
-            docstring=None,
-            # params_schema defaults to {} which is falsy
-        ))
+        reg.register(
+            ToolEntry(
+                name="schemaless",
+                phrases=("schemaless",),
+                func=lambda: None,
+                module="test",
+                docstring=None,
+                # params_schema defaults to {} which is falsy
+            )
+        )
         cfg = LLMRouterConfig(enabled=True, timeout_ms=600)
         router = LLMRouter(cfg, reg)
         assert router._build_tools_array() == []

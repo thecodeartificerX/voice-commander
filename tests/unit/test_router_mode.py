@@ -22,10 +22,10 @@ from voice_commander.config import Config, LLMRouterConfig, MatchingConfig
 from voice_commander.registry import ToolEntry, ToolRegistry
 from voice_commander.tool_metadata import ArgMetadata, ToolMetadata, ToolMetadataStore
 
-
 # ---------------------------------------------------------------------------
 # Helpers — mirrors test_cli_validate.py style
 # ---------------------------------------------------------------------------
+
 
 def _make_store(tools: dict[str, ToolMetadata]) -> MagicMock:
     store = MagicMock(spec=ToolMetadataStore)
@@ -98,6 +98,7 @@ def _cfg_with_llm_router(**kwargs) -> Config:
 
 def _clean_registry_and_store():
     """Return a minimal valid (tool, store) pair for a passing validate run."""
+
     def my_tool() -> None:
         pass
 
@@ -109,6 +110,7 @@ def _clean_registry_and_store():
 # ---------------------------------------------------------------------------
 # A. apply_router_mode happy paths
 # ---------------------------------------------------------------------------
+
 
 class TestApplyRouterModeHappyPaths:
     def test_apply_router_mode_hybrid_is_noop(self):
@@ -188,6 +190,7 @@ class TestApplyRouterModeHappyPaths:
 # B. apply_router_mode error paths
 # ---------------------------------------------------------------------------
 
+
 class TestApplyRouterModeErrorPaths:
     def test_apply_router_mode_llm_missing_endpoint_raises(self):
         """llm mode with empty endpoint_url → RuntimeError mentioning [llm_router] and llm."""
@@ -197,7 +200,7 @@ class TestApplyRouterModeErrorPaths:
             Config(),
             llm_router=LLMRouterConfig(
                 enabled=False,
-                endpoint_url="",       # empty — triggers the guard
+                endpoint_url="",  # empty — triggers the guard
                 model_id="mistral/mistral-7b",
             ),
         )
@@ -218,7 +221,7 @@ class TestApplyRouterModeErrorPaths:
             llm_router=LLMRouterConfig(
                 enabled=False,
                 endpoint_url="http://myhost:1234/v1",
-                model_id="",           # empty — triggers the guard
+                model_id="",  # empty — triggers the guard
             ),
         )
 
@@ -255,6 +258,7 @@ class TestApplyRouterModeErrorPaths:
 # ---------------------------------------------------------------------------
 # C. CLI flag parsing via _build_parser()
 # ---------------------------------------------------------------------------
+
 
 class TestCliParsing:
     def test_cli_parses_router_mode_flag(self):
@@ -327,15 +331,19 @@ class TestCliParsing:
 # D. Integration with _run_validate / main()
 # ---------------------------------------------------------------------------
 
+
 class TestValidateIntegration:
     def test_validate_with_router_mode_fuzzy_exits_zero(self, capsys, monkeypatch):
         """--validate --router-mode fuzzy on a clean stack → exits 0 (no SystemExit)."""
+
         def my_tool() -> None:
             pass
 
         registry, store = _clean_registry_and_store()
 
-        monkeypatch.setattr(sys, "argv", ["voice_commander", "--validate", "--router-mode", "fuzzy"])
+        monkeypatch.setattr(
+            sys, "argv", ["voice_commander", "--validate", "--router-mode", "fuzzy"]
+        )
 
         with patch("voice_commander.__main__.Config") as mock_cfg_cls:
             mock_cfg_cls.load.return_value = Config()
@@ -351,12 +359,15 @@ class TestValidateIntegration:
 
     def test_validate_with_router_mode_hybrid_exits_zero(self, capsys, monkeypatch):
         """--validate --router-mode hybrid on a clean stack → exits 0."""
+
         def my_tool() -> None:
             pass
 
         registry, store = _clean_registry_and_store()
 
-        monkeypatch.setattr(sys, "argv", ["voice_commander", "--validate", "--router-mode", "hybrid"])
+        monkeypatch.setattr(
+            sys, "argv", ["voice_commander", "--validate", "--router-mode", "hybrid"]
+        )
 
         with patch("voice_commander.__main__.Config") as mock_cfg_cls:
             mock_cfg_cls.load.return_value = Config()
@@ -369,9 +380,7 @@ class TestValidateIntegration:
         captured = capsys.readouterr()
         assert "OK" in captured.out
 
-    def test_validate_with_router_mode_llm_missing_config_exits_nonzero(
-        self, monkeypatch
-    ):
+    def test_validate_with_router_mode_llm_missing_config_exits_nonzero(self, monkeypatch):
         """--validate --router-mode llm with no llm_router endpoint configured → non-zero exit.
 
         The default Config has endpoint_url='http://localhost:1234/v1' and
@@ -379,6 +388,7 @@ class TestValidateIntegration:
         inside apply_router_mode will NOT fire for the default config.
         We supply a config where endpoint_url is empty to trigger the RuntimeError.
         """
+
         def my_tool() -> None:
             pass
 
@@ -403,10 +413,9 @@ class TestValidateIntegration:
                 with pytest.raises((SystemExit, RuntimeError)):
                     main()
 
-    def test_validate_with_router_mode_llm_full_config_exits_zero(
-        self, capsys, monkeypatch
-    ):
+    def test_validate_with_router_mode_llm_full_config_exits_zero(self, capsys, monkeypatch):
         """--validate --router-mode llm with complete [llm_router] section → exits 0."""
+
         def my_tool() -> None:
             pass
 

@@ -12,11 +12,7 @@ logger = logging.getLogger(__name__)
 
 COMET_EXE = "comet.exe"
 COMET_LAUNCH_PATH = (
-    Path(os.environ.get("LOCALAPPDATA", ""))
-    / "Perplexity"
-    / "Comet"
-    / "Application"
-    / "comet.exe"
+    Path(os.environ.get("LOCALAPPDATA", "")) / "Perplexity" / "Comet" / "Application" / "comet.exe"
 )
 
 # SW_RESTORE value — same constant used by win32con; duplicated here so it's
@@ -96,9 +92,7 @@ def _do_focus(hwnd: int, foreground_tid: int, target_tid: int) -> None:
             _attach_thread_input(foreground_tid, target_tid, False)
 
 
-def focus_window_by_exe(
-    exe_name: str, launch_path: str | Sequence[str] | None = None
-) -> bool:
+def focus_window_by_exe(exe_name: str, launch_path: str | Sequence[str] | None = None) -> bool:
     """Focus the foreground window to a process whose exe name matches *exe_name*.
 
     Algorithm
@@ -148,9 +142,7 @@ def focus_window_by_exe(
     target_pids = {p.pid for p in psutil.process_iter(["name"]) if p.info["name"] == exe_name}
     if not target_pids:
         Popen(spawn_argv)
-        raise FocusWindowError(
-            f"No running process named '{exe_name}'; launched it instead"
-        )
+        raise FocusWindowError(f"No running process named '{exe_name}'; launched it instead")
 
     found: list[int] = []
 
