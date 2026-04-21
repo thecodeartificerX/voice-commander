@@ -288,28 +288,31 @@ def test_mute_unmute_lifecycle(tmp_path: Any) -> None:
 
     from voice_commander.daemon import StreamingDaemon
     from voice_commander.feedback import CapturingFeedbackSink
+    from voice_commander.plan import Plan, ToolCall
+    from voice_commander.resolver import Resolver
     from voice_commander.transcriber import TranscriptionResult
 
     feedback = CapturingFeedbackSink()
     recorder = MagicMock()
     recorder.is_open = False
     transcriber = MagicMock()
-    matcher = MagicMock()
+    resolver = MagicMock(spec=Resolver)
     dispatcher = MagicMock()
 
     result = TranscriptionResult(
         text="copy", confidence=0.95, language="en", duration_ms=500, no_speech_prob=0.05,
     )
     transcriber.transcribe.return_value = result
-    match_result = MagicMock()
-    matcher.match.return_value = match_result
+    plan = Plan(steps=(ToolCall(name="copy", kwargs={}),), raw_response={})
+    resolver.resolve.return_value = plan
 
     daemon = StreamingDaemon(
         feedback=feedback,
         recorder=recorder,
         transcriber=transcriber,
-        matcher=matcher,
+        resolver=resolver,
         dispatcher=dispatcher,
+        registry=MagicMock(),
         output_dir=str(tmp_path / "outputs"),
     )
 
@@ -338,7 +341,7 @@ def test_mute_unmute_lifecycle(tmp_path: Any) -> None:
         daemon._process_utterance = _p1  # type: ignore[assignment]
         daemon._utt_q.put(np.zeros(1600, dtype=np.float32))
         assert done1.wait(timeout=5.0), "pipeline did not process utterance"
-        assert dispatcher.dispatch.call_count == 0
+        assert dispatcher.run_plan.call_count == 0
 
         # 4. Unmute
         daemon.on_mute_toggle()
@@ -354,7 +357,7 @@ def test_mute_unmute_lifecycle(tmp_path: Any) -> None:
         daemon._process_utterance = _p2  # type: ignore[assignment]
         daemon._utt_q.put(np.zeros(1600, dtype=np.float32))
         assert done2.wait(timeout=5.0), "pipeline did not process utterance"
-        assert dispatcher.dispatch.call_count == 1
+        assert dispatcher.run_plan.call_count == 1
 
         # 6. Close session
         daemon.on_scroll_lock()

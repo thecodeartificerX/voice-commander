@@ -85,19 +85,19 @@ def stub_daemon(tmp_path: Any) -> Any:
     recorder = _StubRecorder()
     feedback = NullFeedbackSink()
 
-    # Stub transcriber, matcher, dispatcher — on_toggle never calls them.
+    # Stub transcriber, resolver, dispatcher — on_toggle never calls them.
     transcriber = MagicMock()
     transcriber.load.return_value = None
     transcriber.unload.return_value = None
 
-    matcher = MagicMock()
+    resolver = MagicMock()
     dispatcher = MagicMock()
 
     daemon = StreamingDaemon(
         feedback=feedback,
         recorder=recorder,  # type: ignore[arg-type]
         transcriber=transcriber,
-        matcher=matcher,
+        resolver=resolver,
         dispatcher=dispatcher,
         output_dir=str(tmp_path / "outputs"),
     )
@@ -189,7 +189,7 @@ def test_toggle_open_failure_reported(tmp_path: Any) -> None:
         feedback=feedback,
         recorder=recorder,  # type: ignore[arg-type]
         transcriber=MagicMock(),
-        matcher=MagicMock(),
+        resolver=MagicMock(),
         dispatcher=MagicMock(),
         output_dir=str(tmp_path / "outputs"),
     )

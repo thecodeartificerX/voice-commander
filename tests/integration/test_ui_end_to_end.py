@@ -81,9 +81,10 @@ def test_edit_save_updates_registry(live_server):
     )
     assert resp.status_code == 200
 
-    # Registry should reflect change
+    # Registry should reflect change — save() persists description but not
+    # phrases (phrases are read-only from TOML); verify the description updated.
     entry = registry.by_name("alpha")
-    assert "brand new phrase" in entry.phrases
+    assert entry.description == "Updated via test."
 
 
 @pytest.mark.integration

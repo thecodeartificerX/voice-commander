@@ -10,7 +10,7 @@ dependencies = [
     "soundfile>=0.12.1",
     "numpy>=1.26",
     "faster-whisper>=1.0.3",
-    "rapidfuzz>=3.9.0",
+
     "pyautogui>=0.9.54",
     "tomli>=2.0.1; python_version < '3.11'",
     "nvidia-cublas-cu12>=12.9.2.10",

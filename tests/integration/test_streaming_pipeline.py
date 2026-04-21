@@ -236,10 +236,13 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
     faster-whisper) + Matcher + Dispatcher + CapturingFeedbackSink. White
     noise is used as the "gibberish" audio source.
     """
+    from unittest.mock import MagicMock
+
     from voice_commander.dispatcher import Dispatcher
     from voice_commander.feedback import CapturingFeedbackSink
-    from voice_commander.matcher import Matcher
+    from voice_commander.llm_router import LLMRouter
     from voice_commander.registry import ToolEntry, ToolRegistry
+    from voice_commander.resolver import Resolver
 
     # Build a minimal registry with one known phrase.
     registry = ToolRegistry()
@@ -253,7 +256,11 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
         )
     )
     feedback = CapturingFeedbackSink()
-    matcher = Matcher(registry, threshold=85.0)
+    # Use a stub LLM router that always returns None (miss) so the test exercises
+    # the miss path without requiring LM Studio.
+    stub_router = MagicMock(spec=LLMRouter)
+    stub_router.route.return_value = None
+    resolver = Resolver(stub_router, feedback)
     dispatcher = Dispatcher(feedback)
 
     # Generate noisy audio that silero may detect as speech.
@@ -288,8 +295,9 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
         if result.no_speech_prob > 0.6:
             continue
 
-        match = matcher.match(result.text)
-        dispatcher.dispatch(result.text, match)
+        plan = resolver.resolve(result.text)
+        if plan is not None:
+            dispatcher.run_plan(result.text, plan, registry)
 
     # At minimum, on_transcript must have been called.
     event_names = [name for name, _ in feedback.calls]

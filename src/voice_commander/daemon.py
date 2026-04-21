@@ -21,9 +21,9 @@ from .dispatcher import Dispatcher
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
 from .llm_router import LLMRouter
-from .matcher import Matcher
 from .plan import Plan
 from .registry import ToolRegistry, discover
+from .resolver import Resolver
 from .streaming_recorder import StreamingRecorder
 from .tool_metadata import ToolMetadataStore
 from .tool_schema import sig_to_json_schema
@@ -54,11 +54,10 @@ class StreamingDaemon:
         feedback: FeedbackSink,
         recorder: StreamingRecorder | None,
         transcriber: Transcriber,
-        matcher: Matcher,
+        resolver: Resolver,
         dispatcher: Dispatcher,
         *,
         registry: ToolRegistry | None = None,
-        llm_router: LLMRouter | None = None,
         min_confidence: float = 0.30,
         min_word_count: int = 1,
         max_no_speech_prob: float = 0.6,
@@ -68,10 +67,9 @@ class StreamingDaemon:
         self._feedback = feedback
         self._recorder = recorder
         self._transcriber = transcriber
-        self._matcher = matcher
+        self._resolver = resolver
         self._dispatcher = dispatcher
         self._registry = registry
-        self._llm_router = llm_router
         self._min_confidence = min_confidence
         self._min_word_count = min_word_count
         self._max_no_speech_prob = max_no_speech_prob
@@ -204,25 +202,14 @@ class StreamingDaemon:
             logger.debug("Mute guard: dropping utterance '%s' (muted during pipeline)", result.text)
             return
 
-        match = self._matcher.match(result.text)
-
-        # Hot path: high-confidence rapidfuzz match → direct dispatch
-        if match.tool is not None:
-            self._dispatcher.dispatch(result.text, match)
+        plan = self._resolver.resolve(result.text)
+        if plan is None:
+            return  # resolver already fired on_miss
+        if self._registry is None:
+            logger.error("Registry not set — cannot execute plan for '%s'", result.text)
             return
-
-        # LLM escalation path (if enabled)
-        if self._llm_router is not None and self._registry is not None:
-            plan = self._llm_router.route(result.text)
-            if plan is None:
-                self._feedback.on_miss(result.text, match.candidates)
-            else:
-                self._dispatcher.run_plan(result.text, plan, self._registry)
-                self._write_plan_async(result.text, plan)
-            return
-
-        # Fallback: no LLM router, report miss
-        self._dispatcher.dispatch(result.text, match)
+        self._dispatcher.run_plan(result.text, plan, self._registry)
+        self._write_plan_async(result.text, plan)
 
     def _write_utterance_async(self, utterance: npt.NDArray[np.float32]) -> None:
         path = self._output_dir / "last_utterance.wav"
@@ -427,18 +414,17 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     validate_config_or_die(cfg)
     validate_or_die(registry, store)
 
-    matcher = Matcher(registry, threshold=cfg.matching.threshold, reload_lock=reload_lock)
     dispatcher = Dispatcher(feedback)
 
-    # LLM Router — enabled by config.
-    llm_router: LLMRouter | None = None
-    if cfg.llm_router.enabled:
-        llm_router = LLMRouter(cfg.llm_router, registry)
-        if cfg.llm_router.warmup_on_startup:
-            if llm_router.warmup():
-                logger.info("LLM router warmup succeeded")
-            else:
-                logger.warning("LLM router warmup failed — LM Studio may be offline")
+    # LLM Router — always created.
+    llm_router = LLMRouter(cfg.llm, registry)
+    if cfg.llm.warmup_on_startup:
+        if llm_router.warmup():
+            logger.info("LLM router warmup succeeded")
+        else:
+            logger.warning("LLM router warmup failed — LM Studio may be offline")
+
+    resolver = Resolver(llm_router, feedback)
 
     # Web server — enabled by config + not suppressed by env var.
     web_server: WebServer | None = None
@@ -452,10 +438,9 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         feedback=feedback,
         recorder=None,
         transcriber=transcriber,
-        matcher=matcher,
+        resolver=resolver,
         dispatcher=dispatcher,
         registry=registry,
-        llm_router=llm_router,
         min_confidence=cfg.transcription.min_confidence,
         min_word_count=cfg.vad.gates.min_word_count,
         max_no_speech_prob=cfg.vad.gates.max_no_speech_prob,

@@ -60,6 +60,48 @@ description = "Application name, file path, or URI to open."
 required = true
 type = "string"
 
+[tools.scroll]
+phrases = []
+description = "Scroll the active window up or down."
+enabled = true
+settle_ms = 0
+llm_only = true
+
+[tools.scroll.args.direction]
+description = "Scroll direction: 'up' or 'down'."
+required = true
+type = "string"
+
+[tools.scroll.args.amount]
+description = "Number of scroll clicks."
+required = false
+type = "integer"
+default = 3
+
+[tools.open_url]
+phrases = []
+description = "Open a URL in the default browser."
+enabled = true
+settle_ms = 500
+llm_only = true
+
+[tools.open_url.args.url]
+description = "The URL to open."
+required = true
+type = "string"
+
+[tools.close_window]
+phrases = []
+description = "Close a window whose title contains the given substring."
+enabled = true
+settle_ms = 200
+llm_only = true
+
+[tools.close_window.args.title_substring]
+description = "Case-insensitive substring to match against window titles."
+required = true
+type = "string"
+
 [tools.no_match]
 phrases = []
 description = "Signals that no tool matches the user's intent."

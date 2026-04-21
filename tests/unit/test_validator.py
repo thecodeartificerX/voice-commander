@@ -7,7 +7,7 @@
 from dataclasses import replace
 from unittest.mock import MagicMock
 
-from voice_commander.config import Config, LLMRouterConfig
+from voice_commander.config import Config, LLMConfig
 from voice_commander.registry import ToolEntry, ToolRegistry
 from voice_commander.tool_metadata import ArgMetadata, ToolMetadata, ToolMetadataStore
 from voice_commander.validator import validate, validate_config
@@ -177,27 +177,6 @@ def test_rule5_settle_ms_too_high():
 
 
 # ---------------------------------------------------------------------------
-# Rule 6: llm_only with phrases
-# ---------------------------------------------------------------------------
-
-def test_rule6_llm_only_with_phrases():
-    """llm_only=True while entry.phrases is non-empty → [rule6]."""
-
-    def my_tool() -> None:
-        pass
-
-    entry = _entry("my_tool", my_tool, phrases=("foo",), llm_only=True)
-    registry = _make_registry(entry)
-    store = _make_store({
-        "my_tool": _meta("my_tool", llm_only=True, phrases=("foo",))
-    })
-
-    errors = validate(registry, store)
-
-    assert any("[rule6]" in e for e in errors), f"Expected [rule6] error, got: {errors}"
-
-
-# ---------------------------------------------------------------------------
 # Rule 7: missing required primitive
 # ---------------------------------------------------------------------------
 
@@ -255,12 +234,12 @@ def test_happy_path_all_valid():
 
 def _cfg_with_timeout(timeout_ms: int) -> "Config":
     """Build a default Config with llm_router.timeout_ms overridden."""
-    llm_cfg = LLMRouterConfig(timeout_ms=timeout_ms)
-    return replace(Config(), llm_router=llm_cfg)
+    llm_cfg = LLMConfig(timeout_ms=timeout_ms)
+    return replace(Config(), llm=llm_cfg)
 
 
 def test_rule_c1_timeout_ms_below_minimum():
-    """timeout_ms=100 is below the 200 ms minimum → [rule_c1] error mentioning timeout_ms and 200."""
+    """timeout_ms=100 is below the 200 ms minimum → [rule_c1] error mentioning timeout_ms."""
     cfg = _cfg_with_timeout(100)
 
     errors = validate_config(cfg)

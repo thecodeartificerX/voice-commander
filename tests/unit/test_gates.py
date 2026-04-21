@@ -15,6 +15,8 @@ from unittest.mock import MagicMock
 import numpy as np
 
 from voice_commander.feedback import CapturingFeedbackSink
+from voice_commander.plan import Plan, ToolCall
+from voice_commander.resolver import Resolver
 from voice_commander.transcriber import TranscriptionResult
 
 # ---------------------------------------------------------------------------
@@ -61,7 +63,13 @@ def _make_daemon(
     transcriber = MagicMock()
     transcriber.transcribe.return_value = transcription_result
 
-    matcher = MagicMock()
+    resolver = MagicMock(spec=Resolver)
+    # Default: resolver returns a plan so dispatch proceeds when all gates pass.
+    _default_plan = Plan(
+        steps=(ToolCall(name="copy", kwargs={}),), raw_response={}
+    )
+    resolver.resolve.return_value = _default_plan
+
     dispatcher = MagicMock()
 
     recorder = MagicMock()
@@ -73,14 +81,15 @@ def _make_daemon(
         feedback=fb,
         recorder=recorder,
         transcriber=transcriber,
-        matcher=matcher,
+        resolver=resolver,
         dispatcher=dispatcher,
+        registry=MagicMock(),
         min_confidence=min_confidence,
         min_word_count=min_word_count,
         max_no_speech_prob=max_no_speech_prob,
         output_dir=output_dir,
     )
-    return daemon, transcriber, matcher, dispatcher, fb
+    return daemon, transcriber, resolver, dispatcher, fb
 
 
 _DUMMY_AUDIO = np.zeros(16000, dtype=np.float32)
@@ -92,24 +101,24 @@ _DUMMY_AUDIO = np.zeros(16000, dtype=np.float32)
 
 
 def test_word_count_gate_drops_empty(tmp_path):
-    """Empty transcript (0 words) must not reach the matcher."""
+    """Empty transcript (0 words) must not reach the resolver."""
     result = _make_result(text="", confidence=0.9, no_speech_prob=0.1)
-    daemon, _, matcher, dispatcher, fb = _make_daemon(result, min_word_count=1, tmp_path=tmp_path)
+    daemon, _, resolver, dispatcher, fb = _make_daemon(result, min_word_count=1, tmp_path=tmp_path)
 
     daemon._process_utterance(_DUMMY_AUDIO)
 
-    matcher.match.assert_not_called()
-    dispatcher.dispatch.assert_not_called()
+    resolver.resolve.assert_not_called()
+    dispatcher.run_plan.assert_not_called()
 
 
 def test_word_count_gate_passes_single_word(tmp_path):
     """A single-word transcript passes the word-count gate."""
     result = _make_result(text="copy", confidence=0.9, no_speech_prob=0.1)
-    daemon, _, matcher, dispatcher, _ = _make_daemon(result, min_word_count=1, tmp_path=tmp_path)
+    daemon, _, resolver, dispatcher, _ = _make_daemon(result, min_word_count=1, tmp_path=tmp_path)
 
     daemon._process_utterance(_DUMMY_AUDIO)
 
-    matcher.match.assert_called_once()
+    resolver.resolve.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -118,28 +127,28 @@ def test_word_count_gate_passes_single_word(tmp_path):
 
 
 def test_no_speech_prob_gate_drops_high_prob(tmp_path):
-    """no_speech_prob=0.8 > max 0.6 → transcript dropped before matcher."""
+    """no_speech_prob=0.8 > max 0.6 → transcript dropped before resolver."""
     result = _make_result(text="copy", confidence=0.9, no_speech_prob=0.8)
-    daemon, _, matcher, dispatcher, _ = _make_daemon(
+    daemon, _, resolver, dispatcher, _ = _make_daemon(
         result, max_no_speech_prob=0.6, tmp_path=tmp_path
     )
 
     daemon._process_utterance(_DUMMY_AUDIO)
 
-    matcher.match.assert_not_called()
-    dispatcher.dispatch.assert_not_called()
+    resolver.resolve.assert_not_called()
+    dispatcher.run_plan.assert_not_called()
 
 
 def test_no_speech_prob_gate_passes_low_prob(tmp_path):
-    """no_speech_prob=0.3 < max 0.6 → passes to matcher."""
+    """no_speech_prob=0.3 < max 0.6 → passes to resolver."""
     result = _make_result(text="copy", confidence=0.9, no_speech_prob=0.3)
-    daemon, _, matcher, dispatcher, _ = _make_daemon(
+    daemon, _, resolver, dispatcher, _ = _make_daemon(
         result, max_no_speech_prob=0.6, tmp_path=tmp_path
     )
 
     daemon._process_utterance(_DUMMY_AUDIO)
 
-    matcher.match.assert_called_once()
+    resolver.resolve.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -148,10 +157,10 @@ def test_no_speech_prob_gate_passes_low_prob(tmp_path):
 
 
 def test_confidence_gate_triggers_miss(tmp_path):
-    """Low confidence fires on_miss; matcher and dispatcher are not called."""
+    """Low confidence fires on_miss; resolver and dispatcher are not called."""
     fb = CapturingFeedbackSink()
     result = _make_result(text="copy", confidence=0.2, no_speech_prob=0.1)
-    daemon, _, matcher, dispatcher, _ = _make_daemon(
+    daemon, _, resolver, dispatcher, _ = _make_daemon(
         result, feedback=fb, min_confidence=0.3, tmp_path=tmp_path
     )
 
@@ -160,8 +169,8 @@ def test_confidence_gate_triggers_miss(tmp_path):
     assert any(c[0] == "on_miss" for c in fb.calls), (
         "on_miss should be fired when confidence < min_confidence"
     )
-    matcher.match.assert_not_called()
-    dispatcher.dispatch.assert_not_called()
+    resolver.resolve.assert_not_called()
+    dispatcher.run_plan.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -171,9 +180,9 @@ def test_confidence_gate_triggers_miss(tmp_path):
 
 def test_all_gates_pass_calls_dispatch(tmp_path):
     """When confidence, no_speech_prob, and word_count are all acceptable,
-    matcher.match and dispatcher.dispatch must both be called."""
+    resolver.resolve and dispatcher.run_plan must both be called."""
     result = _make_result(text="copy", confidence=0.5, no_speech_prob=0.2)
-    daemon, transcriber, matcher, dispatcher, fb = _make_daemon(
+    daemon, transcriber, resolver, dispatcher, fb = _make_daemon(
         result,
         min_confidence=0.3,
         min_word_count=1,
@@ -184,8 +193,8 @@ def test_all_gates_pass_calls_dispatch(tmp_path):
     daemon._process_utterance(_DUMMY_AUDIO)
 
     transcriber.transcribe.assert_called_once()
-    matcher.match.assert_called_once_with(result.text)
-    dispatcher.dispatch.assert_called_once()
+    resolver.resolve.assert_called_once_with(result.text)
+    dispatcher.run_plan.assert_called_once()
 
     # on_transcript must have been called (with text + confidence)
     assert any(c[0] == "on_transcript" for c in fb.calls)

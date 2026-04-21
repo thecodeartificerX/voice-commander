@@ -1,16 +1,13 @@
 category = "system"
 
 [tools.lock_screen]
-phrases = ["lock screen", "lock the screen", "lock computer"]
 description = "Locks the workstation with Win+L."
 enabled = true
 
 [tools.take_screenshot]
-phrases = ["take screenshot", "screenshot", "capture screen", "snip"]
 description = "Opens Snipping Tool with Win+Shift+S."
 enabled = true
 
 [tools.cancel]
-phrases = ["cancel", "escape", "dismiss"]
 description = "Press and release Escape."
 enabled = true

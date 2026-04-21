@@ -1,4 +1,4 @@
-"""LLM Router: escalates low-confidence matches to local LM Studio for tool-call planning."""
+"""LLM Router: routes voice commands to local LM Studio for tool-call planning."""
 from __future__ import annotations
 
 import json
@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from .config import LLMRouterConfig
+from .config import LLMConfig
 from .plan import Plan, ToolCall
 from .registry import ToolRegistry
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class LLMRouter:
     """One-shot tool-call planner via local LM Studio."""
 
-    def __init__(self, config: LLMRouterConfig, registry: ToolRegistry) -> None:
+    def __init__(self, config: LLMConfig, registry: ToolRegistry) -> None:
         self._config = config
         self._registry = registry
         # Metrics (simple counters, no external lib)
@@ -38,9 +38,15 @@ class LLMRouter:
             http2=False,
         )
         self._system_prompt = (
-            "You are a voice command router. The user speaks a command and you "
-            "call tools to execute it. Call no_match if no tool fits the utterance. "
-            "Call multiple tools in sequence for chained commands."
+            "You are a voice command router for a desktop application. "
+            "The user speaks a command. Determine which tool(s) to call. "
+            "Use no_match if nothing fits.\n\n"
+            "Examples:\n"
+            '- "copy" → call copy()\n'
+            '- "open a new tab and search for weather" → call new_tab(), '
+            'then type_text(text="weather"), then press_keys(combo="enter")\n'
+            '- "focus the browser" → call focus_browser()\n'
+            '- "make it bigger" → call no_match(reason="ambiguous command")'
         )
 
     def _build_tools_array(self) -> list[dict[str, Any]]:

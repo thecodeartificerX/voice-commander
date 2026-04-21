@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from voice_commander.tools.primitives import (
     focus_window,
@@ -42,7 +43,7 @@ def test_type_text():
 
 
 def test_focus_window_matching_window(monkeypatch):
-    """EnumWindows finds a visible matching window; AttachThreadInput path runs; returns None (no raise)."""
+    """EnumWindows finds a visible matching window; AttachThreadInput runs; no exception raised."""
     mock_win32gui = MagicMock()
     mock_win32con = MagicMock()
     mock_win32process = MagicMock()
@@ -113,12 +114,19 @@ def test_focus_window_no_matching_window(caplog):
 
     mock_win32gui.EnumWindows.side_effect = fake_enum_windows
 
-    with patch.dict(
-        "sys.modules",
-        {"win32gui": mock_win32gui, "win32con": mock_win32con, "win32process": mock_win32process},
-    ), caplog.at_level(logging.ERROR, logger="voice_commander.tools.primitives"):
-        with pytest.raises(FocusWindowError):
-            focus_window("notepad")
+    with (
+        patch.dict(
+            "sys.modules",
+            {
+                "win32gui": mock_win32gui,
+                "win32con": mock_win32con,
+                "win32process": mock_win32process,
+            },
+        ),
+        caplog.at_level(logging.ERROR, logger="voice_commander.tools.primitives"),
+        pytest.raises(FocusWindowError),
+    ):
+        focus_window("notepad")
 
     mock_win32gui.SetForegroundWindow.assert_not_called()
     assert "notepad" in caplog.text

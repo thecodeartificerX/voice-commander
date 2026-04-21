@@ -77,13 +77,14 @@ def test_reload_metadata_updates_phrases(tmp_path):
     registry.bind_metadata(store)
     assert registry.by_name("alpha").phrases == ("alpha one", "alpha two")
 
-    # Mutate TOML on disk
+    # Mutate TOML on disk — save() persists description/enabled but not phrases
     new_md = ToolMetadata("alpha", ("updated phrase",), "new desc", "test", True)
     store.save("alpha", new_md)
 
-    # Reload
+    # Reload — save() strips phrases from TOML (not persisted), so phrases
+    # become empty after the rewrite; description is updated.
     registry.reload_metadata(store)
-    assert registry.by_name("alpha").phrases == ("updated phrase",)
+    assert registry.by_name("alpha").phrases == ()
     assert registry.by_name("alpha").description == "new desc"
 
 

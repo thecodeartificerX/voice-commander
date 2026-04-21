@@ -78,19 +78,11 @@ Cross-references to Architecture Decision Records live in [`docs/decisions/`](de
 
 ---
 
-## `rapidfuzz` — Fuzzy phrase matching
+## ~~`rapidfuzz`~~ — REMOVED (ADR 0040, ADR 0041)
 
-**Purpose in this project:** `rapidfuzz` powers the `Matcher` subsystem. Given the ASR transcript, the matcher calls `rapidfuzz.process.extract(scorer=fuzz.WRatio)` against the full flat list of registered tool phrases to find the top-5 candidates and their scores. If the best score exceeds the configured threshold (default 85.0), the corresponding tool is dispatched.
+Previously used for the `Matcher` subsystem (fuzzy phrase matching). Removed in ADR 0040 (2026-04-21) when LLM-only routing replaced the hybrid router. With no `Matcher`, `rapidfuzz` is unused anywhere in the codebase and has been dropped from `pyproject.toml`.
 
-**Alternatives considered:**
-- `thefuzz` (formerly `fuzzywuzzy`) — the classic Python fuzzy matching library. Pure Python; slow on large phrase lists.
-- `difflib` (stdlib) — `SequenceMatcher` is available with no extra install, but it is significantly slower and less accurate for short spoken phrases.
-
-**Why `rapidfuzz` won:** `rapidfuzz` is implemented in C++ and is 10–100× faster than `thefuzz` on equivalent inputs. It is API-compatible with `thefuzz`'s `fuzz` module, so the drop-in migration path is trivial. At our scale (dozens of phrases), the speed difference is irrelevant, but C++ correctness and the well-tested scorer implementations make it the right default.
-
-**Pin reason:** `>=3.9.0` for the stable `process.extract()` return-type signature and the `WRatio` scorer improvements in 3.x.
-
-**ADR:** [`decisions/0005-rapidfuzz-matching.md`](decisions/0005-rapidfuzz-matching.md)
+**ADR:** [`decisions/0041-drop-rapidfuzz-dependency.md`](decisions/0041-drop-rapidfuzz-dependency.md) supersedes [`decisions/0005-rapidfuzz-matching.md`](decisions/0005-rapidfuzz-matching.md).
 
 ---
 
@@ -365,7 +357,7 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 | `pynput` | [`0002-pynput-over-keyboard.md`](decisions/0002-pynput-over-keyboard.md) |
 | `sounddevice`, `soundfile`, `numpy` | [`0003-sounddevice-over-pyaudio.md`](decisions/0003-sounddevice-over-pyaudio.md) |
 | `faster-whisper` | [`0004-faster-whisper-cuda.md`](decisions/0004-faster-whisper-cuda.md) |
-| `rapidfuzz` | [`0005-rapidfuzz-matching.md`](decisions/0005-rapidfuzz-matching.md) |
+| `rapidfuzz` (removed) | [`0041-drop-rapidfuzz-dependency.md`](decisions/0041-drop-rapidfuzz-dependency.md) supersedes [`0005-rapidfuzz-matching.md`](decisions/0005-rapidfuzz-matching.md) |
 | `pyautogui` | [`0002-pynput-over-keyboard.md`](decisions/0002-pynput-over-keyboard.md) |
 | `windows-toasts` (removed) | [`0013-drop-winrt-toasts-audio-only-feedback.md`](decisions/0013-drop-winrt-toasts-audio-only-feedback.md) supersedes [`0007-windows-toasts-over-tkinter.md`](decisions/0007-windows-toasts-over-tkinter.md) |
 | `pystray`, `Pillow` (Phase 5) | No dedicated ADR yet |

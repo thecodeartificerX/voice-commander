@@ -230,7 +230,11 @@ def test_lockout_failure_raises_focus_window_error(monkeypatch):
     class FakePyWinError(OSError):
         pass
 
-    mocks = _build_win32_mocks(sfg_side_effect=FakePyWinError("(0, 'SetForegroundWindow', 'No error message is available')"))
+    mocks = _build_win32_mocks(
+        sfg_side_effect=FakePyWinError(
+            "(0, 'SetForegroundWindow', 'No error message is available')"
+        )
+    )
 
     monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", lambda *a: None)
     monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
@@ -260,9 +264,8 @@ def test_attach_detach_paired_on_exception(monkeypatch):
     monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", fake_attach)
     monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
 
-    with _patch_modules(mocks):
-        with pytest.raises(FocusWindowError):
-            focus_window_by_exe("target.exe")
+    with _patch_modules(mocks), pytest.raises(FocusWindowError):
+        focus_window_by_exe("target.exe")
 
     # Must have both TRUE and FALSE calls
     attaches = [c for c in attach_calls if c[2] is True]
@@ -283,9 +286,12 @@ def test_target_not_found_no_pids_raises_and_launches(monkeypatch):
     monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", lambda *a: None)
     monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
 
-    with _patch_modules(mocks), patch("voice_commander.tools._win32.Popen") as mock_popen:
-        with pytest.raises(FocusWindowError) as exc_info:
-            focus_window_by_exe("target.exe", launch_path="C:/Apps/target.exe")
+    with (
+        _patch_modules(mocks),
+        patch("voice_commander.tools._win32.Popen") as mock_popen,
+        pytest.raises(FocusWindowError) as exc_info,
+    ):
+        focus_window_by_exe("target.exe", launch_path="C:/Apps/target.exe")
 
     mock_popen.assert_called_once_with(["C:/Apps/target.exe"])
     assert "target.exe" in str(exc_info.value)
@@ -310,9 +316,8 @@ def test_target_not_found_no_window_raises(monkeypatch):
     monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", lambda *a: None)
     monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
 
-    with _patch_modules(mocks):
-        with pytest.raises(FocusWindowError) as exc_info:
-            focus_window_by_exe("target.exe")
+    with _patch_modules(mocks), pytest.raises(FocusWindowError) as exc_info:
+        focus_window_by_exe("target.exe")
 
     assert "no visible" in str(exc_info.value).lower() or "target.exe" in str(exc_info.value)
 
@@ -324,7 +329,10 @@ def test_target_not_found_no_window_raises(monkeypatch):
 def test_import_error_raises_and_launches():
     """When pywin32/psutil is unavailable, FocusWindowError is raised and Popen called."""
     with (
-        patch.dict("sys.modules", {"win32gui": None, "win32con": None, "win32process": None, "psutil": None}),
+        patch.dict(
+            "sys.modules",
+            {"win32gui": None, "win32con": None, "win32process": None, "psutil": None},
+        ),
         patch("voice_commander.tools._win32.Popen") as mock_popen,
         pytest.raises(FocusWindowError),
     ):
@@ -367,9 +375,12 @@ def test_verify_foreground_all_wrong_raises(monkeypatch):
     monkeypatch.setattr("voice_commander.tools._win32._attach_thread_input", lambda *a: None)
     monkeypatch.setattr("voice_commander.tools._win32._allow_set_foreground", lambda: None)
 
-    with _patch_modules(mocks), patch("voice_commander.tools._win32.time.sleep"):
-        with pytest.raises(FocusWindowError) as exc_info:
-            focus_window_by_exe("target.exe")
+    with (
+        _patch_modules(mocks),
+        patch("voice_commander.tools._win32.time.sleep"),
+        pytest.raises(FocusWindowError) as exc_info,
+    ):
+        focus_window_by_exe("target.exe")
 
     assert "verification" in str(exc_info.value).lower()
 

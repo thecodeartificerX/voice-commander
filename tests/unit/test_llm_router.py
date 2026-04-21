@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
-from voice_commander.config import LLMRouterConfig
+from voice_commander.config import LLMConfig
 from voice_commander.llm_router import LLMRouter
 from voice_commander.plan import Plan, ToolCall
 from voice_commander.registry import ToolEntry, ToolRegistry
@@ -66,8 +66,7 @@ def _make_registry() -> ToolRegistry:
 
 
 def _make_router(max_plan_steps: int = 8, warmup_timeout_ms: int = 5000) -> LLMRouter:
-    cfg = LLMRouterConfig(
-        enabled=True,
+    cfg = LLMConfig(
         endpoint_url="http://localhost:1234/v1",
         model_id="test-model",
         timeout_ms=600,
@@ -463,7 +462,7 @@ class TestBuildToolsArray:
             docstring=None,
             # params_schema defaults to {} which is falsy
         ))
-        cfg = LLMRouterConfig(enabled=True, timeout_ms=600)
+        cfg = LLMConfig(timeout_ms=600)
         router = LLMRouter(cfg, reg)
         assert router._build_tools_array() == []
 

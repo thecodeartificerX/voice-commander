@@ -298,3 +298,32 @@ OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
 ```
 
 Additionally, `GetExitCodeProcess` is called after a successful `OpenProcess` — a handle to a zombie process is truthy but its exit code ≠ `STILL_ACTIVE` (259). See ADR 0039.
+
+---
+
+## 21. LM Studio Must Be Running for Any Routing to Work
+
+**Problem:** Every voice utterance that passes the confidence/word-count gates is now routed through `LLMRouter.route()` unconditionally (ADR 0040). If LM Studio is not running, every utterance produces a miss chime — the daemon appears to be broken even though ASR is working correctly.
+
+**Explanation:** There is no rapidfuzz hot path or offline fallback. `LLMRouter.route()` makes an HTTP call to `http://localhost:1234/v1/chat/completions`. A connection refused, timeout, or HTTP error all return `None`, which `Resolver` converts to a miss. This is by design — `None` is the safe, observable failure mode — but it means the daemon is effectively non-functional without LM Studio.
+
+**Mitigation:**
+
+1. Start LM Studio before starting the Voice Commander daemon.
+2. Load the configured model in LM Studio (`[llm_router].model` in `config.toml`; default is Gemma 4 E4B).
+3. Verify with the daemon's startup log: it calls `LLMRouter.warmup()` at startup and logs either `LLM router warm` or `LLM router warmup failed` with the error. If you see the failure message, check LM Studio is running and the model is loaded.
+4. `LLMRouter.warmup()` sends a real chat-completion POST (not just a `GET /v1/models` ping — see gotcha §19). A successful warmup log means the first real utterance will hit a warm KV cache.
+
+**If LM Studio is not available by design** (e.g. running on a machine without an LLM), the daemon will still capture, transcribe, and gate audio correctly — every routable utterance will miss-chime. There is no silent failure; the miss chime is the observable signal.
+
+**Diagnostic commands:**
+
+```powershell
+# Check whether LM Studio server is listening
+Test-NetConnection -ComputerName localhost -Port 1234
+
+# Check daemon startup log for warmup result
+Select-String -Path outputs\voice_commander_*.log -Pattern "LLM router"
+```
+
+See ADR 0040 for the full rationale for removing the rapidfuzz fallback path.

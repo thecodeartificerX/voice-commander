@@ -53,19 +53,6 @@ class ToolRegistry:
     def by_name(self, name: str) -> ToolEntry | None:
         return self._by_name.get(name)
 
-    def flat_phrases(self) -> list[tuple[str, str]]:
-        """All (phrase, tool_name) pairs regardless of enabled state."""
-        return [(p, e.name) for e in self._by_name.values() for p in e.phrases]
-
-    def flat_phrases_enabled(self) -> list[tuple[str, str]]:
-        """(phrase, tool_name) pairs for enabled, non-llm_only tools only."""
-        return [
-            (p, e.name)
-            for e in self._by_name.values()
-            if e.enabled and not e.llm_only
-            for p in e.phrases
-        ]
-
     def all_llm_visible(self) -> list[ToolEntry]:
         """All enabled tools visible to the LLM router (both regular and llm_only)."""
         return sorted(
@@ -96,8 +83,7 @@ class ToolRegistry:
         # Apply metadata to entries.
         for name, md in all_meta.items():
             entry = self._by_name[name]
-            normalized = tuple(_normalize(p) for p in md.phrases)
-            entry.phrases = normalized
+            entry.phrases = tuple(_normalize(p) for p in md.phrases)
             entry.description = md.description
             entry.category = md.category
             entry.enabled = md.enabled
@@ -116,8 +102,7 @@ class ToolRegistry:
             entry = self._by_name.get(name)
             if entry is None:
                 continue
-            normalized = tuple(_normalize(p) for p in md.phrases)
-            entry.phrases = normalized
+            entry.phrases = tuple(_normalize(p) for p in md.phrases)
             entry.description = md.description
             entry.category = md.category
             entry.enabled = md.enabled

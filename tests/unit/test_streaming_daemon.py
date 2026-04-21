@@ -17,6 +17,8 @@ import numpy as np
 
 from voice_commander.daemon import StreamingDaemon
 from voice_commander.feedback import CapturingFeedbackSink
+from voice_commander.plan import Plan, ToolCall
+from voice_commander.resolver import Resolver
 from voice_commander.transcriber import TranscriptionResult
 
 # ---------------------------------------------------------------------------
@@ -31,7 +33,7 @@ def _make_daemon(
     CapturingFeedbackSink,
     MagicMock,  # recorder
     MagicMock,  # transcriber
-    MagicMock,  # matcher
+    MagicMock,  # resolver
     MagicMock,  # dispatcher
 ]:
     feedback = CapturingFeedbackSink()
@@ -40,18 +42,19 @@ def _make_daemon(
     recorder.is_open = False
 
     transcriber = MagicMock()
-    matcher = MagicMock()
+    resolver = MagicMock(spec=Resolver)
     dispatcher = MagicMock()
 
     daemon = StreamingDaemon(
         feedback=feedback,
         recorder=recorder,
         transcriber=transcriber,
-        matcher=matcher,
+        resolver=resolver,
         dispatcher=dispatcher,
+        registry=MagicMock(),
         output_dir=output_dir,
     )
-    return daemon, feedback, recorder, transcriber, matcher, dispatcher
+    return daemon, feedback, recorder, transcriber, resolver, dispatcher
 
 
 def _fake_utterance(n: int = 1600) -> np.ndarray:
@@ -114,16 +117,16 @@ def test_on_scroll_lock_reports_error_when_open_session_raises(tmp_path):
 
 
 def test_pipeline_processes_utterance(tmp_path):
-    """Utterance placed in _utt_q flows through transcribe → match → dispatch."""
-    daemon, feedback, recorder, transcriber, matcher, dispatcher = _make_daemon(
+    """Utterance placed in _utt_q flows through transcribe → resolve → run_plan."""
+    daemon, feedback, recorder, transcriber, resolver, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
     result = _fake_transcription_result("copy", confidence=0.95)
     transcriber.transcribe.return_value = result
 
-    match_result = MagicMock()
-    matcher.match.return_value = match_result
+    plan = Plan(steps=(ToolCall(name="copy", kwargs={}),), raw_response={})
+    resolver.resolve.return_value = plan
 
     # Start pipeline thread.
     pipeline_done = threading.Event()
@@ -147,13 +150,13 @@ def test_pipeline_processes_utterance(tmp_path):
 
     assert triggered, "pipeline did not process utterance within 5 s"
     transcriber.transcribe.assert_called_once()
-    dispatcher.dispatch.assert_called_once()
+    dispatcher.run_plan.assert_called_once()
 
 
 def test_pipeline_handles_transcribe_error(tmp_path):
     """RuntimeError from transcriber.transcribe is caught; on_error is called;
     the pipeline thread exits cleanly after receiving the poison pill."""
-    daemon, feedback, recorder, transcriber, matcher, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, resolver, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
@@ -182,7 +185,7 @@ def test_pipeline_handles_transcribe_error(tmp_path):
     assert not thread.is_alive(), "pipeline thread did not exit after poison pill"
 
     assert any(c[0] == "on_error" for c in feedback.calls)
-    dispatcher.dispatch.assert_not_called()
+    dispatcher.run_plan.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -329,15 +332,15 @@ def test_mute_drains_utt_q(tmp_path):
 
 def test_pipeline_mute_guard_drops_utterance(tmp_path):
     """Utterance mid-transcription when mute fires must NOT dispatch."""
-    daemon, feedback, recorder, transcriber, matcher, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, resolver, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
     result = _fake_transcription_result("copy", confidence=0.95)
     transcriber.transcribe.return_value = result
 
-    match_result = MagicMock()
-    matcher.match.return_value = match_result
+    plan = Plan(steps=(ToolCall(name="copy", kwargs={}),), raw_response={})
+    resolver.resolve.return_value = plan
 
     # Set muted BEFORE pipeline processes the utterance.
     daemon._muted = True
@@ -362,4 +365,4 @@ def test_pipeline_mute_guard_drops_utterance(tmp_path):
 
     assert triggered, "pipeline did not process utterance within 5 s"
     transcriber.transcribe.assert_called_once()  # transcription still runs
-    dispatcher.dispatch.assert_not_called()  # but dispatch is blocked by mute guard
+    dispatcher.run_plan.assert_not_called()  # but dispatch is blocked by mute guard

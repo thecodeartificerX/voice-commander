@@ -1,31 +1,25 @@
 category = "browser"
 
 [tools.new_tab]
-phrases = ["new tab", "open new tab"]
 description = "Opens a new browser tab with Ctrl+T."
 enabled = true
 
 [tools.close_tab]
-phrases = ["close tab", "close this tab"]
 description = "Closes the current tab with Ctrl+W."
 enabled = true
 
 [tools.reopen_tab]
-phrases = ["reopen tab", "reopen last tab", "bring back tab"]
 description = "Reopens the last closed tab with Ctrl+Shift+T."
 enabled = true
 
 [tools.reload]
-phrases = ["reload", "refresh", "reload page"]
 description = "Reloads the current page with F5."
 enabled = true
 
 [tools.email]
-phrases = ["email", "open email", "open gmail", "check email"]
 description = "Opens Gmail in Comet."
 enabled = true
 
 [tools.messenger]
-phrases = ["messenger", "open messenger", "facebook messenger", "check messenger"]
 description = "Opens Facebook Messenger in Comet."
 enabled = true

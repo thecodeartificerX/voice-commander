@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import faulthandler
 import logging
 import os
@@ -17,33 +16,6 @@ from .single_instance import AlreadyRunning, SingleInstanceLock
 logger = logging.getLogger(__name__)
 
 
-def apply_router_mode(cfg: Config, mode: str) -> Config:
-    """Return a (possibly new) Config adjusted for the requested routing strategy.
-
-    hybrid (default) — unchanged; rapidfuzz first, LLM fallback if enabled.
-    fuzzy            — disable LLM router; rapidfuzz only.
-    llm              — set matching.threshold = 101.0 so every utterance goes to
-                       the LLM router. Requires endpoint_url and model_id to be
-                       configured; enables llm_router even if it was disabled.
-    """
-    if mode == "hybrid":
-        return cfg
-    if mode == "fuzzy":
-        new_llm = dataclasses.replace(cfg.llm_router, enabled=False)
-        return dataclasses.replace(cfg, llm_router=new_llm)
-    if mode == "llm":
-        router = cfg.llm_router
-        if not router.endpoint_url or not router.model_id:
-            raise RuntimeError(
-                "--router-mode llm requires [llm_router] section with "
-                "endpoint_url and model_id populated in config"
-            )
-        new_llm = dataclasses.replace(router, enabled=True)
-        new_matching = dataclasses.replace(cfg.matching, threshold=101.0)
-        return dataclasses.replace(cfg, matching=new_matching, llm_router=new_llm)
-    raise ValueError(f"unknown router mode: {mode}")
-
-
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="voice-commander",
@@ -53,17 +25,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--validate",
         action="store_true",
         help="Discover tools, validate config, print OK, and exit.",
-    )
-    parser.add_argument(
-        "--router-mode",
-        choices=["hybrid", "fuzzy", "llm"],
-        default="hybrid",
-        metavar="MODE",
-        dest="router_mode",
-        help=(
-            "Routing strategy: hybrid=rapidfuzz-first with LLM fallback (default), "
-            "fuzzy=rapidfuzz only, llm=LLM router only (requires [llm_router] config)."
-        ),
     )
     return parser
 
@@ -121,23 +82,6 @@ def _log_environment() -> None:
         logger.exception("failed to probe faster_whisper")
 
 
-def _log_router_mode(mode: str, cfg_before: Config, cfg_after: Config) -> None:
-    """Emit an INFO line when --router-mode is explicitly set."""
-    overrides: list[str] = []
-    if cfg_after.matching.threshold != cfg_before.matching.threshold:
-        overrides.append(
-            f"matching.threshold {cfg_before.matching.threshold} -> {cfg_after.matching.threshold}"
-        )
-    if cfg_after.llm_router.enabled != cfg_before.llm_router.enabled:
-        overrides.append(
-            f"llm_router.enabled {cfg_before.llm_router.enabled} -> {cfg_after.llm_router.enabled}"
-        )
-    if overrides:
-        logger.info("router-mode=%s overrides: %s", mode, ", ".join(overrides))
-    else:
-        logger.info("router-mode=%s (no config overrides)", mode)
-
-
 def _run_validate(cfg: Config) -> None:
     """Discover tools, bind metadata, run startup validator, and exit."""
     from .registry import discover
@@ -156,29 +100,13 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    if args.validate:
-        cfg = Config.load(Path("config.toml"))
-        _configure_logging(cfg)
-        try:
-            cfg_after = apply_router_mode(cfg, args.router_mode)
-        except (RuntimeError, ValueError) as e:
-            logger.error("router-mode error: %s", e)
-            sys.exit(1)
-        if args.router_mode != "hybrid":
-            _log_router_mode(args.router_mode, cfg, cfg_after)
-        _run_validate(cfg_after)
-        return
-
     cfg = Config.load(Path("config.toml"))
     _configure_logging(cfg)
-    try:
-        cfg_after = apply_router_mode(cfg, args.router_mode)
-    except (RuntimeError, ValueError) as e:
-        logger.error("router-mode error: %s", e)
-        sys.exit(1)
-    if args.router_mode != "hybrid":
-        _log_router_mode(args.router_mode, cfg, cfg_after)
-    cfg = cfg_after
+
+    if args.validate:
+        _run_validate(cfg)
+        return
+
     _enable_crash_reporting(cfg)
     _log_environment()
     lock = SingleInstanceLock(Path("outputs/.daemon.lock"))

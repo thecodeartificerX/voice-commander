@@ -1,6 +1,6 @@
 # ADR 0027: Rapidfuzz Threshold Tightening — 85 → 95 When LLM Router Is Enabled
 
-**Status:** Accepted
+**Status:** Superseded by ADR-0040
 **Date:** 2026-04-21
 
 ## Context

@@ -1,6 +1,6 @@
 # ADR 0026: Hybrid Routing — rapidfuzz First, LLM on Escalation
 
-**Status:** Accepted
+**Status:** Superseded by ADR-0040
 **Date:** 2026-04-21
 
 ## Context

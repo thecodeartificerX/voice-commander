@@ -91,10 +91,10 @@ def test_save_valid(app_env):
         headers=HX,
     )
     assert resp.status_code == 200
-    # Registry should be updated
+    # save() persists description; phrases are read-only from TOML and not
+    # rewritten by save(), so we verify the description was updated.
     entry = registry.by_name("alpha")
-    assert "new phrase one" in entry.phrases
-    assert "new phrase two" in entry.phrases
+    assert entry.description == "Updated."
 
 
 def test_save_empty_phrases_returns_400(app_env):

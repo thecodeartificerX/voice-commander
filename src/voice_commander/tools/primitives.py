@@ -1,4 +1,4 @@
-"""LLM-only primitive tools for the hybrid router."""
+"""LLM-only primitive tools for the voice command router."""
 from __future__ import annotations
 
 import logging
@@ -133,6 +133,50 @@ def launch(app: str) -> None:
         os.startfile(app)
     except OSError:
         logger.exception("launch() failed for app=%r", app)
+
+
+@tool
+def scroll(direction: str, amount: int = 3) -> None:
+    """Scroll the active window up or down."""
+    clicks = amount if direction.lower() == "up" else -amount
+    pyautogui.scroll(clicks)
+
+
+@tool
+def open_url(url: str) -> None:
+    """Open a URL in the default browser."""
+    import webbrowser
+    webbrowser.open(url)
+
+
+@tool
+def close_window(title_substring: str) -> None:
+    """Close a window whose title contains the given substring."""
+    try:
+        import win32con
+        import win32gui
+    except ImportError as exc:
+        logger.warning("pywin32 not available, cannot close window")
+        raise FocusWindowError("pywin32 not available; cannot close window by title") from exc
+
+    target_hwnd: int | None = None
+
+    def _enum(hwnd: int, _: object) -> bool:
+        nonlocal target_hwnd
+        if not win32gui.IsWindowVisible(hwnd):
+            return True
+        title = win32gui.GetWindowText(hwnd)
+        if title_substring.lower() in title.lower():
+            target_hwnd = hwnd
+            return False
+        return True
+
+    win32gui.EnumWindows(_enum, None)
+    if target_hwnd is None:
+        logger.error("close_window: no visible window matching title_substring=%r", title_substring)
+        raise FocusWindowError(f"No window matching '{title_substring}'")
+
+    win32gui.PostMessage(target_hwnd, win32con.WM_CLOSE, 0, 0)
 
 
 @tool

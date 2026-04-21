@@ -1,23 +1,19 @@
 category = "window"
 
 [tools.minimize]
-phrases = ["minimize", "minimise", "minimize window"]
 description = "Minimizes the current window."
 enabled = true
 
 [tools.maximize]
-phrases = ["maximize", "maximise", "maximize window"]
 description = "Maximizes the current window."
 enabled = true
 
 [tools.focus_browser]
-phrases = ["focus browser", "switch to browser", "bring up browser"]
 description = "Focuses the Comet browser window."
 enabled = true
 settle_ms = 200
 
 [tools.focus_terminal]
-phrases = ["focus terminal", "switch to terminal", "bring up terminal"]
 description = "Focuses the Windows Terminal window."
 enabled = true
 settle_ms = 200

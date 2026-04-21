@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from voice_commander.config import LLMRouterConfig
+from voice_commander.config import LLMConfig
 from voice_commander.llm_router import LLMRouter
 from voice_commander.registry import ToolEntry, ToolRegistry
 from voice_commander.tool_schema import sig_to_json_schema
@@ -70,8 +70,7 @@ def _make_router() -> LLMRouter:
         )
         reg.register(entry)
 
-    config = LLMRouterConfig(
-        enabled=True,
+    config = LLMConfig(
         endpoint_url=LM_STUDIO_URL,
         timeout_ms=600,
         max_plan_steps=8,

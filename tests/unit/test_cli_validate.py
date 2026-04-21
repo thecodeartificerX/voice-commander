@@ -17,10 +17,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from voice_commander.config import Config, LLMRouterConfig
+from voice_commander.config import Config, LLMConfig
 from voice_commander.registry import ToolEntry, ToolRegistry
 from voice_commander.tool_metadata import ArgMetadata, ToolMetadata, ToolMetadataStore
-
 
 # ---------------------------------------------------------------------------
 # Helpers (mirrors test_validator.py style)
@@ -83,7 +82,7 @@ def _meta(
 
 def _cfg_with_timeout(timeout_ms: int) -> Config:
     """Return a Config with llm_router.timeout_ms overridden."""
-    return replace(Config(), llm_router=LLMRouterConfig(timeout_ms=timeout_ms))
+    return replace(Config(), llm=LLMConfig(timeout_ms=timeout_ms))
 
 
 # ---------------------------------------------------------------------------
@@ -264,28 +263,6 @@ class TestToolDrift:
 
         assert exc_info.value.code == 1
 
-    def test_rule6_llm_only_with_phrases_causes_exit_1(self):
-        """llm_only=True with non-empty phrases → validate_or_die exits 1."""
-
-        def my_tool() -> None:
-            pass
-
-        entry = _entry("my_tool", my_tool, phrases=("foo",), llm_only=True)
-        registry = _make_registry(entry)
-        store = _make_store({
-            "my_tool": _meta("my_tool", llm_only=True, phrases=("foo",))
-        })
-        cfg = Config()
-
-        p_store_cls, p_discover = _patch_infrastructure(registry, store)
-        with p_store_cls, p_discover:
-            from voice_commander.__main__ import _run_validate
-
-            with pytest.raises(SystemExit) as exc_info:
-                _run_validate(cfg)
-
-        assert exc_info.value.code == 1
-
     def test_validate_or_die_mocked_raise_propagates_exit_1(self):
         """If validate_or_die is mocked to call sys.exit(1), the CLI exit code is 1."""
 
@@ -297,17 +274,20 @@ class TestToolDrift:
         cfg = Config()
 
         p_store_cls, p_discover = _patch_infrastructure(registry, store)
-        with p_store_cls, p_discover:
+        with (
+            p_store_cls,
+            p_discover,
             # validate_or_die is imported from .validator inside _run_validate,
             # so we patch it in its source module.
-            with patch(
+            patch(
                 "voice_commander.validator.validate_or_die",
                 side_effect=SystemExit(1),
-            ):
-                from voice_commander.__main__ import _run_validate
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            from voice_commander.__main__ import _run_validate
 
-                with pytest.raises(SystemExit) as exc_info:
-                    _run_validate(cfg)
+            _run_validate(cfg)
 
         assert exc_info.value.code == 1
 

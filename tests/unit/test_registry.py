@@ -2,8 +2,6 @@ import pytest
 
 from voice_commander.registry import (
     DuplicateToolError,
-    ToolEntry,
-    ToolRegistry,
     _normalize,
     get_global_registry,
     reset_global_registry,
@@ -46,12 +44,3 @@ def test_phrases_are_normalized():
     assert _normalize("Focus,  Browser!") == "focus browser"
 
 
-def test_flat_phrases():
-    registry = ToolRegistry()
-    registry.register(
-        ToolEntry(name="t1", phrases=("a", "b"), func=lambda: None, module="m", docstring=None)
-    )
-    registry.register(
-        ToolEntry(name="t2", phrases=("c",), func=lambda: None, module="m", docstring=None)
-    )
-    assert sorted(registry.flat_phrases()) == [("a", "t1"), ("b", "t1"), ("c", "t2")]

@@ -65,7 +65,9 @@ def sig_to_json_schema(
         hints = {}
         # Surface the failure as a generic ToolSchemaError on the first parameter
         # that can't be resolved; we'll hit the missing-annotation guard below.
-        logger.debug("get_type_hints() failed for %s; falling back to empty hints", func, exc_info=True)
+        logger.debug(
+            "get_type_hints() failed for %s; falling back to empty hints", func, exc_info=True
+        )
 
     properties: dict[str, Any] = {}
     required: list[str] = []

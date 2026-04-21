@@ -146,7 +146,6 @@ class ToolMetadataStore:
                 raise ToolMetadataError(f"'tools' key in {toml_path} is not a TOML table")
 
             tool_entry: dict[str, object] = {
-                "phrases": list(md.phrases),
                 "description": md.description,
                 "enabled": md.enabled,
                 # Only store per-tool category when it differs from the file default.
@@ -228,9 +227,9 @@ def _parse_tool(
     source: Path,
 ) -> ToolMetadata:
     try:
-        phrases_raw = raw["phrases"]
+        phrases_raw = raw.get("phrases", [])
         if not isinstance(phrases_raw, list):
-            raise TypeError("'phrases' must be a list of strings")
+            phrases_raw = []
         phrases: tuple[str, ...] = tuple(str(p) for p in phrases_raw)
 
         description = str(raw.get("description", ""))

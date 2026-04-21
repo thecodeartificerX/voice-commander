@@ -87,13 +87,6 @@ def validate(registry: ToolRegistry, store: ToolMetadataStore) -> list[str]:
                 f"[rule5] Tool '{entry.name}' settle_ms={meta.settle_ms} out of range [0, 5000]"
             )
 
-        # Rule 6: llm_only with phrases
-        if meta.llm_only and len(entry.phrases) > 0:
-            errors.append(
-                f"[rule6] Tool '{entry.name}' is llm_only=true "
-                f"but declares phrases: {entry.phrases}"
-            )
-
     # Rule 7: required primitives (only when primitives module is discovered)
     # Check if any tool from the primitives module is registered
     has_primitives = any(
@@ -141,9 +134,9 @@ def validate_config(cfg: Config) -> list[str]:
     # Rule C1: llm_router.timeout_ms must be >= 200.
     # The HTTP client allocates 100 ms for connect and splits the remainder
     # for read; values below 200 ms produce a negative read timeout.
-    if cfg.llm_router.timeout_ms < _LLM_TIMEOUT_MIN_MS:
+    if cfg.llm.timeout_ms < _LLM_TIMEOUT_MIN_MS:
         errors.append(
-            f"[rule_c1] llm_router.timeout_ms={cfg.llm_router.timeout_ms} is below "
+            f"[rule_c1] llm_router.timeout_ms={cfg.llm.timeout_ms} is below "
             f"the minimum allowed value of {_LLM_TIMEOUT_MIN_MS} ms"
         )
 

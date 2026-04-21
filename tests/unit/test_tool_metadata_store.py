@@ -80,7 +80,8 @@ def test_save_round_trip(tmp_path):
     # Re-read and verify
     store2 = ToolMetadataStore(tmp_path)
     result = store2.load_all()
-    assert result["alpha"].phrases == ("new phrase",)
+    # save() no longer writes phrases to TOML; the description and enabled
+    # state are the persisted fields.
     assert result["alpha"].description == "Updated description."
     assert result["alpha"].enabled is False
     # Other tool in same file should be unchanged

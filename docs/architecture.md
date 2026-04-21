@@ -27,8 +27,8 @@ This document is the canonical reference for Voice Commander's subsystem design 
                           ┌──────────────────────────────────────────────────────┐
                           │              StreamingDaemon pipeline worker         │
                           │                                                      │
-                          │  Transcriber ──text──▶ gates ──▶ Matcher ──▶ Dispatcher │
-                          │  (faster-whisper)       (conf)   (rapidfuzz)  (tool fn) │
+                          │  Transcriber ──text──▶ gates ──▶ Resolver ──▶ Dispatcher │
+                          │  (faster-whisper)       (conf)   (LLMRouter)   (tool fn) │
                           │                                                      │
                           │                         FeedbackSink (chime + log)  │
                           └──────────────────────────────────────────────────────┘
@@ -40,7 +40,7 @@ This document is the canonical reference for Voice Commander's subsystem design 
 |---|---|---|
 | PortAudio callback thread | `sd.InputStream` callback | `indata.copy()` + `raw_q.put_nowait()` — no blocking, no allocation |
 | VAD worker thread | `Resampler` + `VADGate` | Drains `raw_q`; resamples 48k→16k; runs silero-vad; emits complete utterances to `utt_q` |
-| Pipeline worker thread | `Transcriber` + `Matcher` + `Dispatcher` | Drains `utt_q`; runs full inference + match + dispatch pipeline |
+| Pipeline worker thread | `Transcriber` + `Resolver` + `Dispatcher` | Drains `utt_q`; runs full inference + resolve + dispatch pipeline |
 
 **Session model:** Scroll Lock opens a session; a second press closes it. An optional mute key (configurable, disabled by default) suspends the audio stream within a session without ending it — two independent flags (`session_active`, `muted`). See ADR 0025. While a session is open, VAD auto-segments the audio stream. Each detected utterance fires the pipeline worker immediately — no keypresses required between commands.
 
@@ -58,10 +58,10 @@ Ten subsystems connected by the `StreamingDaemon` orchestrator. Each is independ
 | `StreamingRecorder` | Own `sd.InputStream` + VAD worker thread; call `utterance_sink` on speech-end | `sounddevice`, `Resampler`, `VADGate` |
 | `Transcriber` | ndarray (or WAV path) → text using preloaded model | `faster-whisper` (CUDA) |
 | `ToolRegistry` | Register/discover `@tool`-decorated functions | stdlib (`importlib`) |
-| `Matcher` | Fuzzy-match transcript → tool | `rapidfuzz` |
-| `Dispatcher` | Invoke tool function, report outcome | (no external) |
+| `Resolver` | Route transcript to a `Plan` via `LLMRouter`; fire `on_miss()` on `None` | `LLMRouter`, `FeedbackSink` |
+| `Dispatcher` | Invoke tool function or execute multi-step plan, report outcome | (no external) |
 | `FeedbackSink` | Chimes + log | `winsound` |
-| `LLMRouter` | Escalate unmatched transcripts to local LM Studio for tool-call planning | `httpx` |
+| `LLMRouter` | Route all transcripts to local LM Studio for tool-call planning | `httpx` |
 | `Validator` | Startup checks: sig/TOML drift, type support, range checks | stdlib (`inspect`, `typing`) |
 
 ---
@@ -74,7 +74,7 @@ Four long-lived threads plus the main thread:
 2. **Hotkey listener thread** — owned by `pynput`. Fires `on_toggle()` as a callback on this thread. Callback only calls `StreamingRecorder.open_session()` or `close_session()` — no blocking work.
 3. **PortAudio callback thread** — owned by `sounddevice`. The `sd.InputStream` callback does `indata.copy()` + `raw_q.put_nowait()` only. No allocation, no blocking, no GIL-contested work. See `gotchas.md` §11.
 4. **VAD worker thread** — drains `raw_q`; passes each chunk through `Resampler.process()` (48k→16k); slices into 512-sample frames; feeds each frame to `VADGate.process()`; when `VADGate` returns a complete utterance ndarray, calls `utterance_sink` which enqueues it on `utt_q`.
-5. **Pipeline worker thread** — drains `queue.Queue[ndarray]` (`utt_q`), runs `Transcriber.transcribe() → confidence/word-count gates → Matcher.match() → Dispatcher.dispatch()` sequentially. One utterance at a time; if the VAD worker emits the next utterance before the previous pipeline run finishes, it queues up.
+5. **Pipeline worker thread** — drains `queue.Queue[ndarray]` (`utt_q`), runs `Transcriber.transcribe() → confidence/word-count gates → Resolver.resolve() → Dispatcher.run_plan()` sequentially. One utterance at a time; if the VAD worker emits the next utterance before the previous pipeline run finishes, it queues up.
 
 Queue topology:
 
@@ -229,62 +229,55 @@ class Transcriber:
 @dataclass(frozen=True)
 class ToolEntry:
     name: str             # function name, e.g. "copy"
-    phrases: tuple[str, ...]
+    phrases: tuple[str, ...]  # always empty; retained for backward compatibility
     func: Callable[[], None]
     module: str           # e.g. "voice_commander.tools.clipboard"
     docstring: str | None
     settle_ms: int            # ms to sleep after execution
-    llm_only: bool            # True → invisible to fuzzy matcher
+    llm_only: bool            # True → tool has parameters; not phrase-matchable
     params_schema: dict | None  # OpenAI tool JSON schema (built by tool_schema)
 
 class ToolRegistry:
     def register(self, entry: ToolEntry) -> None: ...
     def all(self) -> list[ToolEntry]: ...
     def by_name(self, name: str) -> ToolEntry | None: ...
-    def flat_phrases(self) -> list[tuple[str, str]]: ...
-        # [(phrase, tool_name), ...] for rapidfuzz
     def all_llm_visible(self) -> list[ToolEntry]: ...
-        # All entries where llm_only=True OR has phrases (visible to LLM)
+        # All entries visible to the LLM router (all registered tools)
 
-def tool(phrases: list[str]) -> Callable[[Callable], Callable]:
+def tool() -> Callable[[Callable], Callable]:
     """Decorator. Registers the function on the module-global registry."""
 
 def discover(package: str = "voice_commander.tools") -> ToolRegistry:
     """Imports every submodule in `package`, triggering @tool registration."""
 ```
 
-**What it does:** Maintains a name-keyed dictionary of `ToolEntry` records. The `@tool(phrases=[...])` decorator registers the decorated function on the module-global `ToolRegistry` singleton at import time. `discover()` uses `importlib` to import every submodule under `voice_commander.tools`, which triggers all `@tool` decorators as a side effect. Phrases are normalized on registration (lowercase, single-space collapsed, punctuation stripped) so matching is case- and punctuation-insensitive. Re-registering the same `name` raises `DuplicateToolError` to catch accidental duplicates early.
+**What it does:** Maintains a name-keyed dictionary of `ToolEntry` records. The `@tool` decorator registers the decorated function on the module-global `ToolRegistry` singleton at import time. `discover()` uses `importlib` to import every submodule under `voice_commander.tools`, which triggers all `@tool` decorators as a side effect. Re-registering the same `name` raises `DuplicateToolError` to catch accidental duplicates early. The `phrases` field is retained as an empty tuple for backward compatibility but is no longer populated or used for routing.
 
-**Who calls it:** `Daemon.__init__` calls `discover()` to populate the registry before constructing `Matcher`. `Matcher` calls `flat_phrases()` to build its rapidfuzz corpus.
+**Who calls it:** `build_streaming_daemon()` factory calls `discover()` to populate the registry at startup. `LLMRouter` calls `all_llm_visible()` to build the tools array for each chat completion request. `Dispatcher.run_plan()` calls `by_name()` to look up tool functions during plan execution.
 
 **Who it calls:** `importlib.import_module` (inside `discover()`). No external libraries.
 
-**How it is tested:** Fake `ToolEntry` objects are registered manually. Tests assert `all()` returns all entries, `by_name()` returns the right entry or `None`, `flat_phrases()` returns the expected `(phrase, name)` pairs, and `DuplicateToolError` is raised on duplicate `name`.
+**How it is tested:** Fake `ToolEntry` objects are registered manually. Tests assert `all()` returns all entries, `by_name()` returns the right entry or `None`, and `DuplicateToolError` is raised on duplicate `name`.
 
 ---
 
-### 4.5 `Matcher`
+### 4.5 `Resolver`
 
 ```python
-@dataclass(frozen=True)
-class MatchResult:
-    tool: ToolEntry | None
-    phrase: str | None
-    score: float                                 # 0-100
-    candidates: tuple[tuple[str, str, float], ...]  # (phrase, tool_name, score) top-5
-
-class Matcher:
-    def __init__(self, registry: ToolRegistry, threshold: float = 85.0) -> None: ...
-    def match(self, utterance: str) -> MatchResult: ...
+class Resolver:
+    def __init__(self, router: LLMRouter, feedback: FeedbackSink) -> None: ...
+    def resolve(self, transcript: str) -> Plan | None: ...
 ```
 
-**What it does:** Builds a flat phrase corpus from `registry.flat_phrases()` at construction time. `match()` normalizes the utterance the same way phrases were normalized at registration, then calls `rapidfuzz.process.extract(scorer=rapidfuzz.fuzz.WRatio, limit=5)` to retrieve the top-5 candidates. If the best score is at or above `threshold`, `tool` and `phrase` are populated; otherwise they are `None` (a "miss"), but `candidates` is always populated for logging. Ties at the top score are broken by tool-name alphabetical order, making the result deterministic and thus testable.
+**What it does:** The single routing entry point for the daemon pipeline. `resolve()` calls `LLMRouter.route(transcript)`. If the result is `None` (LM Studio offline, timeout, no matching tool, or `no_match` sentinel), `on_miss(transcript, [])` is called on the injected `FeedbackSink` and `None` is returned. If a `Plan` is returned, it is passed back to the caller without modification.
 
-**Who calls it:** The worker thread in `Daemon`'s pipeline, immediately after `Transcriber.transcribe()` returns.
+`Resolver` owns the routing decision and miss signalling. It does not own HTTP (that is `LLMRouter`'s job) or plan execution (that is `Dispatcher`'s job).
 
-**Who it calls:** `rapidfuzz.process.extract` and `ToolRegistry.by_name()` to look up the winning `ToolEntry`.
+**Who calls it:** The pipeline worker thread in `StreamingDaemon._process_utterance()`, immediately after the confidence/word-count gates pass.
 
-**How it is tested:** A stub `ToolRegistry` with known phrases is constructed. Utterances are fed and asserted on: expected tool name, score above threshold, candidate list ordering, miss behaviour below threshold, and tie-breaking by alphabetical order.
+**Who it calls:** `LLMRouter.route()` and `FeedbackSink.on_miss()`.
+
+**How it is tested:** A mock `LLMRouter` is injected. Tests assert: `on_miss()` called when router returns `None`; `Plan` returned when router returns a plan; `on_miss()` not called when a plan is returned; router called exactly once per `resolve()` call.
 
 ---
 
@@ -293,17 +286,18 @@ class Matcher:
 ```python
 class Dispatcher:
     def __init__(self, feedback: FeedbackSink) -> None: ...
-    def dispatch(self, transcript: str, match: MatchResult) -> None: ...
     def run_plan(self, transcript: str, plan: Plan, registry: ToolRegistry) -> None: ...
 ```
 
-**What it does:** The final step in the pipeline. If `match.tool is None`, it calls `feedback.on_miss(transcript, match.candidates)` and returns. If a tool matched, it calls `feedback.on_match(tool_name, phrase, score)` and then invokes `match.tool.func()` inside a `try/except BaseException`. On any exception it calls `feedback.on_error("dispatcher", err)` and logs the full traceback — the daemon continues running. Tool functions run on the worker thread and must complete in a few hundred milliseconds (they perform keystroke sends via `pyautogui`). `run_plan()` executes a multi-step `Plan` from the LLM router. It calls `feedback.on_plan_start()`, iterates through plan steps looking up each tool by name in the registry, invokes `tool.func(**step.kwargs)`, sleeps `settle_ms` between steps, and calls `feedback.on_plan_complete()`. If a step fails or a tool is unknown, `on_error` fires and the chain stops.
+**What it does:** The final step in the pipeline. `run_plan()` executes a multi-step `Plan` from the LLM router. It calls `feedback.on_plan_start()`, iterates through plan steps looking up each tool by name in the registry, invokes `tool.func(**step.kwargs)`, sleeps `settle_ms` between steps, and calls `feedback.on_plan_complete()`. If a step fails or a tool is unknown, `on_error` fires and the chain stops. Tool functions run on the worker thread and must complete in a few hundred milliseconds (they perform keystroke sends via `pyautogui`).
 
-**Who calls it:** The worker thread in `Daemon`, after `Matcher.match()` returns.
+Miss handling is owned by `Resolver` (which calls `FeedbackSink.on_miss()` before `Dispatcher` is ever reached). `Dispatcher` only receives valid `Plan` objects.
 
-**Who it calls:** `FeedbackSink` callbacks and the matched `ToolEntry.func` callable.
+**Who calls it:** The worker thread in `StreamingDaemon`, after `Resolver.resolve()` returns a non-None `Plan`.
 
-**How it is tested:** `CapturingFeedbackSink` is injected. Tests assert: `on_match` + `func()` called on a successful match; `on_miss` called on `match.tool is None`; `on_error` called and daemon does not propagate the exception when `func()` raises.
+**Who it calls:** `FeedbackSink` callbacks and each `ToolEntry.func` callable in the plan.
+
+**How it is tested:** `CapturingFeedbackSink` is injected. Tests assert: `on_plan_start` + each `func()` called on a valid plan; `on_error` called and daemon does not propagate the exception when `func()` raises; `on_plan_complete` called after all steps.
 
 ---
 
@@ -344,9 +338,8 @@ class StreamingDaemon:
         feedback: FeedbackSink,
         recorder: StreamingRecorder | None,
         transcriber: Transcriber,
-        matcher: Matcher,
+        resolver: Resolver,
         dispatcher: Dispatcher,
-        llm_router: LLMRouter | None = None,
         *,
         min_confidence: float = 0.30,
         min_word_count: int = 1,
@@ -358,7 +351,7 @@ class StreamingDaemon:
     def on_toggle(self) -> None: ...             # hotkey callback
 ```
 
-**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_toggle()` is the hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → match → dispatch`. Async WAV write (`outputs/last_utterance.wav`) is submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` does exactly one thing: `build_streaming_daemon(Config.load()).run(cfg.hotkey.key)`. When `llm_router` is not None and the Matcher returns a miss, the pipeline worker escalates to `LLMRouter.route(transcript)`. If the router returns a `Plan`, `Dispatcher.run_plan()` executes it. If the router returns `None`, the miss falls through to `FeedbackSink.on_miss()`.
+**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_toggle()` is the hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → resolve → dispatch`. Async WAV write (`outputs/last_utterance.wav`) is submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` does exactly one thing: `build_streaming_daemon(Config.load()).run(cfg.hotkey.key)`. The pipeline worker calls `Resolver.resolve(transcript)` for every utterance that passes the gates. If `resolve()` returns a `Plan`, `Dispatcher.run_plan()` executes it. If `resolve()` returns `None`, the miss was already signalled by `Resolver` and the worker loops back to `utt_q`.
 
 **Who calls it:** `__main__.py` (the process entry point), signal handlers, and `on_toggle` (hotkey-listener thread).
 
@@ -382,7 +375,7 @@ class LLMRouter:
 
 **What it does:** One-shot tool-call planner via local LM Studio. `route()` sends the transcript to the configured LM Studio endpoint as an OpenAI-compatible chat completion with `tool_choice="required"`. It parses the response into a `Plan` of `ToolCall` steps. Returns `None` on timeout, connection error, HTTP error, malformed response, or if the LLM calls `no_match`. `warmup()` pings `/models` to verify the server is reachable. `close()` shuts down the underlying `httpx.Client`. Tracks simple metrics (total calls, timeouts, errors, avg latency).
 
-**Who calls it:** `StreamingDaemon` pipeline worker, only when Matcher returns a miss and `llm_router` is not None.
+**Who calls it:** `Resolver.resolve()`, on every utterance that passes the confidence/word-count gates.
 
 **Who it calls:** `httpx.Client` for HTTP, `ToolRegistry.all_llm_visible()` to build the tools array.
 
@@ -441,14 +434,10 @@ def validate_or_die(registry: ToolRegistry, store: ToolMetadataStore) -> None: .
 11. Word-count gate: drop if fewer than `min_word_count` words.
 12. `no_speech_prob` gate: drop if above `max_no_speech_prob`.
 13. Confidence gate: `on_miss()` if below `min_confidence`.
-14. `Matcher.match(result.text)` → `MatchResult`.
-14a. **LLM escalation (if Matcher misses and `llm_router` is not None):** `LLMRouter.route(text)` → `Plan | None`.
-14b. If `Plan` returned: `Dispatcher.run_plan(text, plan, registry)` executes multi-step plan. Continue to step 16.
-14c. If `None` returned: fall through to step 15 (miss).
-15. `Dispatcher.dispatch(text, match)`:
-    - Match above threshold → logs match + tool function executes.
-    - Below threshold (and LLM router returned None or disabled) → miss beep + logs miss.
-16. Pipeline worker loops back to `utt_q`.
+14. `Resolver.resolve(result.text)` → `Plan | None` via `LLMRouter.route(text)`.
+14a. If `None` returned: `Resolver` has already called `on_miss()`; pipeline worker loops back to `utt_q`.
+14b. If `Plan` returned: `Dispatcher.run_plan(text, plan, registry)` executes multi-step plan.
+15. Pipeline worker loops back to `utt_q`.
 
 **Session close:**
 17. User presses Scroll Lock again. `on_toggle` → `StreamingRecorder.close_session()` + `feedback.on_recording_stop()` (chime).
@@ -486,7 +475,7 @@ reload_lock                                    shares ToolRegistry   uses reload
 4. Acquires per-tool file lock → atomic TOML write → release.
 5. Acquires `reload_lock` → `registry.reload_metadata()` → release.
 6. Returns updated card fragment → HTMX swaps form back to card.
-7. Matcher's next `match()` call sees updated phrases.
+7. `LLMRouter`'s next `route()` call uses the updated registry metadata via `ToolRegistry.all_llm_visible()`.
 
 ---
 
