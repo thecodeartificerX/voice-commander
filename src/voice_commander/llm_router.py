@@ -40,11 +40,18 @@ Principles
 - When "close" is ambiguous, prefer `close()` (tab). Only use
   `close_window()` when the user explicitly says window, app, or
   quit.
+- Keypress fallback. A bare key name, or a simple verb that cleanly
+  maps to a key, becomes `press(combo="<key>")`. E.g. send / submit
+  → enter; cancel → escape; undo → ctrl+z; save → ctrl+s; find →
+  ctrl+f; refresh → f5. Bare key names (enter, escape, tab, space,
+  delete, backspace, f5) → press them directly.
 - Hard bans — these chords sweep more windows than the user meant:
   * `press(combo="win+d")` / `press(combo="win+m")` — use `minimize()`
   * `press(combo="win+up")` — use `maximize()`
-- Call `no_match(reason)` only when the utterance is not an
-  executable command (casual speech, nonsense).
+- Call `no_match(reason)` only when the utterance genuinely cannot
+  be executed — greetings, questions to you, or intents whose target
+  cannot be inferred. Do NOT no_match a plausible keypress or a
+  simple verb that maps to `press`.
 
 Examples
 
@@ -68,6 +75,12 @@ Tools: close()
 
 User: "close window"
 Tools: close_window()
+
+User: "send"
+Tools: press(combo="enter")
+
+User: "escape"
+Tools: press(combo="escape")
 """
 
 
