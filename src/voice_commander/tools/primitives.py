@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from typing import Any, cast
 
@@ -31,11 +32,37 @@ logger = logging.getLogger(__name__)
 
 _MAX_TYPE_TEXT_LEN = 500
 
-# Applied to the RESOLVED launch token (post-resolver.resolve_app), not the raw
-# utterance. Guards against the LLM emitting a raw interpreter invocation.
-_LAUNCH_BLOCKLIST = {"cmd", "cmd.exe", "powershell", "powershell.exe",
-                     "pwsh", "pwsh.exe", "wscript", "wscript.exe",
-                     "cscript", "cscript.exe"}
+# Applied to the RESOLVED launch token basename (post-resolver.resolve_app)
+# AND to the raw user-provided target when it looks like a direct filename.
+# Guards against interpreter invocation and system-utility launch.
+_LAUNCH_BLOCKLIST = {
+    # Shell interpreters / script hosts
+    "cmd", "cmd.exe", "powershell", "powershell.exe",
+    "pwsh", "pwsh.exe", "wscript", "wscript.exe",
+    "cscript", "cscript.exe",
+    # Admin / destructive system utilities
+    "regedit", "regedit.exe",
+    "diskmgmt.msc", "diskpart", "diskpart.exe",
+    "format", "format.com",
+    "cipher", "cipher.exe",
+    "gpedit.msc", "secpol.msc", "services.msc",
+    "shutdown", "shutdown.exe",
+    "taskkill", "taskkill.exe",
+    "rundll32", "rundll32.exe",
+    "msconfig", "msconfig.exe",
+}
+
+# Deny any launch whose resolved path lives under a Windows system directory.
+_SYSTEM_PATH_RE = re.compile(r"[\\/](System32|SysWOW64|WinSxS)[\\/]", re.IGNORECASE)
+
+# Applied to `press(combo=...)` BEFORE keystroke synthesis. Normalized to
+# sorted lowercase token set, so "shift+delete", "Delete+Shift", "SHIFT+DEL"
+# all match the same blocked chord.
+_PRESS_BLOCKLIST: set[frozenset[str]] = {
+    frozenset({"shift", "delete"}),   # permanent delete, bypasses Recycle Bin
+    frozenset({"shift", "del"}),
+    frozenset({"win", "r"}),          # Run dialog — script / command entry
+}
 
 # How long to poll EnumWindows after an open() before giving up.
 _OPEN_VERIFY_TIMEOUT_MS = 500
@@ -153,13 +180,33 @@ def open_target(target: str) -> None:
     window whose title fuzzy-matches *target*. On timeout: WARNING log, no
     raise (some apps take seconds to appear). On success: INFO log.
     """
+    # Pre-resolution raw-input check: reject if user-provided target looks
+    # like a direct filename match for a blocked interpreter / utility.
+    raw_basename = os.path.basename(target).lower()
+    if raw_basename in _LAUNCH_BLOCKLIST:
+        logger.warning(
+            "open blocked destructive raw target: target=%r", target,
+        )
+        return
+
     token = resolver.resolve_app(target)
 
-    # Blocklist check on the RESOLVED token, not the raw input.
+    # Post-resolution: basename blocklist covers resolved .lnk pointing at
+    # e.g. cmd.exe, or AppsFolder AUMIDs landing on blocked basenames.
     token_basename = os.path.basename(token).lower()
     if token_basename in _LAUNCH_BLOCKLIST:
         logger.warning(
-            "open blocked suspicious resolved token: target=%r token=%r",
+            "open blocked destructive resolved token: target=%r token=%r",
+            target, token,
+        )
+        return
+
+    # Post-resolution: reject any launch whose path lives under a Windows
+    # system directory. Catches System32 / SysWOW64 / WinSxS targets that
+    # slip past the basename check (e.g. renamed copies of regedit.exe).
+    if _SYSTEM_PATH_RE.search(token):
+        logger.warning(
+            "open blocked system-path target: target=%r token=%r",
             target, token,
         )
         return
@@ -322,8 +369,20 @@ def _close_with_verify(combo: tuple[str, ...], *, verb: str) -> None:
 
 @tool
 def press(combo: str) -> None:
-    """Press a key combination like 'ctrl+c', 'alt+tab', 'win+l'."""
-    keys = [k.strip() for k in combo.split("+")]
+    """Press a key combination like 'ctrl+c', 'alt+tab', 'win+l'.
+
+    Blocks known-destructive chords (Shift+Delete, Win+R, …). Logs
+    WARNING and no-ops instead of raising — the dispatcher continues
+    with the rest of the plan if any.
+    """
+    keys = [k.strip().lower() for k in combo.split("+") if k.strip()]
+    key_set = frozenset(keys)
+    if key_set in _PRESS_BLOCKLIST:
+        logger.warning(
+            "press blocked destructive chord: combo=%r (normalized=%s)",
+            combo, "+".join(sorted(key_set)),
+        )
+        return
     pyautogui.hotkey(*keys)
 
 

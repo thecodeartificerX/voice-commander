@@ -254,7 +254,18 @@ def resolve_app(target: str) -> str:
 
 
 _DANGEROUS_DISPLAY_PATTERNS = re.compile(
-    r"\b(uninstall|uninstaller|repair|reset|crash|setup|installer)\b",
+    r"\b("
+    # Install / repair / uninstall chain
+    r"uninstall|uninstaller|repair|reset|crash|setup|installer"
+    # Admin / system configuration shortcuts
+    r"|registry editor|regedit"
+    r"|disk management|diskmgmt|diskpart"
+    r"|format|cipher"
+    r"|group policy|gpedit|secpol"
+    r"|services manager"
+    r"|local users and groups"
+    r"|event viewer"
+    r")\b",
     re.IGNORECASE,
 )
 

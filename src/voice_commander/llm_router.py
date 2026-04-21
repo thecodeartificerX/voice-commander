@@ -53,6 +53,10 @@ Principles
 - Hard bans — these chords sweep more windows than the user meant:
   * `press(combo="win+d")` / `press(combo="win+m")` — use `minimize()`
   * `press(combo="win+up")` — use `maximize()`
+- Destructive bans. Never emit these; tool guards reject them anyway.
+  `press` chords: shift+delete, win+r. `open` targets: cmd,
+  powershell, regedit, diskmgmt, diskpart, format, cipher, gpedit,
+  shutdown, taskkill, msconfig, rundll32.
 - Call `no_match(reason)` only when the utterance genuinely cannot
   be executed — greetings, questions to you, or intents whose target
   cannot be inferred. Do NOT no_match a plausible keypress or a
