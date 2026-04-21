@@ -161,9 +161,13 @@ All runtime settings live in [`config.toml`](config.toml). Create `config.local.
 | `[transcription]` | `min_confidence` | `0.30` | Transcripts below this score fire a miss chime. |
 | `[llm]` | `endpoint_url` | `"http://localhost:1234/v1"` | LM Studio (or any OpenAI-compatible) endpoint. |
 | `[llm]` | `model_id` | `"google/gemma-4-e4b"` | Model served by the endpoint. |
-| `[llm]` | `timeout_ms` | `600` | Per-request budget in milliseconds. |
-| `[llm]` | `max_plan_steps` | `8` | Maximum tool calls in one dispatched plan. |
+| `[llm]` | `default_browser` | `"chrome"` | Browser name templated into the few-shot system prompt (ADR 0044). |
+| `[llm]` | `timeout_ms` | `1200` | Per-request budget in milliseconds. |
+| `[llm]` | `warmup_timeout_ms` | `5000` | One-shot startup warmup budget — larger than `timeout_ms` to cover cold prefill. |
+| `[llm]` | `max_plan_steps` | `12` | Maximum tool calls in one dispatched plan. |
 | `[llm]` | `warmup_on_startup` | `true` | POST a 1-token completion at startup to seed the KV cache. |
+| `[llm]` | `focus_fuzzy_threshold` | `70` | Minimum WRatio score for `focus(target)` to pick a window (ADR 0041/0042). |
+| `[llm]` | `open_fuzzy_threshold` | `70` | Minimum WRatio score for `open(target)` to pick an app / Start-Menu entry. |
 | `[vad]` | `threshold` | `0.4` | Silero speech-probability floor. |
 | `[vad.gates]` | `min_word_count` | `1` | Drop transcripts shorter than N words. |
 | `[web]` | `enabled` | `true` | Start the management UI on port 8765. |
@@ -174,32 +178,39 @@ Full schema + rationale: [`docs/superpowers/specs/2026-04-19-voice-commander-des
 
 ## LLM Router
 
-Every transcript goes through a local LLM unconditionally. The `Resolver` module wraps `LLMRouter`, which POSTs to an LM Studio OpenAI-compatible endpoint (default model: Gemma 4 E4B). The LLM returns a one-shot ordered plan of typed tool calls — including chained commands like *"open a new tab then paste"* — which the `Dispatcher` executes step-by-step with per-tool settle delays. If LM Studio is offline, unreachable, or returns an unparseable response, the router degrades silently to a miss chime; the daemon keeps running.
+Every transcript goes through a local LLM unconditionally. `LLMRouter` POSTs to an LM Studio OpenAI-compatible endpoint (default model: Gemma 4 E4B) with a few-shot system prompt describing the nine-verb catalog (ADR 0043). The LLM returns a one-shot ordered plan of typed tool calls — including chained commands like *"open a new tab then paste"* — which the `Dispatcher` executes step-by-step with per-tool settle delays. For the `focus` and `open` verbs, the `target` string is grounded onto a concrete `hwnd` / launch token by the pure-function `resolver` module (rapidfuzz scoring over visible windows / Start-Menu + AppsFolder, ADR 0042). If LM Studio is offline, unreachable, or returns an unparseable response, the router degrades silently to a miss chime; the daemon keeps running.
 
 Configure in `config.toml` (or `config.local.toml`):
 
 ```toml
 [llm]
-endpoint_url        = "http://localhost:1234/v1"
-model_id            = "google/gemma-4-e4b"
-timeout_ms          = 600
-max_plan_steps      = 8
-warmup_on_startup   = true
-warmup_timeout_ms   = 5000   # budget for the startup POST; higher than timeout_ms to cover cold KV-cache prefill
+endpoint_url           = "http://localhost:1234/v1"
+model_id               = "google/gemma-4-e4b"
+default_browser        = "chrome"
+timeout_ms             = 1200
+warmup_timeout_ms      = 5000
+max_plan_steps         = 12
+warmup_on_startup      = true
+focus_fuzzy_threshold  = 70
+open_fuzzy_threshold   = 70
 ```
+
+> **Default browser.** `default_browser` is substituted into the few-shot system prompt at `LLMRouter.__init__` time. It teaches the model which browser to name when a voice command has web intent ("search how to lose weight" → `focus(target="chrome")` + `press(ctrl+t)` + ...). Change this string, restart the daemon, and every subsequent web-intent utterance routes through your browser of choice. See [ADR 0044](docs/decisions/0044-few-shot-system-prompt.md).
 
 > **Warmup note.** When `warmup_on_startup = true`, the daemon POSTs a real `/v1/chat/completions` request (with `max_tokens = 1`) at startup. This seeds LM Studio's prefix KV cache with the system prompt and tools array so the first real voice command lands on a warm cache. Startup takes ~5 s longer, but the first spoken command completes within the normal `timeout_ms` budget. `GET /v1/models` alone does not seed the cache — see [ADR 0038](docs/decisions/0038-llm-router-warmup-real-chat-completion.md).
 
-Full design: [`docs/superpowers/specs/2026-04-21-llm-router-design.md`](docs/superpowers/specs/2026-04-21-llm-router-design.md). Routing architecture decisions: [ADR 0040](docs/decisions/0040-llm-only-routing.md), [ADR 0041](docs/decisions/0041-drop-rapidfuzz.md).
+> **Fuzzy thresholds.** The resolver's `focus_fuzzy_threshold` / `open_fuzzy_threshold` knobs control how tolerant `focus(target)` and `open(target)` are when mapping the LLM's `target` string onto a visible window / Start-Menu entry. Lower (e.g. 60) = more permissive, accepts looser phonetic matches; higher (e.g. 80) = stricter, fewer false positives but more misses. Defaults of 70 were validated against a 20-utterance live-test script.
+
+Full design: [`docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design.md`](docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design.md). Routing architecture decisions: [ADR 0040](docs/decisions/0040-llm-only-routing-replaces-hybrid.md), [ADR 0041](docs/decisions/0041-rapidfuzz-for-parameter-resolution.md), [ADR 0042](docs/decisions/0042-resolver-module-design.md), [ADR 0043](docs/decisions/0043-nine-verb-primitive-catalog.md), [ADR 0044](docs/decisions/0044-few-shot-system-prompt.md).
 
 ---
 
 ## Architecture at a glance
 
 ```
-HotkeyCtrl ─toggle─▶ StreamingRecorder ─ndarray─▶ Transcriber ─text─▶ Resolver ─plan─▶ Dispatcher ─▶ tool fn
-  pynput            sounddevice + soxr +          faster-whisper       LLMRouter        run_plan()
-                    silero-vad (48k→16k)          (CUDA, small.en)     (httpx→LM Studio) + FeedbackSink
+HotkeyCtrl ─toggle─▶ StreamingRecorder ─ndarray─▶ Transcriber ─text─▶ LLMRouter ─plan─▶ Dispatcher ─▶ tool fn
+  pynput            sounddevice + soxr +          faster-whisper      httpx→LM Studio  run_plan()    + resolver.*
+                    silero-vad (48k→16k)          (CUDA, small.en)    (few-shot prompt) + FeedbackSink   (focus/open)
 ```
 
 Four long-lived threads (PortAudio callback → VAD worker → pipeline worker, plus hotkey listener) connected by thread-safe queues. Every subsystem is independently unit-testable with no hardware.

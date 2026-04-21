@@ -4,11 +4,11 @@ Canonical entry point for any AI agent or human working on this project. **Read 
 
 ## What we're building
 
-A voice-driven command launcher for Windows — like Talon Voice, but you say the actual command ("copy", "new tab", "focus browser") instead of memorizing spoken shortcuts. A local-first daemon: no cloud, no LLM in the MVP.
+A voice-driven command launcher for Windows — like Talon Voice, but you say the actual command ("copy", "open spotify", "search for cats") instead of memorizing spoken shortcuts. A local-first daemon: no cloud, no third-party speech service.
 
-**One-line flow:** press Scroll Lock → speak → VAD auto-segments on silence → command fires → Scroll Lock to end session.
+**One-line flow:** press Scroll Lock → speak → VAD auto-segments on silence → LLM returns a plan → Dispatcher fires it → Scroll Lock to end session.
 
-**End-state vision (post-MVP):** natural utterances with arguments ("open readme in the projects folder") routed via a small local LLM doing tool-calling. All transcripts are routed through the LLM unconditionally — no fuzzy-match hot path.
+**Current state.** LLM-driven tool-calling is the default and only routing path. Every transcript goes to `LLMRouter.route()`, which POSTs to a local LM Studio endpoint and returns an ordered plan of tool calls from the nine-verb catalog (ADR 0043). The system prompt carries three few-shot examples templated from `[llm].default_browser` (ADR 0044). `rapidfuzz` is retained only for grounding tool arguments (`focus(target)` / `open(target)`) inside the pure-function `resolver` module — never for routing. There is no offline fuzzy-match fallback: if LM Studio is down, every utterance miss-chimes.
 
 ## Core principles (non-negotiable)
 
@@ -20,10 +20,10 @@ A voice-driven command launcher for Windows — like Talon Voice, but you say th
 ## Architecture at a glance
 
 ```
-HotkeyCtrl ──toggle──▶ StreamingRecorder ──NDArray──▶ Transcriber ──text──▶ Resolver ─plan─▶ Dispatcher ──▶ tool fn
-   pynput             sounddevice+Resampler+VADGate   faster-whisper        LLMRouter         run_plan()    tools/*
-                      (device-native→16kHz, silero)    (CUDA, small.en)    (httpx→LM Studio)  + FeedbackSink
-                                                                               │miss           (chime + log)
+HotkeyCtrl ──toggle──▶ StreamingRecorder ──NDArray──▶ Transcriber ──text──▶ LLMRouter ─plan─▶ Dispatcher ──▶ tool fn
+   pynput             sounddevice+Resampler+VADGate   faster-whisper        httpx→LM Studio  run_plan()    tools/*
+                      (device-native→16kHz, silero)    (CUDA, small.en)    (few-shot prompt) + FeedbackSink
+                                                                               │miss          + resolver.* (param grounding)
                                                                                ▼
                                                                           feedback.on_miss()
 ```

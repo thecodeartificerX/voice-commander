@@ -78,11 +78,21 @@ Cross-references to Architecture Decision Records live in [`docs/decisions/`](de
 
 ---
 
-## ~~`rapidfuzz`~~ — REMOVED (ADR 0040, ADR 0041)
+## `rapidfuzz` — Parameter resolution (fuzzy scoring for tool arguments)
 
-Previously used for the `Matcher` subsystem (fuzzy phrase matching). Removed in ADR 0040 (2026-04-21) when LLM-only routing replaced the hybrid router. With no `Matcher`, `rapidfuzz` is unused anywhere in the codebase and has been dropped from `pyproject.toml`.
+**Purpose in this project:** `rapidfuzz` is **no longer used for command matching** — that path was removed with ADR 0040. It is retained for a narrower role: scoring fuzzy tool-argument strings onto concrete OS objects inside the `resolver` module. Specifically:
 
-**ADR:** [`decisions/0041-drop-rapidfuzz-dependency.md`](decisions/0041-drop-rapidfuzz-dependency.md) supersedes [`decisions/0005-rapidfuzz-matching.md`](decisions/0005-rapidfuzz-matching.md).
+- `resolver.resolve_window(target)` scores every visible window as `max(WRatio(target, proc_name), WRatio(target, title))` and picks argmax above `focus_fuzzy_threshold` (default 70).
+- `resolver.resolve_app(target)` scores `target` against the cached `(display_name, launch_token)` list assembled from Start-Menu `.lnk` files and `shell:AppsFolder`, picking argmax above `open_fuzzy_threshold` (default 70).
+- `primitives._verify_open(target)` polls `EnumWindows` post-launch and uses `WRatio` ≥ 60 to confirm a new window actually appeared.
+
+**Alternatives considered:** A plain Levenshtein implementation (stdlib `difflib.SequenceMatcher` or a custom function). `WRatio` combines several algorithms (`partial_ratio`, `token_sort_ratio`, `ratio`) in a way that handles acronyms, word-order reshuffles, and partial overlaps much better than plain Levenshtein.
+
+**Why `rapidfuzz` won:** It was already a project dependency for the old matcher, and no new install pain. Sub-millisecond `WRatio` over lists of ~200 AppsFolder entries keeps parameter resolution off the critical latency path. Reimplementing `WRatio` correctly is more code than the dependency costs.
+
+**Pin reason:** `>=3.9.0` for the stable `rapidfuzz.fuzz.WRatio` API used by the resolver.
+
+**ADR:** [`decisions/0041-rapidfuzz-for-parameter-resolution.md`](decisions/0041-rapidfuzz-for-parameter-resolution.md) — supersedes the *matching* use in [`decisions/0005-rapidfuzz-matching.md`](decisions/0005-rapidfuzz-matching.md), but keeps the dependency for parameter resolution.
 
 ---
 
@@ -357,7 +367,7 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 | `pynput` | [`0002-pynput-over-keyboard.md`](decisions/0002-pynput-over-keyboard.md) |
 | `sounddevice`, `soundfile`, `numpy` | [`0003-sounddevice-over-pyaudio.md`](decisions/0003-sounddevice-over-pyaudio.md) |
 | `faster-whisper` | [`0004-faster-whisper-cuda.md`](decisions/0004-faster-whisper-cuda.md) |
-| `rapidfuzz` (removed) | [`0041-drop-rapidfuzz-dependency.md`](decisions/0041-drop-rapidfuzz-dependency.md) supersedes [`0005-rapidfuzz-matching.md`](decisions/0005-rapidfuzz-matching.md) |
+| `rapidfuzz` (scope: parameter resolution) | [`0041-rapidfuzz-for-parameter-resolution.md`](decisions/0041-rapidfuzz-for-parameter-resolution.md) supersedes the matching use in [`0005-rapidfuzz-matching.md`](decisions/0005-rapidfuzz-matching.md) |
 | `pyautogui` | [`0002-pynput-over-keyboard.md`](decisions/0002-pynput-over-keyboard.md) |
 | `windows-toasts` (removed) | [`0013-drop-winrt-toasts-audio-only-feedback.md`](decisions/0013-drop-winrt-toasts-audio-only-feedback.md) supersedes [`0007-windows-toasts-over-tkinter.md`](decisions/0007-windows-toasts-over-tkinter.md) |
 | `pystray`, `Pillow` (Phase 5) | No dedicated ADR yet |

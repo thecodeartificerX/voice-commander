@@ -16,13 +16,13 @@ The ~600 ms overhead of the LLM path on simple commands is acceptable for a voic
 Remove rapidfuzz matching entirely. Route all transcripts through the LLM router unconditionally:
 
 1. Delete `matcher.py`.
-2. Remove the `--router-mode` CLI flag (and all related CLI routing options).
+2. Remove the `--router-mode` CLI flag (and all related CLI routing options), the `.last-router-mode` persistence file, and the router-mode prompt in `start.ps1`.
 3. Remove the `[matching]` config section entirely (`config.toml` and `config.local.toml`).
-4. Remove `phrases` from all tool TOML sidecars.
+4. Remove `phrases` from all tool TOML sidecars so `phrases = []` is the only legal value.
 5. Remove `flat_phrases()` and `flat_phrases_enabled()` from `ToolRegistry`.
-6. Introduce `Resolver` (ADR 0042) as the clean single entry point for routing.
+6. Route every utterance through `LLMRouter.route()` directly from `StreamingDaemon._process_utterance()`. `LLMRouter` remains stateless per-call. Parameter resolution for `focus` / `open` targets is delegated to a small `resolver` module of pure functions (ADR 0042) — **not** a wrapper router class.
 
-The LLM router is now the only routing path. A miss is `None` returned from `LLMRouter.route()`, which fires `FeedbackSink.on_miss()`.
+The LLM router is now the only routing path. A miss is `None` returned from `LLMRouter.route()`, which fires `FeedbackSink.on_miss()` directly from the pipeline worker.
 
 ## Consequences
 

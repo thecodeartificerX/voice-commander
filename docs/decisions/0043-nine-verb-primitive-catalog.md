@@ -5,77 +5,90 @@
 
 ## Context
 
-The original primitive catalog shipped six verbs:
+With LLM-only routing (ADR 0040), the tools array sent to LM Studio is the sole surface the model can compose from. A sprawling catalog hurts small-MoE accuracy; a threadbare one forces the LLM to work around missing verbs (or emit `no_match`). The spec at `docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design.md` Section 2 locked a minimal, orthogonal set of **nine** primitives as the catalog the LLM sees.
 
-| Verb | Purpose |
-|---|---|
-| `wait(ms)` | Pause between plan steps |
-| `press_keys(combo: str)` | Send arbitrary keystroke combinations |
-| `type_text(text)` | Type a string via `pyautogui.typewrite()` |
-| `focus_window(title_substring)` | Bring a window to foreground |
-| `launch(app)` | Open an application |
-| `no_match(reason)` | Escape hatch — LLM signals no matching tool |
-
-These covered basic command composition but left three common voice-command intents unaddressed:
-
-1. **Scrolling.** "Scroll down" and "page up" are high-frequency commands with no natural single-tool mapping. They require sending specific keys or calling OS scroll APIs, and the LLM needs a named primitive to compose with.
-2. **URL opening.** "Open the Voice Commander GitHub page" requires launching a URL in the default browser. `launch()` cannot express this cleanly — it is designed for app names, not URLs.
-3. **Window closing.** "Close this window" and "close the terminal" are common. `press_keys('alt', 'f4')` is a workaround, but it is fragile (some apps ignore Alt+F4) and non-declarative. A named `close_window()` primitive expresses intent clearly.
-
-The LLM's ability to compose plans is only as rich as the primitive catalog. Gaps in the catalog force the LLM to either fail (`no_match`) or compose awkward workarounds via `press_keys`. Both outcomes degrade UX.
+Two of the spec's verb names collide with Python builtins (`type`, `open`). A previous draft of this ADR listed invented verbs such as `press_keys(*keys)`, `hscroll`, `focus_window`, and `open_url` — names that were never implemented. This rewrite documents the catalog as it actually ships.
 
 ## Decision
 
-Add three primitives, all marked `llm_only = true`:
+### The nine canonical verbs
 
-### `scroll(direction, amount)`
+| Verb (LLM-visible) | Python symbol | Arguments | Implementation |
+|---|---|---|---|
+| `focus` | `focus` | `target: str` | `resolver.resolve_window(target)` → `SetForegroundWindow` with `AttachThreadInput` workaround + `_verify_foreground` |
+| `type` | `type_text` | `text: str` | `pyautogui.write(text, interval=0.02)`; truncated to 500 chars with WARNING log |
+| `open` | `open_target` | `target: str` | `resolver.resolve_app(target)` → blocklist check → `os.startfile(token)` + `_verify_open` poll |
+| `close` | `close` | *(none)* | `pyautogui.hotkey("ctrl", "w")` + foreground-change verify (closes current tab/doc) |
+| `close_window` | `close_window` | *(none)* | `pyautogui.hotkey("alt", "f4")` + foreground-change verify |
+| `press` | `press` | `combo: str` | Split on `+` → `pyautogui.hotkey(*keys)` |
+| `wait` | `wait` | `ms: int` | `time.sleep(ms / 1000.0)` |
+| `click` | `click` | `button: str = "left"` | `pyautogui.click(button=button)` (validates `{left, right, middle}`) |
+| `no_match` | `no_match` | `reason: str` | No-op body; `LLMRouter._parse_response` intercepts the first `no_match` step and returns `None` to signal a miss |
 
-- `direction`: `"up"` | `"down"` | `"left"` | `"right"`
-- `amount`: integer number of scroll clicks (default 3)
-- Implementation: `pyautogui.scroll(clicks)` (positive = up, negative = down). Horizontal scrolling (left/right) is not implemented in the current catalog.
-- `settle_ms`: 0 (scroll is near-instantaneous)
+Total: **9 LLM-visible verbs**.
 
-### `open_url(url)`
+### Symbol-to-name mapping
 
-- `url`: fully-qualified URL string (e.g. `"https://github.com/..."`)
-- Implementation: `webbrowser.open(url)` — uses the OS default browser, no subprocess required.
-- `settle_ms`: 500 (browser tab open takes a moment to become interactive)
+Two verbs use `@tool(name=...)` to register under a name that differs from the Python symbol:
 
-### `close_window(title_substring)`
+```python
+@tool(name="type")
+def type_text(text: str) -> None: ...
 
-- `title_substring`: case-insensitive substring to match against the foreground window title (or `""` to close the current foreground window).
-- Implementation: `win32gui.FindWindow` / `EnumWindows` to find matching hwnd, then `win32gui.PostMessage(hwnd, WM_CLOSE, 0, 0)`. Uses `WM_CLOSE` (graceful close request), not `TerminateProcess` or `WM_DESTROY`.
-- `settle_ms`: 200 (app needs a moment to process the close message)
+@tool(name="open")
+def open_target(target: str) -> None: ...
+```
 
-Total primitive count after this ADR: **9**.
+The Python symbols (`type_text`, `open_target`) avoid shadowing the builtins `type` and `open` inside `primitives.py`. The `name=` argument was added to the `@tool` decorator in `registry.py` for exactly this purpose. Every other verb registers under its Python symbol via the bare `@tool` form.
+
+### Bonus verb (retained from the pre-ADR catalog)
+
+`scroll(direction: str, amount: int = 3)` is still registered and still `llm_only = true`. It predates this ADR and is not part of the canonical nine, but it is harmless, documented, and occasionally used by the LLM for "scroll down" / "page up" utterances. Left in place; a future ADR may merge it into `press` (via `page_down` / `page_up` keys) if tool-count pressure rises.
+
+### Registration surface
+
+All ten tools live in `src/voice_commander/tools/primitives.py` with sidecar metadata in `primitives.toml`. Every entry carries `phrases = []` and `llm_only = true` — both mandatory since ADR 0040. `settle_ms` is per-tool:
+
+| Tool | `settle_ms` |
+|---|---|
+| `focus` | 200 |
+| `type` | 50 |
+| `open` | 500 |
+| `close` | 100 |
+| `close_window` | 100 |
+| `press` | 50 |
+| `wait` | 0 |
+| `click` | 50 |
+| `no_match` | 0 |
+| `scroll` | 0 |
 
 ## Consequences
 
 ### Positive
 
-- Richer command composition. The LLM can express scrolling, URL navigation, and window closing declaratively in multi-step plans.
-- `close_window` uses `WM_CLOSE` — apps receive a normal close request and can save state. No data loss.
-- `open_url` via `webbrowser.open()` is stdlib — no new dependency.
-- `scroll` via `pyautogui` — already a dependency.
-- Total tool count remains well under 25 (the safe upper bound for small MoE model accuracy with tool-calling).
+- The LLM sees exactly 10 tool signatures (9 canonical + `scroll`). Well under the 25-tool soft ceiling for small MoE tool-calling reliability.
+- Every verb is composable: "search for cats" decomposes into `focus(target="chrome") → press(combo="ctrl+t") → press(combo="ctrl+l") → type(text="cats") → press(combo="enter")` with no verb left wanting.
+- Parameter resolution is delegated to `resolver.resolve_window` / `resolve_app` (ADR 0042), keeping the primitive bodies small and testable.
+- `no_match` is a first-class tool call rather than a null response. `tool_choice="required"` (ADR 0031) ensures the LLM always returns *some* valid call.
+- Naming: short strings ("focus", "type", "open") minimise prefill tokens in the system prompt and tool-call outputs.
 
 ### Negative
 
-- `close_window` requires `pywin32` (`win32gui`) for `EnumWindows` / `PostMessage`. `pywin32` is not currently a runtime dependency. If `pywin32` is not acceptable, the fallback implementation is `pyautogui.hotkey('alt', 'f4')` — less reliable but dependency-free.
-- `open_url` with a `webbrowser` module call may open a new tab in an existing browser window or a new window, depending on OS default browser settings. This is acceptable but not fully deterministic.
+- Shadowed builtins inside `primitives.py` required the `@tool(name=...)` overload and two Python-symbol / LLM-name pairs. Mildly surprising to readers but well-documented.
+- `close` vs `close_window` is a semantic split the LLM must keep straight (close-current-tab vs close-current-window). System prompt does not explicitly cover the distinction yet; guarded by tool descriptions in `primitives.toml`.
 
 ### Neutral
 
-- All three primitives are `llm_only = true`. They do not appear in any phrase corpus (which is removed in ADR 0040 anyway).
-- `scroll` left/right is included for completeness but unlikely to appear in common plans — horizontal scroll is rare in voice command flows.
+- `scroll` is kept for backward compatibility with pre-ADR plans; future catalog audits may retire it.
+- No horizontal-scroll verb. The old ADR draft mentioned "hscroll"; it was never implemented and has been removed from this document.
 
 ## Alternatives considered
 
-### Add `close_window` via `pyautogui.hotkey('alt', 'f4')` only
-Rejected. Alt+F4 is not universal (browsers intercept it differently across platforms; some apps have custom close handlers). `WM_CLOSE` is the correct Win32 close signal.
+### Keep `press_keys(*keys)` variadic form
+Rejected. Variadic parameters do not round-trip cleanly through OpenAI tool-call JSON schemas. A single string with `+` separators (`combo: str`) is the simpler contract and matches the way LM Studio actually emits keystroke plans.
 
-### Add URL opening via a `launch` overload
-Rejected. `launch()` is designed for application names resolved via the OS app launcher. URLs are a different semantic. A separate `open_url()` primitive is clearer for LLM tool calling — the LLM knows when to use which.
+### Collapse `close` and `close_window` into one verb with a `scope` parameter
+Rejected. Adds an enum argument the LLM must choose correctly. Two short verbs with distinct names is more predictable and needs less prompt explanation.
 
-### Raise primitive count higher (add clipboard read, screenshot, etc.)
-Deferred. Tool count growth increases the chance of LLM tool-call confusion. Each new primitive should solve a specific, high-frequency gap. Clipboard read and screenshot are lower frequency and have privacy implications. They can be added in a future ADR when the use case is validated.
+### Rename Python symbols to match verb names (`type`, `open` at module scope)
+Rejected. Python lets you shadow builtins inside a module but the ergonomic cost (type-checker warnings, surprising error messages) outweighs the symmetry benefit. `@tool(name=...)` is a one-liner and preserves clarity.

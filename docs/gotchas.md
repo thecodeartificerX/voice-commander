@@ -310,7 +310,7 @@ Additionally, `GetExitCodeProcess` is called after a successful `OpenProcess` �
 **Mitigation:**
 
 1. Start LM Studio before starting the Voice Commander daemon.
-2. Load the configured model in LM Studio (`[llm_router].model` in `config.toml`; default is Gemma 4 E4B).
+2. Load the configured model in LM Studio (`[llm].model_id` in `config.toml`; default is `google/gemma-4-e4b`).
 3. Verify with the daemon's startup log: it calls `LLMRouter.warmup()` at startup and logs either `LLM router warm` or `LLM router warmup failed` with the error. If you see the failure message, check LM Studio is running and the model is loaded.
 4. `LLMRouter.warmup()` sends a real chat-completion POST (not just a `GET /v1/models` ping — see gotcha §19). A successful warmup log means the first real utterance will hit a warm KV cache.
 
@@ -327,3 +327,24 @@ Select-String -Path outputs\voice_commander_*.log -Pattern "LLM router"
 ```
 
 See ADR 0040 for the full rationale for removing the rapidfuzz fallback path.
+
+---
+
+## 22. `OpenProcess` Permission Denial When Enumerating Windows
+
+**Problem:** `resolver.resolve_window(target)` scores every visible window by `max(WRatio(target, proc_name), WRatio(target, title))`. Reading the process name requires `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) + GetModuleBaseName`. On Windows 11, that call raises `pywintypes.error: (5, 'OpenProcess', 'Access is denied')` for processes owned by a different session or running at higher integrity (e.g. Task Manager when the daemon runs unelevated, or most shell surfaces owned by `dwm.exe` / `ShellExperienceHost.exe`).
+
+**Explanation:** Per-process access control is enforced by the kernel. `PROCESS_QUERY_LIMITED_INFORMATION` is the weakest handle that still allows `GetModuleBaseName`; anything lower cannot read the image name. Processes running as SYSTEM or in a different session deny even this level to a normal-integrity caller.
+
+**Mitigation:** `_get_process_name()` in `resolver.py` catches every exception from `OpenProcess` and returns `""`. The caller then computes the candidate's score purely from `WRatio(target, title)` — i.e. the process-name axis is zero, and the title axis carries the decision. This is the correct behaviour:
+
+- The user sees window titles, not process names. Scoring by title alone is usually fine.
+- A window title almost always contains enough signal ("Chrome" in "Inbox — Gmail — Google Chrome", "Spotify Premium" in the Spotify window) to clear the 70 threshold.
+- If the title axis also fails, the top-3 diagnostic in `FocusWindowError` includes `proc=''` so the developer can see the permission denial and decide whether to elevate the daemon.
+
+**Do not:**
+
+- Elevate the daemon to get process-name read access. That expands the attack surface for every other pywin32 call and is not justified by a marginal accuracy gain on fuzzy scoring.
+- Ignore the exception and crash. The resolver must be robust — a single unreadable `dwm.exe` handle cannot break `focus("chrome")`.
+
+**Diagnostic:** Turn on `DEBUG` logging for `voice_commander.resolver` and you will see per-call `resolve_window target=… picked=… top3=…` lines. Entries with `proc=''` are the permission-denied cases.

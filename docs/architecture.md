@@ -27,8 +27,10 @@ This document is the canonical reference for Voice Commander's subsystem design 
                           ┌──────────────────────────────────────────────────────┐
                           │              StreamingDaemon pipeline worker         │
                           │                                                      │
-                          │  Transcriber ──text──▶ gates ──▶ Resolver ──▶ Dispatcher │
-                          │  (faster-whisper)       (conf)   (LLMRouter)   (tool fn) │
+                          │  Transcriber ──text──▶ gates ──▶ LLMRouter ──▶ Dispatcher │
+                          │  (faster-whisper)       (conf)   (httpx→LM)   (run_plan)  │
+                          │                                    │                 │
+                          │                                    └─ resolver.* (per-step param grounding) │
                           │                                                      │
                           │                         FeedbackSink (chime + log)  │
                           └──────────────────────────────────────────────────────┘
@@ -40,7 +42,7 @@ This document is the canonical reference for Voice Commander's subsystem design 
 |---|---|---|
 | PortAudio callback thread | `sd.InputStream` callback | `indata.copy()` + `raw_q.put_nowait()` — no blocking, no allocation |
 | VAD worker thread | `Resampler` + `VADGate` | Drains `raw_q`; resamples 48k→16k; runs silero-vad; emits complete utterances to `utt_q` |
-| Pipeline worker thread | `Transcriber` + `Resolver` + `Dispatcher` | Drains `utt_q`; runs full inference + resolve + dispatch pipeline |
+| Pipeline worker thread | `Transcriber` + `LLMRouter` + `Dispatcher` | Drains `utt_q`; runs transcribe → gates → `LLMRouter.route()` → `Dispatcher.run_plan()` |
 
 **Session model:** Scroll Lock opens a session; a second press closes it. An optional mute key (configurable, disabled by default) suspends the audio stream within a session without ending it — two independent flags (`session_active`, `muted`). See ADR 0025. While a session is open, VAD auto-segments the audio stream. Each detected utterance fires the pipeline worker immediately — no keypresses required between commands.
 
@@ -48,7 +50,7 @@ This document is the canonical reference for Voice Commander's subsystem design 
 
 ## 2. Subsystem Boundaries
 
-Ten subsystems connected by the `StreamingDaemon` orchestrator. Each is independently unit-testable:
+Subsystems are connected by the `StreamingDaemon` orchestrator. Each is independently unit-testable:
 
 | Subsystem | Responsibility | Key dependency |
 |---|---|---|
@@ -57,9 +59,9 @@ Ten subsystems connected by the `StreamingDaemon` orchestrator. Each is independ
 | `VADGate` | Detect speech onset/offset; accumulate utterance ndarrays with pre-roll | `silero-vad`, `onnxruntime` |
 | `StreamingRecorder` | Own `sd.InputStream` + VAD worker thread; call `utterance_sink` on speech-end | `sounddevice`, `Resampler`, `VADGate` |
 | `Transcriber` | ndarray (or WAV path) → text using preloaded model | `faster-whisper` (CUDA) |
-| `ToolRegistry` | Register/discover `@tool`-decorated functions | stdlib (`importlib`) |
-| `Resolver` | Route transcript to a `Plan` via `LLMRouter`; fire `on_miss()` on `None` | `LLMRouter`, `FeedbackSink` |
-| `Dispatcher` | Invoke tool function or execute multi-step plan, report outcome | (no external) |
+| `ToolRegistry` | Register/discover `@tool`-decorated functions; supports `@tool(name=...)` override for builtin-shadowing names (`type`, `open`) | stdlib (`importlib`) |
+| `resolver` (module) | Ground `focus(target)` / `open(target)` parameters onto hwnds / launch tokens via rapidfuzz scoring | `rapidfuzz`, `pywin32`, `win32com` |
+| `Dispatcher` | Execute a multi-step plan step-by-step; emit per-step INFO log; report plan start/complete/error | (no external) |
 | `FeedbackSink` | Chimes + log | `winsound` |
 | `LLMRouter` | Route all transcripts to local LM Studio for tool-call planning | `httpx` |
 | `Validator` | Startup checks: sig/TOML drift, type support, range checks | stdlib (`inspect`, `typing`) |
@@ -74,7 +76,7 @@ Four long-lived threads plus the main thread:
 2. **Hotkey listener thread** — owned by `pynput`. Fires `on_scroll_lock()` or `on_mute_toggle()` as callbacks on this thread. Callbacks only call `StreamingRecorder.open_session()` or `close_session()` — no blocking work.
 3. **PortAudio callback thread** — owned by `sounddevice`. The `sd.InputStream` callback does `indata.copy()` + `raw_q.put_nowait()` only. No allocation, no blocking, no GIL-contested work. See `gotchas.md` §11.
 4. **VAD worker thread** — drains `raw_q`; passes each chunk through `Resampler.process()` (48k→16k); slices into 512-sample frames; feeds each frame to `VADGate.process()`; when `VADGate` returns a complete utterance ndarray, calls `utterance_sink` which enqueues it on `utt_q`.
-5. **Pipeline worker thread** — drains `queue.Queue[ndarray]` (`utt_q`), runs `Transcriber.transcribe() → confidence/word-count gates → Resolver.resolve() → Dispatcher.run_plan()` sequentially. One utterance at a time; if the VAD worker emits the next utterance before the previous pipeline run finishes, it queues up.
+5. **Pipeline worker thread** — drains `queue.Queue[ndarray]` (`utt_q`), runs `Transcriber.transcribe() → confidence/word-count gates → LLMRouter.route() → Dispatcher.run_plan()` sequentially. One utterance at a time; if the VAD worker emits the next utterance before the previous pipeline run finishes, it queues up. A `None` return from `LLMRouter.route()` (timeout, connection error, malformed response, or `no_match` sentinel) fires `FeedbackSink.on_miss()` directly and loops back.
 
 Queue topology:
 
@@ -261,23 +263,32 @@ def discover(package: str = "voice_commander.tools") -> ToolRegistry:
 
 ---
 
-### 4.5 `Resolver`
+### 4.5 `resolver` module (parameter grounding)
 
 ```python
-class Resolver:
-    def __init__(self, router: LLMRouter, feedback: FeedbackSink) -> None: ...
-    def resolve(self, transcript: str) -> Plan | None: ...
+# src/voice_commander/resolver.py — module-level API
+
+def resolve_window(target: str) -> int: ...       # returns hwnd; raises FocusWindowError
+def resolve_app(target: str) -> str: ...          # returns launch token; raises OpenResolveError
+
+def _set_config(config: LLMConfig) -> None: ...   # daemon startup hook
 ```
 
-**What it does:** The single routing entry point for the daemon pipeline. `resolve()` calls `LLMRouter.route(transcript)`. If the result is `None` (LM Studio offline, timeout, no matching tool, or `no_match` sentinel), `on_miss(transcript, [])` is called on the injected `FeedbackSink` and `None` is returned. If a `Plan` is returned, it is passed back to the caller without modification.
+**What it does:** Two pure functions that ground fuzzy `target` strings emitted by the LLM onto concrete OS objects, plus a one-shot config-injection hook.
 
-`Resolver` owns the routing decision and miss signalling. It does not own HTTP (that is `LLMRouter`'s job) or plan execution (that is `Dispatcher`'s job).
+- `resolve_window(target)` enumerates visible titled windows via `win32gui.EnumWindows`, reads each owner process name via `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) + GetModuleBaseName`, and scores every candidate as `max(WRatio(target, proc_name), WRatio(target, title))`. The top score wins above `focus_fuzzy_threshold` (default 70). Below → `FocusWindowError` with top-3 `(proc_name, title, score)` for diagnostics.
+- `resolve_app(target)` branches: URI (scheme regex) → return verbatim; existing path → return resolved absolute path; otherwise rapidfuzz-score against a cached `(display_name, launch_token)` list of Start Menu `.lnk` stems (recursive `rglob` under `%ProgramData%` and `%APPDATA%`) plus `shell:AppsFolder` COM enumeration. Argmax above `open_fuzzy_threshold` (default 70) wins; below → `OpenResolveError`. Cache populated lazily on first call; never invalidated during daemon uptime.
+- `_set_config(cfg.llm)` is called exactly once by `daemon.build_streaming_daemon()` at startup. It parks the `LLMConfig` on a module-level `_config_ref` slot so the threshold accessors can read `focus_fuzzy_threshold` / `open_fuzzy_threshold` without the primitives having to thread config through every call. The functions remain pure per call; the slot is set once and never mutated afterward.
 
-**Who calls it:** The pipeline worker thread in `StreamingDaemon._process_utterance()`, immediately after the confidence/word-count gates pass.
+Both functions are called directly from `tools/primitives.py` — `focus(target)` calls `resolve_window(target)` then runs the AttachThreadInput foreground workaround; `open(target)` calls `resolve_app(target)` then blocklist-checks the resolved token before `os.startfile`. `rapidfuzz` is the only external dependency; `pywin32` / `win32com` are imported lazily inside the functions so unit tests can monkeypatch them.
 
-**Who it calls:** `LLMRouter.route()` and `FeedbackSink.on_miss()`.
+**Who calls it:** `primitives.focus` and `primitives.open_target` (on the pipeline worker thread, inside `Dispatcher.run_plan`). `daemon.build_streaming_daemon` calls `_set_config` once.
 
-**How it is tested:** A mock `LLMRouter` is injected. Tests assert: `on_miss()` called when router returns `None`; `Plan` returned when router returns a plan; `on_miss()` not called when a plan is returned; router called exactly once per `resolve()` call.
+**Who it calls:** `rapidfuzz.fuzz.WRatio`, `win32gui`, `win32process`, `win32api`, `win32com.client.Dispatch`, `pythoncom.CoInitialize`, filesystem `Path.rglob`.
+
+**How it is tested:** Monkeypatch `win32gui.EnumWindows` to a scripted callback list; assert return value on clear matches, `FocusWindowError` with expected top-3 below threshold. For `resolve_app`, seed `_cache["apps"]` directly and exercise URI / path / fuzzy branches. `_invalidate_app_cache()` is the test reset hook.
+
+See ADR 0041 (rapidfuzz scope) and ADR 0042 (resolver module design).
 
 ---
 
@@ -289,11 +300,11 @@ class Dispatcher:
     def run_plan(self, transcript: str, plan: Plan, registry: ToolRegistry) -> None: ...
 ```
 
-**What it does:** The final step in the pipeline. `run_plan()` executes a multi-step `Plan` from the LLM router. It calls `feedback.on_plan_start()`, iterates through plan steps looking up each tool by name in the registry, invokes `tool.func(**step.kwargs)`, sleeps `settle_ms` between steps, and calls `feedback.on_plan_complete()`. If a step fails or a tool is unknown, `on_error` fires and the chain stops. Tool functions run on the worker thread and must complete in a few hundred milliseconds (they perform keystroke sends via `pyautogui`).
+**What it does:** The final step in the pipeline. `run_plan()` executes a multi-step `Plan` from the LLM router. It calls `feedback.on_plan_start()`, iterates through plan steps looking up each tool by name in the registry, emits a per-step `INFO` log of the form `plan step <i>/<total>: <name>(<kwargs>)`, invokes `tool.func(**step.kwargs)`, sleeps `settle_ms` between steps, and calls `feedback.on_plan_complete()`. If a step fails or a tool is unknown, `on_error` fires and the chain stops. Tool functions run on the worker thread and must complete in a few hundred milliseconds (they perform keystroke sends via `pyautogui`).
 
-Miss handling is owned by `Resolver` (which calls `FeedbackSink.on_miss()` before `Dispatcher` is ever reached). `Dispatcher` only receives valid `Plan` objects.
+Miss handling is owned by the pipeline worker (`StreamingDaemon._process_utterance` calls `FeedbackSink.on_miss()` directly when `LLMRouter.route()` returns `None`). `Dispatcher` only receives valid `Plan` objects.
 
-**Who calls it:** The worker thread in `StreamingDaemon`, after `Resolver.resolve()` returns a non-None `Plan`.
+**Who calls it:** The worker thread in `StreamingDaemon`, after `LLMRouter.route()` returns a non-None `Plan`.
 
 **Who it calls:** `FeedbackSink` callbacks and each `ToolEntry.func` callable in the plan.
 
@@ -338,13 +349,15 @@ class StreamingDaemon:
         feedback: FeedbackSink,
         recorder: StreamingRecorder | None,
         transcriber: Transcriber,
-        resolver: Resolver,
+        llm_router: LLMRouter,
         dispatcher: Dispatcher,
         *,
+        registry: ToolRegistry | None = None,
         min_confidence: float = 0.30,
         min_word_count: int = 1,
         max_no_speech_prob: float = 0.6,
         output_dir: str = "outputs",
+        web_server: WebServer | None = None,
     ) -> None: ...
     def run(self, hotkey_key: str, mute_key: str = "") -> None: ...  # blocks until shutdown
     def shutdown(self) -> None: ...
@@ -352,7 +365,7 @@ class StreamingDaemon:
     def on_mute_toggle(self) -> None: ...        # mute-key hotkey callback
 ```
 
-**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_scroll_lock()` is the scroll-lock hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. `on_mute_toggle()` is the mute-key callback: suspends or resumes the audio stream within an open session. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → resolve → dispatch`. Async WAV write (`outputs/last_utterance.wav`) is submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` handles `--validate` mode (runs `validate_or_die()` then exits), acquires a single-instance OS-level lock to prevent duplicate daemon processes, configures logging, logs environment diagnostics, installs a crash reporter, and then calls `build_streaming_daemon(Config.load()).run(cfg.hotkey.key, cfg.hotkey.mute_key)`. The pipeline worker calls `Resolver.resolve(transcript)` for every utterance that passes the gates. If `resolve()` returns a `Plan`, `Dispatcher.run_plan()` executes it. If `resolve()` returns `None`, the miss was already signalled by `Resolver` and the worker loops back to `utt_q`.
+**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems, including a one-shot `resolver._set_config(cfg.llm)` to inject fuzzy-threshold config into the parameter resolver. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_scroll_lock()` is the scroll-lock hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. `on_mute_toggle()` is the mute-key callback: suspends or resumes the audio stream within an open session. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → LLMRouter.route() → Dispatcher.run_plan()`. Async WAV write (`outputs/last_utterance.wav`) and JSON plan dump (`outputs/last_plan.json`) are submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` handles `--validate` mode (runs `validate_or_die()` then exits), acquires a single-instance OS-level lock to prevent duplicate daemon processes, configures logging, logs environment diagnostics, installs a crash reporter, and then calls `build_streaming_daemon(Config.load()).run(cfg.hotkey.key, cfg.hotkey.mute_key)`. The pipeline worker calls `LLMRouter.route(transcript)` for every utterance that passes the gates. If `route()` returns a `Plan`, `Dispatcher.run_plan()` executes it. If `route()` returns `None`, `FeedbackSink.on_miss()` fires directly and the worker loops back to `utt_q`.
 
 **Who calls it:** `__main__.py` (the process entry point), signal handlers, and `on_scroll_lock` / `on_mute_toggle` (hotkey-listener thread).
 
@@ -376,7 +389,7 @@ class LLMRouter:
 
 **What it does:** One-shot tool-call planner via local LM Studio. `route()` sends the transcript to the configured LM Studio endpoint as an OpenAI-compatible chat completion with `tool_choice="required"`. It parses the response into a `Plan` of `ToolCall` steps. Returns `None` on timeout, connection error, HTTP error, malformed response, no tool_calls in response, or if the LLM calls `no_match`. `warmup()` posts a real chat-completion request with a synthetic transcript and `max_tokens=1` to prefill LM Studio's KV cache before the first real utterance. Returns `True` on success, `False` on any error. `close()` shuts down the underlying `httpx.Client`. Tracks simple metrics (total calls, timeouts, errors, avg latency).
 
-**Who calls it:** `Resolver.resolve()`, on every utterance that passes the confidence/word-count gates.
+**Who calls it:** `StreamingDaemon._process_utterance()` directly, on every utterance that passes the confidence/word-count gates.
 
 **Who it calls:** `httpx.Client` for HTTP, `ToolRegistry.all_llm_visible()` to build the tools array.
 
@@ -435,9 +448,9 @@ def validate_or_die(registry: ToolRegistry, store: ToolMetadataStore) -> None: .
 11. Word-count gate: drop if fewer than `min_word_count` words.
 12. `no_speech_prob` gate: drop if above `max_no_speech_prob`.
 13. Confidence gate: `on_miss()` if below `min_confidence`.
-14. `Resolver.resolve(result.text)` → `Plan | None` via `LLMRouter.route(text)`.
-14a. If `None` returned: `Resolver` has already called `on_miss()`; pipeline worker loops back to `utt_q`.
-14b. If `Plan` returned: `Dispatcher.run_plan(text, plan, registry)` executes multi-step plan.
+14. `LLMRouter.route(result.text)` → `Plan | None`.
+14a. If `None` returned: pipeline worker calls `FeedbackSink.on_miss(text, ())` directly and loops back to `utt_q`.
+14b. If `Plan` returned: `Dispatcher.run_plan(text, plan, registry)` executes multi-step plan (per-step INFO log; `resolver.resolve_window` / `resolve_app` called inside `focus` / `open` as needed).
 15. Pipeline worker loops back to `utt_q`.
 
 **Session close:**
@@ -456,7 +469,7 @@ The command management web UI runs as an embedded FastAPI server on a uvicorn da
 
 ```
 [Main thread]           [HotkeyCtrl thread]    [Pipeline threads]    [uvicorn thread]
-Daemon orchestrator     pynput listener        transcribe→match→     FastAPI app
+Daemon orchestrator     pynput listener        transcribe→route→     FastAPI app
 owns registry,                                 dispatch worker       handles HTTP
 reload_lock                                    shares ToolRegistry   uses reload_lock
 ```
@@ -504,7 +517,8 @@ reload_lock                                    shares ToolRegistry   uses reload
   - [`decisions/0017-soxr-streaming-resampler.md`](decisions/0017-soxr-streaming-resampler.md)
   - [`decisions/0018-ndarray-handoff-to-whisper.md`](decisions/0018-ndarray-handoff-to-whisper.md)
   - [`decisions/0019-supersede-single-shot-recorder.md`](decisions/0019-supersede-single-shot-recorder.md)
-  - [`decisions/0040-llm-only-routing.md`](decisions/0040-llm-only-routing.md)
-  - [`decisions/0041-drop-rapidfuzz-dependency.md`](decisions/0041-drop-rapidfuzz-dependency.md)
-  - [`decisions/0042-resolver-split-from-dispatcher.md`](decisions/0042-resolver-split-from-dispatcher.md)
+  - [`decisions/0040-llm-only-routing-replaces-hybrid.md`](decisions/0040-llm-only-routing-replaces-hybrid.md)
+  - [`decisions/0041-rapidfuzz-for-parameter-resolution.md`](decisions/0041-rapidfuzz-for-parameter-resolution.md)
+  - [`decisions/0042-resolver-module-design.md`](decisions/0042-resolver-module-design.md)
   - [`decisions/0043-nine-verb-primitive-catalog.md`](decisions/0043-nine-verb-primitive-catalog.md)
+  - [`decisions/0044-few-shot-system-prompt.md`](decisions/0044-few-shot-system-prompt.md)
