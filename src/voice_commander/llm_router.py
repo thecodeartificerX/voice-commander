@@ -15,6 +15,40 @@ from .registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+_SYSTEM_PROMPT_TEMPLATE = """You are a Windows voice command executor. Spoken commands reach
+you as transcripts; pick the tools that carry out the intent.
+
+Chain multiple tool calls proactively when the command is multi-step
+(browser search, copy across apps, open-then-type). Single-step
+commands use one tool — don't pad.
+
+Rules
+- Prefer the user's default browser ('{default_browser}') for web
+  or search intents.
+- Emit tool calls in strict execution order. The dispatcher runs
+  them linearly and cannot replan.
+- Call `no_match(reason)` only when the utterance is not an
+  executable command (casual speech, nonsense).
+
+Examples
+
+User: "search how to lose weight"
+Tools: focus(target="{default_browser}"),
+       press(combo="ctrl+t"),
+       press(combo="ctrl+l"),
+       type(text="how to lose weight"),
+       press(combo="enter")
+
+User: "copy that and paste it in notepad"
+Tools: press(combo="ctrl+c"),
+       focus(target="notepad"),
+       press(combo="ctrl+v")
+
+User: "open spotify"
+Tools: open(target="spotify")
+"""
+
+
 class LLMRouter:
     """One-shot tool-call planner via local LM Studio."""
 
@@ -43,16 +77,17 @@ class LLMRouter:
             timeout=timeout,
             http2=False,
         )
-        self._system_prompt = (
-            "You are a voice command router for a desktop application. "
-            "The user speaks a command. Determine which tool(s) to call. "
-            "Use no_match if nothing fits.\n\n"
-            "Examples:\n"
-            '- "copy" → call copy()\n'
-            '- "open a new tab and search for weather" → call new_tab(), '
-            'then type_text(text="weather"), then press_keys(combo="enter")\n'
-            '- "focus the browser" → call focus_browser()\n'
-            '- "make it bigger" → call no_match(reason="ambiguous command")'
+        self._system_prompt = self._build_system_prompt()
+
+    def _build_system_prompt(self) -> str:
+        """Assemble the system prompt from the module-level template.
+
+        ``default_browser`` is interpolated from config at construction time.
+        Kept as a method (not an inline f-string) so tests can exercise the
+        prompt surface without booting an LLMRouter.
+        """
+        return _SYSTEM_PROMPT_TEMPLATE.format(
+            default_browser=self._config.default_browser,
         )
 
     def _build_tools_array(self) -> list[dict[str, Any]]:

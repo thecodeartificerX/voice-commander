@@ -1,9 +1,0 @@
-category = "mouse"
-
-[tools.click]
-description = "Left-click at the cursor."
-enabled = true
-
-[tools.right_click]
-description = "Right-click at the cursor."
-enabled = true

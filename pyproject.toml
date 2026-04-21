@@ -86,6 +86,11 @@ module = [
     "win32con.*",
     "win32gui.*",
     "win32process.*",
+    "win32api.*",
+    "win32com.*",
+    "win32com.client",
+    "pythoncom.*",
+    "rapidfuzz.*",
 ]
 ignore_missing_imports = true
 

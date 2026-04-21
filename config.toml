@@ -45,7 +45,10 @@ auto_open_browser = true
 [llm]
 endpoint_url = "http://localhost:1234/v1"
 model_id = "google/gemma-4-e4b"
-timeout_ms = 600
-# warmup_timeout_ms = 5000   # one-shot startup cost; not a per-call budget
-# max_plan_steps = 8
+default_browser = "chrome"
+timeout_ms = 1200
+warmup_timeout_ms = 5000
+max_plan_steps = 12
 warmup_on_startup = true
+focus_fuzzy_threshold = 70
+open_fuzzy_threshold = 70

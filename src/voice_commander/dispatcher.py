@@ -18,7 +18,8 @@ class Dispatcher:
         """Execute a multi-step plan from the LLM router."""
         self._feedback.on_plan_start(transcript, len(plan.steps))
         executed = 0
-        for step in plan.steps:
+        total = len(plan.steps)
+        for i, step in enumerate(plan.steps):
             tool = registry.by_name(step.name)
             if tool is None:
                 self._feedback.on_error(
@@ -26,6 +27,11 @@ class Dispatcher:
                     ValueError(f"Tool '{step.name}' not found in registry"),
                 )
                 break
+            logger.info(
+                "plan step %d/%d: %s(%s)",
+                i + 1, total, step.name,
+                ", ".join(f"{k}={v!r}" for k, v in step.kwargs.items()),
+            )
             try:
                 tool.func(**step.kwargs)
             except Exception as e:

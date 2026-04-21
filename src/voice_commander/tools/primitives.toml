@@ -1,8 +1,70 @@
 category = "primitives"
 
+[tools.focus]
+phrases = []
+description = "Focus a window matching the given target (process name or window title, fuzzy-matched)."
+enabled = true
+settle_ms = 200
+llm_only = true
+
+[tools.focus.args.target]
+description = "Human utterance naming the window to focus (e.g. 'notepad', 'chrome', 'spotify'). Fuzzy-matched against process names and window titles."
+required = true
+type = "string"
+
+[tools.type]
+phrases = []
+description = "Type arbitrary text via keystroke synthesis into the currently focused window."
+enabled = true
+settle_ms = 50
+llm_only = true
+
+[tools.type.args.text]
+description = "The text to type. Truncated to 500 characters with a warning log when exceeded."
+required = true
+type = "string"
+
+[tools.open]
+phrases = []
+description = "Open an application, file, URI, or Start Menu entry. Resolves fuzzy app names via Start Menu and shell:AppsFolder."
+enabled = true
+settle_ms = 500
+llm_only = true
+
+[tools.open.args.target]
+description = "Application name ('spotify'), URI ('https://example.com'), or file path. App names are fuzzy-matched against Start Menu and AppsFolder entries."
+required = true
+type = "string"
+
+[tools.close]
+phrases = []
+description = "Close the current tab/document in the focused window via Ctrl+W."
+enabled = true
+settle_ms = 100
+llm_only = true
+
+[tools.close_window]
+phrases = []
+description = "Close the currently focused window via Alt+F4."
+enabled = true
+settle_ms = 100
+llm_only = true
+
+[tools.press]
+phrases = []
+description = "Press a key combination like 'ctrl+c', 'alt+tab', 'win+l'."
+enabled = true
+settle_ms = 50
+llm_only = true
+
+[tools.press.args.combo]
+description = "Key combination string with '+' separator (e.g. 'ctrl+c', 'alt+tab', 'win+shift+s')."
+required = true
+type = "string"
+
 [tools.wait]
 phrases = []
-description = "Pause execution for the specified milliseconds."
+description = "Pause execution for the specified milliseconds before the next step."
 enabled = true
 settle_ms = 0
 llm_only = true
@@ -12,51 +74,28 @@ description = "Duration to wait in milliseconds."
 required = true
 type = "integer"
 
-[tools.press_keys]
+[tools.click]
 phrases = []
-description = "Press a key combination (e.g. ctrl+c, alt+tab)."
+description = "Click the mouse at the current cursor position."
 enabled = true
 settle_ms = 50
 llm_only = true
 
-[tools.press_keys.args.combo]
-description = "Key combination string with + separator (e.g. 'ctrl+c', 'alt+tab')."
-required = true
+[tools.click.args.button]
+description = "Mouse button: 'left', 'right', or 'middle'. Defaults to 'left'."
+required = false
 type = "string"
+default = "left"
 
-[tools.type_text]
+[tools.no_match]
 phrases = []
-description = "Type arbitrary text via keystroke synthesis."
+description = "Signal that the utterance is not an executable command (casual speech, nonsense)."
 enabled = true
-settle_ms = 50
+settle_ms = 0
 llm_only = true
 
-[tools.type_text.args.text]
-description = "The text to type."
-required = true
-type = "string"
-
-[tools.focus_window]
-phrases = []
-description = "Focus a window whose title contains the given substring."
-enabled = true
-settle_ms = 200
-llm_only = true
-
-[tools.focus_window.args.title_substring]
-description = "Case-insensitive substring to match against window titles."
-required = true
-type = "string"
-
-[tools.launch]
-phrases = []
-description = "Launch an application, file, or URI via the system handler."
-enabled = true
-settle_ms = 500
-llm_only = true
-
-[tools.launch.args.app]
-description = "Application name, file path, or URI to open."
+[tools.no_match.args.reason]
+description = "Brief explanation of why no tool matched."
 required = true
 type = "string"
 
@@ -77,39 +116,3 @@ description = "Number of scroll clicks."
 required = false
 type = "integer"
 default = 3
-
-[tools.open_url]
-phrases = []
-description = "Open a URL in the default browser."
-enabled = true
-settle_ms = 500
-llm_only = true
-
-[tools.open_url.args.url]
-description = "The URL to open."
-required = true
-type = "string"
-
-[tools.close_window]
-phrases = []
-description = "Close a window whose title contains the given substring."
-enabled = true
-settle_ms = 200
-llm_only = true
-
-[tools.close_window.args.title_substring]
-description = "Case-insensitive substring to match against window titles."
-required = true
-type = "string"
-
-[tools.no_match]
-phrases = []
-description = "Signals that no tool matches the user's intent."
-enabled = true
-settle_ms = 0
-llm_only = true
-
-[tools.no_match.args.reason]
-description = "Brief explanation of why no tool matched."
-required = true
-type = "string"

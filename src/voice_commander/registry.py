@@ -5,10 +5,12 @@ import pkgutil
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 if TYPE_CHECKING:
     from .tool_metadata import ToolMetadataStore
+
+F = TypeVar("F", bound=Callable[..., None])
 
 
 class DuplicateToolError(Exception):
@@ -137,19 +139,36 @@ def _normalize(phrase: str) -> str:
     return " ".join(cleaned.split())
 
 
+@overload
+def tool(func: F) -> F: ...
+
+
+@overload
+def tool(*, name: str | None = ...) -> Callable[[F], F]: ...
+
+
 def tool(
-    func: Callable[..., None] | None = None,
-) -> Callable[..., None] | Callable[[Callable[..., None]], Callable[..., None]]:
+    func: F | None = None,
+    *,
+    name: str | None = None,
+) -> F | Callable[[F], F]:
     """Decorator that registers a function as a voice command tool.
 
-    Supports both bare ``@tool`` and ``@tool()`` usage.  Phrases are not
-    specified here — they are loaded from sidecar TOML files via
+    Supports both bare ``@tool`` and ``@tool(name="...")`` usage.  Phrases are
+    not specified here — they are loaded from sidecar TOML files via
     :meth:`ToolRegistry.bind_metadata`.
+
+    Parameters
+    ----------
+    name:
+        Optional LLM-visible name override.  When provided, the tool is
+        registered under this name instead of ``func.__name__``.  Used when the
+        Python symbol would shadow a builtin (e.g. ``type``, ``open``).
     """
 
-    def _register(fn: Callable[..., None]) -> Callable[..., None]:
+    def _register(fn: F) -> F:
         entry = ToolEntry(
-            name=fn.__name__,
+            name=name if name is not None else fn.__name__,
             phrases=(),
             func=fn,
             module=fn.__module__,
@@ -162,7 +181,7 @@ def tool(
     if func is not None:
         return _register(func)
 
-    # Called as @tool() (with parens) — return the decorator.
+    # Called as @tool(...) (with parens / kwargs) — return the decorator.
     return _register
 
 

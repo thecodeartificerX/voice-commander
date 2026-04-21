@@ -16,14 +16,14 @@ import numpy.typing as npt
 import soundfile as sf
 from silero_vad import load_silero_vad
 
-from .config import Config
+from . import resolver as param_resolver
+from .config import Config, log_llm_sources
 from .dispatcher import Dispatcher
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
 from .llm_router import LLMRouter
 from .plan import Plan
 from .registry import ToolRegistry, discover
-from .resolver import Resolver
 from .streaming_recorder import StreamingRecorder
 from .tool_metadata import ToolMetadataStore
 from .tool_schema import sig_to_json_schema
@@ -55,7 +55,7 @@ class StreamingDaemon:
         feedback: FeedbackSink,
         recorder: StreamingRecorder | None,
         transcriber: Transcriber,
-        resolver: Resolver,
+        llm_router: LLMRouter,
         dispatcher: Dispatcher,
         *,
         registry: ToolRegistry | None = None,
@@ -68,7 +68,7 @@ class StreamingDaemon:
         self._feedback = feedback
         self._recorder = recorder
         self._transcriber = transcriber
-        self._resolver = resolver
+        self._llm_router = llm_router
         self._dispatcher = dispatcher
         self._registry = registry
         self._min_confidence = min_confidence
@@ -203,9 +203,10 @@ class StreamingDaemon:
             logger.debug("Mute guard: dropping utterance '%s' (muted during pipeline)", result.text)
             return
 
-        plan = self._resolver.resolve(result.text)
+        plan = self._llm_router.route(result.text)
         if plan is None:
-            return  # resolver already fired on_miss
+            self._feedback.on_miss(result.text, ())
+            return
         if self._registry is None:
             logger.error("Registry not set — cannot execute plan for '%s'", result.text)
             return
@@ -416,6 +417,14 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     validate_config_or_die(cfg)
     validate_or_die(registry, store)
 
+    # Log every [llm].* field and its winning source (env / config.local.toml /
+    # config.toml / default) before anything reads cfg.llm at runtime.
+    log_llm_sources(cfg)
+
+    # Wire the parameter resolver's threshold accessors to the live LLMConfig
+    # so focus/open read focus_fuzzy_threshold / open_fuzzy_threshold from TOML.
+    param_resolver._set_config(cfg.llm)
+
     dispatcher = Dispatcher(feedback)
 
     # LLM Router — always created.
@@ -425,8 +434,6 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
             logger.info("LLM router warmup succeeded")
         else:
             logger.warning("LLM router warmup failed — LM Studio may be offline")
-
-    resolver = Resolver(llm_router, feedback)
 
     # Web server — enabled by config + not suppressed by env var.
     web_server: WebServer | None = None
@@ -440,7 +447,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         feedback=feedback,
         recorder=None,
         transcriber=transcriber,
-        resolver=resolver,
+        llm_router=llm_router,
         dispatcher=dispatcher,
         registry=registry,
         min_confidence=cfg.transcription.min_confidence,
