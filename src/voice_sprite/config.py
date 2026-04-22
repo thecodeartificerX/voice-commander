@@ -83,9 +83,7 @@ def _require_int(
     max: int | None = None,
 ) -> int:
     if isinstance(raw, bool):
-        raise SpriteConfigError(
-            f"[{table}] {key}: expected int, got bool {raw!r}"
-        )
+        raise SpriteConfigError(f"[{table}] {key}: expected int, got bool {raw!r}")
     try:
         val = int(raw)
     except (TypeError, ValueError) as exc:
@@ -93,13 +91,9 @@ def _require_int(
             f"[{table}] {key}: expected int, got {type(raw).__name__} {raw!r}"
         ) from exc
     if min is not None and val < min:
-        raise SpriteConfigError(
-            f"[{table}] {key}: must be >= {min}, got {val}"
-        )
+        raise SpriteConfigError(f"[{table}] {key}: must be >= {min}, got {val}")
     if max is not None and val > max:
-        raise SpriteConfigError(
-            f"[{table}] {key}: must be <= {max}, got {val}"
-        )
+        raise SpriteConfigError(f"[{table}] {key}: must be <= {max}, got {val}")
     return val
 
 
@@ -111,9 +105,7 @@ def _require_float(
     min_exclusive: float | None = None,
 ) -> float:
     if isinstance(raw, bool):
-        raise SpriteConfigError(
-            f"[{table}] {key}: expected float, got bool {raw!r}"
-        )
+        raise SpriteConfigError(f"[{table}] {key}: expected float, got bool {raw!r}")
     try:
         val = float(raw)
     except (TypeError, ValueError) as exc:
@@ -121,26 +113,20 @@ def _require_float(
             f"[{table}] {key}: expected float, got {type(raw).__name__} {raw!r}"
         ) from exc
     if min_exclusive is not None and val <= min_exclusive:
-        raise SpriteConfigError(
-            f"[{table}] {key}: must be > {min_exclusive}, got {val}"
-        )
+        raise SpriteConfigError(f"[{table}] {key}: must be > {min_exclusive}, got {val}")
     return val
 
 
 def _require_bool(table: str, key: str, raw: Any) -> bool:
     if not isinstance(raw, bool):
-        raise SpriteConfigError(
-            f"[{table}] {key}: expected bool, got {type(raw).__name__} {raw!r}"
-        )
+        raise SpriteConfigError(f"[{table}] {key}: expected bool, got {type(raw).__name__} {raw!r}")
     return raw
 
 
 def _build_hud(hud_raw: dict[str, Any]) -> HudConfig:
     return HudConfig(
         enabled=(
-            _require_bool("hud", "enabled", hud_raw["enabled"])
-            if "enabled" in hud_raw
-            else True
+            _require_bool("hud", "enabled", hud_raw["enabled"]) if "enabled" in hud_raw else True
         ),
         max_lines=(
             _require_int("hud", "max_lines", hud_raw["max_lines"], min=1)
@@ -178,18 +164,12 @@ def _build_hud(hud_raw: dict[str, Any]) -> HudConfig:
             else 800
         ),
         llm_fallback_enabled=(
-            _require_bool(
-                "hud", "llm_fallback_enabled", hud_raw["llm_fallback_enabled"]
-            )
+            _require_bool("hud", "llm_fallback_enabled", hud_raw["llm_fallback_enabled"])
             if "llm_fallback_enabled" in hud_raw
             else True
         ),
-        llm_endpoint_url=str(
-            hud_raw.get("llm_endpoint_url", "http://localhost:1234/v1")
-        ),
-        llm_model_id=str(
-            hud_raw.get("llm_model_id", "google/gemma-4-e4b")
-        ),
+        llm_endpoint_url=str(hud_raw.get("llm_endpoint_url", "http://localhost:1234/v1")),
+        llm_model_id=str(hud_raw.get("llm_model_id", "google/gemma-4-e4b")),
     )
 
 
@@ -216,9 +196,7 @@ def load_sprite_config(
         daemon_url=daemon_url,
         corner=sprite_raw.get("corner", "bottom_right"),
         base_size_px=(
-            _require_int(
-                "sprite", "base_size_px", sprite_raw["base_size_px"], min=1
-            )
+            _require_int("sprite", "base_size_px", sprite_raw["base_size_px"], min=1)
             if "base_size_px" in sprite_raw
             else 128
         ),
@@ -235,7 +213,9 @@ def load_sprite_config(
         asset_path=sprite_raw.get("asset_path", "assets/sprite"),
         bubble_fade_ms=(
             _require_int(
-                "sprite", "bubble_fade_ms", sprite_raw["bubble_fade_ms"],
+                "sprite",
+                "bubble_fade_ms",
+                sprite_raw["bubble_fade_ms"],
                 min=0,
             )
             if "bubble_fade_ms" in sprite_raw
@@ -262,16 +242,12 @@ def load_sprite_config(
             else 0.75
         ),
         y_nudge_px=(
-            _require_int(
-                "sprite", "y_nudge_px", sprite_raw["y_nudge_px"]
-            )
+            _require_int("sprite", "y_nudge_px", sprite_raw["y_nudge_px"])
             if "y_nudge_px" in sprite_raw
             else 16
         ),
         follow_cursor=(
-            _require_bool(
-                "sprite", "follow_cursor", sprite_raw["follow_cursor"]
-            )
+            _require_bool("sprite", "follow_cursor", sprite_raw["follow_cursor"])
             if "follow_cursor" in sprite_raw
             else True
         ),
@@ -287,16 +263,12 @@ def load_sprite_config(
             else 30
         ),
         margin_x=(
-            _require_int(
-                "sprite", "margin_x", sprite_raw["margin_x"], min=0
-            )
+            _require_int("sprite", "margin_x", sprite_raw["margin_x"], min=0)
             if "margin_x" in sprite_raw
             else 8
         ),
         margin_y=(
-            _require_int(
-                "sprite", "margin_y", sprite_raw["margin_y"], min=0
-            )
+            _require_int("sprite", "margin_y", sprite_raw["margin_y"], min=0)
             if "margin_y" in sprite_raw
             else 8
         ),

@@ -74,19 +74,22 @@ def test_sprite_follow_cursor_defaults(tmp_path):
 
 
 # --- Negative values → raise ---
-@pytest.mark.parametrize("toml_text", [
-    "[hud]\nmax_lines = -1\n",
-    "[hud]\nhold_ms = -500\n",
-    "[hud]\nfade_ms = -1\n",
-    "[hud]\nfont_size = -5\n",
-    "[hud]\nwidth_px = 0\n",
-    "[hud]\nllm_summary_timeout_ms = 0\n",
-    "[sprite]\nbase_size_px = -10\n",
-    "[sprite]\nbubble_fade_ms = -1\n",
-    "[sprite]\nheartbeat_timeout_ms = 0\n",
-    "[sprite]\nmargin_x = -1\n",
-    "[sprite]\nmargin_y = -3\n",
-])
+@pytest.mark.parametrize(
+    "toml_text",
+    [
+        "[hud]\nmax_lines = -1\n",
+        "[hud]\nhold_ms = -500\n",
+        "[hud]\nfade_ms = -1\n",
+        "[hud]\nfont_size = -5\n",
+        "[hud]\nwidth_px = 0\n",
+        "[hud]\nllm_summary_timeout_ms = 0\n",
+        "[sprite]\nbase_size_px = -10\n",
+        "[sprite]\nbubble_fade_ms = -1\n",
+        "[sprite]\nheartbeat_timeout_ms = 0\n",
+        "[sprite]\nmargin_x = -1\n",
+        "[sprite]\nmargin_y = -3\n",
+    ],
+)
 def test_negative_or_zero_invalid_raises(tmp_path, toml_text):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(toml_text, encoding="utf-8")
@@ -95,13 +98,16 @@ def test_negative_or_zero_invalid_raises(tmp_path, toml_text):
 
 
 # --- Zero values that ARE valid ---
-@pytest.mark.parametrize("toml_text,attr_path,expected", [
-    ("[hud]\nfade_ms = 0\n", ("hud", "fade_ms"), 0),
-    ("[hud]\nhold_ms = 0\n", ("hud", "hold_ms"), 0),
-    ("[sprite]\nbubble_fade_ms = 0\n", ("bubble_fade_ms",), 0),
-    ("[sprite]\nmargin_x = 0\n", ("margin_x",), 0),
-    ("[sprite]\nmargin_y = 0\n", ("margin_y",), 0),
-])
+@pytest.mark.parametrize(
+    "toml_text,attr_path,expected",
+    [
+        ("[hud]\nfade_ms = 0\n", ("hud", "fade_ms"), 0),
+        ("[hud]\nhold_ms = 0\n", ("hud", "hold_ms"), 0),
+        ("[sprite]\nbubble_fade_ms = 0\n", ("bubble_fade_ms",), 0),
+        ("[sprite]\nmargin_x = 0\n", ("margin_x",), 0),
+        ("[sprite]\nmargin_y = 0\n", ("margin_y",), 0),
+    ],
+)
 def test_zero_valid_values(tmp_path, toml_text, attr_path, expected):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(toml_text, encoding="utf-8")
@@ -113,14 +119,17 @@ def test_zero_valid_values(tmp_path, toml_text, attr_path, expected):
 
 
 # --- Type mismatches → raise ---
-@pytest.mark.parametrize("toml_text", [
-    '[hud]\nmax_lines = "five"\n',
-    '[hud]\nhold_ms = "fast"\n',
-    "[sprite]\nfollow_poll_hz = true\n",   # bool not valid for int field
-    "[sprite]\nrender_scale = true\n",      # bool not valid for float field
-    '[sprite]\nfollow_cursor = "yes"\n',    # str not valid for bool field
-    '[hud]\nenabled = "false"\n',           # str not valid for bool field
-])
+@pytest.mark.parametrize(
+    "toml_text",
+    [
+        '[hud]\nmax_lines = "five"\n',
+        '[hud]\nhold_ms = "fast"\n',
+        "[sprite]\nfollow_poll_hz = true\n",  # bool not valid for int field
+        "[sprite]\nrender_scale = true\n",  # bool not valid for float field
+        '[sprite]\nfollow_cursor = "yes"\n',  # str not valid for bool field
+        '[hud]\nenabled = "false"\n',  # str not valid for bool field
+    ],
+)
 def test_type_mismatch_raises(tmp_path, toml_text):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(toml_text, encoding="utf-8")
@@ -129,12 +138,15 @@ def test_type_mismatch_raises(tmp_path, toml_text):
 
 
 # --- Out-of-range ---
-@pytest.mark.parametrize("toml_text", [
-    "[sprite]\nfollow_poll_hz = 10000\n",
-    "[sprite]\nfollow_poll_hz = 0\n",
-    "[sprite]\nrender_scale = 0.0\n",
-    "[sprite]\nrender_scale = -1.5\n",
-])
+@pytest.mark.parametrize(
+    "toml_text",
+    [
+        "[sprite]\nfollow_poll_hz = 10000\n",
+        "[sprite]\nfollow_poll_hz = 0\n",
+        "[sprite]\nrender_scale = 0.0\n",
+        "[sprite]\nrender_scale = -1.5\n",
+    ],
+)
 def test_out_of_range_raises(tmp_path, toml_text):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(toml_text, encoding="utf-8")
