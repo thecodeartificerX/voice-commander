@@ -207,3 +207,75 @@ def test_run_plan_extra_kwargs_fires_error():
     # Chain stopped; executed == 0
     complete_calls = [c for c in sink.calls if c[0] == "on_plan_complete"]
     assert complete_calls[0][1][1] == 0
+
+
+from voice_commander.event_bus import EventBus
+
+
+def _drain_bus(bus: EventBus) -> list[tuple[str, dict]]:
+    """Collect every published event by replaying from id=0."""
+    return [(e.type, e.data) for e in bus.replay_after(0)]
+
+
+def test_run_plan_publishes_plan_outcome_on_success():
+    reg = _make_registry(
+        _entry("step_a", func=lambda: None, settle_ms=0),
+        _entry("step_b", func=lambda: None, settle_ms=0),
+    )
+    bus = EventBus()
+    d = Dispatcher(feedback=CapturingFeedbackSink(), event_bus=bus)
+    plan = _plan(("step_a", {}), ("step_b", {}))
+
+    d.run_plan("two steps", plan, reg)
+
+    outcomes = [(t, data) for (t, data) in _drain_bus(bus) if t == "plan_outcome"]
+    assert len(outcomes) == 1
+    _, payload = outcomes[0]
+    assert payload["transcript"] == "two steps"
+    assert payload["status"] == "ok"
+    assert payload["failed_step_index"] is None
+    assert payload["error_msg"] is None
+    assert payload["duration_ms"] >= 0
+    assert payload["steps"] == [
+        {"name": "step_a", "kwargs": {}},
+        {"name": "step_b", "kwargs": {}},
+    ]
+
+
+def test_run_plan_publishes_plan_outcome_on_step_error():
+    def boom() -> None:
+        raise RuntimeError("boom")
+
+    reg = _make_registry(
+        _entry("step_a", func=lambda: None),
+        _entry("step_b", func=boom),
+        _entry("step_c", func=lambda: None),
+    )
+    bus = EventBus()
+    d = Dispatcher(feedback=CapturingFeedbackSink(), event_bus=bus)
+    plan = _plan(("step_a", {}), ("step_b", {}), ("step_c", {}))
+
+    d.run_plan("three steps", plan, reg)
+
+    outcomes = [(t, data) for (t, data) in _drain_bus(bus) if t == "plan_outcome"]
+    assert len(outcomes) == 1
+    _, payload = outcomes[0]
+    assert payload["status"] == "error"
+    assert payload["failed_step_index"] == 1
+    assert "boom" in payload["error_msg"]
+
+
+def test_run_plan_publishes_plan_outcome_on_unknown_tool():
+    reg = _make_registry(_entry("step_a", func=lambda: None))
+    bus = EventBus()
+    d = Dispatcher(feedback=CapturingFeedbackSink(), event_bus=bus)
+    plan = _plan(("step_a", {}), ("nonexistent", {}))
+
+    d.run_plan("unknown", plan, reg)
+
+    outcomes = [(t, data) for (t, data) in _drain_bus(bus) if t == "plan_outcome"]
+    assert len(outcomes) == 1
+    _, payload = outcomes[0]
+    assert payload["status"] == "error"
+    assert payload["failed_step_index"] == 1
+    assert "nonexistent" in payload["error_msg"]
