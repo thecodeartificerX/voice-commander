@@ -22,20 +22,18 @@ def _typed_snip(text: str, cap: int = 30) -> str:
 
 
 RULES: dict[str, Callable[[dict[str, Any], PlanOutcome], str]] = {
-    "focus":        lambda kw, _o: f"focused {kw.get('target', 'window')}",
-    "minimize":     lambda _kw, _o: "minimized window",
-    "maximize":     lambda _kw, _o: "maximized window",
-    "close":        lambda _kw, _o: "closed tab",
+    "focus": lambda kw, _o: f"focused {kw.get('target', 'window')}",
+    "minimize": lambda _kw, _o: "minimized window",
+    "maximize": lambda _kw, _o: "maximized window",
+    "close": lambda _kw, _o: "closed tab",
     "close_window": lambda _kw, _o: "closed window",
-    "open":         lambda kw, _o: f"opened {kw.get('target', 'app')}",
-    "type":         lambda kw, _o: f'typed "{_typed_snip(str(kw.get("text", "")))}"',
-    "press":        lambda kw, _o: f"pressed {kw.get('combo', '')}".rstrip(),
-    "wait":         lambda kw, _o: f"waited {kw.get('ms', 0)}ms",
-    "click":        lambda _kw, _o: "clicked",
-    "scroll":       lambda kw, _o: (
-        f"scrolled {kw.get('direction', '')}".rstrip()
-    ),
-    "no_match":     lambda _kw, _o: "no match",
+    "open": lambda kw, _o: f"opened {kw.get('target', 'app')}",
+    "type": lambda kw, _o: f'typed "{_typed_snip(str(kw.get("text", "")))}"',
+    "press": lambda kw, _o: f"pressed {kw.get('combo', '')}".rstrip(),
+    "wait": lambda kw, _o: f"waited {kw.get('ms', 0)}ms",
+    "click": lambda _kw, _o: "clicked",
+    "scroll": lambda kw, _o: f"scrolled {kw.get('direction', '')}".rstrip(),
+    "no_match": lambda _kw, _o: "no match",
 }
 
 

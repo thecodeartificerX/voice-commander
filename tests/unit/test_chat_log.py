@@ -36,10 +36,10 @@ def test_opacity_linear_after_hold():
     log = ChatLog(max_lines=3, hold_ms=1000, fade_ms=1000)
     e = _entry("x", 0.0)
     log.append(e)
-    assert log.opacity_of(e, 1.0) == 1.0     # right at hold boundary
+    assert log.opacity_of(e, 1.0) == 1.0  # right at hold boundary
     assert abs(log.opacity_of(e, 1.5) - 0.5) < 1e-6
     assert log.opacity_of(e, 2.0) == 0.0
-    assert log.opacity_of(e, 3.0) == 0.0     # clamped
+    assert log.opacity_of(e, 3.0) == 0.0  # clamped
 
 
 def test_tick_evicts_fully_faded():

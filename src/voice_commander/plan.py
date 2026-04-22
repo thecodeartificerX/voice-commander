@@ -54,8 +54,7 @@ class PlanOutcome:
     @classmethod
     def from_event_dict(cls, d: dict[str, Any]) -> PlanOutcome:
         steps = tuple(
-            ToolCall(name=s["name"], kwargs=dict(s.get("kwargs", {})))
-            for s in d.get("steps", [])
+            ToolCall(name=s["name"], kwargs=dict(s.get("kwargs", {}))) for s in d.get("steps", [])
         )
         return cls(
             transcript=d["transcript"],

@@ -180,8 +180,8 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
             # Without this, sprite pixels can land with wrong alpha and the
             # transparent framebuffer looks muddy / black-fringed on Windows.
             gl = pyglet.gl
-            self._sprite.blend_src = gl.GL_SRC_ALPHA
-            self._sprite.blend_dest = gl.GL_ONE_MINUS_SRC_ALPHA
+            self._sprite.blend_src = gl.GL_SRC_ALPHA  # type: ignore[attr-defined]
+            self._sprite.blend_dest = gl.GL_ONE_MINUS_SRC_ALPHA  # type: ignore[attr-defined]
         elif self._sprite.image is not region:
             self._sprite.image = region
         self._sprite.x = sprite_x

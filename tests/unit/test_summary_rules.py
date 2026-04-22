@@ -19,8 +19,18 @@ def _outcome(steps: tuple[ToolCall, ...], status: str = "ok") -> PlanOutcome:
 
 def test_every_catalog_verb_has_rule():
     required = {
-        "focus", "minimize", "maximize", "close", "close_window",
-        "open", "type", "press", "wait", "click", "scroll", "no_match",
+        "focus",
+        "minimize",
+        "maximize",
+        "close",
+        "close_window",
+        "open",
+        "type",
+        "press",
+        "wait",
+        "click",
+        "scroll",
+        "no_match",
     }
     assert required <= set(RULES)
 

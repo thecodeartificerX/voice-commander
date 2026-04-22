@@ -6,6 +6,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes as wt
 import logging
+from typing import Any
 
 from .dpi import get_dpi_for_monitor
 
@@ -38,7 +39,7 @@ class CursorDock:
 
     def __init__(
         self,
-        window,
+        window: Any,
         sprite_base_size_px: int,
         window_extra_w_px: int,
         window_extra_h_px: int,
@@ -86,6 +87,14 @@ class CursorDock:
         self._last_hmon = hmon
         logger.info(
             "CursorDock → hmon=%s rcWork=(%d,%d,%d,%d) dpi=%d → window=(%d,%d) @ (%d,%d)",
-            hmon, mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom,
-            dpi, window_w, window_h, x, y,
+            hmon,
+            mi.rcWork.left,
+            mi.rcWork.top,
+            mi.rcWork.right,
+            mi.rcWork.bottom,
+            dpi,
+            window_w,
+            window_h,
+            x,
+            y,
         )

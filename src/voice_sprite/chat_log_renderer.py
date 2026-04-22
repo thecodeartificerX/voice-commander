@@ -8,9 +8,9 @@ import pyglet
 
 from .chat_log import ChatLog
 
-_COLOR_OK = (143, 215, 127)      # #8fd77f — success
-_COLOR_ERROR = (255, 118, 118)   # #ff7676 — error
-_COLOR_MISS = (255, 181, 98)     # #ffb562 — miss
+_COLOR_OK = (143, 215, 127)  # #8fd77f — success
+_COLOR_ERROR = (255, 118, 118)  # #ff7676 — error
+_COLOR_MISS = (255, 181, 98)  # #ffb562 — miss
 
 
 def _color_for_status(status: str) -> tuple[int, int, int]:
@@ -31,7 +31,7 @@ class ChatLogRenderer:
     def __init__(
         self,
         chat_log: ChatLog,
-        window: pyglet.window.Window,  # type: ignore[name-defined]
+        window: pyglet.window.Window,
         hud_width_px: int,
         font_size: int,
         line_gap_px: int,

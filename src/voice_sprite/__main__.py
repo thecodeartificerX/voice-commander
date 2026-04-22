@@ -45,6 +45,7 @@ def main() -> None:
     # Must run BEFORE the first pyglet window is constructed.
     import contextlib
     import ctypes
+
     with contextlib.suppress(AttributeError, OSError):
         ctypes.windll.shcore.SetProcessDpiAwarenessContext(-4)
 
@@ -173,6 +174,7 @@ def main() -> None:
     # Cursor-follow docking
     if cfg.follow_cursor:
         from .cursor_tracker import CursorDock
+
         dock = CursorDock(
             window=window,
             sprite_base_size_px=cfg.base_size_px,
@@ -218,14 +220,17 @@ def main() -> None:
                 import time as _time
 
                 from voice_commander.plan import PlanOutcome
+
                 outcome = PlanOutcome.from_event_dict(data)
                 summary = summarizer.summarize(outcome)
                 if summary:
-                    chat_log.append(ChatLogEntry(
-                        text=summary,
-                        status=outcome.status,  # type: ignore[arg-type]
-                        born_at_s=_time.monotonic(),
-                    ))
+                    chat_log.append(
+                        ChatLogEntry(
+                            text=summary,
+                            status=outcome.status,
+                            born_at_s=_time.monotonic(),
+                        )
+                    )
             except Exception:
                 logger.exception("Failed to process plan_outcome event")
         if event_type == "tool_fired" and "name" in data:
@@ -252,6 +257,7 @@ def main() -> None:
         renderer.tick(dt)
         bubble.tick(dt)
         import time as _time
+
         chat_log.tick(_time.monotonic())
 
     pyglet.clock.schedule_interval(update, 1 / 60.0)

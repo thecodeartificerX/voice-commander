@@ -24,9 +24,7 @@ def _outcome() -> PlanOutcome:
 def _mock_client_response(content: str = "minimize failed — no window"):
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
-    resp.json.return_value = {
-        "choices": [{"message": {"content": content}}]
-    }
+    resp.json.return_value = {"choices": [{"message": {"content": content}}]}
     return resp
 
 
