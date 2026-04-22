@@ -89,11 +89,14 @@ def main() -> None:
 
     # Deferred pyglet import — avoids display probe at module-load time.
     # ImportError here means pyglet/GL libs missing; surface as startup
-    # failure rather than import failure.
+    # failure rather than import failure. pyglet 2.x lazy-loads submodules
+    # so `pyglet.display` must be imported explicitly; bare `pyglet` does
+    # not expose `.display` / `.canvas` attribute access.
     import pyglet
+    import pyglet.display
 
     # Calculate position
-    screen = pyglet.canvas.get_display().get_default_screen()  # type: ignore[attr-defined]
+    screen = pyglet.display.get_display().get_default_screen()
     offset_x = int(cfg.offset_x * scale)
     offset_y = int(cfg.offset_y * scale)
 
