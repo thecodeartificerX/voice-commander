@@ -64,12 +64,15 @@ class HUDPipeline:
 
     def on_event(self, event_type: str, data: dict[str, Any]) -> None:
         """SSE event handler — call from SSEClient.on_event."""
-        result = self._sm.on_event(event_type, data)
-        if result is not None:
-            self._renderer.set_state(result)
-            logger.info("State → %s", result.value)
-        self._window.set_muted(self._sm.muted)
-        self._renderer.set_muted(self._sm.muted)
+        try:
+            result = self._sm.on_event(event_type, data)
+            if result is not None:
+                self._renderer.set_state(result)
+                logger.info("State → %s", result.value)
+            self._window.set_muted(self._sm.muted)
+            self._renderer.set_muted(self._sm.muted)
+        except Exception:
+            logger.exception("on_event: state update failed for event_type=%r", event_type)
         if event_type == "plan_outcome":
             from voice_commander.plan import PlanOutcome
 
@@ -108,24 +111,28 @@ class HUDPipeline:
             except Exception:
                 logger.exception("Summarizer failed — using last-resort text")
                 summary = raw_text
-            if summary:
+            try:
+                if summary:
 
-                def _append(dt: float, _s: str = summary, _st: Any = outcome.status) -> None:
-                    from .chat_log import ChatLogEntry
+                    def _append(dt: float, _s: str = summary, _st: Any = outcome.status) -> None:
+                        from .chat_log import ChatLogEntry
 
-                    self._chat_log.append(
-                        ChatLogEntry(
-                            text=_s,
-                            status=_st,
-                            born_at_s=time.monotonic(),
+                        self._chat_log.append(
+                            ChatLogEntry(
+                                text=_s,
+                                status=_st,
+                                born_at_s=time.monotonic(),
+                            )
                         )
-                    )
 
-                _pclock.schedule_once(_append, 0)
-            self._queue.task_done()
+                    _pclock.schedule_once(_append, 0)
+            except Exception:
+                logger.exception("worker: schedule_once failed for summary=%r", summary)
+            finally:
+                self._queue.task_done()
 
     def stop(self) -> None:
-        """Signal worker thread to exit and drain the queue."""
+        """Enqueue sentinel to signal worker thread exit."""
         self._queue.put(None)
 
 

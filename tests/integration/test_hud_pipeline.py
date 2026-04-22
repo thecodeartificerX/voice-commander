@@ -51,13 +51,20 @@ def _make_pipeline(chat_log: ChatLog) -> HUDPipeline:
 
 
 def _run_worker_with_mock_clock(pipeline) -> None:
-    """Run worker in a thread with mocked pyglet.clock.schedule_once firing synchronously."""
+    """Run worker in a thread with mocked pyglet.clock.schedule_once firing synchronously.
+
+    Ordering contract: call this AFTER all pipeline.on_event() calls.
+    stop() enqueues the sentinel AFTER any real work items so the worker
+    processes all real items before terminating (FIFO queue ordering).
+    """
     import pyglet.clock as _pclock
 
     def immediate(fn, delay):
         fn(0)
 
-    pipeline.stop()  # enqueue sentinel so worker terminates
+    # Sentinel enqueued here — after on_event() has already put work items.
+    # The worker drains real items first (FIFO), then sees None and exits.
+    pipeline.stop()
 
     with patch.object(_pclock, "schedule_once", side_effect=immediate):
         t = threading.Thread(target=pipeline.worker, daemon=True)
@@ -114,7 +121,11 @@ def test_plan_outcome_miss_appends_no_match():
 
 
 def test_malformed_plan_outcome_falls_back_to_raw_transcript():
-    """Malformed event dict (missing 'transcript') → raw transcript appended as error."""
+    """Malformed event dict with empty transcript → no ChatLog entry appended.
+
+    When from_event_dict() raises and raw_text is empty string, the fallback
+    branch skips appending (guarded by ``if raw_text:``).
+    """
     chat_log = ChatLog(max_lines=5, hold_ms=10_000, fade_ms=1_000)
     pipeline = _make_pipeline(chat_log)
 
@@ -125,6 +136,30 @@ def test_malformed_plan_outcome_falls_back_to_raw_transcript():
     # No queue item — entry appended synchronously in on_event fallback
     entries = chat_log.entries()
     assert len(entries) == 0  # raw_text was empty string, so nothing appended
+
+
+def test_malformed_plan_outcome_with_transcript_appends_error_entry():
+    """Malformed event dict with non-empty transcript → error ChatLog entry appended.
+
+    When from_event_dict() raises and raw_text is non-empty, the fallback
+    branch appends the raw transcript as an error-status entry.
+    """
+    chat_log = ChatLog(max_lines=5, hold_ms=10_000, fade_ms=1_000)
+    pipeline = _make_pipeline(chat_log)
+
+    # Has 'transcript' but step dict missing 'name' key — from_event_dict raises KeyError
+    bad_data = {
+        "transcript": "open browser",
+        "status": "ok",
+        "steps": [{"kwargs": {}}],
+        "duration_ms": 0,
+    }
+    pipeline.on_event("plan_outcome", bad_data)
+
+    entries = chat_log.entries()
+    assert len(entries) == 1
+    assert entries[0].status == "error"
+    assert entries[0].text == "open browser"
 
 
 def test_tool_fired_shows_bubble():
