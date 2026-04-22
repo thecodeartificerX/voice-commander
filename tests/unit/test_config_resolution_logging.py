@@ -4,6 +4,7 @@ At daemon startup, every [llm].* field must emit an INFO log line showing the
 resolved value and where it came from (env / config.local.toml / config.toml /
 default). Silent fallback is forbidden.
 """
+
 from __future__ import annotations
 
 import logging
@@ -33,6 +34,7 @@ def test_all_fields_have_source_line(
     cfg = Config.load(tmp_path / "nonexistent.toml")
     text = _emit(cfg, caplog)
     from dataclasses import fields
+
     for f in fields(LLMConfig):
         assert f"llm.{f.name}" in text, f"Missing log line for field {f.name}"
     assert "(source: " in text

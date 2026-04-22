@@ -239,9 +239,7 @@ def _coerce_scalar(raw: str, expected: Any, env_key: str) -> Any:
 
 def _check_type(value: Any, expected: Any, label: str) -> None:
     if not _type_ok(value, expected):
-        raise TypeError(
-            f"Config {label} expected {expected}, got {type(value).__name__}"
-        )
+        raise TypeError(f"Config {label} expected {expected}, got {type(value).__name__}")
 
 
 def log_llm_sources(cfg: Config) -> None:
@@ -260,7 +258,10 @@ def log_llm_sources(cfg: Config) -> None:
         source = cfg.llm_sources.get(name, "default")
         logger.info(
             "config: llm.%-*s = %s (source: %s)",
-            max_key_len, name, value, source,
+            max_key_len,
+            name,
+            value,
+            source,
         )
 
 

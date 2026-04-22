@@ -3,10 +3,10 @@
 Covers each verb with pyautogui + resolver + win32 helpers mocked. Verifies
 self-verify behaviors where applicable (focus raises, close* warn on timeout).
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,7 +24,6 @@ from voice_commander.tools.primitives import (
     type_text,
     wait,
 )
-
 
 # ---------------------------------------------------------------------------
 # wait
@@ -102,6 +101,7 @@ def test_focus_calls_resolver_and_routes_hwnd(monkeypatch: pytest.MonkeyPatch) -
     # AttachThreadInput sequence.
     def _fake_do_focus(hwnd: int, _fg_tid: int, _target_tid: int) -> None:
         import win32gui as _wg  # resolves to mock_win32gui under the sys.modules patch
+
         _wg.BringWindowToTop(hwnd)
         _wg.SetForegroundWindow(hwnd)
 
@@ -120,6 +120,7 @@ def test_focus_calls_resolver_and_routes_hwnd(monkeypatch: pytest.MonkeyPatch) -
     ):
         # Import the focus function from the module (avoid shadowing Python's focus).
         from voice_commander.tools.primitives import focus as _focus
+
         _focus("notepad")
 
     mock_win32gui.BringWindowToTop.assert_called_once_with(_TARGET_HWND)
@@ -130,9 +131,7 @@ def test_focus_raises_on_resolver_miss(monkeypatch: pytest.MonkeyPatch) -> None:
     def _raise(_target: str) -> int:
         raise FocusWindowError("no match")
 
-    monkeypatch.setattr(
-        "voice_commander.tools.primitives.resolver.resolve_window", _raise
-    )
+    monkeypatch.setattr("voice_commander.tools.primitives.resolver.resolve_window", _raise)
     mock_win32gui = MagicMock()
     mock_win32con = MagicMock()
     mock_win32process = MagicMock()
@@ -142,6 +141,7 @@ def test_focus_raises_on_resolver_miss(monkeypatch: pytest.MonkeyPatch) -> None:
         {"win32gui": mock_win32gui, "win32con": mock_win32con, "win32process": mock_win32process},
     ):
         from voice_commander.tools.primitives import focus as _focus
+
         with pytest.raises(FocusWindowError):
             _focus("zzz")
 
@@ -158,9 +158,7 @@ def test_open_uri_shortcut(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda t: t,
     )
     # Neutralise the best-effort _verify_open so it returns quickly.
-    monkeypatch.setattr(
-        "voice_commander.tools.primitives._verify_open", lambda _t: None
-    )
+    monkeypatch.setattr("voice_commander.tools.primitives._verify_open", lambda _t: None)
     with patch("voice_commander.tools.primitives.os.startfile") as mock_startfile:
         open_target("https://x.com")
     mock_startfile.assert_called_once_with("https://x.com")
@@ -172,9 +170,7 @@ def test_open_calls_resolve_app(monkeypatch: pytest.MonkeyPatch) -> None:
         "voice_commander.tools.primitives.resolver.resolve_app",
         lambda t: r"C:\fake\Spotify.lnk",
     )
-    monkeypatch.setattr(
-        "voice_commander.tools.primitives._verify_open", lambda _t: None
-    )
+    monkeypatch.setattr("voice_commander.tools.primitives._verify_open", lambda _t: None)
     with patch("voice_commander.tools.primitives.os.startfile") as mock_startfile:
         open_target("spotify")
     mock_startfile.assert_called_once_with(r"C:\fake\Spotify.lnk")
@@ -201,11 +197,23 @@ def test_open_resolver_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None
     def _raise(_t: str) -> str:
         raise OpenResolveError("no app")
 
-    monkeypatch.setattr(
-        "voice_commander.tools.primitives.resolver.resolve_app", _raise
-    )
+    monkeypatch.setattr("voice_commander.tools.primitives.resolver.resolve_app", _raise)
     with pytest.raises(OpenResolveError):
         open_target("zzz")
+
+
+def test_open_startfile_oserror_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OSError from os.startfile propagates so dispatcher chimes on failure."""
+    monkeypatch.setattr(
+        "voice_commander.tools.primitives.resolver.resolve_app",
+        lambda t: r"C:\fake\MyApp.lnk",
+    )
+    monkeypatch.setattr(
+        "voice_commander.tools.primitives.os.startfile",
+        MagicMock(side_effect=OSError("not found")),
+    )
+    with pytest.raises(OSError, match="not found"):
+        open_target("nonexistent_app")
 
 
 def test_open_self_verify_best_effort_logs_on_timeout(
@@ -223,12 +231,8 @@ def test_open_self_verify_best_effort_logs_on_timeout(
     mock_win32gui.EnumWindows.side_effect = lambda cb, _: cb(1, None)
 
     # Short-circuit the verify loop to only run once, then log the warning.
-    monkeypatch.setattr(
-        "voice_commander.tools.primitives._OPEN_VERIFY_TIMEOUT_MS", 10
-    )
-    monkeypatch.setattr(
-        "voice_commander.tools.primitives._OPEN_VERIFY_POLL_INTERVAL_MS", 5
-    )
+    monkeypatch.setattr("voice_commander.tools.primitives._OPEN_VERIFY_TIMEOUT_MS", 10)
+    monkeypatch.setattr("voice_commander.tools.primitives._OPEN_VERIFY_POLL_INTERVAL_MS", 5)
 
     with (
         patch.dict("sys.modules", {"win32gui": mock_win32gui}),
@@ -280,12 +284,8 @@ def test_close_self_verify_logs_when_fg_unchanged(
     mock_win32gui.GetForegroundWindow.return_value = 77  # unchanged
     mock_win32gui.IsWindow.return_value = True
 
-    monkeypatch.setattr(
-        "voice_commander.tools.primitives._CLOSE_VERIFY_TIMEOUT_MS", 10
-    )
-    monkeypatch.setattr(
-        "voice_commander.tools.primitives._CLOSE_VERIFY_POLL_INTERVAL_MS", 5
-    )
+    monkeypatch.setattr("voice_commander.tools.primitives._CLOSE_VERIFY_TIMEOUT_MS", 10)
+    monkeypatch.setattr("voice_commander.tools.primitives._CLOSE_VERIFY_POLL_INTERVAL_MS", 5)
 
     with (
         patch.dict("sys.modules", {"win32gui": mock_win32gui}),
@@ -369,6 +369,15 @@ def test_imports_expose_expected_symbols() -> None:
     from voice_commander.tools import primitives as _p
 
     # Each verb present with the Python symbol declared in the module.
-    for name in ("click", "close", "close_window", "no_match", "open_target",
-                 "press", "scroll", "type_text", "wait"):
+    for name in (
+        "click",
+        "close",
+        "close_window",
+        "no_match",
+        "open_target",
+        "press",
+        "scroll",
+        "type_text",
+        "wait",
+    ):
         assert hasattr(_p, name), f"primitives missing symbol {name!r}"

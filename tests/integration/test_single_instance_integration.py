@@ -16,6 +16,7 @@ The worktree ``src/`` directory is injected into child processes via the
 always import the *worktree* copy of ``single_instance.py`` rather than
 whatever editable install happens to be on the system ``sys.path``.
 """
+
 from __future__ import annotations
 
 import os
@@ -34,9 +35,7 @@ pytestmark = pytest.mark.skipif(
 
 # Absolute path to the worktree's src/ directory — two levels up from this
 # file (tests/integration/ → tests/ → repo root) then into src/.
-_WORKTREE_SRC = str(
-    pathlib.Path(__file__).resolve().parent.parent.parent / "src"
-)
+_WORKTREE_SRC = str(pathlib.Path(__file__).resolve().parent.parent.parent / "src")
 
 # Prepend the worktree src onto the parent process path so imports in the
 # test body also pick up the worktree implementation, not an installed copy.
@@ -47,6 +46,7 @@ if _WORKTREE_SRC not in sys.path:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _child_env() -> dict[str, str]:
     """Return an environment dict that ensures children import the worktree src."""
@@ -145,6 +145,7 @@ _SCRIPT_ACQUIRE_AND_SPIN = """\
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestLockConflict:
     """Parent holds lock; child must see AlreadyRunning."""

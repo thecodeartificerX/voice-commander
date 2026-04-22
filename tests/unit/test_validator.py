@@ -16,6 +16,7 @@ from voice_commander.validator import validate, validate_config
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_store(tools: dict[str, ToolMetadata]) -> MagicMock:
     """Return a mock ToolMetadataStore whose load_all() yields *tools*."""
     store = MagicMock(spec=ToolMetadataStore)
@@ -85,6 +86,7 @@ def _arg(name: str, type_str: str = "str", description: str = "A param.") -> Arg
 # Rule 2: sig param without TOML arg entry
 # ---------------------------------------------------------------------------
 
+
 def test_rule2_param_without_toml_arg():
     """A function parameter that has no matching [args.*] in TOML → [rule2]."""
 
@@ -104,6 +106,7 @@ def test_rule2_param_without_toml_arg():
 # Rule 3: TOML arg not in signature
 # ---------------------------------------------------------------------------
 
+
 def test_rule3_toml_arg_not_in_signature():
     """TOML declares arg 'foo' but function has no such parameter → [rule3]."""
 
@@ -111,9 +114,7 @@ def test_rule3_toml_arg_not_in_signature():
         pass
 
     registry = _make_registry(_entry("my_tool", my_tool))
-    store = _make_store({
-        "my_tool": _meta("my_tool", args={"foo": _arg("foo")})
-    })
+    store = _make_store({"my_tool": _meta("my_tool", args={"foo": _arg("foo")})})
 
     errors = validate(registry, store)
 
@@ -124,6 +125,7 @@ def test_rule3_toml_arg_not_in_signature():
 # Rule 4: unsupported type annotation
 # ---------------------------------------------------------------------------
 
+
 def test_rule4_unsupported_type():
     """A param annotated with `list` (unsupported) → [rule4]."""
 
@@ -131,9 +133,9 @@ def test_rule4_unsupported_type():
         pass
 
     registry = _make_registry(_entry("my_tool", my_tool))
-    store = _make_store({
-        "my_tool": _meta("my_tool", args={"items": _arg("items", type_str="list")})
-    })
+    store = _make_store(
+        {"my_tool": _meta("my_tool", args={"items": _arg("items", type_str="list")})}
+    )
 
     errors = validate(registry, store)
 
@@ -144,6 +146,7 @@ def test_rule4_unsupported_type():
 # Rule 5: settle_ms out of range
 # ---------------------------------------------------------------------------
 
+
 def test_rule5_settle_ms_negative():
     """settle_ms=-1 is below the allowed range [0, 5000] → [rule5]."""
 
@@ -151,9 +154,7 @@ def test_rule5_settle_ms_negative():
         pass
 
     registry = _make_registry(_entry("my_tool", my_tool))
-    store = _make_store({
-        "my_tool": _meta("my_tool", settle_ms=-1)
-    })
+    store = _make_store({"my_tool": _meta("my_tool", settle_ms=-1)})
 
     errors = validate(registry, store)
 
@@ -167,9 +168,7 @@ def test_rule5_settle_ms_too_high():
         pass
 
     registry = _make_registry(_entry("my_tool", my_tool))
-    store = _make_store({
-        "my_tool": _meta("my_tool", settle_ms=5001)
-    })
+    store = _make_store({"my_tool": _meta("my_tool", settle_ms=5001)})
 
     errors = validate(registry, store)
 
@@ -179,6 +178,7 @@ def test_rule5_settle_ms_too_high():
 # ---------------------------------------------------------------------------
 # Rule 7: missing required primitive
 # ---------------------------------------------------------------------------
+
 
 def test_rule7_missing_primitive():
     """Module is 'voice_commander.tools.primitives' but 'no_match' is absent → [rule7]."""
@@ -195,9 +195,7 @@ def test_rule7_missing_primitive():
         phrases=(),
     )
     registry = _make_registry(entry)
-    store = _make_store({
-        "wait": _meta("wait", llm_only=True, phrases=())
-    })
+    store = _make_store({"wait": _meta("wait", llm_only=True, phrases=())})
 
     errors = validate(registry, store)
 
@@ -212,6 +210,7 @@ def test_rule7_missing_primitive():
 # Happy path: no errors
 # ---------------------------------------------------------------------------
 
+
 def test_happy_path_all_valid():
     """A properly configured zero-arg tool produces an empty error list."""
 
@@ -219,9 +218,7 @@ def test_happy_path_all_valid():
         pass
 
     registry = _make_registry(_entry("my_tool", my_tool))
-    store = _make_store({
-        "my_tool": _meta("my_tool", args={})
-    })
+    store = _make_store({"my_tool": _meta("my_tool", args={})})
 
     errors = validate(registry, store)
 
@@ -231,6 +228,7 @@ def test_happy_path_all_valid():
 # ---------------------------------------------------------------------------
 # Rule C1: llm_router.timeout_ms minimum
 # ---------------------------------------------------------------------------
+
 
 def _cfg_with_timeout(timeout_ms: int) -> "Config":
     """Build a default Config with llm_router.timeout_ms overridden."""
@@ -244,9 +242,7 @@ def test_rule_c1_timeout_ms_below_minimum():
 
     errors = validate_config(cfg)
 
-    assert any("[rule_c1]" in e for e in errors), (
-        f"Expected [rule_c1] error, got: {errors}"
-    )
+    assert any("[rule_c1]" in e for e in errors), f"Expected [rule_c1] error, got: {errors}"
     assert any("timeout_ms" in e for e in errors), (
         f"Expected 'timeout_ms' in error message, got: {errors}"
     )

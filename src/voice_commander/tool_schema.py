@@ -1,4 +1,5 @@
 """Reflect Python function signatures into OpenAI-compatible tool JSON schemas."""
+
 from __future__ import annotations
 
 import inspect
@@ -147,10 +148,7 @@ def _py_type_to_json_schema(annotation: Any, tool_name: str, param_name: str) ->
     # ------------------------------------------------------------------ Union / Optional
     # After get_type_hints() resolves annotations, `X | None` in Python 3.10+
     # may come back as either `types.UnionType` or `typing.Union`.  Handle both.
-    is_union = (
-        origin is typing.Union
-        or (isinstance(annotation, types.UnionType))
-    )
+    is_union = origin is typing.Union or (isinstance(annotation, types.UnionType))
     if is_union:
         args = typing.get_args(annotation)
         non_none = [a for a in args if a is not type(None)]
@@ -164,10 +162,6 @@ def _py_type_to_json_schema(annotation: Any, tool_name: str, param_name: str) ->
             return inner
 
         # General unions (e.g. str | int) are not supported.
-        raise ToolSchemaError(
-            tool_name, param_name, f"unsupported union type: {annotation}"
-        )
+        raise ToolSchemaError(tool_name, param_name, f"unsupported union type: {annotation}")
 
-    raise ToolSchemaError(
-        tool_name, param_name, f"unsupported type: {annotation}"
-    )
+    raise ToolSchemaError(tool_name, param_name, f"unsupported type: {annotation}")

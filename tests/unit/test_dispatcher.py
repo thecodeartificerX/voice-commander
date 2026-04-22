@@ -50,6 +50,7 @@ def test_run_plan_unknown_tool_fires_error():
 
 def test_run_plan_tool_error_fires_error_and_does_not_raise():
     """A tool that raises must fire on_error and must not propagate the exception."""
+
     def boom() -> None:
         raise RuntimeError("tool exploded")
 
@@ -125,9 +126,7 @@ def test_run_plan_halts_on_mid_chain_error():
 
     # (d) on_error fired exactly once, identifying the offending step by name
     error_calls = [c for c in sink.calls if c[0] == "on_error"]
-    assert len(error_calls) == 1, (
-        f"Expected exactly one on_error call, got {len(error_calls)}"
-    )
+    assert len(error_calls) == 1, f"Expected exactly one on_error call, got {len(error_calls)}"
     subsystem, exc = error_calls[0][1]
     # Dispatcher tags errors as "plan:step:<tool_name>". The second step's tool
     # is named "second" → subsystem reflects step index 1 (the second step).
@@ -175,13 +174,25 @@ def test_run_plan_logs_per_step(caplog):
     """Dispatcher emits an INFO line per step like 'plan step 1/3: focus(target=...)'."""
     log: list[str] = []
     entry_f = ToolEntry(
-        "focus", (), lambda target=None: log.append(f"focus:{target}"), "m", None,
+        "focus",
+        (),
+        lambda target=None: log.append(f"focus:{target}"),
+        "m",
+        None,
     )
     entry_p = ToolEntry(
-        "press", (), lambda combo=None: log.append(f"press:{combo}"), "m", None,
+        "press",
+        (),
+        lambda combo=None: log.append(f"press:{combo}"),
+        "m",
+        None,
     )
     entry_t = ToolEntry(
-        "type", (), lambda text=None: log.append(f"type:{text}"), "m", None,
+        "type",
+        (),
+        lambda text=None: log.append(f"type:{text}"),
+        "m",
+        None,
     )
     registry = _make_registry(entry_f, entry_p, entry_t)
     sink = CapturingFeedbackSink()

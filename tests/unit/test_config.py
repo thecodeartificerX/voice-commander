@@ -153,6 +153,7 @@ def test_mute_key_invalid_type_raises(tmp_path):
 # LLMConfig parsing
 # ---------------------------------------------------------------------------
 
+
 def test_llm_section_absent_returns_all_defaults(tmp_path):
     """No [llm] section → all fields carry their documented defaults."""
     cfg = Config.load(tmp_path / "nope.toml")
@@ -287,10 +288,9 @@ def test_legacy_llm_router_key_rejected(tmp_path, caplog):
     )
 
     raised: Exception | None = None
-    cfg = None
     with caplog.at_level(logging.WARNING, logger="voice_commander.config"):
         try:
-            cfg = Config.load(cfg_file)
+            Config.load(cfg_file)
         except Exception as exc:  # noqa: BLE001 — we inspect any error type
             raised = exc
 
@@ -298,12 +298,8 @@ def test_legacy_llm_router_key_rejected(tmp_path, caplog):
         # Strict contract: loader raised. Message must reference both the old
         # and new section names so the user knows what to do.
         msg = str(raised)
-        assert "llm_router" in msg, (
-            f"Rejection message must name the legacy section, got: {msg!r}"
-        )
-        assert "llm" in msg, (
-            f"Rejection message must mention the new [llm] section, got: {msg!r}"
-        )
+        assert "llm_router" in msg, f"Rejection message must name the legacy section, got: {msg!r}"
+        assert "llm" in msg, f"Rejection message must mention the new [llm] section, got: {msg!r}"
         return
 
     # Lenient contract: loader did not raise → a WARNING must have been logged

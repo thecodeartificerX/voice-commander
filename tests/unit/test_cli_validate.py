@@ -25,6 +25,7 @@ from voice_commander.tool_metadata import ArgMetadata, ToolMetadata, ToolMetadat
 # Helpers (mirrors test_validator.py style)
 # ---------------------------------------------------------------------------
 
+
 def _make_store(tools: dict[str, ToolMetadata]) -> MagicMock:
     """Return a mock ToolMetadataStore whose load_all() yields *tools*."""
     store = MagicMock(spec=ToolMetadataStore)
@@ -117,6 +118,7 @@ def _patch_infrastructure(registry: ToolRegistry, store: MagicMock):
 # Happy path: clean config + passing registry → returns normally, prints "OK"
 # ---------------------------------------------------------------------------
 
+
 class TestHappyPath:
     def test_returns_without_raising(self, capsys):
         """Clean config + valid tool registry → _run_validate returns normally (exit 0)."""
@@ -167,6 +169,7 @@ class TestHappyPath:
 # Config drift: timeout_ms below minimum → sys.exit(1)
 # ---------------------------------------------------------------------------
 
+
 class TestConfigDrift:
     def test_timeout_ms_too_low_causes_exit_1(self):
         """llm_router.timeout_ms=100 (< 200) → validate_config_or_die calls sys.exit(1)."""
@@ -210,6 +213,7 @@ class TestConfigDrift:
 # Tool drift: validate_or_die raises when registry/TOML disagree → sys.exit(1)
 # ---------------------------------------------------------------------------
 
+
 class TestToolDrift:
     def test_rule2_missing_toml_arg_causes_exit_1(self):
         """Function param with no matching TOML arg → validate_or_die exits 1."""
@@ -238,20 +242,22 @@ class TestToolDrift:
             pass
 
         registry = _make_registry(_entry("my_tool", my_tool))
-        store = _make_store({
-            "my_tool": _meta(
-                "my_tool",
-                args={
-                    "items": ArgMetadata(
-                        name="items",
-                        type_str="list",
-                        description="Items.",
-                        required=True,
-                        default=None,
-                    )
-                },
-            )
-        })
+        store = _make_store(
+            {
+                "my_tool": _meta(
+                    "my_tool",
+                    args={
+                        "items": ArgMetadata(
+                            name="items",
+                            type_str="list",
+                            description="Items.",
+                            required=True,
+                            default=None,
+                        )
+                    },
+                )
+            }
+        )
         cfg = Config()
 
         p_store_cls, p_discover = _patch_infrastructure(registry, store)
@@ -295,6 +301,7 @@ class TestToolDrift:
 # ---------------------------------------------------------------------------
 # Stdout contract: "OK" only printed on success, not on failure
 # ---------------------------------------------------------------------------
+
 
 class TestOutputContract:
     def test_ok_not_printed_on_config_failure(self, capsys):

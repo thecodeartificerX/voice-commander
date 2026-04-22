@@ -13,6 +13,7 @@ Two pure functions power the ``focus`` and ``open`` verbs:
 Both functions raise ``FocusWindowError`` / ``OpenResolveError`` carrying the
 top-3 candidates when no match clears the configured threshold.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -92,9 +93,7 @@ def resolve_window(target: str) -> int:
         import win32gui
         import win32process
     except ImportError as exc:
-        raise FocusWindowError(
-            "pywin32 not available; cannot enumerate windows"
-        ) from exc
+        raise FocusWindowError("pywin32 not available; cannot enumerate windows") from exc
 
     candidates: list[tuple[int, str, str, int]] = []
 
@@ -141,8 +140,7 @@ def resolve_window(target: str) -> int:
     if best_score < threshold:
         top3_display = [(p, t, s) for _hwnd, p, t, s in top3]
         raise FocusWindowError(
-            f"no window matching {target!r} (threshold={threshold}); "
-            f"top3={top3_display}"
+            f"no window matching {target!r} (threshold={threshold}); top3={top3_display}"
         )
 
     logger.debug(
@@ -169,7 +167,7 @@ def _get_process_name(pid: int) -> str:
     try:
         import psutil
     except ImportError:
-        psutil = None  # type: ignore[assignment]
+        psutil = None
     if psutil is not None:
         try:
             return str(psutil.Process(pid).name())
@@ -187,7 +185,7 @@ def _get_process_name(pid: int) -> str:
     except Exception:
         return ""
     try:
-        name = win32process.GetModuleBaseName(handle, None)  # type: ignore[arg-type]
+        name = win32process.GetModuleBaseName(handle, None)
     except Exception:
         return ""
     finally:

@@ -3,6 +3,7 @@
 
 Run after migrating from @tool(phrases=[...]) to bare @tool() + sidecar TOMLs.
 """
+
 from __future__ import annotations
 
 import sys
@@ -12,8 +13,8 @@ from pathlib import Path
 src = Path(__file__).resolve().parent.parent / "src"
 sys.path.insert(0, str(src))
 
-from voice_commander.registry import discover, get_global_registry, reset_global_registry
-from voice_commander.tool_metadata import ToolMetadataStore
+from voice_commander.registry import discover, reset_global_registry  # noqa: E402
+from voice_commander.tool_metadata import ToolMetadataStore  # noqa: E402
 
 
 def main() -> None:
@@ -28,8 +29,10 @@ def main() -> None:
     print(f"✓ {len(all_tools)} tools registered and paired with TOML metadata:")
     for t in all_tools:
         status = "enabled" if t.enabled else "DISABLED"
-        print(f"  [{status:>8}] {t.name:20s} ({', '.join(t.phrases[:3])}{'...' if len(t.phrases) > 3 else ''})")
-    print(f"\nMigration validated. All tools have matching sidecar TOML entries.")
+        phrases_preview = ", ".join(t.phrases[:3])
+        ellipsis = "..." if len(t.phrases) > 3 else ""
+        print(f"  [{status:>8}] {t.name:20s} ({phrases_preview}{ellipsis})")
+    print("\nMigration validated. All tools have matching sidecar TOML entries.")
 
 
 if __name__ == "__main__":

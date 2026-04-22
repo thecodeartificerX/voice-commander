@@ -4,6 +4,7 @@ All win32/COM side-effects are monkeypatched. Tests exercise the fuzzy-match
 path, the threshold-miss error path, URI / path / fuzzy-app branches in
 resolve_app, and the daemon-lifetime app cache.
 """
+
 from __future__ import annotations
 
 import sys
@@ -22,7 +23,6 @@ from voice_commander.resolver import (
     resolve_window,
 )
 from voice_commander.tools._win32 import FocusWindowError
-
 
 # ---------------------------------------------------------------------------
 # Fake win32 modules — installed into sys.modules so resolve_window's local
@@ -99,9 +99,7 @@ def _install_fake_win32(
 
     cands = [(hwnd, title) for hwnd, title, _pid, _proc in windows]
     pid_by_hwnd = {hwnd: pid for hwnd, _title, pid, _proc in windows}
-    proc_name_by_pid = {
-        pid: proc for _hwnd, _title, pid, proc in windows if pid not in denied_pids
-    }
+    proc_name_by_pid = {pid: proc for _hwnd, _title, pid, proc in windows if pid not in denied_pids}
     allowed_pids = {pid for _hwnd, _title, pid, _proc in windows if pid not in denied_pids}
 
     fake_gui = _FakeWin32Gui(cands)

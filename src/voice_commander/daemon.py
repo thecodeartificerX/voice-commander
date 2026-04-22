@@ -85,7 +85,8 @@ class StreamingDaemon:
         self._shutdown_lock = threading.Lock()
         # Single-worker executor for fire-and-forget async WAV writes (outputs/last_utterance.wav).
         self._wav_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="wav-writer",
+            max_workers=1,
+            thread_name_prefix="wav-writer",
         )
         self._session_active: bool = False
         self._muted: bool = False
@@ -231,14 +232,12 @@ class StreamingDaemon:
             try:
                 artifact = {
                     "transcript": transcript,
-                    "steps": [
-                        {"name": s.name, "kwargs": s.kwargs}
-                        for s in plan.steps
-                    ],
+                    "steps": [{"name": s.name, "kwargs": s.kwargs} for s in plan.steps],
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 }
                 path.write_text(
-                    json.dumps(artifact, indent=2), encoding="utf-8",
+                    json.dumps(artifact, indent=2),
+                    encoding="utf-8",
                 )
             except Exception:
                 logger.exception("Failed to write %s", path)
@@ -302,9 +301,7 @@ class StreamingDaemon:
         if threading.current_thread() is threading.main_thread():
             signal.signal(signal.SIGINT, lambda *_: self.shutdown())
         else:
-            logger.warning(
-                "run() called from a non-main thread; SIGINT handler not registered"
-            )
+            logger.warning("run() called from a non-main thread; SIGINT handler not registered")
         logger.info("StreamingDaemon running. Press Ctrl+C to exit.")
         try:
             while not self._shutdown.wait(0.5):
@@ -410,7 +407,10 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         meta = all_meta.get(entry.name)
         args_meta = meta.args if meta else {}
         entry.params_schema = sig_to_json_schema(
-            entry.func, args_meta, tool_name=entry.name, description=entry.description,
+            entry.func,
+            args_meta,
+            tool_name=entry.name,
+            description=entry.description,
         )
 
     # Startup validation — refuse to run on bad config or tool/TOML drift.

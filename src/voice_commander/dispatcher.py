@@ -29,7 +29,9 @@ class Dispatcher:
                 break
             logger.info(
                 "plan step %d/%d: %s(%s)",
-                i + 1, total, step.name,
+                i + 1,
+                total,
+                step.name,
                 ", ".join(f"{k}={v!r}" for k, v in step.kwargs.items()),
             )
             try:

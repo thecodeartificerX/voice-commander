@@ -1,4 +1,5 @@
 """LLM Router: routes voice commands to local LM Studio for tool-call planning."""
+
 from __future__ import annotations
 
 import json
@@ -187,14 +188,16 @@ class LLMRouter:
         except httpx.ConnectError:
             self._total_errors += 1
             logger.warning(
-                "LLM router connect error for transcript=%r", transcript,
+                "LLM router connect error for transcript=%r",
+                transcript,
             )
             return None
         except httpx.HTTPStatusError as e:
             self._total_errors += 1
             logger.warning(
                 "LLM router HTTP %d for transcript=%r",
-                e.response.status_code, transcript,
+                e.response.status_code,
+                transcript,
             )
             return None
         except httpx.HTTPError as e:
@@ -217,7 +220,9 @@ class LLMRouter:
         step_count = len(plan.steps) if plan else 0
         logger.info(
             "llm_router latency_ms=%d steps=%d transcript=%r",
-            int(elapsed_ms), step_count, transcript,
+            int(elapsed_ms),
+            step_count,
+            transcript,
         )
         return plan
 
@@ -329,7 +334,8 @@ class LLMRouter:
         except httpx.HTTPStatusError as exc:
             logger.warning(
                 "LLM router warmup HTTP %d: %s",
-                exc.response.status_code, exc,
+                exc.response.status_code,
+                exc,
             )
             return False
         except httpx.HTTPError as exc:
@@ -347,9 +353,7 @@ class LLMRouter:
     @property
     def metrics(self) -> dict[str, Any]:
         """Simple metrics snapshot."""
-        avg = (
-            self._total_latency_ms / max(self._total_calls - self._total_errors, 1)
-        )
+        avg = self._total_latency_ms / max(self._total_calls - self._total_errors, 1)
         return {
             "total_calls": self._total_calls,
             "total_timeouts": self._total_timeouts,

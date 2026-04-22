@@ -1,4 +1,5 @@
 """Startup validator: catches drift between Python tool signatures and TOML metadata."""
+
 from __future__ import annotations
 
 import inspect
@@ -42,8 +43,7 @@ def validate(registry: ToolRegistry, store: ToolMetadataStore) -> list[str]:
         sig_params = {
             name: param
             for name, param in sig.parameters.items()
-            if name != "self"
-            and param.kind not in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
+            if name != "self" and param.kind not in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
         }
 
         # Rule 2: sig param without TOML arg description
@@ -71,9 +71,7 @@ def validate(registry: ToolRegistry, store: ToolMetadataStore) -> list[str]:
             annotation = hints.get(pname)
             if annotation is None:
                 # No annotation — that's an error (tool_schema will fail)
-                errors.append(
-                    f"[rule4] Tool '{entry.name}' param '{pname}' has no type annotation"
-                )
+                errors.append(f"[rule4] Tool '{entry.name}' param '{pname}' has no type annotation")
                 continue
             if not _is_supported_type(annotation):
                 errors.append(
@@ -89,20 +87,14 @@ def validate(registry: ToolRegistry, store: ToolMetadataStore) -> list[str]:
 
     # Rule 7: required primitives (only when primitives module is discovered)
     # Check if any tool from the primitives module is registered
-    has_primitives = any(
-        "tools.primitives" in e.module for e in registry.all()
-    )
+    has_primitives = any("tools.primitives" in e.module for e in registry.all())
     if has_primitives:
         for required_name in ("no_match", "wait"):
             prim_entry = registry.by_name(required_name)
             if prim_entry is None:
-                errors.append(
-                    f"[rule7] Required primitive '{required_name}' not registered"
-                )
+                errors.append(f"[rule7] Required primitive '{required_name}' not registered")
             elif not prim_entry.llm_only:
-                errors.append(
-                    f"[rule7] Required primitive '{required_name}' must be llm_only=true"
-                )
+                errors.append(f"[rule7] Required primitive '{required_name}' must be llm_only=true")
 
     return errors
 

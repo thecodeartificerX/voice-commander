@@ -131,10 +131,7 @@ class VADGate:
                     else:
                         logger.debug("VAD speech-end detected (t=%s)", result["end"])  # type: ignore[index]
 
-                    too_short = (
-                        not force_end
-                        and self._speech_samples < self._min_speech_samples
-                    )
+                    too_short = not force_end and self._speech_samples < self._min_speech_samples
 
                     if too_short:
                         logger.debug(

@@ -7,6 +7,7 @@ Covers:
 - Prompt mentions strict execution order per the spec.
 - No legacy tool names (focus_browser, new_tab, type_text, press_keys) remain.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -42,9 +43,7 @@ def test_prompt_token_budget() -> None:
     """~4 chars/token rule-of-thumb → len(prompt) < 4000 keeps us under 1000 tokens."""
     router = _make_router()
     prompt = router._build_system_prompt()
-    assert len(prompt) < 4000, (
-        f"System prompt length {len(prompt)} exceeds the 4000-char soft cap"
-    )
+    assert len(prompt) < 4000, f"System prompt length {len(prompt)} exceeds the 4000-char soft cap"
 
 
 def test_prompt_mentions_strict_execution_order() -> None:

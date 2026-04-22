@@ -57,33 +57,39 @@ def test_all_llm_visible_filters_correctly():
     Only the first should appear in the result.
     """
     registry = ToolRegistry()
-    registry.register(ToolEntry(
-        name="alpha",
-        phrases=(),
-        func=lambda: None,
-        module="t",
-        docstring=None,
-        enabled=True,
-        llm_only=True,
-    ))
-    registry.register(ToolEntry(
-        name="beta",
-        phrases=(),
-        func=lambda: None,
-        module="t",
-        docstring=None,
-        enabled=True,
-        llm_only=False,
-    ))
-    registry.register(ToolEntry(
-        name="gamma",
-        phrases=(),
-        func=lambda: None,
-        module="t",
-        docstring=None,
-        enabled=False,
-        llm_only=True,
-    ))
+    registry.register(
+        ToolEntry(
+            name="alpha",
+            phrases=(),
+            func=lambda: None,
+            module="t",
+            docstring=None,
+            enabled=True,
+            llm_only=True,
+        )
+    )
+    registry.register(
+        ToolEntry(
+            name="beta",
+            phrases=(),
+            func=lambda: None,
+            module="t",
+            docstring=None,
+            enabled=True,
+            llm_only=False,
+        )
+    )
+    registry.register(
+        ToolEntry(
+            name="gamma",
+            phrases=(),
+            func=lambda: None,
+            module="t",
+            docstring=None,
+            enabled=False,
+            llm_only=True,
+        )
+    )
 
     visible = registry.all_llm_visible()
     visible_names = [e.name for e in visible]
@@ -91,5 +97,3 @@ def test_all_llm_visible_filters_correctly():
         f"Expected all_llm_visible() to return only the enabled+llm_only tool "
         f"('alpha'), got {visible_names}"
     )
-
-

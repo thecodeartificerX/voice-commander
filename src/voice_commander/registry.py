@@ -17,7 +17,6 @@ class DuplicateToolError(Exception):
     pass
 
 
-
 @dataclass
 class ToolEntry:
     name: str

@@ -115,9 +115,7 @@ def test_word_count_gate_drops_empty(tmp_path):
 def test_word_count_gate_passes_single_word(tmp_path):
     """A single-word transcript passes the word-count gate."""
     result = _make_result(text="copy", confidence=0.9, no_speech_prob=0.1)
-    daemon, _, llm_router, dispatcher, _ = _make_daemon(
-        result, min_word_count=1, tmp_path=tmp_path
-    )
+    daemon, _, llm_router, dispatcher, _ = _make_daemon(result, min_word_count=1, tmp_path=tmp_path)
 
     daemon._process_utterance(_DUMMY_AUDIO)
 

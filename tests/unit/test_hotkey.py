@@ -29,10 +29,12 @@ def test_multi_binding_dispatches_correct_callback():
     """Verify each key in bindings routes to its own callback."""
     fired_a = threading.Event()
     fired_b = threading.Event()
-    ctrl = HotkeyController(bindings={
-        "scroll_lock": fired_a.set,
-        "ctrl_r": fired_b.set,
-    })
+    ctrl = HotkeyController(
+        bindings={
+            "scroll_lock": fired_a.set,
+            "ctrl_r": fired_b.set,
+        }
+    )
     # Verify internal dispatch table has two entries
     assert len(ctrl._dispatch) == 2
 
@@ -44,7 +46,7 @@ def test_listener_does_not_suppress():
     try:
         assert ctrl._listener is not None
         # pynput Listener stores suppress flag; default is False
-        assert not getattr(ctrl._listener, '_suppress', True)
+        assert not getattr(ctrl._listener, "_suppress", True)
     finally:
         ctrl.stop()
 

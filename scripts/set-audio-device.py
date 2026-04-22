@@ -15,13 +15,13 @@ Exit codes:
     1  error (message printed to stderr)
 """
 
+import contextlib
 import os
 import re
 import sys
 import tempfile
 import tomllib
 from pathlib import Path
-
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.local.toml"
 
@@ -38,10 +38,8 @@ def _atomic_write(path: Path, text: str) -> None:
             fh.write(text)
         os.replace(tmp_path, path)
     except Exception:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         raise
 
 
@@ -56,7 +54,7 @@ def _patch_lines(lines: list[str], new_index: int) -> list[str]:
     audio_header_idx = -1
     out: list[str] = []
 
-    for idx, line in enumerate(lines):
+    for _idx, line in enumerate(lines):
         stripped = line.rstrip("\n").rstrip("\r")
         if section_re.match(stripped):
             in_audio = stripped.strip() == "[audio]"
@@ -66,7 +64,7 @@ def _patch_lines(lines: list[str], new_index: int) -> list[str]:
         if in_audio and not replaced:
             m = device_re.match(stripped)
             if m:
-                ending = line[len(stripped):]
+                ending = line[len(stripped) :]
                 out.append(f"{m.group(1)}{new_index}{m.group(3)}{ending}")
                 replaced = True
                 continue
@@ -86,7 +84,7 @@ def _patch_lines(lines: list[str], new_index: int) -> list[str]:
         out[-1] = out[-1] + "\n"
     if out and out[-1].strip() != "":
         out.append("\n")
-    out.extend([f"[audio]\n", f"device = {new_index}\n"])
+    out.extend(["[audio]\n", f"device = {new_index}\n"])
     return out
 
 

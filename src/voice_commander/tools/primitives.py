@@ -9,6 +9,7 @@ Two verbs shadow Python builtins — ``type`` and ``open``. Their Python symbols
 are ``type_text`` and ``open_target``; the registry exposes them under the
 short LLM-visible names via ``@tool(name=...)``.
 """
+
 from __future__ import annotations
 
 import logging
@@ -36,19 +37,37 @@ _MAX_TYPE_TEXT_LEN = 500
 # Guards against interpreter invocation and system-utility launch.
 _LAUNCH_BLOCKLIST = {
     # Shell interpreters / script hosts
-    "cmd", "cmd.exe", "powershell", "powershell.exe",
-    "pwsh", "pwsh.exe", "wscript", "wscript.exe",
-    "cscript", "cscript.exe",
+    "cmd",
+    "cmd.exe",
+    "powershell",
+    "powershell.exe",
+    "pwsh",
+    "pwsh.exe",
+    "wscript",
+    "wscript.exe",
+    "cscript",
+    "cscript.exe",
     # Admin / destructive system utilities
-    "regedit", "regedit.exe",
-    "diskmgmt.msc", "diskpart", "diskpart.exe",
-    "format", "format.com",
-    "cipher", "cipher.exe",
-    "gpedit.msc", "secpol.msc", "services.msc",
-    "shutdown", "shutdown.exe",
-    "taskkill", "taskkill.exe",
-    "rundll32", "rundll32.exe",
-    "msconfig", "msconfig.exe",
+    "regedit",
+    "regedit.exe",
+    "diskmgmt.msc",
+    "diskpart",
+    "diskpart.exe",
+    "format",
+    "format.com",
+    "cipher",
+    "cipher.exe",
+    "gpedit.msc",
+    "secpol.msc",
+    "services.msc",
+    "shutdown",
+    "shutdown.exe",
+    "taskkill",
+    "taskkill.exe",
+    "rundll32",
+    "rundll32.exe",
+    "msconfig",
+    "msconfig.exe",
 }
 
 # Deny any launch whose resolved path lives under a Windows system directory.
@@ -58,9 +77,9 @@ _SYSTEM_PATH_RE = re.compile(r"[\\/](System32|SysWOW64|WinSxS)[\\/]", re.IGNOREC
 # sorted lowercase token set, so "shift+delete", "Delete+Shift", "SHIFT+DEL"
 # all match the same blocked chord.
 _PRESS_BLOCKLIST: set[frozenset[str]] = {
-    frozenset({"shift", "delete"}),   # permanent delete, bypasses Recycle Bin
+    frozenset({"shift", "delete"}),  # permanent delete, bypasses Recycle Bin
     frozenset({"shift", "del"}),
-    frozenset({"win", "r"}),          # Run dialog — script / command entry
+    frozenset({"win", "r"}),  # Run dialog — script / command entry
 }
 
 # How long to poll EnumWindows after an open() before giving up.
@@ -119,8 +138,7 @@ def focus(target: str) -> None:
         _do_focus(target_hwnd, foreground_tid, target_tid)
     except Exception as exc:
         raise FocusWindowError(
-            f"SetForegroundWindow failed for target={target!r} "
-            f"hwnd={target_hwnd}: {exc}"
+            f"SetForegroundWindow failed for target={target!r} hwnd={target_hwnd}: {exc}"
         ) from exc
 
     if not _verify_foreground(target_hwnd):
@@ -145,7 +163,9 @@ def type_text(text: str) -> None:
     """
     if len(text) > _MAX_TYPE_TEXT_LEN:
         logger.warning(
-            "type truncated: %d chars > %d max", len(text), _MAX_TYPE_TEXT_LEN,
+            "type truncated: %d chars > %d max",
+            len(text),
+            _MAX_TYPE_TEXT_LEN,
         )
         text = text[:_MAX_TYPE_TEXT_LEN]
     pyautogui.write(text, interval=0.02)
@@ -175,7 +195,8 @@ def open_target(target: str) -> None:
     raw_basename = os.path.basename(target).lower()
     if raw_basename in _LAUNCH_BLOCKLIST:
         logger.warning(
-            "open blocked destructive raw target: target=%r", target,
+            "open blocked destructive raw target: target=%r",
+            target,
         )
         return
 
@@ -187,7 +208,8 @@ def open_target(target: str) -> None:
     if token_basename in _LAUNCH_BLOCKLIST:
         logger.warning(
             "open blocked destructive resolved token: target=%r token=%r",
-            target, token,
+            target,
+            token,
         )
         return
 
@@ -197,15 +219,12 @@ def open_target(target: str) -> None:
     if _SYSTEM_PATH_RE.search(token):
         logger.warning(
             "open blocked system-path target: target=%r token=%r",
-            target, token,
+            target,
+            token,
         )
         return
 
-    try:
-        os.startfile(token)
-    except OSError:
-        logger.exception("open() failed for target=%r token=%r", target, token)
-        return
+    os.startfile(token)
 
     _verify_open(target)
 
@@ -245,14 +264,18 @@ def _verify_open(target: str) -> None:
         if best_score >= _OPEN_VERIFY_FUZZY_THRESHOLD:
             logger.info(
                 "open verified: target=%r hwnd=%d title=%r score=%d",
-                target, best_hwnd, best_title, best_score,
+                target,
+                best_hwnd,
+                best_title,
+                best_score,
             )
             return
         time.sleep(poll_s)
 
     logger.warning(
         "open verify timeout: target=%r (no matching window within %d ms)",
-        target, _OPEN_VERIFY_TIMEOUT_MS,
+        target,
+        _OPEN_VERIFY_TIMEOUT_MS,
     )
 
 
@@ -348,7 +371,9 @@ def _close_with_verify(combo: tuple[str, ...], *, verb: str) -> None:
 
     logger.warning(
         "%s verify timeout: foreground hwnd unchanged (hwnd=%d) after %d ms",
-        verb, before_hwnd, _CLOSE_VERIFY_TIMEOUT_MS,
+        verb,
+        before_hwnd,
+        _CLOSE_VERIFY_TIMEOUT_MS,
     )
 
 
@@ -370,7 +395,8 @@ def press(combo: str) -> None:
     if key_set in _PRESS_BLOCKLIST:
         logger.warning(
             "press blocked destructive chord: combo=%r (normalized=%s)",
-            combo, "+".join(sorted(key_set)),
+            combo,
+            "+".join(sorted(key_set)),
         )
         return
     pyautogui.hotkey(*keys)
