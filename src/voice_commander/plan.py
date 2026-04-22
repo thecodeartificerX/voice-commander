@@ -64,3 +64,17 @@ class PlanOutcome:
             error_msg=d.get("error_msg"),
             duration_ms=int(d.get("duration_ms", 0)),
         )
+
+    @classmethod
+    def try_from_event_dict(cls, d: dict[str, Any]) -> PlanOutcome | None:
+        """Return a PlanOutcome parsed from *d*, or ``None`` on any parse failure.
+
+        Catches ``KeyError``, ``ValueError``, and ``TypeError`` — the three
+        exceptions ``from_event_dict`` can raise on malformed input.  Callers
+        that cannot guarantee a well-formed dict should prefer this over a bare
+        ``try/except``.
+        """
+        try:
+            return cls.from_event_dict(d)
+        except (KeyError, ValueError, TypeError):
+            return None
