@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -78,8 +79,6 @@ def test_strips_and_truncates_content():
 
 def test_log_once_offline_first_call_warns_second_call_debugs(caplog):
     """First ConnectError → WARNING; second → DEBUG; flag flips exactly once."""
-    import logging
-
     client = LLMSummaryClient("http://localhost:1234/v1", "m", timeout_ms=800)
     mock_post = MagicMock(side_effect=httpx.ConnectError("refused"))
 
@@ -104,8 +103,6 @@ def test_log_once_offline_first_call_warns_second_call_debugs(caplog):
 
 def test_log_once_malformed_first_call_warns_second_call_debugs(caplog):
     """First malformed response → WARNING; second → DEBUG; flag flips exactly once."""
-    import logging
-
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
     resp.json.side_effect = ValueError("bad json")
