@@ -117,7 +117,7 @@ def test_reverse_time_order_entries_newest_appended_first():
 
 
 def test_tick_clock_skew_opacity_never_negative():
-    """tick(now_s) with now_s < born_at_s: age is negative, opacity returns 1.0 (treated as still-in-hold)."""
+    """now_s < born_at_s (clock skew): negative age → opacity is 1.0, entry is not evicted."""
     log = ChatLog(max_lines=3, hold_ms=1000, fade_ms=1000)
     e = _entry("future", born_at_s=10.0)
     log.append(e)
@@ -148,7 +148,7 @@ def test_both_zero_ms_entry_instantly_invisible():
     log = ChatLog(max_lines=3, hold_ms=0, fade_ms=0)
     e = _entry("x", 0.0)
     log.append(e)
-    assert log.opacity_of(e, 0.0) == 0.0   # instantly opaque-zero at birth
+    assert log.opacity_of(e, 0.0) == 0.0   # instantly invisible at birth
     assert log.opacity_of(e, 1.0) == 0.0
     log.tick(0.0)
     assert log.entries() == []              # immediately evicted
