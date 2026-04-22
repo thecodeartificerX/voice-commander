@@ -91,12 +91,11 @@ def _require_int(
         raise SpriteConfigError(
             f"[{table}] {key}: expected int, got {type(raw).__name__} {raw!r}"
         )
-    val = raw
-    if min_val is not None and val < min_val:
-        raise SpriteConfigError(f"[{table}] {key}: must be >= {min_val}, got {val}")
-    if max_val is not None and val > max_val:
-        raise SpriteConfigError(f"[{table}] {key}: must be <= {max_val}, got {val}")
-    return val
+    if min_val is not None and raw < min_val:
+        raise SpriteConfigError(f"[{table}] {key}: must be >= {min_val}, got {raw}")
+    if max_val is not None and raw > max_val:
+        raise SpriteConfigError(f"[{table}] {key}: must be <= {max_val}, got {raw}")
+    return raw
 
 
 def _require_float(
@@ -126,51 +125,45 @@ def _require_bool(table: str, key: str, raw: Any) -> bool:
     return raw
 
 
+def _opt_int(
+    table: str,
+    d: dict[str, Any],
+    key: str,
+    default: int,
+    *,
+    min_val: int | None = None,
+    max_val: int | None = None,
+) -> int:
+    if key not in d:
+        return default
+    return _require_int(table, key, d[key], min_val=min_val, max_val=max_val)
+
+
+def _opt_float(
+    table: str,
+    d: dict[str, Any],
+    key: str,
+    default: float,
+    *,
+    min_exclusive: float | None = None,
+) -> float:
+    return _require_float(table, key, d[key], min_exclusive=min_exclusive) if key in d else default
+
+
+def _opt_bool(table: str, d: dict[str, Any], key: str, default: bool) -> bool:
+    return _require_bool(table, key, d[key]) if key in d else default
+
+
 def _build_hud(hud_raw: dict[str, Any]) -> HudConfig:
     return HudConfig(
-        enabled=(
-            _require_bool("hud", "enabled", hud_raw["enabled"]) if "enabled" in hud_raw else True
-        ),
-        max_lines=(
-            _require_int("hud", "max_lines", hud_raw["max_lines"], min_val=1)
-            if "max_lines" in hud_raw
-            else 5
-        ),
-        hold_ms=(
-            _require_int("hud", "hold_ms", hud_raw["hold_ms"], min_val=0)
-            if "hold_ms" in hud_raw
-            else 4000
-        ),
-        fade_ms=(
-            _require_int("hud", "fade_ms", hud_raw["fade_ms"], min_val=0)
-            if "fade_ms" in hud_raw
-            else 3000
-        ),
-        font_size=(
-            _require_int("hud", "font_size", hud_raw["font_size"], min_val=1)
-            if "font_size" in hud_raw
-            else 13
-        ),
-        width_px=(
-            _require_int("hud", "width_px", hud_raw["width_px"], min_val=1)
-            if "width_px" in hud_raw
-            else 220
-        ),
-        llm_summary_timeout_ms=(
-            _require_int(
-                "hud",
-                "llm_summary_timeout_ms",
-                hud_raw["llm_summary_timeout_ms"],
-                min_val=1,
-            )
-            if "llm_summary_timeout_ms" in hud_raw
-            else 800
-        ),
-        llm_fallback_enabled=(
-            _require_bool("hud", "llm_fallback_enabled", hud_raw["llm_fallback_enabled"])
-            if "llm_fallback_enabled" in hud_raw
-            else True
-        ),
+        enabled=_opt_bool("hud", hud_raw, "enabled", True),
+        max_lines=_opt_int("hud", hud_raw, "max_lines", 5, min_val=1),
+        hold_ms=_opt_int("hud", hud_raw, "hold_ms", 4000, min_val=0),
+        fade_ms=_opt_int("hud", hud_raw, "fade_ms", 3000, min_val=0),
+        font_size=_opt_int("hud", hud_raw, "font_size", 13, min_val=1),
+        width_px=_opt_int("hud", hud_raw, "width_px", 220, min_val=1),
+        llm_summary_timeout_ms=_opt_int("hud", hud_raw, "llm_summary_timeout_ms", 800, min_val=1),
+        llm_fallback_enabled=_opt_bool("hud", hud_raw, "llm_fallback_enabled", True),
         llm_endpoint_url=str(hud_raw.get("llm_endpoint_url", "http://localhost:1234/v1")),
         llm_model_id=str(hud_raw.get("llm_model_id", "google/gemma-4-e4b")),
     )
@@ -198,83 +191,20 @@ def load_sprite_config(
     return SpriteAppConfig(
         daemon_url=daemon_url,
         corner=sprite_raw.get("corner", "bottom_right"),
-        base_size_px=(
-            _require_int("sprite", "base_size_px", sprite_raw["base_size_px"], min_val=1)
-            if "base_size_px" in sprite_raw
-            else 128
-        ),
-        offset_x=(
-            _require_int("sprite", "offset_x", sprite_raw["offset_x"])
-            if "offset_x" in sprite_raw
-            else 16
-        ),
-        offset_y=(
-            _require_int("sprite", "offset_y", sprite_raw["offset_y"])
-            if "offset_y" in sprite_raw
-            else 16
-        ),
+        base_size_px=_opt_int("sprite", sprite_raw, "base_size_px", 128, min_val=1),
+        offset_x=_opt_int("sprite", sprite_raw, "offset_x", 16),
+        offset_y=_opt_int("sprite", sprite_raw, "offset_y", 16),
         asset_path=sprite_raw.get("asset_path", "assets/sprite"),
-        bubble_fade_ms=(
-            _require_int(
-                "sprite",
-                "bubble_fade_ms",
-                sprite_raw["bubble_fade_ms"],
-                min_val=0,
-            )
-            if "bubble_fade_ms" in sprite_raw
-            else 2000
+        bubble_fade_ms=_opt_int("sprite", sprite_raw, "bubble_fade_ms", 2000, min_val=0),
+        heartbeat_timeout_ms=_opt_int(
+            "sprite", sprite_raw, "heartbeat_timeout_ms", 3000, min_val=1
         ),
-        heartbeat_timeout_ms=(
-            _require_int(
-                "sprite",
-                "heartbeat_timeout_ms",
-                sprite_raw["heartbeat_timeout_ms"],
-                min_val=1,
-            )
-            if "heartbeat_timeout_ms" in sprite_raw
-            else 3000
-        ),
-        render_scale=(
-            _require_float(
-                "sprite",
-                "render_scale",
-                sprite_raw["render_scale"],
-                min_exclusive=0.0,
-            )
-            if "render_scale" in sprite_raw
-            else 0.75
-        ),
-        y_nudge_px=(
-            _require_int("sprite", "y_nudge_px", sprite_raw["y_nudge_px"])
-            if "y_nudge_px" in sprite_raw
-            else 16
-        ),
-        follow_cursor=(
-            _require_bool("sprite", "follow_cursor", sprite_raw["follow_cursor"])
-            if "follow_cursor" in sprite_raw
-            else True
-        ),
-        follow_poll_hz=(
-            _require_int(
-                "sprite",
-                "follow_poll_hz",
-                sprite_raw["follow_poll_hz"],
-                min_val=1,
-                max_val=60,
-            )
-            if "follow_poll_hz" in sprite_raw
-            else 30
-        ),
-        margin_x=(
-            _require_int("sprite", "margin_x", sprite_raw["margin_x"], min_val=0)
-            if "margin_x" in sprite_raw
-            else 8
-        ),
-        margin_y=(
-            _require_int("sprite", "margin_y", sprite_raw["margin_y"], min_val=0)
-            if "margin_y" in sprite_raw
-            else 8
-        ),
+        render_scale=_opt_float("sprite", sprite_raw, "render_scale", 0.75, min_exclusive=0.0),
+        y_nudge_px=_opt_int("sprite", sprite_raw, "y_nudge_px", 16),
+        follow_cursor=_opt_bool("sprite", sprite_raw, "follow_cursor", True),
+        follow_poll_hz=_opt_int("sprite", sprite_raw, "follow_poll_hz", 30, min_val=1, max_val=60),
+        margin_x=_opt_int("sprite", sprite_raw, "margin_x", 8, min_val=0),
+        margin_y=_opt_int("sprite", sprite_raw, "margin_y", 8, min_val=0),
         hud=_build_hud(hud_raw),
     )
 
