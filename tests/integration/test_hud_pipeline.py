@@ -10,16 +10,19 @@ loop required.
 from __future__ import annotations
 
 import threading
-import time
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from voice_commander.plan import PlanOutcome, ToolCall
-from voice_sprite.chat_log import ChatLog, ChatLogEntry
+from voice_sprite.chat_log import ChatLog
 from voice_sprite.summarizer import Summarizer
 from voice_sprite.summary_rules import CHAIN_DETECTORS, RULES
 
+if TYPE_CHECKING:
+    from voice_sprite.__main__ import HUDPipeline
 
-def _make_pipeline(chat_log: ChatLog) -> "HUDPipeline":
+
+def _make_pipeline(chat_log: ChatLog) -> HUDPipeline:
     from voice_sprite.__main__ import HUDPipeline
 
     sm = MagicMock()

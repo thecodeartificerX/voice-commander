@@ -49,7 +49,7 @@ def test_on_draw_returns_early_when_no_image():
     bubble = MagicMock()
     hud = MagicMock()
 
-    with patch.object(_mod, "pyglet") as pg:
+    with patch.object(_mod, "pyglet"):
         win = _make_window(renderer, bubble, hud_renderer=hud, image=None)
         win.clear = MagicMock()
         win.on_draw()
