@@ -28,9 +28,13 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         super().__init__(
             width=width,
             height=height,
-            style=pyglet.window.Window.WINDOW_STYLE_BORDERLESS,
+            style=pyglet.window.Window.WINDOW_STYLE_TRANSPARENT,
             vsync=False,
         )
+        # Clear to fully transparent (default pyglet clear is opaque black,
+        # which would fill the window with a black rectangle and defeat the
+        # WS_EX_LAYERED / WINDOW_STYLE_TRANSPARENT setup).
+        pyglet.gl.glClearColor(0, 0, 0, 0)
         self.set_location(x, y)
         self._renderer = renderer
         self._bubble = bubble
