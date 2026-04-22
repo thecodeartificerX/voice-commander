@@ -101,23 +101,23 @@ def test_reverse_time_order_entries_newest_appended_first():
     """Appending entries with decreasing born_at_s: entries() is newest-appended-first,
     and opacity is computed from each entry's own born_at_s regardless of insert order."""
     log = ChatLog(max_lines=3, hold_ms=1000, fade_ms=1000)
-    late = _entry("late", born_at_s=5.0)
-    early = _entry("early", born_at_s=1.0)
-    log.append(late)
-    log.append(early)
-    # newest-inserted is first
+    first_inserted = _entry("first_inserted", born_at_s=5.0)   # older born_at, appended first
+    second_inserted = _entry("second_inserted", born_at_s=1.0) # newer born_at, appended second
+    log.append(first_inserted)
+    log.append(second_inserted)
+    # second_inserted is newest-appended → appears first
     texts = [e.text for e in log.entries()]
-    assert texts == ["early", "late"]
+    assert texts == ["second_inserted", "first_inserted"]
     # opacity is from born_at_s, not insertion position
     now = 5.5
-    # late: born=5.0, now=5.5, age=0.5 < hold_s=1.0 → still in hold → 1.0
-    assert log.opacity_of(late, now) == pytest.approx(1.0)
-    # early: born=1.0, now=5.5, age=4.5, hold_s=1.0, fade_s=1.0 → t=3.5 → clamped 0.0
-    assert log.opacity_of(early, now) == pytest.approx(0.0, abs=1e-9)
+    # first_inserted: born=5.0, now=5.5, age=0.5 < hold_s=1.0 → still in hold → 1.0
+    assert log.opacity_of(first_inserted, now) == pytest.approx(1.0)
+    # second_inserted: born=1.0, now=5.5, age=4.5, hold_s=1.0, fade_s=1.0 → t=3.5 → clamped 0.0
+    assert log.opacity_of(second_inserted, now) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_tick_clock_skew_opacity_never_negative():
-    """tick(now_s) with now_s < born_at_s: age is negative, opacity clamps to 1.0."""
+    """tick(now_s) with now_s < born_at_s: age is negative, opacity returns 1.0 (treated as still-in-hold)."""
     log = ChatLog(max_lines=3, hold_ms=1000, fade_ms=1000)
     e = _entry("future", born_at_s=10.0)
     log.append(e)
@@ -127,3 +127,28 @@ def test_tick_clock_skew_opacity_never_negative():
     # tick with skewed clock must not evict the entry
     log.tick(5.0)
     assert len(log.entries()) == 1
+
+
+@pytest.mark.parametrize("bad_hold_ms", [-1, -1000])
+def test_invalid_hold_ms_raises(bad_hold_ms: int):
+    """hold_ms < 0 must raise ValueError."""
+    with pytest.raises(ValueError):
+        ChatLog(max_lines=3, hold_ms=bad_hold_ms, fade_ms=1000)
+
+
+@pytest.mark.parametrize("bad_fade_ms", [-1, -1000])
+def test_invalid_fade_ms_raises(bad_fade_ms: int):
+    """fade_ms < 0 must raise ValueError."""
+    with pytest.raises(ValueError):
+        ChatLog(max_lines=3, hold_ms=1000, fade_ms=bad_fade_ms)
+
+
+def test_both_zero_ms_entry_instantly_invisible():
+    """hold_ms=0, fade_ms=0: opacity is 0.0 at birth and entry evicted on first tick."""
+    log = ChatLog(max_lines=3, hold_ms=0, fade_ms=0)
+    e = _entry("x", 0.0)
+    log.append(e)
+    assert log.opacity_of(e, 0.0) == 0.0   # instantly opaque-zero at birth
+    assert log.opacity_of(e, 1.0) == 0.0
+    log.tick(0.0)
+    assert log.entries() == []              # immediately evicted
