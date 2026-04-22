@@ -42,6 +42,11 @@ def main() -> None:
     _configure_logging()
     logger.info("voice-sprite starting")
 
+    # Must run BEFORE the first pyglet window is constructed.
+    import ctypes, contextlib
+    with contextlib.suppress(AttributeError, OSError):
+        ctypes.windll.shcore.SetProcessDpiAwarenessContext(-4)
+
     from .charsheet import CharSheetError, load_charsheet
     from .config import load_sprite_config
     from .dpi import get_primary_dpi
@@ -163,6 +168,20 @@ def main() -> None:
 
     window.load_charsheet_image(str(png_path))
     window.apply_win32_flags()
+
+    # Cursor-follow docking
+    if cfg.follow_cursor:
+        from .cursor_tracker import CursorDock
+        dock = CursorDock(
+            window=window,
+            sprite_base_size_px=cfg.base_size_px,
+            window_extra_w_px=cfg.hud.width_px if cfg.hud.enabled else 0,
+            window_extra_h_px=0,
+            margin_x=cfg.margin_x,
+            margin_y=cfg.margin_y,
+        )
+        pyglet.clock.schedule_interval(dock.tick, 1.0 / max(1, cfg.follow_poll_hz))
+        logger.info("CursorDock scheduled at %d Hz", cfg.follow_poll_hz)
 
     # Hot-reload: check charsheet file mtime every 2 seconds
     _last_toml_mtime = toml_path.stat().st_mtime if toml_path.exists() else 0
