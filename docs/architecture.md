@@ -540,6 +540,7 @@ HotkeyCtrl ──▶ VADGate ──▶ Dispatcher         httpx SSE client
 - `state_machine.py` — 11 states, event→state mapping, heartbeat timeout
 - `event_client.py` — httpx-sse with exponential backoff reconnect
 - `charsheet.py` — TOML parser + PNG bounds validator
+- `plan_outcome_handler.py` — `handle_plan_outcome`: parses `plan_outcome` SSE event dict into a `ChatLog` entry; called directly from the SSE thread
 - `sprite_renderer.py` — frame selection + animation timing
 - `window.py` — pyglet Window with Win32 click-through flags
 - `speech_bubble.py` — fading last-command label
@@ -560,12 +561,13 @@ HotkeyCtrl ──▶ VADGate ──▶ Dispatcher         httpx SSE client
 
 - **`PlanOutcome`** (daemon — `src/voice_commander/plan.py`) — frozen
   dataclass carrying the full outcome of one command cycle.
+- **`handle_plan_outcome`** (sprite — `src/voice_sprite/plan_outcome_handler.py`) — parses the `plan_outcome` SSE event dict, calls `Summarizer.summarize()`, and appends a `ChatLogEntry` directly from the SSE thread. Parse failures are swallowed; summarizer exceptions fall back to the raw transcript.
 - **`Summarizer`** (sprite — `src/voice_sprite/summarizer.py`) — routes
   rule → chain-detector → LLM fallback → raw fallback.
 - **`RULES` + `CHAIN_DETECTORS`** (sprite — `summary_rules.py`).
 - **`LLMSummaryClient`** (sprite — `llm_summary_client.py`) — httpx client
   for LM Studio; 800 ms deadline; returns None on any failure.
-- **`ChatLog`** (sprite — `chat_log.py`) — ring buffer + fade curve.
+- **`ChatLog`** (sprite — `chat_log.py`) — ring buffer + fade curve. `append()` is called from the SSE thread (not deferred to the pyglet main thread).
 - **`ChatLogRenderer`** (sprite — `chat_log_renderer.py`) — pyglet labels.
 
 ### Event

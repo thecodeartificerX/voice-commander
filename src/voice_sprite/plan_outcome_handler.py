@@ -31,11 +31,8 @@ def handle_plan_outcome(
     raw_text: str = data.get("transcript", "")
     try:
         outcome = PlanOutcome.from_event_dict(data)
-    except (KeyError, ValueError, TypeError):
-        logger.warning(
-            "Failed to parse PlanOutcome — swallowed",
-            exc_info=True,
-        )
+    except (KeyError, ValueError, TypeError, AttributeError):
+        logger.exception("Failed to parse PlanOutcome — falling back to raw transcript")
         if raw_text:
             chat_log.append(
                 ChatLogEntry(
@@ -58,7 +55,7 @@ def handle_plan_outcome(
     chat_log.append(
         ChatLogEntry(
             text=summary,
-            status=outcome.status,  # type: ignore[arg-type]
+            status=outcome.status,
             born_at_s=now_provider(),
         )
     )

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock
+
+import pytest
 
 from voice_sprite.chat_log import ChatLog
 from voice_sprite.plan_outcome_handler import handle_plan_outcome
@@ -51,14 +54,19 @@ def test_malformed_dict_swallowed_with_warning(caplog):
 
     summarizer = MagicMock()
     log = _chat_log()
-    bad_data: dict = {"not_transcript": "x"}  # missing "transcript" key on parse
+    # all required PlanOutcome fields absent → KeyError in from_event_dict
+    # no transcript → no fallback entry
+    bad_data: dict = {"not_transcript": "x"}
 
     with caplog.at_level(logging.WARNING, logger="voice_sprite.plan_outcome_handler"):
         handle_plan_outcome(bad_data, summarizer, log)  # must not raise
 
     summarizer.summarize.assert_not_called()
+    assert log.entries() == []
     assert any(
-        "swallowed" in r.message.lower() or "parse" in r.message.lower()
+        "swallowed" in r.message.lower()
+        or "parse" in r.message.lower()
+        or "falling back" in r.message.lower()
         for r in caplog.records
     )
 
@@ -126,3 +134,58 @@ def test_summarizer_exception_falls_back_to_raw_text(caplog):
     assert entries[0].text == "open spotify"  # raw transcript from _valid_data
     assert entries[0].status == "ok"
     assert any("fallback" in r.message.lower() for r in caplog.records)
+
+
+# --- parse exception variants ---
+
+
+@pytest.mark.parametrize(
+    "bad_data,exc_type_label",
+    [
+        # KeyError — missing "name" in steps dict
+        ({"transcript": "copy that", "steps": [{"bad": "data"}]}, "KeyError"),
+        # TypeError — steps is not iterable as expected (wrong type)
+        ({"transcript": "copy that", "steps": "not_a_list"}, "TypeError"),
+    ],
+)
+def test_parse_exception_variants_append_raw_text(bad_data: dict, exc_type_label: str) -> None:
+    """KeyError, TypeError during parse each fall back to raw-transcript error entry."""
+    summarizer = MagicMock()
+    log = _chat_log()
+
+    handle_plan_outcome(bad_data, summarizer, log)
+
+    entries = log.entries()
+    assert len(entries) == 1, f"Expected 1 error entry for {exc_type_label}"
+    assert entries[0].text == "copy that"
+    assert entries[0].status == "error"
+
+
+# --- thread safety ---
+
+
+def test_handle_plan_outcome_thread_safe_appends() -> None:
+    """Concurrent calls from N threads each produce exactly one entry (no race)."""
+    n = 20
+    log = ChatLog(max_lines=n + 5, hold_ms=3000, fade_ms=1000)
+    errors: list[Exception] = []
+    barrier = threading.Barrier(n)
+
+    def worker(i: int) -> None:
+        summarizer = MagicMock()
+        summarizer.summarize.return_value = f"step {i}"
+        data = _valid_data()
+        barrier.wait()
+        try:
+            handle_plan_outcome(data, summarizer, log)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == [], f"Exceptions raised during concurrent calls: {errors}"
+    assert len(log.entries()) == n

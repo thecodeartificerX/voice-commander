@@ -73,6 +73,7 @@ voice-commander/
 │   ├── dpi.py                    # per-monitor DPI queries via shcore.dll
 │   ├── event_client.py           # httpx-sse consumer with auto-reconnect
 │   ├── llm_summary_client.py     # HTTP client for LM Studio one-shot summarization
+│   ├── plan_outcome_handler.py   # handle_plan_outcome: parses plan_outcome SSE event → ChatLog entry
 │   ├── speech_bubble.py          # fading label overlay
 │   ├── sprite_renderer.py        # frame selection + animation timing
 │   ├── state_machine.py          # 11-state FSM + heartbeat timeout
