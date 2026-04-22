@@ -110,7 +110,16 @@ def main() -> None:
 
     from .window import SpriteWindow
 
-    window = SpriteWindow(width=size, height=size, x=x, y=y, renderer=renderer, bubble=bubble)
+    window = SpriteWindow(
+        width=size,
+        height=size,
+        x=x,
+        y=y,
+        renderer=renderer,
+        bubble=bubble,
+        render_scale=cfg.render_scale,
+        y_nudge_px=cfg.y_nudge_px,
+    )
     window.load_charsheet_image(str(png_path))
     window.apply_win32_flags()
 

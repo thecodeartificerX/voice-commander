@@ -18,6 +18,11 @@ class SpriteAppConfig:
     asset_path: str = "assets/sprite"
     bubble_fade_ms: int = 2000
     heartbeat_timeout_ms: int = 3000
+    # Render tuning — tweak without touching code. render_scale shrinks the
+    # sprite below the window edges (1.0 = fills, 0.75 = 75 % of window size),
+    # y_nudge_px shifts it up (positive) or down (negative) from centre.
+    render_scale: float = 0.75
+    y_nudge_px: int = 16
 
 
 def load_sprite_config(
@@ -48,6 +53,8 @@ def load_sprite_config(
         asset_path=sprite_raw.get("asset_path", "assets/sprite"),
         bubble_fade_ms=sprite_raw.get("bubble_fade_ms", 2000),
         heartbeat_timeout_ms=sprite_raw.get("heartbeat_timeout_ms", 3000),
+        render_scale=sprite_raw.get("render_scale", 0.75),
+        y_nudge_px=sprite_raw.get("y_nudge_px", 16),
     )
 
 

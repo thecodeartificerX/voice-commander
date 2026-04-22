@@ -26,6 +26,8 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         y: int,
         renderer: SpriteRenderer,
         bubble: SpeechBubble,
+        render_scale: float = 1.0,
+        y_nudge_px: int = 0,
     ) -> None:
         # WINDOW_STYLE_OVERLAY (pyglet 2.1+) = borderless + per-pixel alpha +
         # topmost + click-through + no-activate in one flag. WINDOW_STYLE_BORDERLESS
@@ -54,6 +56,10 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         # Set by load_charsheet_image. Always >= 1; on_draw multiplies source
         # coords by this to index into the pre-upscaled charsheet.
         self._upscale_factor: int = 1
+        # Render tuning — tweak live via config.toml (sprite.render_scale,
+        # sprite.y_nudge_px) to size + position the cat within the window.
+        self._render_scale = render_scale
+        self._y_nudge_px = y_nudge_px
 
     def load_charsheet_image(self, png_path: str) -> None:
         """Load the charsheet PNG, pre-upscaled with nearest-neighbour so each
@@ -123,10 +129,31 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
             self._cached_frame_key = frame_key
         region = self._cached_region
 
-        # Centre the upscaled frame in the window.
-        blit_x = (self.width - region.width) // 2
-        blit_y = (self.height - region.height) // 2
-        region.blit(blit_x, blit_y, 0)
+        # Render-tuning: shrink the upscaled frame (render_scale < 1.0 leaves a
+        # margin around the sprite) and nudge it up/down (y_nudge_px positive
+        # shifts toward the top of the window, since pyglet y=0 is bottom).
+        #
+        # We can't re-scale the region itself via blit(), so we re-extract the
+        # region into a dynamically-sized texture when render_scale != 1.0:
+        # use a pyglet image copy + set_scale on a persistent sprite object.
+        blit_w = int(region.width * self._render_scale)
+        blit_h = int(region.height * self._render_scale)
+        blit_x = (self.width - blit_w) // 2
+        blit_y = (self.height - blit_h) // 2 + self._y_nudge_px
+        if self._render_scale == 1.0:
+            region.blit(blit_x, blit_y, 0)
+        else:
+            # Reuse a single Sprite object; only reset image when the source
+            # region changes (cache invalidation already gated above).
+            if self._sprite is None or self._sprite.image is not region:
+                if self._sprite is None:
+                    self._sprite = pyglet.sprite.Sprite(region, x=blit_x, y=blit_y)
+                else:
+                    self._sprite.image = region
+            self._sprite.x = blit_x
+            self._sprite.y = blit_y
+            self._sprite.scale = self._render_scale
+            self._sprite.draw()
 
         # Speech bubble
         if self._bubble.visible:

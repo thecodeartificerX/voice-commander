@@ -62,3 +62,5 @@ offset_y = 16  # pixel gap from the chosen corner along the Y axis
 asset_path = "assets/sprite"
 bubble_fade_ms = 2000  # speech-bubble fade-out duration after each utterance
 heartbeat_timeout_ms = 3000  # sprite flips to CRASHED if no daemon heartbeat within this many ms
+render_scale = 0.75  # fraction of window the cat fills (1.0 = edge-to-edge, 0.75 = 75 % with margin)
+y_nudge_px = 16  # pixels to shift the cat upward from centre (positive = up)
