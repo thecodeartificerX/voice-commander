@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pyglet
 
 if TYPE_CHECKING:
+    from .chat_log_renderer import ChatLogRenderer
     from .speech_bubble import SpeechBubble
     from .sprite_renderer import SpriteRenderer
 
@@ -42,6 +43,10 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         bubble: SpeechBubble,
         render_scale: float = 1.0,
         y_nudge_px: int = 0,
+        *,
+        hud_renderer: "ChatLogRenderer | None" = None,
+        sprite_region_x: int = 0,
+        sprite_region_w: int | None = None,
     ) -> None:
         gl_config = pyglet.gl.Config(  # type: ignore[abstract]
             alpha_size=8,
@@ -97,6 +102,9 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._bubble = bubble
         self._render_scale = render_scale
         self._y_nudge_px = y_nudge_px
+        self._hud_renderer = hud_renderer
+        self._sprite_region_x = sprite_region_x
+        self._sprite_region_w = sprite_region_w if sprite_region_w is not None else width
 
         self._image: pyglet.image.AbstractImage | None = None
         self._sprite: pyglet.sprite.Sprite | None = None
@@ -152,16 +160,17 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
             self._cached_frame_key = frame_key
         region = self._cached_region
 
-        # Fit the source frame to the window, then apply the configurable
-        # render_scale shrink factor. render_scale=1.0 fills the window
-        # edge-to-edge; 0.75 leaves a 12.5 % margin each side so the cat
-        # does not clip at the window borders.
-        fit_scale = min(self.width / w, self.height / h)
+        # Fit the source frame into the sprite sub-region of the window,
+        # then apply the configurable render_scale shrink factor.
+        # render_scale=1.0 fills the region edge-to-edge; 0.75 adds margin.
+        region_w = self._sprite_region_w
+        region_h = self.height
+        fit_scale = min(region_w / w, region_h / h)
         final_scale = fit_scale * self._render_scale
         disp_w = w * final_scale
         disp_h = h * final_scale
-        sprite_x = (self.width - disp_w) / 2
-        sprite_y = (self.height - disp_h) / 2 + self._y_nudge_px
+        sprite_x = self._sprite_region_x + (region_w - disp_w) / 2
+        sprite_y = (region_h - disp_h) / 2 + self._y_nudge_px
 
         if self._sprite is None:
             self._sprite = pyglet.sprite.Sprite(region, x=sprite_x, y=sprite_y)
@@ -180,6 +189,9 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._sprite.scale = final_scale
         self._sprite.color = self._mute_color if self._muted else (255, 255, 255)
         self._sprite.draw()
+
+        if self._hud_renderer is not None:
+            self._hud_renderer.draw()
 
         if self._bubble.visible:
             if self._label is None:
