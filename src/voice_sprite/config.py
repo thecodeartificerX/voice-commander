@@ -79,21 +79,23 @@ def _require_int(
     key: str,
     raw: Any,
     *,
-    min: int | None = None,
-    max: int | None = None,
+    min_val: int | None = None,
+    max_val: int | None = None,
 ) -> int:
+    # bool subclasses int in Python; reject it so TOML `true` doesn't coerce to 1.
     if isinstance(raw, bool):
         raise SpriteConfigError(f"[{table}] {key}: expected int, got bool {raw!r}")
-    try:
-        val = int(raw)
-    except (TypeError, ValueError) as exc:
+    if isinstance(raw, float):
+        raise SpriteConfigError(f"[{table}] {key}: expected int, got float {raw!r}")
+    if not isinstance(raw, int):
         raise SpriteConfigError(
             f"[{table}] {key}: expected int, got {type(raw).__name__} {raw!r}"
-        ) from exc
-    if min is not None and val < min:
-        raise SpriteConfigError(f"[{table}] {key}: must be >= {min}, got {val}")
-    if max is not None and val > max:
-        raise SpriteConfigError(f"[{table}] {key}: must be <= {max}, got {val}")
+        )
+    val = raw
+    if min_val is not None and val < min_val:
+        raise SpriteConfigError(f"[{table}] {key}: must be >= {min_val}, got {val}")
+    if max_val is not None and val > max_val:
+        raise SpriteConfigError(f"[{table}] {key}: must be <= {max_val}, got {val}")
     return val
 
 
@@ -104,6 +106,7 @@ def _require_float(
     *,
     min_exclusive: float | None = None,
 ) -> float:
+    # bool subclasses int (and int → float); reject it so TOML `true` doesn't coerce to 1.0.
     if isinstance(raw, bool):
         raise SpriteConfigError(f"[{table}] {key}: expected float, got bool {raw!r}")
     try:
@@ -129,27 +132,27 @@ def _build_hud(hud_raw: dict[str, Any]) -> HudConfig:
             _require_bool("hud", "enabled", hud_raw["enabled"]) if "enabled" in hud_raw else True
         ),
         max_lines=(
-            _require_int("hud", "max_lines", hud_raw["max_lines"], min=1)
+            _require_int("hud", "max_lines", hud_raw["max_lines"], min_val=1)
             if "max_lines" in hud_raw
             else 5
         ),
         hold_ms=(
-            _require_int("hud", "hold_ms", hud_raw["hold_ms"], min=0)
+            _require_int("hud", "hold_ms", hud_raw["hold_ms"], min_val=0)
             if "hold_ms" in hud_raw
             else 4000
         ),
         fade_ms=(
-            _require_int("hud", "fade_ms", hud_raw["fade_ms"], min=0)
+            _require_int("hud", "fade_ms", hud_raw["fade_ms"], min_val=0)
             if "fade_ms" in hud_raw
             else 3000
         ),
         font_size=(
-            _require_int("hud", "font_size", hud_raw["font_size"], min=1)
+            _require_int("hud", "font_size", hud_raw["font_size"], min_val=1)
             if "font_size" in hud_raw
             else 13
         ),
         width_px=(
-            _require_int("hud", "width_px", hud_raw["width_px"], min=1)
+            _require_int("hud", "width_px", hud_raw["width_px"], min_val=1)
             if "width_px" in hud_raw
             else 220
         ),
@@ -158,7 +161,7 @@ def _build_hud(hud_raw: dict[str, Any]) -> HudConfig:
                 "hud",
                 "llm_summary_timeout_ms",
                 hud_raw["llm_summary_timeout_ms"],
-                min=1,
+                min_val=1,
             )
             if "llm_summary_timeout_ms" in hud_raw
             else 800
@@ -196,7 +199,7 @@ def load_sprite_config(
         daemon_url=daemon_url,
         corner=sprite_raw.get("corner", "bottom_right"),
         base_size_px=(
-            _require_int("sprite", "base_size_px", sprite_raw["base_size_px"], min=1)
+            _require_int("sprite", "base_size_px", sprite_raw["base_size_px"], min_val=1)
             if "base_size_px" in sprite_raw
             else 128
         ),
@@ -216,7 +219,7 @@ def load_sprite_config(
                 "sprite",
                 "bubble_fade_ms",
                 sprite_raw["bubble_fade_ms"],
-                min=0,
+                min_val=0,
             )
             if "bubble_fade_ms" in sprite_raw
             else 2000
@@ -226,7 +229,7 @@ def load_sprite_config(
                 "sprite",
                 "heartbeat_timeout_ms",
                 sprite_raw["heartbeat_timeout_ms"],
-                min=1,
+                min_val=1,
             )
             if "heartbeat_timeout_ms" in sprite_raw
             else 3000
@@ -256,19 +259,19 @@ def load_sprite_config(
                 "sprite",
                 "follow_poll_hz",
                 sprite_raw["follow_poll_hz"],
-                min=1,
-                max=60,
+                min_val=1,
+                max_val=60,
             )
             if "follow_poll_hz" in sprite_raw
             else 30
         ),
         margin_x=(
-            _require_int("sprite", "margin_x", sprite_raw["margin_x"], min=0)
+            _require_int("sprite", "margin_x", sprite_raw["margin_x"], min_val=0)
             if "margin_x" in sprite_raw
             else 8
         ),
         margin_y=(
-            _require_int("sprite", "margin_y", sprite_raw["margin_y"], min=0)
+            _require_int("sprite", "margin_y", sprite_raw["margin_y"], min_val=0)
             if "margin_y" in sprite_raw
             else 8
         ),
