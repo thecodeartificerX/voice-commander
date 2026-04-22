@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import logging
+import queue
 import threading
 import time
 from dataclasses import dataclass, field
@@ -20,10 +20,11 @@ class Event:
 
 
 class EventBus:
-    """Thread-safe pub/sub broker with bounded per-subscriber async queues.
+    """Thread-safe pub/sub broker with bounded per-subscriber queues.
 
     Designed for daemon → SSE bridge: sync ``publish()`` from any thread,
-    async ``subscribe()`` queues consumed by FastAPI SSE generators.
+    subscriber queues consumed by FastAPI SSE generators (drained via
+    ``asyncio.get_event_loop().run_in_executor``).
     """
 
     def __init__(
@@ -31,7 +32,7 @@ class EventBus:
         max_buffer: int = 100,
         max_subscriber_queue: int = 1024,
     ) -> None:
-        self._subscribers: list[asyncio.Queue[Event]] = []
+        self._subscribers: list[queue.Queue[Event]] = []
         self._lock = threading.Lock()
         self._buffer: list[Event] = []
         self._max_buffer = max_buffer
@@ -55,22 +56,35 @@ class EventBus:
             for q in self._subscribers:
                 try:
                     q.put_nowait(event)
-                except asyncio.QueueFull:
+                except queue.Full:
                     # Drop oldest, enqueue new
-                    with contextlib.suppress(asyncio.QueueEmpty):
+                    with contextlib.suppress(queue.Empty):
                         q.get_nowait()
-                    with contextlib.suppress(asyncio.QueueFull):
+                    with contextlib.suppress(queue.Full):
                         q.put_nowait(event)
                     self._events_dropped += 1
 
-    def subscribe(self) -> asyncio.Queue[Event]:
+    def subscribe(self) -> queue.Queue[Event]:
         """Create a new subscriber queue."""
-        q: asyncio.Queue[Event] = asyncio.Queue(maxsize=self._max_subscriber_queue)
+        q: queue.Queue[Event] = queue.Queue(maxsize=self._max_subscriber_queue)
         with self._lock:
             self._subscribers.append(q)
         return q
 
-    def unsubscribe(self, q: asyncio.Queue[Event]) -> None:
+    def subscribe_with_replay(self, last_id: int) -> tuple[queue.Queue[Event], list[Event]]:
+        """Atomically subscribe and replay missed events.
+
+        Returns ``(queue, replay_list)`` inside a single lock acquisition,
+        closing the window where events could be lost between subscribe
+        and replay.
+        """
+        q: queue.Queue[Event] = queue.Queue(maxsize=self._max_subscriber_queue)
+        with self._lock:
+            self._subscribers.append(q)
+            replay = [e for e in self._buffer if e.id > last_id]
+        return q, replay
+
+    def unsubscribe(self, q: queue.Queue[Event]) -> None:
         """Remove a subscriber queue."""
         with self._lock, contextlib.suppress(ValueError):
             self._subscribers.remove(q)
@@ -82,4 +96,5 @@ class EventBus:
 
     @property
     def events_dropped(self) -> int:
-        return self._events_dropped
+        with self._lock:
+            return self._events_dropped

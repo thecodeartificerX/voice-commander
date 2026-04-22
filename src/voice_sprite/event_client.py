@@ -44,6 +44,12 @@ class SSEClient:
         self._on_disconnect()
 
     def _run(self) -> None:
+        """SSE consumer loop with auto-reconnect.
+
+        Uses exponential backoff (1s -> 2s -> 4s -> 8s cap) on connection
+        failure. Passes Last-Event-ID header on reconnect so the daemon
+        replays missed events from its ring buffer.
+        """
         backoff = 1.0
         while not self._stop.is_set():
             try:
@@ -68,6 +74,10 @@ class SSEClient:
                             try:
                                 data = json.loads(event.data) if event.data else {}
                             except json.JSONDecodeError:
+                                logger.warning(
+                                    "Malformed SSE event data (ignored): %.200s",
+                                    event.data,
+                                )
                                 data = {}
                             self._dispatch(event.event or "message", data)
             except (

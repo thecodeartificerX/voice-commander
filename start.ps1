@@ -476,16 +476,21 @@ function Start-VoiceWithUI {
     }
 
     # Spawn sprite companion unless disabled
+    $spriteProc = $null
     if (-not $NoSprite -and -not $NoUI) {
-        Write-Verbose "Scheduling sprite companion spawn (after 500 ms)"
-        Start-Job -ScriptBlock {
-            Start-Sleep -Milliseconds 500
-            $spriteProcess = Start-Process -FilePath "uv" -ArgumentList "run","voice-sprite" -PassThru -WindowStyle Hidden
-            # Sprite runs independently — daemon does not track it
-        } | Out-Null
+        Write-Verbose "Spawning sprite companion"
+        $spriteProc = Start-Process -FilePath "uv" -ArgumentList "run","voice-sprite" -PassThru -WindowStyle Hidden
     }
 
-    return Start-VoiceDaemon
+    try {
+        return Start-VoiceDaemon
+    } finally {
+        if ($spriteProc -and -not $spriteProc.HasExited) {
+            Write-Verbose "Stopping sprite companion (PID=$($spriteProc.Id))"
+            $spriteProc.Kill()
+            $spriteProc.WaitForExit(3000) | Out-Null
+        }
+    }
 }
 
 # ---------------------------------------------------------------------------

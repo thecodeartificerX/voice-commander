@@ -44,7 +44,10 @@ def load_charsheet(toml_path: Path, png_path: Path) -> CharSheet:
         raise CharSheetError(f"Charsheet PNG not found: {png_path}")
 
     with toml_path.open("rb") as f:
-        raw = tomllib.load(f)
+        try:
+            raw = tomllib.load(f)
+        except tomllib.TOMLDecodeError as e:
+            raise CharSheetError(f"Invalid TOML in {toml_path}: {e}") from e
 
     # Warn on unknown top-level keys
     for key in raw:
@@ -64,6 +67,10 @@ def load_charsheet(toml_path: Path, png_path: Path) -> CharSheet:
             raise CharSheetError(
                 f"State '{state.value}' missing from charsheet.toml [states] section"
             )
+        if entry["frames"] < 1:
+            raise CharSheetError(f"State '{state.value}' must have frames >= 1")
+        if entry["row"] < 0:
+            raise CharSheetError(f"State '{state.value}' must have row >= 0")
         states[state] = AnimInfo(
             row=entry["row"],
             frames=entry["frames"],
@@ -84,6 +91,10 @@ def load_charsheet(toml_path: Path, png_path: Path) -> CharSheet:
         except ValueError:
             logger.warning("Unknown state in transition '%s' (ignored)", key)
             continue
+        if entry["frames"] < 1:
+            raise CharSheetError(f"Transition '{key}' must have frames >= 1")
+        if entry["row"] < 0:
+            raise CharSheetError(f"Transition '{key}' must have row >= 0")
         transitions[(from_state, to_state)] = AnimInfo(
             row=entry["row"],
             frames=entry["frames"],

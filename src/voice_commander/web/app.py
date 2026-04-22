@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json as json_mod
 import logging
+import queue as _queue_mod
 import threading
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -90,12 +91,13 @@ def create_app(
         except ValueError:
             last_id = 0
 
-        q = event_bus.subscribe()
+        q, replay = event_bus.subscribe_with_replay(last_id)
 
         async def generate():  # type: ignore[return]
+            loop = asyncio.get_running_loop()
             try:
-                # Replay missed events from ring buffer
-                for ev in event_bus.replay_after(last_id):
+                # Replay missed events from ring buffer (atomic with subscribe)
+                for ev in replay:
                     if await request.is_disconnected():
                         return
                     yield (
@@ -103,24 +105,24 @@ def create_app(
                         f"event: {ev.type}\n"
                         f"data: {json_mod.dumps(ev.data | {'ts': ev.ts})}\n\n"
                     )
-                # Stream new events
+                # Stream new events (queue.Queue drained via executor)
                 while True:
                     if await request.is_disconnected():
                         return
                     try:
-                        ev = await asyncio.wait_for(q.get(), timeout=1.0)
+                        ev = await asyncio.wait_for(
+                            loop.run_in_executor(None, q.get, True, 1.0),
+                            timeout=2.0,
+                        )
                         yield (
                             f"id: {ev.id}\n"
                             f"event: {ev.type}\n"
                             f"data: {json_mod.dumps(ev.data | {'ts': ev.ts})}\n\n"
                         )
-                    except TimeoutError:
-                        # Check disconnect before keepalive
+                    except (_queue_mod.Empty, TimeoutError):
                         if await request.is_disconnected():
                             return
                         yield ": keepalive\n\n"
-            except asyncio.CancelledError:
-                pass
             finally:
                 event_bus.unsubscribe(q)
 

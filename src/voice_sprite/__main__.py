@@ -86,7 +86,8 @@ def main() -> None:
     renderer = SpriteRenderer(charsheet)
     bubble = SpeechBubble(fade_ms=cfg.bubble_fade_ms)
 
-    # Import pyglet (deferred to avoid import-time display probe)
+    # Import pyglet late — importing at module level triggers display
+    # enumeration which crashes on headless/multi-display systems.
     import pyglet
 
     # Calculate position

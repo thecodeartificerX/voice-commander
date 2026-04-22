@@ -67,10 +67,16 @@ class StateMachine:
         self._heartbeat_timeout_s = heartbeat_timeout_ms / 1000.0
         self._last_heartbeat: float = 0.0
         self._hold_timer: float | None = None
+        self._return_state: SpriteState = SpriteState.LISTENING
         self._transitioning = False
 
     def on_event(self, event_type: str, data: dict[str, Any]) -> SpriteState | None:
-        """Process an SSE event. Returns new target state, or None if no change."""
+        """Process an SSE event and return the new state, or None if unchanged.
+
+        Filters: vad_speech events only trigger on payload active=true.
+        Side-effects: resets heartbeat timer, may start hold timer for
+        transient states (success, miss, tool_error).
+        """
         if event_type == "daemon_heartbeat":
             self._last_heartbeat = time.monotonic()
             if self.current_state == SpriteState.CRASHED:
@@ -93,10 +99,15 @@ class StateMachine:
         if target is None:
             return None
 
+        # If session stopped during a hold, update the return state
+        if target == SpriteState.IDLE and self._hold_timer is not None:
+            self._return_state = SpriteState.IDLE
+
         self.target_state = target
 
         if target in HOLD_STATES:
             self._hold_timer = time.monotonic() + HOLD_DURATION_S
+            self._return_state = SpriteState.LISTENING
 
         pair = (self.current_state, target)
         self._transitioning = pair in ANIMATED_TRANSITIONS
@@ -116,14 +127,20 @@ class StateMachine:
                 self.target_state = SpriteState.CRASHED
                 return True
 
-        # Hold timer expiry → return to LISTENING
+        # Hold timer expiry → return to cached return state
         if self._hold_timer is not None and time.monotonic() >= self._hold_timer:
             self._hold_timer = None
-            self.target_state = SpriteState.LISTENING
-            self.current_state = SpriteState.LISTENING
+            self.target_state = self._return_state
+            self.current_state = self._return_state
             return True
 
         return False
+
+    def complete_transition(self) -> None:
+        """Called when the renderer finishes a play-once transition animation."""
+        if self._transitioning:
+            self.current_state = self.target_state
+            self._transitioning = False
 
     def force_crashed(self) -> None:
         """Force CRASHED state (used when SSE connection drops)."""

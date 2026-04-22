@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import asyncio
+import queue
 
 from voice_commander.event_bus import Event, EventBus
 
 
-def _drain(q: asyncio.Queue[Event]) -> list[Event]:
-    """Drain all events from an asyncio.Queue synchronously."""
+def _drain(q: queue.Queue[Event]) -> list[Event]:
+    """Drain all events from a queue.Queue synchronously."""
     events = []
     while not q.empty():
         events.append(q.get_nowait())
@@ -92,3 +92,18 @@ def test_replay_after_zero_returns_all_buffered():
     bus.publish("y")
     replayed = bus.replay_after(0)
     assert len(replayed) == 2
+
+
+def test_subscribe_with_replay_atomic():
+    bus = EventBus(max_buffer=100)
+    bus.publish("a")
+    bus.publish("b")
+    bus.publish("c")
+    q, replay = bus.subscribe_with_replay(1)
+    # Should get events 2 and 3 in replay
+    assert [e.id for e in replay] == [2, 3]
+    # New events after subscribe should arrive in queue
+    bus.publish("d")
+    events = _drain(q)
+    assert len(events) == 1
+    assert events[0].type == "d"

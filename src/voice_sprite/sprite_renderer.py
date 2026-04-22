@@ -32,7 +32,9 @@ class SpriteRenderer:
         self._frame_timer = 0.0
 
     def set_state(self, state: SpriteState) -> None:
-        """Switch to a new state's animation."""
+        """Switch to *state*, playing a transition animation if one exists
+        in the charsheet, otherwise swapping frames instantly.
+        """
         # Check for transition animation
         transition = self._cs.get_transition(self._state, state)
         if transition is not None:

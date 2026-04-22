@@ -134,7 +134,8 @@ class StreamingDaemon:
     def on_mute_toggle(self) -> None:
         """Toggle mute within an active session. No-op when session is inactive."""
         if not self._session_active:
-            return  # Silent no-op (requirement 4)
+            # Silent no-op — mute toggle outside session has no effect.
+            return
         if self._recorder is None:
             return
         if self._muted:
@@ -374,6 +375,12 @@ class StreamingDaemon:
             if self._pipeline_thread.is_alive():
                 logger.warning("Pipeline thread did not exit within 5 s")
             self._pipeline_thread = None
+
+        # Join heartbeat thread.
+        if hasattr(self, "_heartbeat_thread") and self._heartbeat_thread is not None:
+            self._heartbeat_thread.join(timeout=2.0)
+            if self._heartbeat_thread.is_alive():
+                logger.warning("Heartbeat thread did not exit within 2 s")
 
         # Shut down the WAV writer executor.
         self._wav_executor.shutdown(wait=False)
