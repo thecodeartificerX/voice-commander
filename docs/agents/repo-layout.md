@@ -66,12 +66,18 @@ voice-commander/
 │   ├── __init__.py
 │   ├── __main__.py               # entry point: SSE client thread + pyglet event loop
 │   ├── charsheet.py              # TOML parser + PNG bounds validator
+│   ├── chat_log.py               # ring-buffered HUD entries with hold+fade lifecycle
+│   ├── chat_log_renderer.py      # pyglet label pool rendering fading chat entries
 │   ├── config.py                 # sprite-side config loader
-│   ├── dpi.py                    # per-monitor DPI scaling
+│   ├── cursor_tracker.py         # CursorDock: snaps window to cursor's monitor work area
+│   ├── dpi.py                    # per-monitor DPI queries via shcore.dll
 │   ├── event_client.py           # httpx-sse consumer with auto-reconnect
+│   ├── llm_summary_client.py     # HTTP client for LM Studio one-shot summarization
 │   ├── speech_bubble.py          # fading label overlay
 │   ├── sprite_renderer.py        # frame selection + animation timing
 │   ├── state_machine.py          # 11-state FSM + heartbeat timeout
+│   ├── summarizer.py             # hybrid rule-table + LLM-fallback HUD text generator
+│   ├── summary_rules.py          # per-verb summary rules and chain detectors
 │   ├── win32_flags.py            # WS_EX_LAYERED | WS_EX_TRANSPARENT | etc.
 │   └── window.py                 # pyglet Window subclass
 │

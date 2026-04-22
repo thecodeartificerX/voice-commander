@@ -25,10 +25,8 @@ def test_draw_creates_label_per_entry():
         log.append(ChatLogEntry("minimized window", "ok", now))
         log.append(ChatLogEntry("no match", "miss", now))
 
-        window = MagicMock(width=400, height=200)
         r = ChatLogRenderer(
             chat_log=log,
-            window=window,
             hud_width_px=220,
             font_size=13,
             line_gap_px=4,
@@ -54,7 +52,6 @@ def test_hidden_when_chat_log_empty():
         ChatLogRenderer = _mod.ChatLogRenderer
 
         log = ChatLog(max_lines=3, hold_ms=1, fade_ms=1)
-        window = MagicMock(width=400, height=200)
-        r = ChatLogRenderer(log, window, hud_width_px=220, font_size=13, line_gap_px=4)
+        r = ChatLogRenderer(log, hud_width_px=220, font_size=13, line_gap_px=4)
         r.draw()
         fake_label_cls.assert_not_called()

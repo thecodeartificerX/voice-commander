@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections import deque
 from dataclasses import dataclass
 from typing import Literal
@@ -27,13 +28,16 @@ class ChatLog:
         self._entries: deque[ChatLogEntry] = deque(maxlen=max_lines)
         self._hold_s = hold_ms / 1000.0
         self._fade_s = fade_ms / 1000.0
+        self._lock = threading.Lock()
 
     def append(self, entry: ChatLogEntry) -> None:
-        self._entries.append(entry)
+        with self._lock:
+            self._entries.append(entry)
 
     def entries(self) -> list[ChatLogEntry]:
         """Newest-first."""
-        return list(reversed(self._entries))
+        with self._lock:
+            return list(reversed(self._entries))
 
     def opacity_of(self, entry: ChatLogEntry, now_s: float) -> float:
         age = now_s - entry.born_at_s
@@ -48,5 +52,6 @@ class ChatLog:
 
     def tick(self, now_s: float) -> None:
         """Evict fully-faded entries. Call ~once per frame."""
-        while self._entries and self.opacity_of(self._entries[0], now_s) == 0.0:
-            self._entries.popleft()
+        with self._lock:
+            while self._entries and self.opacity_of(self._entries[0], now_s) == 0.0:
+                self._entries.popleft()

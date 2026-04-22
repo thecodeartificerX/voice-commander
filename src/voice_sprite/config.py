@@ -18,6 +18,8 @@ class HudConfig:
     offset_y: int = 0
     llm_summary_timeout_ms: int = 800
     llm_fallback_enabled: bool = True
+    llm_endpoint_url: str = "http://localhost:1234/v1"
+    llm_model_id: str = "google/gemma-4-e4b"
 
 
 @dataclass(frozen=True)
@@ -73,6 +75,8 @@ def load_sprite_config(
         offset_y=int(hud_raw.get("offset_y", 0)),
         llm_summary_timeout_ms=int(hud_raw.get("llm_summary_timeout_ms", 800)),
         llm_fallback_enabled=bool(hud_raw.get("llm_fallback_enabled", True)),
+        llm_endpoint_url=str(hud_raw.get("llm_endpoint_url", "http://localhost:1234/v1")),
+        llm_model_id=str(hud_raw.get("llm_model_id", "google/gemma-4-e4b")),
     )
 
     return SpriteAppConfig(

@@ -58,8 +58,6 @@ class CursorDock:
         pt = wt.POINT()
         if not ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
             return
-        if pt.x == 0 and pt.y == 0:
-            return
 
         hmon = ctypes.windll.user32.MonitorFromPoint(pt, _MONITOR_DEFAULTTONEAREST)
         if hmon == self._last_hmon:
@@ -81,7 +79,7 @@ class CursorDock:
 
         self._window.set_size(window_w, window_h)
 
-        x = mi.rcWork.right - window_w - self._margin_x + extra_w
+        x = mi.rcWork.right - window_w - self._margin_x
         y = mi.rcWork.bottom - window_h - self._margin_y
         self._window.set_location(x, y)
         self._last_hmon = hmon

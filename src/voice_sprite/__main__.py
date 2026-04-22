@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import queue
 import sys
+import threading
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -109,8 +112,8 @@ def main() -> None:
     llm_client: LLMSummaryClient | None = None
     if cfg.hud.enabled and cfg.hud.llm_fallback_enabled:
         llm_client = LLMSummaryClient(
-            endpoint_url="http://localhost:1234/v1",
-            model_id="google/gemma-4-e4b",
+            endpoint_url=cfg.hud.llm_endpoint_url,
+            model_id=cfg.hud.llm_model_id,
             timeout_ms=cfg.hud.llm_summary_timeout_ms,
         )
     summarizer = Summarizer(
@@ -142,6 +145,15 @@ def main() -> None:
     x = screen.width - window_w - cfg.margin_x
     y = cfg.margin_y
 
+    hud_renderer: ChatLogRenderer | None = None
+    if cfg.hud.enabled:
+        hud_renderer = ChatLogRenderer(
+            chat_log=chat_log,
+            hud_width_px=hud_w,
+            font_size=cfg.hud.font_size,
+            line_gap_px=4,
+        )
+
     from .window import SpriteWindow
 
     window = SpriteWindow(
@@ -155,18 +167,8 @@ def main() -> None:
         y_nudge_px=cfg.y_nudge_px,
         sprite_region_x=sprite_region_x,
         sprite_region_w=sprite_region_w,
+        hud_renderer=hud_renderer,
     )
-
-    hud_renderer: ChatLogRenderer | None = None
-    if cfg.hud.enabled:
-        hud_renderer = ChatLogRenderer(
-            chat_log=chat_log,
-            window=window,
-            hud_width_px=hud_w,
-            font_size=cfg.hud.font_size,
-            line_gap_px=4,
-        )
-        window._hud_renderer = hud_renderer  # inject post-construction
 
     window.load_charsheet_image(str(png_path))
     window.apply_win32_flags()
@@ -207,6 +209,42 @@ def main() -> None:
 
     pyglet.clock.schedule_interval(check_hot_reload, 2.0)
 
+    # Worker thread: summarizes PlanOutcome objects off the SSE thread.
+    _summarize_queue: queue.Queue[Any] = queue.Queue()
+
+    def _summarizer_worker() -> None:
+        import pyglet.clock as _pclock
+
+        while True:
+            item = _summarize_queue.get()
+            if item is None:
+                break
+            outcome, raw_text = item
+            try:
+                summary = summarizer.summarize(outcome)
+            except Exception:
+                logger.exception("Summarizer failed — using last-resort text")
+                summary = raw_text
+            if summary:
+
+                def _append(dt: float, _s: str = summary, _st: Any = outcome.status) -> None:
+                    chat_log.append(
+                        ChatLogEntry(
+                            text=_s,
+                            status=_st,
+                            born_at_s=time.monotonic(),
+                        )
+                    )
+
+                _pclock.schedule_once(_append, 0)
+            _summarize_queue.task_done()
+
+    _summarizer_thread = threading.Thread(
+        target=_summarizer_worker,
+        name="summarizer-worker",
+        daemon=True,
+    )
+
     # SSE event handler
     def on_event(event_type: str, data: dict[str, Any]) -> None:
         result = sm.on_event(event_type, data)
@@ -216,23 +254,23 @@ def main() -> None:
         window.set_muted(sm.muted)
         renderer.set_muted(sm.muted)
         if event_type == "plan_outcome":
+            from voice_commander.plan import PlanOutcome
+
+            raw_text: str = data.get("transcript", "")
             try:
-                import time as _time
-
-                from voice_commander.plan import PlanOutcome
-
                 outcome = PlanOutcome.from_event_dict(data)
-                summary = summarizer.summarize(outcome)
-                if summary:
+            except (KeyError, ValueError, TypeError):
+                logger.exception("Failed to parse PlanOutcome — falling back to raw transcript")
+                if raw_text:
                     chat_log.append(
                         ChatLogEntry(
-                            text=summary,
-                            status=outcome.status,
-                            born_at_s=_time.monotonic(),
+                            text=raw_text,
+                            status="error",
+                            born_at_s=time.monotonic(),
                         )
                     )
-            except Exception:
-                logger.exception("Failed to process plan_outcome event")
+            else:
+                _summarize_queue.put((outcome, raw_text))
         if event_type == "tool_fired" and "name" in data:
             bubble.show(data["name"])
 
@@ -256,19 +294,20 @@ def main() -> None:
             renderer.set_state(sm.current_state)
         renderer.tick(dt)
         bubble.tick(dt)
-        import time as _time
-
-        chat_log.tick(_time.monotonic())
+        chat_log.tick(time.monotonic())
 
     pyglet.clock.schedule_interval(update, 1 / 60.0)
 
     logger.info("Sprite window open at (%d, %d), size=%d", x, y, size)
 
+    _summarizer_thread.start()
     try:
         pyglet.app.run()
     except KeyboardInterrupt:
         pass
     finally:
+        _summarize_queue.put(None)  # signal worker to exit
+        _summarizer_thread.join(timeout=5.0)
         if llm_client is not None:
             llm_client.close()
         sse.stop()

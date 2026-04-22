@@ -31,13 +31,11 @@ class ChatLogRenderer:
     def __init__(
         self,
         chat_log: ChatLog,
-        window: pyglet.window.Window,
         hud_width_px: int,
         font_size: int,
         line_gap_px: int,
     ) -> None:
         self._log = chat_log
-        self._window = window
         self._width = hud_width_px
         self._font_size = font_size
         self._line_gap = line_gap_px
