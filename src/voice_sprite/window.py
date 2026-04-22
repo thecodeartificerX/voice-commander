@@ -44,8 +44,19 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._cached_region: pyglet.image.AbstractImage | None = None
 
     def load_charsheet_image(self, png_path: str) -> None:
-        """Load the charsheet PNG into a pyglet image."""
+        """Load the charsheet PNG into a pyglet image.
+
+        Applies GL_NEAREST filtering so 32-px pixel-art cells upscale to the
+        configured window size without blur (bilinear default smears pixels).
+        """
         self._image = pyglet.image.load(png_path)
+        # pyglet.image.load() returns an ImageData; touching .get_texture() forces
+        # texture creation so we can override the default GL_LINEAR filter.
+        texture = self._image.get_texture()
+        gl = pyglet.gl
+        gl.glBindTexture(texture.target, texture.id)
+        gl.glTexParameteri(texture.target, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+        gl.glTexParameteri(texture.target, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
 
     def set_muted(self, muted: bool) -> None:
         self._muted = muted
@@ -66,10 +77,20 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
             self._cached_frame_key = frame_key
         region = self._cached_region
 
+        # Upscale pixel-art frame to fill the window. Cells are small (32px)
+        # but the window is sized for visibility (~128px+) — nearest-neighbor
+        # scaling keeps edges crisp.
+        scale = min(self.width / w, self.height / h)
+        sprite_x = (self.width - w * scale) / 2
+        sprite_y = (self.height - h * scale) / 2
+
         if self._sprite is None:
-            self._sprite = pyglet.sprite.Sprite(region, x=0, y=0)
+            self._sprite = pyglet.sprite.Sprite(region, x=sprite_x, y=sprite_y)
         else:
             self._sprite.image = region
+            self._sprite.x = sprite_x
+            self._sprite.y = sprite_y
+        self._sprite.scale = scale
 
         if self._muted:
             self._sprite.color = self._mute_color
