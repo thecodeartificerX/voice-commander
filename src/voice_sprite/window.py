@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import logging
 import platform
 from typing import TYPE_CHECKING
 
 import pyglet
+from PIL import Image
 
 if TYPE_CHECKING:
     from .speech_bubble import SpeechBubble
@@ -49,21 +51,52 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         # Cache for on_draw region lookup — recomputed only when frame_region changes.
         self._cached_frame_key: tuple[int, int, int, int] | None = None
         self._cached_region: pyglet.image.AbstractImage | None = None
+        # Set by load_charsheet_image. Always >= 1; on_draw multiplies source
+        # coords by this to index into the pre-upscaled charsheet.
+        self._upscale_factor: int = 1
 
     def load_charsheet_image(self, png_path: str) -> None:
-        """Load the charsheet PNG into a pyglet image.
+        """Load the charsheet PNG, pre-upscaled with nearest-neighbour so each
+        frame blits at its on-screen size with no runtime scaling.
 
-        Applies GL_NEAREST filtering so 32-px pixel-art cells upscale to the
-        configured window size without blur (bilinear default smears pixels).
+        pyglet 2.1's ``Sprite.scale`` does not reliably compose with
+        per-frame ``Sprite.image`` swaps from ``TextureRegion``s — some frames
+        render at native texture size regardless of the scale attribute. The
+        workaround is to do the upscale once at load time via Pillow's NEAREST
+        filter and feed pyglet an already-upscaled charsheet. After this, frame
+        regions are already the final display size and a direct ``blit`` at
+        (0, 0) fills the window as expected.
+
+        The upscale factor is derived from the window height and the charsheet
+        row-count implied by the source PNG: caller's set the
+        ``_upscale_factor`` here so ``on_draw`` can multiply the source
+        coordinates returned by :class:`SpriteRenderer`.
         """
-        self._image = pyglet.image.load(png_path)
-        # pyglet.image.load() returns an ImageData; touching .get_texture() forces
-        # texture creation so we can override the default GL_LINEAR filter.
+        src = Image.open(png_path).convert("RGBA")
+        # Derive scale from the window's intended display size vs the source
+        # cell size. Cell size isn't known here, but the renderer's charsheet
+        # knows frame_height; assume the window was sized for that cell
+        # upscaled by a power-of-two factor. 4x is the sweet spot for 32 -> 128.
+        factor = max(1, self.height // self._renderer.charsheet.frame_height)
+        if factor > 1:
+            scaled = src.resize((src.width * factor, src.height * factor), Image.Resampling.NEAREST)
+        else:
+            scaled = src
+        self._upscale_factor = factor
+
+        buf = io.BytesIO()
+        scaled.save(buf, format="PNG")
+        buf.seek(0)
+        self._image = pyglet.image.load(png_path, file=buf)
+        # Force GL_NEAREST on the already-upscaled texture — avoids any further
+        # bilinear smearing if pyglet mips it down somewhere.
         texture = self._image.get_texture()
         gl = pyglet.gl
         gl.glBindTexture(texture.target, texture.id)
         gl.glTexParameteri(texture.target, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
         gl.glTexParameteri(texture.target, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+        self._cached_frame_key = None
+        self._cached_region = None
 
     def set_muted(self, muted: bool) -> None:
         self._muted = muted
@@ -75,36 +108,25 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
 
         frame_key = self._renderer.frame_region
         x, y, w, h = frame_key
-        # pyglet uses bottom-left origin; charsheet uses top-left rows.
-        # Cache the region so we avoid a get_region() allocation every draw at 60 fps;
-        # recompute only when the active frame (x, y, w, h) actually changes.
+        # Source (x, y, w, h) are in source-PNG pixels; charsheet image in
+        # memory has been pre-upscaled by _upscale_factor, so multiply through.
+        # Also convert y from charsheet-top-down to pyglet-bottom-up here.
+        f = self._upscale_factor
         if frame_key != self._cached_frame_key or self._cached_region is None:
             img_h = self._image.height
-            self._cached_region = self._image.get_region(x, img_h - y - h, w, h)
+            self._cached_region = self._image.get_region(
+                x * f,
+                img_h - (y + h) * f,
+                w * f,
+                h * f,
+            )
             self._cached_frame_key = frame_key
         region = self._cached_region
 
-        # Upscale pixel-art frame to fill the window. Cells are small (32px)
-        # but the window is sized for visibility (~128px+) — nearest-neighbor
-        # scaling keeps edges crisp.
-        scale = min(self.width / w, self.height / h)
-        sprite_x = (self.width - w * scale) / 2
-        sprite_y = (self.height - h * scale) / 2
-
-        if self._sprite is None:
-            self._sprite = pyglet.sprite.Sprite(region, x=sprite_x, y=sprite_y)
-        else:
-            self._sprite.image = region
-            self._sprite.x = sprite_x
-            self._sprite.y = sprite_y
-        self._sprite.scale = scale
-
-        if self._muted:
-            self._sprite.color = self._mute_color
-        else:
-            self._sprite.color = (255, 255, 255)
-
-        self._sprite.draw()
+        # Centre the upscaled frame in the window.
+        blit_x = (self.width - region.width) // 2
+        blit_y = (self.height - region.height) // 2
+        region.blit(blit_x, blit_y, 0)
 
         # Speech bubble
         if self._bubble.visible:
