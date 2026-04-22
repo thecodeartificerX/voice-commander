@@ -217,12 +217,20 @@ Full design: [`docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design
 ## Architecture at a glance
 
 ```
-HotkeyCtrl ─toggle─▶ StreamingRecorder ─ndarray─▶ Transcriber ─text─▶ LLMRouter ─plan─▶ Dispatcher ─▶ tool fn
-  pynput            sounddevice + soxr +          faster-whisper      httpx→LM Studio  run_plan()    + resolver.*
-                    silero-vad (48k→16k)          (CUDA, small.en)    (few-shot prompt) + FeedbackSink   (focus/open)
+HotkeyCtrl ─toggle─▶ StreamingRecorder ─ndarray─▶ Transcriber ─text─▶ LLMRouter ─plan─▶ Dispatcher ──▶ tool fn
+  pynput            sounddevice + soxr +          faster-whisper      httpx→LM Studio  run_plan()     + resolver.*
+                    silero-vad (48k→16k)          (CUDA, small.en)    (few-shot prompt) + FeedbackSink    (focus/open)
+                                                                          │miss
+                                                                          ▼
+                                                                     feedback.on_miss()
+                                                       ┌──────────────────┘
+                                                       ▼
+                                                  EventBus ──SSE /events──▶ voice_sprite (separate process)
+                                                  (pub/sub)                  pyglet + StateMachine + ChatLogRenderer
+                                                                             + CursorDock (30 Hz) + Summarizer
 ```
 
-Four long-lived threads (PortAudio callback → VAD worker → pipeline worker, plus hotkey listener) connected by thread-safe queues. Every subsystem is independently unit-testable with no hardware.
+Five long-lived threads (PortAudio callback → VAD worker → pipeline worker, hotkey listener, plus 1 Hz heartbeat) connected by thread-safe queues. Every subsystem is independently unit-testable with no hardware.
 
 Read [`docs/architecture.md`](docs/architecture.md) for the full component contracts. Every big decision has an ADR in [`docs/decisions/`](docs/decisions/).
 
@@ -337,7 +345,7 @@ Feature requests: describe the utterance you want to say and what should happen 
 | [`docs/libraries.md`](docs/libraries.md) | Every dependency and why it is here |
 | [`docs/gotchas.md`](docs/gotchas.md) | Windows traps, CUDA DLL quirks, threading pitfalls |
 | [`docs/testing-strategy.md`](docs/testing-strategy.md) | Four-layer test pyramid + per-phase validation |
-| [`docs/decisions/`](docs/decisions/) | ADRs 0001–0025 — one per locked decision |
+| [`docs/decisions/`](docs/decisions/) | One ADR per locked decision |
 | [`docs/references/`](docs/references/) | Vendored framework docs (faster-whisper, silero-vad, etc.) |
 | [`docs/superpowers/specs/`](docs/superpowers/specs/) | Design docs from brainstorming |
 | [`docs/superpowers/plans/`](docs/superpowers/plans/) | Implementation plans |

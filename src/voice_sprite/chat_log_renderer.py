@@ -79,3 +79,5 @@ class ChatLogRenderer:
             label.y = bottom_y + i * line_h
             label.color = (r, g, b, int(255 * opacity))
             label.draw()
+        for label in self._labels[len(entries):]:
+            label.text = ""

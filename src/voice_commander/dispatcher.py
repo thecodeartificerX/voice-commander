@@ -5,7 +5,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from .feedback import FeedbackSink
-from .plan import Plan, PlanOutcome
+from .plan import Plan, PlanOutcome, PlanStatus
 from .registry import ToolRegistry
 
 if TYPE_CHECKING:
@@ -33,7 +33,7 @@ class Dispatcher:
         start_s = time.perf_counter()
         executed = 0
         total = len(plan.steps)
-        status: str = "ok"
+        status: PlanStatus = "ok"
         failed_index: int | None = None
         error_msg: str | None = None
 
@@ -75,7 +75,7 @@ class Dispatcher:
         outcome = PlanOutcome(
             transcript=transcript,
             steps=plan.steps,
-            status=status,  # type: ignore[arg-type]
+            status=status,
             failed_step_index=failed_index,
             error_msg=error_msg,
             duration_ms=int((time.perf_counter() - start_s) * 1000),

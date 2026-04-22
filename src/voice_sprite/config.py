@@ -14,8 +14,6 @@ class HudConfig:
     fade_ms: int = 3000
     font_size: int = 13
     width_px: int = 220
-    offset_x: int = -230
-    offset_y: int = 0
     llm_summary_timeout_ms: int = 800
     llm_fallback_enabled: bool = True
     llm_endpoint_url: str = "http://localhost:1234/v1"
@@ -71,8 +69,6 @@ def load_sprite_config(
         fade_ms=int(hud_raw.get("fade_ms", 3000)),
         font_size=int(hud_raw.get("font_size", 13)),
         width_px=int(hud_raw.get("width_px", 220)),
-        offset_x=int(hud_raw.get("offset_x", -230)),
-        offset_y=int(hud_raw.get("offset_y", 0)),
         llm_summary_timeout_ms=int(hud_raw.get("llm_summary_timeout_ms", 800)),
         llm_fallback_enabled=bool(hud_raw.get("llm_fallback_enabled", True)),
         llm_endpoint_url=str(hud_raw.get("llm_endpoint_url", "http://localhost:1234/v1")),

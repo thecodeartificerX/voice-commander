@@ -45,8 +45,6 @@ def test_hud_defaults(tmp_path):
     assert cfg.hud.fade_ms == 3000
     assert cfg.hud.font_size == 13
     assert cfg.hud.width_px == 220
-    assert cfg.hud.offset_x == -230
-    assert cfg.hud.offset_y == 0
     assert cfg.hud.llm_summary_timeout_ms == 800
     assert cfg.hud.llm_fallback_enabled is True
 
