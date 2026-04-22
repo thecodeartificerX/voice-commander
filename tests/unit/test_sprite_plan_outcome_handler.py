@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from unittest.mock import MagicMock
 
@@ -50,8 +51,6 @@ def test_happy_path_appends_entry():
 
 def test_malformed_dict_swallowed_with_warning(caplog):
     """KeyError during parse is swallowed; a warning is logged; nothing raises."""
-    import logging
-
     summarizer = MagicMock()
     log = _chat_log()
     # all required PlanOutcome fields absent → KeyError in from_event_dict
@@ -120,8 +119,6 @@ def test_now_provider_controls_born_at_s():
 
 def test_summarizer_exception_falls_back_to_raw_text(caplog):
     """If summarizer.summarize() raises, raw transcript used as fallback."""
-    import logging
-
     summarizer = MagicMock()
     summarizer.summarize.side_effect = RuntimeError("LM Studio timeout")
     log = _chat_log()
