@@ -1,6 +1,6 @@
 # Metadata for the sprite companion character sheet.
 # Each [states.*] entry maps a SpriteState to a row in charsheet.png.
-# Regenerate charsheet.png using the prompt template in README.md.
+# Regenerate charsheet.png using the prompt template in ./README.md.
 
 frame_width = 128
 frame_height = 128

@@ -5,7 +5,7 @@ import json as json_mod
 import logging
 import queue as _queue_mod
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -93,7 +93,7 @@ def create_app(
 
         q, replay = event_bus.subscribe_with_replay(last_id)
 
-        async def generate():  # type: ignore[return]
+        async def generate() -> AsyncIterator[str]:
             loop = asyncio.get_running_loop()
             try:
                 # Replay missed events from ring buffer (atomic with subscribe)

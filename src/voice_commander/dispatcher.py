@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .feedback import FeedbackSink
 from .plan import Plan
@@ -23,7 +23,7 @@ class Dispatcher:
         self._feedback = feedback
         self._event_bus = event_bus
 
-    def _publish(self, event_type: str, data: dict | None = None) -> None:
+    def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         if self._event_bus is not None:
             self._event_bus.publish(event_type, data)
 

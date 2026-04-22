@@ -56,9 +56,9 @@ open_fuzzy_threshold = 70
 [sprite]
 enabled = true
 corner = "bottom_right"
-base_size_px = 128
-offset_x = 16
-offset_y = 16
+base_size_px = 128  # on-screen sprite size in pixels; bump up on 4K displays
+offset_x = 16  # pixel gap from the chosen corner along the X axis
+offset_y = 16  # pixel gap from the chosen corner along the Y axis
 asset_path = "assets/sprite"
-bubble_fade_ms = 2000
-heartbeat_timeout_ms = 3000
+bubble_fade_ms = 2000  # speech-bubble fade-out duration after each utterance
+heartbeat_timeout_ms = 3000  # sprite flips to CRASHED if no daemon heartbeat within this many ms

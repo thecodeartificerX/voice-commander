@@ -101,7 +101,7 @@ module = [
 ignore_missing_imports = true
 
 [tool.coverage.run]
-source = ["src/voice_commander"]
+source = ["src/voice_commander", "src/voice_sprite"]
 branch = true
 # Exclude thin hardware-wrapper modules — tested via -m hardware not unit suite.
 omit = [

@@ -2,6 +2,7 @@
 
 Usage: python scripts/generate-placeholder-charsheet.py
 """
+
 from PIL import Image, ImageDraw
 
 FRAME_W, FRAME_H = 128, 128
@@ -11,8 +12,16 @@ img = Image.new("RGBA", (COLS * FRAME_W, ROWS * FRAME_H), (0, 0, 0, 0))
 draw = ImageDraw.Draw(img)
 
 states = [
-    "idle", "listening", "hearing", "thinking", "llm_think",
-    "success", "miss", "error", "warmup", "crashed",
+    "idle",
+    "listening",
+    "hearing_speech",
+    "thinking",
+    "llm_thinking",
+    "success",
+    "miss",
+    "tool_error",
+    "warmup",
+    "crashed",
 ]
 for row, name in enumerate(states):
     for col in range(COLS):

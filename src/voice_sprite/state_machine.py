@@ -73,6 +73,9 @@ class StateMachine:
     def on_event(self, event_type: str, data: dict[str, Any]) -> SpriteState | None:
         """Process an SSE event and return the new state, or None if unchanged.
 
+        Accepts any event_type string; target state is resolved via the
+        EVENT_STATE_MAP table. Unknown event types return None with no
+        state change and no exception (quietly ignored).
         Filters: vad_speech events only trigger on payload active=true.
         Side-effects: resets heartbeat timer, may start hold timer for
         transient states (success, miss, tool_error).

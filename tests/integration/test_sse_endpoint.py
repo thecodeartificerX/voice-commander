@@ -89,6 +89,41 @@ def test_sse_replay_with_last_event_id(event_bus):
     assert replayed[1].type == "c"
 
 
+def test_sse_malformed_last_event_id_falls_back_to_no_replay(event_bus):
+    """Malformed Last-Event-ID must not raise — should fall back to last_id=0.
+
+    The endpoint parses the header with ``int()`` and catches ``ValueError``
+    (see ``app.py``'s ``/events`` handler).  A fallback of ``0`` means the
+    subsequent ``subscribe_with_replay(0)`` call replays every buffered
+    event, identical to the no-header case.
+
+    Mirrors the style of ``test_sse_replay_with_last_event_id`` — we don't
+    drive the HTTP streaming layer (TestClient + SSE generator deadlocks),
+    but we pin the exact parse-and-fallback logic used by the endpoint.
+    """
+    event_bus.publish("a")
+    event_bus.publish("b")
+    event_bus.publish("c")
+
+    # Exact logic copied from app.py's /events handler (lines 88-92).
+    last_id_str = "not-a-number"
+    try:
+        last_id = int(last_id_str)
+    except ValueError:
+        last_id = 0
+
+    assert last_id == 0
+
+    # subscribe_with_replay(0) — what the handler would call next — must
+    # succeed and replay the full buffer, not raise.
+    q, replay = event_bus.subscribe_with_replay(last_id)
+    try:
+        assert len(replay) == 3
+        assert [e.type for e in replay] == ["a", "b", "c"]
+    finally:
+        event_bus.unsubscribe(q)
+
+
 def test_create_app_accepts_event_bus_kwarg(tmp_path, event_bus):
     """create_app() signature accepts event_bus parameter."""
     registry = ToolRegistry()

@@ -63,6 +63,11 @@ class EventBus:
                     with contextlib.suppress(queue.Full):
                         q.put_nowait(event)
                     self._events_dropped += 1
+                    logger.debug(
+                        "event_bus overflow, dropped oldest event: type=%s id=%d",
+                        event.type,
+                        event.id,
+                    )
 
     def subscribe(self) -> queue.Queue[Event]:
         """Create a new subscriber queue."""

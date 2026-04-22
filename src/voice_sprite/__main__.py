@@ -6,6 +6,7 @@ import os
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger("voice_sprite")
 
@@ -86,12 +87,13 @@ def main() -> None:
     renderer = SpriteRenderer(charsheet)
     bubble = SpeechBubble(fade_ms=cfg.bubble_fade_ms)
 
-    # Import pyglet late — importing at module level triggers display
-    # enumeration which crashes on headless/multi-display systems.
+    # Deferred pyglet import — avoids display probe at module-load time.
+    # ImportError here means pyglet/GL libs missing; surface as startup
+    # failure rather than import failure.
     import pyglet
 
     # Calculate position
-    screen = pyglet.canvas.get_display().get_default_screen()
+    screen = pyglet.canvas.get_display().get_default_screen()  # type: ignore[attr-defined]
     offset_x = int(cfg.offset_x * scale)
     offset_y = int(cfg.offset_y * scale)
 
@@ -125,13 +127,13 @@ def main() -> None:
                 window.load_charsheet_image(str(png_path))
                 _last_toml_mtime = toml_mt
                 _last_png_mtime = png_mt
-        except Exception:
+        except (OSError, FileNotFoundError, ValueError):
             logger.exception("Hot-reload failed")
 
     pyglet.clock.schedule_interval(check_hot_reload, 2.0)
 
     # SSE event handler
-    def on_event(event_type: str, data: dict) -> None:
+    def on_event(event_type: str, data: dict[str, Any]) -> None:
         result = sm.on_event(event_type, data)
         if result is not None:
             renderer.set_state(result)

@@ -2,13 +2,15 @@
 
 Usage: python scripts/pyglet-smoke.py
 """
+
 import ctypes
 import platform
 
 import pyglet
 
 win = pyglet.window.Window(
-    256, 256,
+    256,
+    256,
     style=pyglet.window.Window.WINDOW_STYLE_BORDERLESS,
     vsync=False,
 )
@@ -17,6 +19,10 @@ win = pyglet.window.Window(
 screen = pyglet.canvas.get_display().get_default_screen()
 win.set_location(screen.width - 256 - 16, 16)
 
+# Win32 ex-style flag block: call SetWindowLongW with GWL_EXSTYLE to OR-in
+# WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+# which together achieve transparent + click-through + no-taskbar + no-focus-steal.
+# Mirrors the sprite's runtime flags in src/voice_sprite/win32_flags.py.
 if platform.system() == "Windows":
     GWL_EXSTYLE = -20
     WS_EX_LAYERED = 0x00080000

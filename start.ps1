@@ -91,6 +91,9 @@ $ErrorActionPreference = 'Stop'
 
 Set-Location -LiteralPath $PSScriptRoot
 
+# Phase banner shown in Show-VoiceBanner. Extracted so phase bumps touch one place.
+$script:PhaseString = '  Phase 6: LLM-only routing (9 primitives, unconditional LLM)'
+
 # ---------------------------------------------------------------------------
 # Color helper functions
 # ---------------------------------------------------------------------------
@@ -163,7 +166,7 @@ function Show-VoiceBanner {
     Write-VoiceHeader '  \ V /| () | | | \__ \ ) _)  )( (__( () |)  / | \/ |/    \/    / ) D ( ) _)  )   /'
     Write-VoiceHeader '   \_/ \____/\___/(____/(____)(__)\___)\__/(__/  \_)(_/\_/\_/\_)__)(____/(____)(__\_)'
     Write-VoiceHeader ''
-    Write-VoiceHeader '  Phase 6: LLM-only routing (9 primitives, unconditional LLM)'
+    Write-VoiceHeader $script:PhaseString
     Write-Host '  ---------------------------------------------------------------' -ForegroundColor Cyan
     Write-Host ''
 }

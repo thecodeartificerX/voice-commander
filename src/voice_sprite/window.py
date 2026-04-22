@@ -39,6 +39,9 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._label: pyglet.text.Label | None = None
         self._muted = False
         self._mute_color = (128, 128, 128)
+        # Cache for on_draw region lookup — recomputed only when frame_region changes.
+        self._cached_frame_key: tuple[int, int, int, int] | None = None
+        self._cached_region: pyglet.image.AbstractImage | None = None
 
     def load_charsheet_image(self, png_path: str) -> None:
         """Load the charsheet PNG into a pyglet image."""
@@ -52,10 +55,16 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         if self._image is None:
             return
 
-        x, y, w, h = self._renderer.frame_region
-        # pyglet uses bottom-left origin; charsheet uses top-left rows
-        img_h = self._image.height
-        region = self._image.get_region(x, img_h - y - h, w, h)
+        frame_key = self._renderer.frame_region
+        x, y, w, h = frame_key
+        # pyglet uses bottom-left origin; charsheet uses top-left rows.
+        # Cache the region so we avoid a get_region() allocation every draw at 60 fps;
+        # recompute only when the active frame (x, y, w, h) actually changes.
+        if frame_key != self._cached_frame_key or self._cached_region is None:
+            img_h = self._image.height
+            self._cached_region = self._image.get_region(x, img_h - y - h, w, h)
+            self._cached_frame_key = frame_key
+        region = self._cached_region
 
         if self._sprite is None:
             self._sprite = pyglet.sprite.Sprite(region, x=0, y=0)
@@ -101,7 +110,7 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
 
         hwnd = self.canvas.hwnd if hasattr(self.canvas, "hwnd") else None
         if hwnd is None:
-            # pyglet 2.x: access via _hwnd
+            # TODO: revisit on pyglet upgrade — 2.x HWND access path via window._hwnd
             hwnd = getattr(self, "_hwnd", None)
         if hwnd is None:
             logger.error("Could not obtain HWND for sprite window")

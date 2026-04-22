@@ -90,7 +90,7 @@ class SSEClient:
                 if self._stop.wait(backoff):
                     return
                 backoff = min(backoff * 2, 8.0)
-            except Exception:
+            except httpx.HTTPError:
                 logger.exception("Unexpected SSE error")
                 self._on_disconnect_callback()
                 if self._stop.wait(backoff):

@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -94,7 +95,7 @@ class StreamingDaemon:
         self._session_active: bool = False
         self._muted: bool = False
 
-    def _publish(self, event_type: str, data: dict | None = None) -> None:
+    def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         if self._event_bus is not None:
             self._event_bus.publish(event_type, data)
 
