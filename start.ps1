@@ -489,8 +489,13 @@ function Start-VoiceWithUI {
         return Start-VoiceDaemon
     } finally {
         if ($spriteProc -and -not $spriteProc.HasExited) {
-            Write-Verbose "Stopping sprite companion (PID=$($spriteProc.Id))"
-            $spriteProc.Kill()
+            # `uv run voice-sprite` spawns a python.exe child that owns the
+            # pyglet window. $spriteProc.Kill() only stops the uv wrapper and
+            # orphans the python child, leaving the overlay stuck on screen.
+            # taskkill /T walks the process tree and /F force-terminates it,
+            # so both uv and python die together.
+            Write-Verbose "Stopping sprite companion tree (PID=$($spriteProc.Id))"
+            & taskkill.exe /PID $spriteProc.Id /T /F 2>&1 | Out-Null
             $spriteProc.WaitForExit(3000) | Out-Null
         }
     }

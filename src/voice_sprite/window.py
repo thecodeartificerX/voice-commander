@@ -46,6 +46,12 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         gl_config = pyglet.gl.Config(  # type: ignore[abstract]
             alpha_size=8,
             double_buffer=True,
+            # Explicitly disable MSAA — some Windows drivers silently drop
+            # the alpha channel when pyglet auto-picks a multisampled
+            # framebuffer, which causes DWM to composite our window against
+            # opaque black regardless of glClearColor.
+            sample_buffers=0,
+            samples=0,
         )
         super().__init__(
             width=width,
@@ -54,12 +60,37 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
             config=gl_config,
             vsync=False,
         )
-        # Alpha compositing — sprite pixels blend over the transparent clear
-        # instead of overwriting the framebuffer with opaque black.
+        # Alpha compositing — sprite pixels blend over the transparent clear.
+        # Separate blend for alpha is critical on Windows layered windows:
+        # a standard glBlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA) multiplies
+        # destination alpha by (1-src_alpha) which collapses the framebuffer's
+        # alpha channel toward zero-but-also-weird and DWM ends up drawing
+        # opaque black where we intended transparency. Using GL_ONE for the
+        # alpha source makes the output alpha = src_alpha + dst_alpha*(1-src_alpha),
+        # which preserves sprite opacity correctly while leaving empty regions
+        # at alpha=0.
         gl = pyglet.gl
         gl.glEnable(gl.GL_BLEND)
-        gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+        gl.glBlendFuncSeparate(
+            gl.GL_SRC_ALPHA,
+            gl.GL_ONE_MINUS_SRC_ALPHA,
+            gl.GL_ONE,
+            gl.GL_ONE_MINUS_SRC_ALPHA,
+        )
+        # NOTE: glClearColor is also called inside on_draw() every frame.
+        # Some pyglet internals can reset the clear color between frames,
+        # and pyglet upstream docs + issue #1271 specifically say to set it
+        # inside the draw handler before window.clear() for transparent
+        # overlays. Setting it once at init is insufficient on Windows.
         gl.glClearColor(0, 0, 0, 0)
+
+        # Verify the driver actually granted an alpha-enabled framebuffer.
+        # On some Windows GPUs / RDP sessions, alpha_size=8 is silently
+        # downgraded to 0 and the window has no alpha channel to composite
+        # from — which produces an opaque black background no matter what
+        # glClearColor we pick. If this logs 0, the fix is not in Python.
+        granted_alpha = getattr(self.context.config, "alpha_size", None)
+        logger.info("GL config granted alpha_size=%s (need 8 for transparency)", granted_alpha)
 
         self.set_location(x, y)
         self._renderer = renderer
@@ -102,6 +133,11 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._muted = muted
 
     def on_draw(self) -> None:
+        # Re-assert transparent clear color every frame. Canonical Windows
+        # transparent-overlay pattern per pyglet issue #1271 and upstream
+        # docs — pyglet internals can reset glClearColor between frames, so
+        # setting it only at init results in opaque black background.
+        pyglet.gl.glClearColor(0, 0, 0, 0)
         self.clear()
         if self._image is None:
             return
@@ -129,6 +165,14 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
 
         if self._sprite is None:
             self._sprite = pyglet.sprite.Sprite(region, x=sprite_x, y=sprite_y)
+            # Explicit per-sprite blend mode. pyglet 2.x sprites use their
+            # own shader+blend state that does NOT inherit the window-level
+            # glBlendFuncSeparate we set in __init__, so we set it here too.
+            # Without this, sprite pixels can land with wrong alpha and the
+            # transparent framebuffer looks muddy / black-fringed on Windows.
+            gl = pyglet.gl
+            self._sprite.blend_src = gl.GL_SRC_ALPHA
+            self._sprite.blend_dest = gl.GL_ONE_MINUS_SRC_ALPHA
         elif self._sprite.image is not region:
             self._sprite.image = region
         self._sprite.x = sprite_x

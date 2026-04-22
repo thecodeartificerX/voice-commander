@@ -21,6 +21,12 @@ class AnimInfo:
     row: int
     frames: int
     once: bool = False
+    # Per-state pitch overrides. None → fall back to charsheet global.
+    # Free sprite packs often mix pose widths across rows (sitting cats =
+    # 32-wide, lying cats with long tail = 48-wide), so an optional override
+    # keeps TOML authoring ergonomic without forcing a uniform grid.
+    frame_width: int | None = None
+    frame_height: int | None = None
 
 
 @dataclass
@@ -75,6 +81,8 @@ def load_charsheet(toml_path: Path, png_path: Path) -> CharSheet:
             row=entry["row"],
             frames=entry["frames"],
             once=entry.get("once", False),
+            frame_width=entry.get("frame_width"),
+            frame_height=entry.get("frame_height"),
         )
 
     # Parse transition animations
@@ -99,6 +107,8 @@ def load_charsheet(toml_path: Path, png_path: Path) -> CharSheet:
             row=entry["row"],
             frames=entry["frames"],
             once=entry.get("once", True),
+            frame_width=entry.get("frame_width"),
+            frame_height=entry.get("frame_height"),
         )
 
     cs = CharSheet(
@@ -135,8 +145,10 @@ def _validate_png_bounds(cs: CharSheet, png_path: Path) -> None:
         all_anims.append((f"transition:{from_s.value}->{to_s.value}", anim))
 
     for label, anim in all_anims:
-        max_x = anim.frames * cs.frame_width
-        max_y = (anim.row + 1) * cs.frame_height
+        fw = anim.frame_width or cs.frame_width
+        fh = anim.frame_height or cs.frame_height
+        max_x = anim.frames * fw
+        max_y = (anim.row + 1) * fh
         if max_x > png_w or max_y > png_h:
             raise CharSheetError(
                 f"{label} (row={anim.row}, frames={anim.frames}) exceeds PNG bounds "

@@ -151,6 +151,7 @@ def main() -> None:
             renderer.set_state(result)
             logger.info("State → %s", result.value)
         window.set_muted(sm.muted)
+        renderer.set_muted(sm.muted)
         if event_type == "tool_fired" and "name" in data:
             bubble.show(data["name"])
 

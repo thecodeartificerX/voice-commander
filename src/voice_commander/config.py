@@ -108,6 +108,8 @@ class SpriteConfig:
     asset_path: str = "assets/sprite"
     bubble_fade_ms: int = 2000
     heartbeat_timeout_ms: int = 3000
+    render_scale: float = 0.75
+    y_nudge_px: int = 16
 
 
 @dataclass(frozen=True)

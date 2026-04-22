@@ -348,3 +348,100 @@ See ADR 0040 for the full rationale for removing the rapidfuzz fallback path.
 - Ignore the exception and crash. The resolver must be robust — a single unreadable `dwm.exe` handle cannot break `focus("chrome")`.
 
 **Diagnostic:** Turn on `DEBUG` logging for `voice_commander.resolver` and you will see per-call `resolve_window target=… picked=… top3=…` lines. Entries with `proc=''` are the permission-denied cases.
+
+---
+
+## 23. Pyglet Transparent Overlay on Windows — Black Background
+
+**Problem:** Sprite companion window showed an opaque black square around the cat on Windows 11 despite using `WINDOW_STYLE_OVERLAY`, `alpha_size=8`, `glClearColor(0,0,0,0)`, and `GL_BLEND`. The cat drew correctly but the rest of the window never composited against the desktop.
+
+**Explanation:** Several independent Windows/pyglet traps stack. Any one of them produces the exact same symptom (opaque black where alpha should be zero), so they have to be audited together:
+
+1. **`glClearColor` reset between frames.** `window.clear()` clears to the *current* clear color, and pyglet's internal framebuffer bookkeeping can reset it between draws. Setting `glClearColor(0,0,0,0)` once in `__init__` is insufficient — the second frame renders against whatever default pyglet reinstalled. Must be called **inside `on_draw` before `window.clear()`**, every frame. (Pyglet issue [#1271](https://github.com/pyglet/pyglet/issues/1271).)
+2. **Driver silently drops alpha under MSAA.** `pyglet.gl.Config(alpha_size=8)` does not promise an alpha channel — some Windows drivers auto-pick a multisampled config when `sample_buffers` is unspecified, and the multisampled framebuffer has no alpha. Always set `sample_buffers=0, samples=0` explicitly, and log `window.context.config.alpha_size` at startup to verify the driver granted 8 bits.
+3. **`glBlendFunc` collapses framebuffer alpha.** `glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)` uses the same factors for the alpha channel, so output alpha = `src_α*src_α + dst_α*(1-src_α)`. With `dst_α=0` after clear, opaque sprite pixels get `1*1+0=1` (fine), but semi-transparent edges get squared-down values and the DWM composite looks black-fringed. Use `glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)` so output alpha = `src_α + dst_α*(1-src_α)` accumulates correctly.
+4. **`pyglet.sprite.Sprite` ignores the window-level blend state.** In pyglet 2.x every sprite has its own `blend_src` / `blend_dest` attributes used by its shader, and they default to values that don't assume a transparent framebuffer. Set them explicitly per sprite (`sprite.blend_src = GL_SRC_ALPHA; sprite.blend_dest = GL_ONE_MINUS_SRC_ALPHA`) so the texture composites correctly against our zero-alpha clear.
+5. **`SetLayeredWindowAttributes` switches the window to constant-alpha mode.** This call **disables** per-pixel alpha. Pyglet's `WINDOW_STYLE_OVERLAY` already calls it internally with alpha=255 (a deliberate DWM pass-through dance alongside `DwmEnableBlurBehindWindow`), which works. Do **not** call `SetLayeredWindowAttributes` a second time from user code — the redundant call re-arms constant-alpha mode and the framebuffer alpha stops reaching DWM.
+6. **`DwmExtendFrameIntoClientArea` is useless for `WS_POPUP` overlays.** It requires a window with non-client area (title bar, borders) to extend. Our overlay has none, so the call returns `E_INVALIDARG`. Skip it entirely; `DwmEnableBlurBehindWindow` (already called by pyglet) is the relevant DWM hint for borderless overlays.
+
+**Mitigation:** All six are fixed in `src/voice_sprite/window.py` and `src/voice_sprite/win32_flags.py`:
+
+```python
+# window.py
+gl_config = pyglet.gl.Config(
+    alpha_size=8,
+    double_buffer=True,
+    sample_buffers=0,   # (2) no MSAA auto-pick
+    samples=0,
+)
+super().__init__(..., style=pyglet.window.Window.WINDOW_STYLE_OVERLAY, config=gl_config)
+
+gl.glEnable(gl.GL_BLEND)
+gl.glBlendFuncSeparate(                             # (3) separate alpha channel
+    gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA,
+    gl.GL_ONE,       gl.GL_ONE_MINUS_SRC_ALPHA,
+)
+
+granted = self.context.config.alpha_size            # (2) verify
+logger.info("GL config granted alpha_size=%s", granted)
+
+def on_draw(self):
+    pyglet.gl.glClearColor(0, 0, 0, 0)              # (1) every frame
+    self.clear()
+    ...
+    if self._sprite is None:
+        self._sprite = pyglet.sprite.Sprite(region, ...)
+        self._sprite.blend_src  = gl.GL_SRC_ALPHA   # (4) per-sprite
+        self._sprite.blend_dest = gl.GL_ONE_MINUS_SRC_ALPHA
+```
+
+```python
+# win32_flags.py — add ONLY toolwindow + noactivate + topmost.
+# Do NOT re-call SetLayeredWindowAttributes (pyglet already did it).
+# Do NOT call DwmExtendFrameIntoClientArea (WS_POPUP has no frame to extend).
+style |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+```
+
+**Diagnostic (paste the line into the log you want to see at startup):**
+
+```
+GL config granted alpha_size=8 (need 8 for transparency)
+```
+
+If that logs `0`, your driver (or RDP session, or iGPU) silently refused alpha and no Python-side fix will help — swap GPU or fall back to `UpdateLayeredWindow` with a CPU blit. If it logs `8`, the bug is in the six-item list above.
+
+See ADR 0050.
+
+---
+
+## 24. Charsheet Cell Size Cannot Be Assumed From Pack Documentation
+
+**Problem:** `CatPackPaid/Sprites/Halloween/witch.png` is advertised as a "32×32" pack, but slicing at 32×32 produces headless cats — the witch-hat adds vertical content that pushes the real pose-to-pose pitch to 32×48 for most rows. Other rows (sleeping, lying-down poses with long tail) use 32×48-wide cells. The pack's documented cell size is only the *body* — not the pitch.
+
+**Explanation:** Free / paid sprite packs authored by hand commonly mix cell sizes per row, with padding added around tall or wide poses to avoid overlap. A uniform grid is the exception, not the rule. Assuming the docs' cell size is the right pitch produces the classic "every other frame is chopped" artefact visible when the pitch you're slicing at is a factor-of-2 off from the real pitch.
+
+**Mitigation:** Never trust the pack's documented cell size for a new charsheet. Detect the pitch mathematically:
+
+1. Load the PNG alpha channel into numpy.
+2. For each candidate `(cell_w, cell_h)` that evenly divides the sheet, compute the mean alpha of pixels landing exactly on the grid lines. The correct pitch has the lowest grid-line alpha because gaps between cells should be (mostly) transparent.
+3. Overlay the winning grid on the sheet and eyeball — red lines should land in the alpha gaps, not through hats/tails.
+4. If per-row horizontal pitch varies (e.g. row 0 has 10 sitting cats at 32-wide, row 6 has 10 lying cats at 48-wide), support per-state overrides in the charsheet TOML:
+
+```toml
+frame_width = 32      # global default
+frame_height = 48
+
+[states.crashed]      # row 6 uses wider pose pitch
+row = 6
+frames = 10
+frame_width = 48
+```
+
+To verify a chosen mapping, run `uv run python scripts/dump_sprite_slices.py` — it
+slices every declared state out of the sheet and writes per-state strips to
+`outputs/sprite_debug/` so misalignment is obvious. `scripts/build_state_reference.py`
+produces a single labeled reference PNG of every state for human review.
+
+See ADR 0047 (updated) for the per-state pitch override.

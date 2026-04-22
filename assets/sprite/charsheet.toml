@@ -1,94 +1,79 @@
 # Metadata for the sprite companion character sheet.
 # Source: CatPackPaid/Sprites/Halloween/witch.png (witch-hat pixel-art cat).
 # Each [states.*] entry maps a SpriteState to a row (0-indexed) in charsheet.png.
-# Cells are 32x32 px; sheet is 512x1024 px (16 cols × 32 rows).
+#
+# Cell pitch = 32 x 48 px (16 cols x 21 rows of content + 16 px trailing pad).
+# Native pack cat body = 32x32; this witch variant adds a hat that pushes
+# content to 32x48 tall. Some rows (row 2 flop, row 6 sleep) use wider
+# 48-wide poses — those states override `frame_width` below.
+#
+# Verify any mapping change with `uv run python scripts/dump_sprite_slices.py`.
 # Regenerate / swap art per ./README.md.
 
 frame_width = 32
-frame_height = 32
+frame_height = 48
 fps = 8
 
 # -- Canonical states -------------------------------------------------------
-# row 0 — sitting witch cat, breathing loop (10 frames available, use 4).
+# row 6 — sleeping curled cat (same pose as CRASHED).
+# Used when no session (gates closed) or when muted — cat is NOT
+# listening, so it visibly snoozes. Distinct from LISTENING's alert
+# sitting pose. Muted override in SpriteRenderer also maps to this anim.
 [states.idle]
-row = 0
-frames = 4
+row = 6
+frames = 10
+frame_width = 48
 
-# row 2 — alt sitting / reactive pose (10 frames).
+# row 0 — default sitting witch cat, engaged / alert tail sway.
+# Used when session is open and actively listening for commands.
+# (Row 1 has an alt sitting pose; kept unassigned for now.)
 [states.listening]
-row = 2
-frames = 6
+row = 0
+frames = 10
 
-# row 4 — active / leaning forward (12 frames) — responds to heard speech.
+# row 4 — mouth-open meow / reacting to heard speech.
 [states.hearing_speech]
 row = 4
-frames = 4
+frames = 8
 
-# row 8 — standing / pawing (12 frames) — mid processing.
+# row 7 — walking witch cat — mid processing / locomotion.
 [states.thinking]
-row = 8
-frames = 6
-
-# row 7 — witch on broom (12 frames) — magical "spellcasting" animation for LLM call.
-[states.llm_thinking]
 row = 7
-frames = 6
+frames = 9
 
-# row 15 — reactive bright pose (12 frames) — happy outcome.
+# row 5 — standing holding glowing orb — spellcasting LLM call.
+[states.llm_thinking]
+row = 5
+frames = 12
+
+# row 0 (reused) — happy outcome chirp.
 [states.success]
-row = 15
-frames = 3
+row = 0
+frames = 10
 
-# row 11 — confused / question pose (9 frames).
+# row 2 — lying / flopped — command not understood.
+# 48-wide pose (cat with tail outstretched).
 [states.miss]
-row = 11
-frames = 3
+row = 2
+frames = 4
+frame_width = 48
 
-# row 3 — crouch / spooked (6 frames).
+# row 3 — startled ghost float — tool execution failed.
 [states.tool_error]
 row = 3
-frames = 3
-
-# row 9 — standing stretch (15 frames) — initial warmup cycle.
-[states.warmup]
-row = 9
 frames = 4
 
-# row 6 — lying down / sleep (8 frames) — daemon gone, sprite crashed.
+# row 0 (reused) — warmup = idle sitting at start.
+[states.warmup]
+row = 0
+frames = 10
+
+# row 6 — sleeping curled — daemon gone, sprite crashed.
+# 48-wide pose (sleep cat with long tail).
 [states.crashed]
 row = 6
-frames = 2
+frames = 10
+frame_width = 48
 
-# -- Transitions (optional) -------------------------------------------------
-# Transitions between states that play ONCE before settling into target state's loop.
-# Not all state pairs have transitions; unlisted pairs snap instantly.
-
-[transitions."idle->listening"]
-row = 16
-frames = 4
-once = true
-
-[transitions."listening->idle"]
-row = 17
-frames = 4
-once = true
-
-[transitions."listening->hearing_speech"]
-row = 18
-frames = 4
-once = true
-
-[transitions."hearing_speech->thinking"]
-row = 19
-frames = 4
-once = true
-
-[transitions."thinking->success"]
-row = 20
-frames = 3
-once = true
-
-[transitions."thinking->miss"]
-row = 21
-frames = 3
-once = true
+# -- Transitions ------------------------------------------------------------
+# No dedicated transition rows. States snap instantly.

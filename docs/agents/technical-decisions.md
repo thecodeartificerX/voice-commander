@@ -69,5 +69,6 @@ When you touch any row, also update the corresponding ADR (never the other way a
 | Character sheet format | Grid PNG + sidecar TOML | Art regen = image gen + TOML edit, no code changes | [0047](../decisions/0047-charsheet-grid-format-sidecar-toml.md) |
 | Outbound telemetry | In-daemon EventBus + FastAPI SSE `/events` | Single broadcast channel for sprite, future dashboard, analytics | [0048](../decisions/0048-eventbus-sse-outbound-telemetry.md) |
 | Miss chimes | Retained alongside sprite | Sprite supplements audio, does not replace it | [0049](../decisions/0049-miss-chimes-retained.md) |
+| Pyglet transparent-overlay recipe | `sample_buffers=0` + `glClearColor` in `on_draw` every frame + `glBlendFuncSeparate` + per-sprite `blend_src/dest` + no manual `SetLayeredWindowAttributes` + no `DwmExtendFrameIntoClientArea` + startup `alpha_size` log | Six independent Win11 traps all produce the same opaque-black-background symptom; must be mitigated together or transparency fails | [0050](../decisions/0050-pyglet-transparent-overlay-windows-recipe.md) |
 
 All ADRs live in [`../decisions/`](../decisions/). Add a new row here whenever you add a new ADR.
