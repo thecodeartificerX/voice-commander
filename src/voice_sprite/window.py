@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import io
 import logging
 import platform
 from typing import TYPE_CHECKING
 
 import pyglet
-from PIL import Image
 
 if TYPE_CHECKING:
     from .speech_bubble import SpeechBubble
@@ -16,7 +14,23 @@ logger = logging.getLogger(__name__)
 
 
 class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
-    """Transparent, borderless, always-on-top sprite window."""
+    """Transparent, borderless, always-on-top sprite window.
+
+    Follows the canonical pyglet 2.1.8+ recipe for per-pixel alpha overlays
+    on Windows (see pyglet issue #1271):
+
+    1. Explicit ``gl.Config(alpha_size=8, double_buffer=True)`` guarantees
+       an alpha-enabled framebuffer even if pyglet's style-driven auto-
+       config misses it on some drivers.
+    2. ``style=WINDOW_STYLE_OVERLAY`` wires ``WS_POPUP | WS_EX_LAYERED |
+       WS_EX_TRANSPARENT`` and calls DwmEnableBlurBehindWindow — borderless,
+       click-through, topmost, per-pixel-alpha in one flag.
+    3. ``glEnable(GL_BLEND)`` + standard src-alpha / one-minus-src-alpha
+       blend func so sprite pixels composite over the transparent clear
+       instead of overwriting the framebuffer with alpha=1.
+    4. ``glClearColor(0, 0, 0, 0)`` so ``window.clear()`` writes fully
+       transparent pixels everywhere except where the sprite draws.
+    """
 
     def __init__(
         self,
@@ -29,18 +43,9 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         render_scale: float = 1.0,
         y_nudge_px: int = 0,
     ) -> None:
-        # WINDOW_STYLE_OVERLAY (pyglet 2.1+) = borderless + DWM blur-behind +
-        # topmost + click-through + no-activate in one flag. WINDOW_STYLE_BORDERLESS
-        # alone leaves the window opaque; WINDOW_STYLE_TRANSPARENT keeps the
-        # title bar. OVERLAY gives the HUD-style compositing we need — BUT
-        # only if the GL framebuffer actually has an alpha channel to write
-        # into. Default pyglet Config has alpha_size=0; explicitly request
-        # alpha_size=8 so our glClearColor(0, 0, 0, 0) and sprite alpha blend
-        # compose into the layered-window alpha the DWM reads for compositing.
         gl_config = pyglet.gl.Config(  # type: ignore[abstract]
-            double_buffer=True,
             alpha_size=8,
-            transparent_framebuffer=True,
+            double_buffer=True,
         )
         super().__init__(
             width=width,
@@ -49,70 +54,49 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
             config=gl_config,
             vsync=False,
         )
-        # Pyglet's default clear colour is opaque black; replace with fully
-        # transparent so only non-zero-alpha sprite pixels are visible.
-        pyglet.gl.glClearColor(0, 0, 0, 0)
+        # Alpha compositing — sprite pixels blend over the transparent clear
+        # instead of overwriting the framebuffer with opaque black.
+        gl = pyglet.gl
+        gl.glEnable(gl.GL_BLEND)
+        gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+        gl.glClearColor(0, 0, 0, 0)
+
         self.set_location(x, y)
         self._renderer = renderer
         self._bubble = bubble
+        self._render_scale = render_scale
+        self._y_nudge_px = y_nudge_px
+
         self._image: pyglet.image.AbstractImage | None = None
         self._sprite: pyglet.sprite.Sprite | None = None
         self._label: pyglet.text.Label | None = None
         self._muted = False
         self._mute_color = (128, 128, 128)
-        # Cache for on_draw region lookup — recomputed only when frame_region changes.
+
+        # Cache the current frame region so get_region() runs only when the
+        # renderer advances to a new frame (every 125 ms at 8 fps, not every
+        # 16 ms at 60 fps draw).
         self._cached_frame_key: tuple[int, int, int, int] | None = None
         self._cached_region: pyglet.image.AbstractImage | None = None
-        # Set by load_charsheet_image. Always >= 1; on_draw multiplies source
-        # coords by this to index into the pre-upscaled charsheet.
-        self._upscale_factor: int = 1
-        # Render tuning — tweak live via config.toml (sprite.render_scale,
-        # sprite.y_nudge_px) to size + position the cat within the window.
-        self._render_scale = render_scale
-        self._y_nudge_px = y_nudge_px
 
     def load_charsheet_image(self, png_path: str) -> None:
-        """Load the charsheet PNG, pre-upscaled with nearest-neighbour so each
-        frame blits at its on-screen size with no runtime scaling.
+        """Load the charsheet PNG and force GL_NEAREST filtering.
 
-        pyglet 2.1's ``Sprite.scale`` does not reliably compose with
-        per-frame ``Sprite.image`` swaps from ``TextureRegion``s — some frames
-        render at native texture size regardless of the scale attribute. The
-        workaround is to do the upscale once at load time via Pillow's NEAREST
-        filter and feed pyglet an already-upscaled charsheet. After this, frame
-        regions are already the final display size and a direct ``blit`` at
-        (0, 0) fills the window as expected.
-
-        The upscale factor is derived from the window height and the charsheet
-        row-count implied by the source PNG: caller's set the
-        ``_upscale_factor`` here so ``on_draw`` can multiply the source
-        coordinates returned by :class:`SpriteRenderer`.
+        Pixel-art upscaled with GL_LINEAR (pyglet's default) looks blurry.
+        GL_NEAREST keeps edges crisp when the sprite renders at e.g. 4x the
+        source 32x32 cell size.
         """
-        src = Image.open(png_path).convert("RGBA")
-        # Derive scale from the window's intended display size vs the source
-        # cell size. Cell size isn't known here, but the renderer's charsheet
-        # knows frame_height; assume the window was sized for that cell
-        # upscaled by a power-of-two factor. 4x is the sweet spot for 32 -> 128.
-        factor = max(1, self.height // self._renderer.charsheet.frame_height)
-        if factor > 1:
-            scaled = src.resize((src.width * factor, src.height * factor), Image.Resampling.NEAREST)
-        else:
-            scaled = src
-        self._upscale_factor = factor
-
-        buf = io.BytesIO()
-        scaled.save(buf, format="PNG")
-        buf.seek(0)
-        self._image = pyglet.image.load(png_path, file=buf)
-        # Force GL_NEAREST on the already-upscaled texture — avoids any further
-        # bilinear smearing if pyglet mips it down somewhere.
+        self._image = pyglet.image.load(png_path)
         texture = self._image.get_texture()
         gl = pyglet.gl
         gl.glBindTexture(texture.target, texture.id)
         gl.glTexParameteri(texture.target, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
         gl.glTexParameteri(texture.target, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+        # Charsheet swapped (e.g. hot-reload) — drop cached region + sprite so
+        # next draw rebuilds them from the new image.
         self._cached_frame_key = None
         self._cached_region = None
+        self._sprite = None
 
     def set_muted(self, muted: bool) -> None:
         self._muted = muted
@@ -124,58 +108,45 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
 
         frame_key = self._renderer.frame_region
         x, y, w, h = frame_key
-        # Source (x, y, w, h) are in source-PNG pixels; charsheet image in
-        # memory has been pre-upscaled by _upscale_factor, so multiply through.
-        # Also convert y from charsheet-top-down to pyglet-bottom-up here.
-        f = self._upscale_factor
+        # pyglet.image.get_region uses bottom-up y; the charsheet itself uses
+        # top-down rows (row 0 = top of PNG). Convert with img_h - (y + h).
         if frame_key != self._cached_frame_key or self._cached_region is None:
             img_h = self._image.height
-            self._cached_region = self._image.get_region(
-                x * f,
-                img_h - (y + h) * f,
-                w * f,
-                h * f,
-            )
+            self._cached_region = self._image.get_region(x, img_h - (y + h), w, h)
             self._cached_frame_key = frame_key
         region = self._cached_region
 
-        # Render-tuning: shrink the upscaled frame (render_scale < 1.0 leaves a
-        # margin around the sprite) and nudge it up/down (y_nudge_px positive
-        # shifts toward the top of the window, since pyglet y=0 is bottom).
-        #
-        # We can't re-scale the region itself via blit(), so we re-extract the
-        # region into a dynamically-sized texture when render_scale != 1.0:
-        # use a pyglet image copy + set_scale on a persistent sprite object.
-        blit_w = int(region.width * self._render_scale)
-        blit_h = int(region.height * self._render_scale)
-        blit_x = (self.width - blit_w) // 2
-        blit_y = (self.height - blit_h) // 2 + self._y_nudge_px
-        if self._render_scale == 1.0:
-            region.blit(blit_x, blit_y, 0)
-        else:
-            # Reuse a single Sprite object; only reset image when the source
-            # region changes (cache invalidation already gated above).
-            if self._sprite is None or self._sprite.image is not region:
-                if self._sprite is None:
-                    self._sprite = pyglet.sprite.Sprite(region, x=blit_x, y=blit_y)
-                else:
-                    self._sprite.image = region
-            self._sprite.x = blit_x
-            self._sprite.y = blit_y
-            self._sprite.scale = self._render_scale
-            self._sprite.draw()
+        # Fit the source frame to the window, then apply the configurable
+        # render_scale shrink factor. render_scale=1.0 fills the window
+        # edge-to-edge; 0.75 leaves a 12.5 % margin each side so the cat
+        # does not clip at the window borders.
+        fit_scale = min(self.width / w, self.height / h)
+        final_scale = fit_scale * self._render_scale
+        disp_w = w * final_scale
+        disp_h = h * final_scale
+        sprite_x = (self.width - disp_w) / 2
+        sprite_y = (self.height - disp_h) / 2 + self._y_nudge_px
 
-        # Speech bubble
+        if self._sprite is None:
+            self._sprite = pyglet.sprite.Sprite(region, x=sprite_x, y=sprite_y)
+        elif self._sprite.image is not region:
+            self._sprite.image = region
+        self._sprite.x = sprite_x
+        self._sprite.y = sprite_y
+        self._sprite.scale = final_scale
+        self._sprite.color = self._mute_color if self._muted else (255, 255, 255)
+        self._sprite.draw()
+
         if self._bubble.visible:
             if self._label is None:
                 self._label = pyglet.text.Label(
                     self._bubble.text,
                     font_name="Segoe UI",
                     font_size=10,
-                    x=w // 2,
-                    y=h + 4,
+                    x=self.width // 2,
+                    y=self.height - 4,
                     anchor_x="center",
-                    anchor_y="bottom",
+                    anchor_y="top",
                     color=(255, 255, 255, int(self._bubble.opacity * 255)),
                 )
             else:
@@ -189,7 +160,13 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
             self._label.draw()
 
     def apply_win32_flags(self) -> None:
-        """Apply click-through, topmost, no-taskbar flags (Windows only)."""
+        """Apply click-through, topmost, no-taskbar flags (Windows only).
+
+        Redundant when using ``WINDOW_STYLE_OVERLAY`` (pyglet already sets
+        ``WS_EX_LAYERED | WS_EX_TRANSPARENT`` internally) but harmless —
+        kept as a safety net for older pyglet versions and non-overlay
+        styles users may switch to.
+        """
         if platform.system() != "Windows":
             logger.warning("Win32 flags only apply on Windows")
             return
