@@ -146,6 +146,23 @@ def test_from_event_dict_malformed(bad_dict: dict, exc_type: type[Exception]) ->
             {"transcript": "hi", "steps": 42, "status": "ok", "duration_ms": 0},
             id="steps_not_a_list",
         ),
+        pytest.param(
+            {"transcript": "hi", "steps": [{"kwargs": {}}], "status": "ok", "duration_ms": 0},
+            id="step_missing_name",
+        ),
+        pytest.param(
+            {
+                "transcript": "hi",
+                "steps": [{"name": "copy", "kwargs": 99}],
+                "status": "ok",
+                "duration_ms": 0,
+            },
+            id="step_kwargs_not_a_dict",
+        ),
+        pytest.param(
+            {"transcript": "hi", "steps": [], "status": "ok", "duration_ms": "bad"},
+            id="duration_ms_non_numeric",
+        ),
         pytest.param({}, id="empty_dict"),
     ],
 )
