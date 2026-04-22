@@ -189,17 +189,32 @@ class StreamingDaemon:
         # Async write for post-mortem debugging
         self._write_utterance_async(utterance)
 
+        start_s = time.perf_counter()
+
+        def _publish_miss(transcript: str) -> None:
+            self._publish(
+                "plan_outcome",
+                {
+                    "transcript": transcript,
+                    "steps": [],
+                    "status": "miss",
+                    "failed_step_index": None,
+                    "error_msg": None,
+                    "duration_ms": int((time.perf_counter() - start_s) * 1000),
+                },
+            )
+
         self._publish("transcribing")
         result: TranscriptionResult = self._transcriber.transcribe(utterance)
         self._feedback.on_transcript(result.text, result.confidence)
 
-        # Gate: word-count
+        # Gate: word-count  (infrastructure noise — no plan_outcome)
         word_count = len(result.text.split())
         if word_count < self._min_word_count:
             logger.debug("Gate: word-count %d < %d, dropping", word_count, self._min_word_count)
             return
 
-        # Gate: no_speech_prob
+        # Gate: no_speech_prob  (infrastructure noise — no plan_outcome)
         if result.no_speech_prob > self._max_no_speech_prob:
             logger.debug(
                 "Gate: no_speech_prob %.2f > %.2f, dropping",
@@ -208,9 +223,10 @@ class StreamingDaemon:
             )
             return
 
-        # Gate: confidence
+        # Gate: confidence  (emits plan_outcome status=miss — user-visible)
         if result.confidence < self._min_confidence:
             self._feedback.on_miss(result.text, ())
+            _publish_miss(result.text)
             return
 
         # Mute guard: utterance may have been mid-transcription when mute fired.
@@ -222,6 +238,7 @@ class StreamingDaemon:
         plan = self._llm_router.route(result.text)
         if plan is None:
             self._feedback.on_miss(result.text, ())
+            _publish_miss(result.text)
             return
         if self._registry is None:
             logger.error("Registry not set — cannot execute plan for '%s'", result.text)
