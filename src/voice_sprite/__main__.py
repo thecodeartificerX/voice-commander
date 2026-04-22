@@ -76,14 +76,14 @@ class HUDPipeline:
         if event_type == "plan_outcome":
             from voice_commander.plan import PlanOutcome
 
+            from .chat_log import ChatLogEntry
+
             raw_text: str = data.get("transcript", "")
             try:
                 outcome = PlanOutcome.from_event_dict(data)
             except (KeyError, ValueError, TypeError):
                 logger.exception("Failed to parse PlanOutcome — falling back to raw transcript")
                 if raw_text:
-                    from .chat_log import ChatLogEntry
-
                     self._chat_log.append(
                         ChatLogEntry(
                             text=raw_text,
@@ -100,6 +100,8 @@ class HUDPipeline:
         """Background thread target — summarizes PlanOutcome objects off the SSE thread."""
         import pyglet.clock as _pclock
 
+        from .chat_log import ChatLogEntry
+
         while True:
             item = self._queue.get()
             if item is None:
@@ -115,8 +117,6 @@ class HUDPipeline:
                 if summary:
 
                     def _append(dt: float, _s: str = summary, _st: Any = outcome.status) -> None:
-                        from .chat_log import ChatLogEntry
-
                         self._chat_log.append(
                             ChatLogEntry(
                                 text=_s,
