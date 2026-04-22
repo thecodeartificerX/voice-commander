@@ -33,7 +33,7 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
        transparent pixels everywhere except where the sprite draws.
     """
 
-    def __init__(
+    def __init__(  # pragma: no cover
         self,
         width: int,
         height: int,
@@ -118,7 +118,7 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._cached_frame_key: tuple[int, int, int, int] | None = None
         self._cached_region: pyglet.image.AbstractImage | None = None
 
-    def load_charsheet_image(self, png_path: str) -> None:
+    def load_charsheet_image(self, png_path: str) -> None:  # pragma: no cover
         """Load the charsheet PNG and force GL_NEAREST filtering.
 
         Pixel-art upscaled with GL_LINEAR (pyglet's default) looks blurry.
@@ -215,7 +215,7 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
                 )
             self._label.draw()
 
-    def apply_win32_flags(self) -> None:
+    def apply_win32_flags(self) -> None:  # pragma: no cover
         """Apply click-through, topmost, no-taskbar flags (Windows only).
 
         Redundant when using ``WINDOW_STYLE_OVERLAY`` (pyglet already sets

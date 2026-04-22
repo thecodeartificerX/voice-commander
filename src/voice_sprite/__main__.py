@@ -9,12 +9,20 @@ import threading
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .chat_log import ChatLog
+    from .speech_bubble import SpeechBubble
+    from .sprite_renderer import SpriteRenderer
+    from .state_machine import StateMachine
+    from .summarizer import Summarizer
+    from .window import SpriteWindow
 
 logger = logging.getLogger("voice_sprite")
 
 
-def _configure_logging() -> None:
+def _configure_logging() -> None:  # pragma: no cover
     os.makedirs("outputs", exist_ok=True)
     handler = RotatingFileHandler(
         "outputs/sprite.log",
@@ -30,7 +38,98 @@ def _configure_logging() -> None:
     )
 
 
-def main() -> None:
+class HUDPipeline:
+    """Wires SSE events → Summarizer → ChatLog.
+
+    Extracted from main() so the pipeline is independently testable
+    without a live pyglet GL context or SSE connection.
+    """
+
+    def __init__(
+        self,
+        sm: StateMachine,
+        renderer: SpriteRenderer,
+        window: SpriteWindow,
+        bubble: SpeechBubble,
+        chat_log: ChatLog,
+        summarizer: Summarizer,
+    ) -> None:
+        self._sm = sm
+        self._renderer = renderer
+        self._window = window
+        self._bubble = bubble
+        self._chat_log = chat_log
+        self._summarizer = summarizer
+        self._queue: queue.Queue[Any] = queue.Queue()
+
+    def on_event(self, event_type: str, data: dict[str, Any]) -> None:
+        """SSE event handler — call from SSEClient.on_event."""
+        result = self._sm.on_event(event_type, data)
+        if result is not None:
+            self._renderer.set_state(result)
+            logger.info("State → %s", result.value)
+        self._window.set_muted(self._sm.muted)
+        self._renderer.set_muted(self._sm.muted)
+        if event_type == "plan_outcome":
+            from voice_commander.plan import PlanOutcome
+
+            raw_text: str = data.get("transcript", "")
+            try:
+                outcome = PlanOutcome.from_event_dict(data)
+            except (KeyError, ValueError, TypeError):
+                logger.exception("Failed to parse PlanOutcome — falling back to raw transcript")
+                if raw_text:
+                    from .chat_log import ChatLogEntry
+
+                    self._chat_log.append(
+                        ChatLogEntry(
+                            text=raw_text,
+                            status="error",
+                            born_at_s=time.monotonic(),
+                        )
+                    )
+            else:
+                self._queue.put((outcome, raw_text))
+        if event_type == "tool_fired" and "name" in data:
+            self._bubble.show(data["name"])
+
+    def worker(self) -> None:
+        """Background thread target — summarizes PlanOutcome objects off the SSE thread."""
+        import pyglet.clock as _pclock
+
+        while True:
+            item = self._queue.get()
+            if item is None:
+                self._queue.task_done()
+                break
+            outcome, raw_text = item
+            try:
+                summary = self._summarizer.summarize(outcome)
+            except Exception:
+                logger.exception("Summarizer failed — using last-resort text")
+                summary = raw_text
+            if summary:
+
+                def _append(dt: float, _s: str = summary, _st: Any = outcome.status) -> None:
+                    from .chat_log import ChatLogEntry
+
+                    self._chat_log.append(
+                        ChatLogEntry(
+                            text=_s,
+                            status=_st,
+                            born_at_s=time.monotonic(),
+                        )
+                    )
+
+                _pclock.schedule_once(_append, 0)
+            self._queue.task_done()
+
+    def stop(self) -> None:
+        """Signal worker thread to exit and drain the queue."""
+        self._queue.put(None)
+
+
+def main() -> None:  # pragma: no cover
     parser = argparse.ArgumentParser(
         prog="voice-sprite",
         description="On-screen sprite companion for Voice Commander.",
@@ -98,7 +197,7 @@ def main() -> None:
     bubble = SpeechBubble(fade_ms=cfg.bubble_fade_ms)
 
     # Chat-log + summarizer stack
-    from .chat_log import ChatLog, ChatLogEntry
+    from .chat_log import ChatLog
     from .chat_log_renderer import ChatLogRenderer
     from .llm_summary_client import LLMSummaryClient
     from .summarizer import Summarizer
@@ -209,70 +308,21 @@ def main() -> None:
 
     pyglet.clock.schedule_interval(check_hot_reload, 2.0)
 
-    # Worker thread: summarizes PlanOutcome objects off the SSE thread.
-    _summarize_queue: queue.Queue[Any] = queue.Queue()
-
-    def _summarizer_worker() -> None:
-        import pyglet.clock as _pclock
-
-        while True:
-            item = _summarize_queue.get()
-            if item is None:
-                break
-            outcome, raw_text = item
-            try:
-                summary = summarizer.summarize(outcome)
-            except Exception:
-                logger.exception("Summarizer failed — using last-resort text")
-                summary = raw_text
-            if summary:
-
-                def _append(dt: float, _s: str = summary, _st: Any = outcome.status) -> None:
-                    chat_log.append(
-                        ChatLogEntry(
-                            text=_s,
-                            status=_st,
-                            born_at_s=time.monotonic(),
-                        )
-                    )
-
-                _pclock.schedule_once(_append, 0)
-            _summarize_queue.task_done()
+    # HUD pipeline: wires SSE events → Summarizer → ChatLog.
+    pipeline = HUDPipeline(
+        sm=sm,
+        renderer=renderer,
+        window=window,
+        bubble=bubble,
+        chat_log=chat_log,
+        summarizer=summarizer,
+    )
 
     _summarizer_thread = threading.Thread(
-        target=_summarizer_worker,
+        target=pipeline.worker,
         name="summarizer-worker",
         daemon=True,
     )
-
-    # SSE event handler
-    def on_event(event_type: str, data: dict[str, Any]) -> None:
-        result = sm.on_event(event_type, data)
-        if result is not None:
-            renderer.set_state(result)
-            logger.info("State → %s", result.value)
-        window.set_muted(sm.muted)
-        renderer.set_muted(sm.muted)
-        if event_type == "plan_outcome":
-            from voice_commander.plan import PlanOutcome
-
-            raw_text: str = data.get("transcript", "")
-            try:
-                outcome = PlanOutcome.from_event_dict(data)
-            except (KeyError, ValueError, TypeError):
-                logger.exception("Failed to parse PlanOutcome — falling back to raw transcript")
-                if raw_text:
-                    chat_log.append(
-                        ChatLogEntry(
-                            text=raw_text,
-                            status="error",
-                            born_at_s=time.monotonic(),
-                        )
-                    )
-            else:
-                _summarize_queue.put((outcome, raw_text))
-        if event_type == "tool_fired" and "name" in data:
-            bubble.show(data["name"])
 
     def on_disconnect() -> None:
         sm.force_crashed()
@@ -282,7 +332,7 @@ def main() -> None:
     # Start SSE client
     sse = SSEClient(
         base_url=cfg.daemon_url,
-        on_event=on_event,
+        on_event=pipeline.on_event,
         on_disconnect=on_disconnect,
     )
     sse.start()
@@ -306,7 +356,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        _summarize_queue.put(None)  # signal worker to exit
+        pipeline.stop()  # signal worker to exit
         _summarizer_thread.join(timeout=5.0)
         if llm_client is not None:
             llm_client.close()
