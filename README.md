@@ -29,7 +29,8 @@ Voice Commander is the boring middle ground. Push-to-talk, speak plain English, 
 - **Mute hotkey for dictation coexistence.** Secondary key (default Right Ctrl) suspends the mic so Voice Commander does not fight your other dictation software. See [ADR 0025](docs/decisions/0025-mute-hotkey-for-external-dictation.md).
 - **Web UI.** Open `http://127.0.0.1:8765` while the daemon runs to edit phrases, toggle tools, and hot-reload without restarting. HTMX + FastAPI, no SPA build step. See [ADR 0022](docs/decisions/0022-htmx-over-spa.md).
 - **Sidecar TOML metadata.** Phrases and descriptions live in `.toml` files beside each tool module, so config and code evolve independently. See [ADR 0021](docs/decisions/0021-sidecar-toml-per-tool.md).
-- **Audio-only feedback.** A miss chime on low confidence, silence on success. No toast notifications ever. See [ADR 0013](docs/decisions/0013-drop-winrt-toasts-audio-only-feedback.md).
+- **Audio + visual feedback.** A miss chime on low confidence, silence on success ([ADR 0014](docs/decisions/0014-miss-only-chimes.md)). The sprite companion provides continuous visual state ([ADR 0049](docs/decisions/0049-miss-chimes-retained.md)). No toast notifications.
+- **On-screen sprite companion.** A pixel-art desktop pet mirrors daemon state — idle, listening, thinking, success, miss. Runs as a separate process (`voice_sprite`) via SSE, so a sprite crash never affects voice recognition. Configurable corner, size, and art via `config.toml [sprite]`. See [ADR 0045](docs/decisions/0045-sprite-separate-process-via-sse.md).
 - **CUDA preloading shim.** cuBLAS and cuDNN are preloaded via `ctypes` before `faster_whisper` imports, so venv-local pip wheels resolve cleanly regardless of shell `PATH` state. You still need CUDA Toolkit and cuDNN installed system-wide (see [CUDA setup](#cuda-setup) below). See [ADR 0012](docs/decisions/0012-cuda-dll-bundling.md).
 
 ---

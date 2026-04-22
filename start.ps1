@@ -78,13 +78,21 @@ param(
     [Parameter(ParameterSetName = 'Interactive')]
     [Parameter(ParameterSetName = 'NoMenu')]
     [Parameter(ParameterSetName = 'DirectDevice')]
-    [switch]$NoOpenBrowser
+    [switch]$NoOpenBrowser,
+
+    [Parameter(ParameterSetName = 'Interactive')]
+    [Parameter(ParameterSetName = 'NoMenu')]
+    [Parameter(ParameterSetName = 'DirectDevice')]
+    [switch]$NoSprite
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 Set-Location -LiteralPath $PSScriptRoot
+
+# Phase banner shown in Show-VoiceBanner. Extracted so phase bumps touch one place.
+$script:PhaseString = '  Phase 6: LLM-only routing (9 primitives, unconditional LLM)'
 
 # ---------------------------------------------------------------------------
 # Color helper functions
@@ -158,7 +166,7 @@ function Show-VoiceBanner {
     Write-VoiceHeader '  \ V /| () | | | \__ \ ) _)  )( (__( () |)  / | \/ |/    \/    / ) D ( ) _)  )   /'
     Write-VoiceHeader '   \_/ \____/\___/(____/(____)(__)\___)\__/(__/  \_)(_/\_/\_/\_)__)(____/(____)(__\_)'
     Write-VoiceHeader ''
-    Write-VoiceHeader '  Phase 6: LLM-only routing (9 primitives, unconditional LLM)'
+    Write-VoiceHeader $script:PhaseString
     Write-Host '  ---------------------------------------------------------------' -ForegroundColor Cyan
     Write-Host ''
 }
@@ -470,7 +478,22 @@ function Start-VoiceWithUI {
         } | Out-Null
     }
 
-    return Start-VoiceDaemon
+    # Spawn sprite companion unless disabled
+    $spriteProc = $null
+    if (-not $NoSprite -and -not $NoUI) {
+        Write-Verbose "Spawning sprite companion"
+        $spriteProc = Start-Process -FilePath "uv" -ArgumentList "run","voice-sprite" -PassThru -WindowStyle Hidden
+    }
+
+    try {
+        return Start-VoiceDaemon
+    } finally {
+        if ($spriteProc -and -not $spriteProc.HasExited) {
+            Write-Verbose "Stopping sprite companion (PID=$($spriteProc.Id))"
+            $spriteProc.Kill()
+            $spriteProc.WaitForExit(3000) | Out-Null
+        }
+    }
 }
 
 # ---------------------------------------------------------------------------

@@ -360,6 +360,34 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 
 ---
 
+## `pyglet` — Sprite companion renderer
+
+**Purpose in this project:** `pyglet` renders the on-screen sprite companion in the `voice_sprite` process. It provides a transparent, borderless, always-on-top, click-through OpenGL window for displaying animated pixel-art frames from the character sheet. The pyglet event loop runs on the main thread; the SSE client runs on a daemon thread.
+
+**Alternatives considered:** Tkinter (limited transparency support), PyQt (100+ MB dependency), Electron overlay (heavyweight), web overlay via browser.
+
+**Why `pyglet` won:** Native per-pixel alpha transparency via OpenGL. Built-in sprite-sheet primitives (TextureGrid, Animation). Direct HWND access for Win32 extended style flags. ~2 MB dependency vs 100+ MB for Qt.
+
+**Pin reason:** `>=2.1.3` for stable Windows transparency and `pyglet.window.Window` HWND access API.
+
+**ADR:** [`decisions/0046-pyglet-over-tkinter-pyqt-web-overlay.md`](decisions/0046-pyglet-over-tkinter-pyqt-web-overlay.md)
+
+---
+
+## `httpx-sse` — SSE client for sprite companion
+
+**Purpose in this project:** `httpx-sse` provides the `connect_sse()` context manager used by `voice_sprite.event_client.SSEClient` to consume the daemon's `/events` SSE stream. Wraps httpx with proper SSE frame parsing and `Last-Event-ID` support.
+
+**Alternatives considered:** Raw `httpx` streaming (manual SSE parsing), `aiohttp` (async-only), `sseclient-py` (unmaintained).
+
+**Why `httpx-sse` won:** Already using `httpx` for the LLM router. `connect_sse()` adds SSE-specific parsing (event type, data, id fields) without switching HTTP libraries. Sync API fits the daemon-thread model.
+
+**Pin reason:** `>=0.4.0` for stable `connect_sse()` API and `ServerSentEvent` field accessors.
+
+**ADR:** [`decisions/0048-eventbus-sse-outbound-telemetry.md`](decisions/0048-eventbus-sse-outbound-telemetry.md)
+
+---
+
 ## Cross-reference index
 
 | Library | ADR |
@@ -382,3 +410,5 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 | Threading model | [`0010-threading-model.md`](decisions/0010-threading-model.md) |
 | Scroll Lock hotkey | [`0001-scroll-lock-hotkey.md`](decisions/0001-scroll-lock-hotkey.md) |
 | `httpx` | No dedicated ADR yet |
+| `pyglet` | [`0046-pyglet-over-tkinter-pyqt-web-overlay.md`](decisions/0046-pyglet-over-tkinter-pyqt-web-overlay.md) |
+| `httpx-sse` | [`0048-eventbus-sse-outbound-telemetry.md`](decisions/0048-eventbus-sse-outbound-telemetry.md) |

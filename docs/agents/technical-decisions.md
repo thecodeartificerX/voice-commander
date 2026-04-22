@@ -60,4 +60,14 @@ When you touch any row, also update the corresponding ADR (never the other way a
 |---|---|---|---|
 | Single-instance lock | OS-level file locking (`msvcrt`/`fcntl`) + fixed ctypes HANDLE truncation + PID:GUID + cleanup handlers | Advisory file lock auto-released on crash; ctypes `c_void_p` for 64-bit HANDLE correctness | [0039](../decisions/0039-single-instance-lock-hardening.md) |
 
+## Sprite Companion
+
+| Decision | Choice | Why | ADR |
+|---|---|---|---|
+| Sprite isolation | Separate OS process via SSE, not in-process | Crash isolation; daemon has zero sprite knowledge | [0045](../decisions/0045-sprite-separate-process-via-sse.md) |
+| Sprite renderer | pyglet 2.x | Per-pixel alpha, sprite-sheet primitives, HWND access, no Qt bloat | [0046](../decisions/0046-pyglet-over-tkinter-pyqt-web-overlay.md) |
+| Character sheet format | Grid PNG + sidecar TOML | Art regen = image gen + TOML edit, no code changes | [0047](../decisions/0047-charsheet-grid-format-sidecar-toml.md) |
+| Outbound telemetry | In-daemon EventBus + FastAPI SSE `/events` | Single broadcast channel for sprite, future dashboard, analytics | [0048](../decisions/0048-eventbus-sse-outbound-telemetry.md) |
+| Miss chimes | Retained alongside sprite | Sprite supplements audio, does not replace it | [0049](../decisions/0049-miss-chimes-retained.md) |
+
 All ADRs live in [`../decisions/`](../decisions/). Add a new row here whenever you add a new ADR.

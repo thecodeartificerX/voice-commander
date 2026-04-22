@@ -60,6 +60,20 @@ voice-commander/
 │       ├── server.py               # uvicorn daemon thread
 │       ├── static/                 # htmx + tailwind bundles, app.css
 │       └── templates/              # Jinja2 templates (HTMX fragments)
+│   └── event_bus.py                # in-process pub/sub for SSE consumers
+│
+├── src/voice_sprite/                 # sprite companion process (separate from daemon)
+│   ├── __init__.py
+│   ├── __main__.py               # entry point: SSE client thread + pyglet event loop
+│   ├── charsheet.py              # TOML parser + PNG bounds validator
+│   ├── config.py                 # sprite-side config loader
+│   ├── dpi.py                    # per-monitor DPI scaling
+│   ├── event_client.py           # httpx-sse consumer with auto-reconnect
+│   ├── speech_bubble.py          # fading label overlay
+│   ├── sprite_renderer.py        # frame selection + animation timing
+│   ├── state_machine.py          # 11-state FSM + heartbeat timeout
+│   ├── win32_flags.py            # WS_EX_LAYERED | WS_EX_TRANSPARENT | etc.
+│   └── window.py                 # pyglet Window subclass
 │
 ├── tests/
 │   ├── unit/                       # one file per src module, mocked hardware
@@ -67,7 +81,10 @@ voice-commander/
 │   ├── soak/                       # overnight stability runs
 │   └── fixtures/                   # audio WAVs + sidecar TOML fixtures
 │
-├── scripts/                        # one-off utilities (device listing, config patching)
+├── scripts/                        # one-off utilities (device listing, config patching, smoke tests)
+├── assets/sprite/                  # sprite character sheet assets
+│   ├── README.md                  # art regeneration prompt template
+│   └── charsheet.toml             # state→row mapping for charsheet.png
 ├── assets/sounds/                  # miss.wav (played) + start/stop.wav (unused per ADR 0014)
 └── outputs/                        # rolling debug WAVs (gitignored)
 ```

@@ -493,7 +493,66 @@ reload_lock                                    shares ToolRegistry   uses reload
 
 ---
 
-## 6. See Also
+## 7. EventBus Subsystem
+
+### Component
+
+```python
+class EventBus:
+    def publish(self, event_type: str, data: dict | None = None) -> None: ...
+    def subscribe(self) -> asyncio.Queue[Event]: ...
+    def unsubscribe(self, q: asyncio.Queue[Event]) -> None: ...
+    def replay_after(self, last_id: int) -> list[Event]: ...
+```
+
+**What it does:** Thread-safe pub/sub broker. `publish()` is called from daemon threads (hotkey, pipeline, heartbeat). Each SSE connection calls `subscribe()` to get a bounded `asyncio.Queue` (max 1024 events, drop-oldest on overflow). 100-event ring buffer supports `Last-Event-ID` reconnect replay.
+
+**Who calls it:** `StreamingDaemon` (session/mute/warmup events), `Dispatcher` (tool_fired/miss/tool_error), heartbeat thread (1 Hz daemon_heartbeat).
+
+**Who consumes it:** FastAPI `/events` SSE endpoint → sprite process via httpx-sse.
+
+### SSE Endpoint
+
+`GET /events` — `text/event-stream`. One JSON event per SSE frame. Keepalive every 30s. `Last-Event-ID` header rewinds through ring buffer.
+
+---
+
+## 8. Sprite Companion (Separate Process)
+
+### Architecture
+
+```
+voice-commander daemon (process A)            voice_sprite (process B)
+───────────────────────────────────           ─────────────────────────
+HotkeyCtrl ──▶ VADGate ──▶ Dispatcher         httpx SSE client
+                              │                     │
+                              ▼                     ▼
+                         EventBus ──SSE──▶   StateMachine
+                              ▲                     │
+                         FastAPI /events             ▼
+                         (uvicorn thread)     pyglet Window
+                                              (topmost, click-through,
+                                               transparent, no titlebar)
+```
+
+### Module layout
+
+- `state_machine.py` — 11 states, event→state mapping, heartbeat timeout
+- `event_client.py` — httpx-sse with exponential backoff reconnect
+- `charsheet.py` — TOML parser + PNG bounds validator
+- `sprite_renderer.py` — frame selection + animation timing
+- `window.py` — pyglet Window with Win32 click-through flags
+- `speech_bubble.py` — fading last-command label
+- `dpi.py` — per-monitor DPI scaling
+- `win32_flags.py` — WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+
+### Lifecycle
+
+`start.ps1` spawns daemon → waits 500 ms → spawns `uv run voice-sprite`. Daemon never checks sprite health. Sprite polls daemon heartbeat; 3s timeout → CRASHED state → SSE reconnect loop.
+
+---
+
+## 9. See Also
 
 - [`../CLAUDE.md`](../CLAUDE.md) — project-wide durable context for agents and contributors
 - [`superpowers/specs/2026-04-19-voice-commander-design.md`](superpowers/specs/2026-04-19-voice-commander-design.md) — original design spec (source of truth for this document)
@@ -522,3 +581,8 @@ reload_lock                                    shares ToolRegistry   uses reload
   - [`decisions/0042-resolver-module-design.md`](decisions/0042-resolver-module-design.md)
   - [`decisions/0043-nine-verb-primitive-catalog.md`](decisions/0043-nine-verb-primitive-catalog.md)
   - [`decisions/0044-few-shot-system-prompt.md`](decisions/0044-few-shot-system-prompt.md)
+  - [`decisions/0045-sprite-separate-process-via-sse.md`](decisions/0045-sprite-separate-process-via-sse.md)
+  - [`decisions/0046-pyglet-over-tkinter-pyqt-web-overlay.md`](decisions/0046-pyglet-over-tkinter-pyqt-web-overlay.md)
+  - [`decisions/0047-charsheet-grid-format-sidecar-toml.md`](decisions/0047-charsheet-grid-format-sidecar-toml.md)
+  - [`decisions/0048-eventbus-sse-outbound-telemetry.md`](decisions/0048-eventbus-sse-outbound-telemetry.md)
+  - [`decisions/0049-miss-chimes-retained.md`](decisions/0049-miss-chimes-retained.md)
