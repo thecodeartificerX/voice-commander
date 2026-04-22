@@ -70,5 +70,8 @@ When you touch any row, also update the corresponding ADR (never the other way a
 | Outbound telemetry | In-daemon EventBus + FastAPI SSE `/events` | Single broadcast channel for sprite, future dashboard, analytics | [0048](../decisions/0048-eventbus-sse-outbound-telemetry.md) |
 | Miss chimes | Retained alongside sprite | Sprite supplements audio, does not replace it | [0049](../decisions/0049-miss-chimes-retained.md) |
 | Pyglet transparent-overlay recipe | `sample_buffers=0` + `glClearColor` in `on_draw` every frame + `glBlendFuncSeparate` + per-sprite `blend_src/dest` + no manual `SetLayeredWindowAttributes` + no `DwmExtendFrameIntoClientArea` + startup `alpha_size` log | Six independent Win11 traps all produce the same opaque-black-background symptom; must be mitigated together or transparency fails | [0050](../decisions/0050-pyglet-transparent-overlay-windows-recipe.md) |
+| Command HUD surface | Standalone chat-log overlay rendered in the same pyglet window as the sprite | Glanceable RPG-chat feedback per command; sharing the window avoids a second HWND | [0051](../decisions/0051-command-hud-overlay.md) |
+| HUD summarization | Hybrid: rule table covers nine-verb catalog, LLM fallback on errors / unknown verbs | Cheap hot path, rich error explanations, bounded worst case | [0052](../decisions/0052-hybrid-rule-llm-summarization.md) |
+| Multi-monitor docking | 30 Hz `GetCursorPos` poll → `MonitorFromPoint` → `rcWork` → `set_location` + `set_size`; PMv2 awareness mandatory | Sprite + HUD track the cursor; taskbar-excluded docking works on any taskbar edge | [0053](../decisions/0053-sprite-follows-cursor-monitor.md) |
 
 All ADRs live in [`../decisions/`](../decisions/). Add a new row here whenever you add a new ADR.

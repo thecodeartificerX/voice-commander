@@ -31,6 +31,8 @@ Voice Commander is the boring middle ground. Push-to-talk, speak plain English, 
 - **Sidecar TOML metadata.** Phrases and descriptions live in `.toml` files beside each tool module, so config and code evolve independently. See [ADR 0021](docs/decisions/0021-sidecar-toml-per-tool.md).
 - **Audio + visual feedback.** A miss chime on low confidence, silence on success ([ADR 0014](docs/decisions/0014-miss-only-chimes.md)). The sprite companion provides continuous visual state ([ADR 0049](docs/decisions/0049-miss-chimes-retained.md)). No toast notifications.
 - **On-screen sprite companion.** A pixel-art desktop pet mirrors daemon state — idle, listening, thinking, success, miss. Runs as a separate process (`voice_sprite`) via SSE, so a sprite crash never affects voice recognition. Configurable corner, size, and art via `config.toml [sprite]`. See [ADR 0045](docs/decisions/0045-sprite-separate-process-via-sse.md).
+- **Command HUD.** A persistent RPG-style chat log renders one line per voice command directly next to the sprite — colour-coded by outcome (green = ok, red = error, amber = miss). Entries hold full opacity for 4 s, then fade over 3 s. The HUD lives inside the same pyglet window as the sprite, so no second overlay process is needed. Configure via `config.toml [hud]`. See [ADR 0051](docs/decisions/0051-command-hud-overlay.md).
+- **Cursor-follow across monitors.** The sprite (and its attached HUD) docks to the bottom-right of whichever monitor holds the mouse cursor, sitting above the taskbar regardless of which edge the taskbar is on. 30 Hz polling — no mouse hook, no elevated rights required. See [ADR 0053](docs/decisions/0053-sprite-follows-cursor-monitor.md).
 - **CUDA preloading shim.** cuBLAS and cuDNN are preloaded via `ctypes` before `faster_whisper` imports, so venv-local pip wheels resolve cleanly regardless of shell `PATH` state. You still need CUDA Toolkit and cuDNN installed system-wide (see [CUDA setup](#cuda-setup) below). See [ADR 0012](docs/decisions/0012-cuda-dll-bundling.md).
 
 ---
@@ -172,6 +174,12 @@ All runtime settings live in [`config.toml`](config.toml). Create `config.local.
 | `[vad]` | `threshold` | `0.4` | Silero speech-probability floor. |
 | `[vad.gates]` | `min_word_count` | `1` | Drop transcripts shorter than N words. |
 | `[web]` | `enabled` | `true` | Start the management UI on port 8765. |
+| `[hud]` | `enabled` | `true` | Master toggle for the chat-log HUD |
+| `[hud]` | `max_lines` | `5` | Number of entries visible at once |
+| `[hud]` | `hold_ms` / `fade_ms` | `4000` / `3000` | Full-opacity hold then linear fade |
+| `[hud]` | `llm_fallback_enabled` | `true` | Use LM Studio to summarize errors |
+| `[sprite]` | `follow_cursor` | `true` | Sprite tracks cursor across monitors |
+| `[sprite]` | `follow_poll_hz` | `30` | Cursor-poll rate in Hz |
 
 Full schema + rationale: [`docs/superpowers/specs/2026-04-19-voice-commander-design.md`](docs/superpowers/specs/2026-04-19-voice-commander-design.md) §5.
 
