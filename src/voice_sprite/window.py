@@ -25,15 +25,18 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         renderer: SpriteRenderer,
         bubble: SpeechBubble,
     ) -> None:
+        # WINDOW_STYLE_OVERLAY (pyglet 2.1+) = borderless + per-pixel alpha +
+        # topmost + click-through + no-activate in one flag. WINDOW_STYLE_BORDERLESS
+        # alone leaves the window opaque; WINDOW_STYLE_TRANSPARENT keeps the
+        # title bar. Only OVERLAY gives the HUD-style compositing we need.
         super().__init__(
             width=width,
             height=height,
-            style=pyglet.window.Window.WINDOW_STYLE_TRANSPARENT,
+            style=pyglet.window.Window.WINDOW_STYLE_OVERLAY,
             vsync=False,
         )
-        # Clear to fully transparent (default pyglet clear is opaque black,
-        # which would fill the window with a black rectangle and defeat the
-        # WS_EX_LAYERED / WINDOW_STYLE_TRANSPARENT setup).
+        # Pyglet's default clear colour is opaque black; replace with fully
+        # transparent so only non-zero-alpha sprite pixels are visible.
         pyglet.gl.glClearColor(0, 0, 0, 0)
         self.set_location(x, y)
         self._renderer = renderer
