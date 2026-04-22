@@ -99,6 +99,18 @@ class LLMConfig:
 
 
 @dataclass(frozen=True)
+class SpriteConfig:
+    enabled: bool = True
+    corner: str = "bottom_right"
+    base_size_px: int = 128
+    offset_x: int = 16
+    offset_y: int = 16
+    asset_path: str = "assets/sprite"
+    bubble_fade_ms: int = 2000
+    heartbeat_timeout_ms: int = 3000
+
+
+@dataclass(frozen=True)
 class Config:
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
@@ -108,6 +120,7 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     web: WebConfig = field(default_factory=WebConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    sprite: SpriteConfig = field(default_factory=SpriteConfig)
     # Per-field source strings for [llm], keyed by field name. Populated by
     # :meth:`load`; empty when the config is constructed directly. Consumed by
     # :func:`log_llm_sources` at daemon startup so every field's origin is
@@ -147,6 +160,7 @@ class Config:
             logging=_section(LoggingConfig, raw.get("logging", {})),
             web=_section(WebConfig, raw.get("web", {})),
             llm=LLMConfig(**llm_values),
+            sprite=_section(SpriteConfig, raw.get("sprite", {})),
             llm_sources=llm_sources,
         )
 

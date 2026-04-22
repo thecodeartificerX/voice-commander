@@ -19,6 +19,7 @@ from silero_vad import load_silero_vad
 from . import resolver as param_resolver
 from .config import Config, log_llm_sources
 from .dispatcher import Dispatcher
+from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
 from .llm_router import LLMRouter
@@ -64,6 +65,7 @@ class StreamingDaemon:
         max_no_speech_prob: float = 0.6,
         output_dir: str = "outputs",
         web_server: WebServer | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._feedback = feedback
         self._recorder = recorder
@@ -77,6 +79,7 @@ class StreamingDaemon:
         self._output_dir = Path(output_dir)
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._web_server = web_server
+        self._event_bus = event_bus
 
         self._utt_q: queue.Queue[npt.NDArray[np.float32] | None] = queue.Queue(maxsize=8)
         self._pipeline_thread: threading.Thread | None = None
@@ -90,6 +93,10 @@ class StreamingDaemon:
         )
         self._session_active: bool = False
         self._muted: bool = False
+
+    def _publish(self, event_type: str, data: dict | None = None) -> None:
+        if self._event_bus is not None:
+            self._event_bus.publish(event_type, data)
 
     # ------------------------------------------------------------------
     # Hotkey callbacks
@@ -109,6 +116,7 @@ class StreamingDaemon:
             self._session_active = False
             self._muted = False
             self._feedback.on_recording_stop()
+            self._publish("session_stopped")
             logger.info("Session closed")
         else:
             try:
@@ -116,6 +124,7 @@ class StreamingDaemon:
                 self._session_active = True
                 self._muted = False
                 self._feedback.on_recording_start()
+                self._publish("session_started")
                 logger.info("Session opened")
             except Exception as e:
                 self._session_active = False
@@ -133,6 +142,7 @@ class StreamingDaemon:
             try:
                 self._recorder.open_session()
                 self._muted = False
+                self._publish("unmuted")
                 logger.info("Session unmuted")
             except Exception as e:
                 self._feedback.on_error("recorder.open_session", e)
@@ -144,6 +154,7 @@ class StreamingDaemon:
                 logger.exception("close_session() failed during mute; treating as muted")
             self._drain_utt_q()
             self._muted = True
+            self._publish("muted")
             logger.info("Session muted")
 
     def _drain_utt_q(self) -> None:
@@ -176,6 +187,7 @@ class StreamingDaemon:
         # Async write for post-mortem debugging
         self._write_utterance_async(utterance)
 
+        self._publish("transcribing")
         result: TranscriptionResult = self._transcriber.transcribe(utterance)
         self._feedback.on_transcript(result.text, result.confidence)
 
@@ -204,6 +216,7 @@ class StreamingDaemon:
             logger.debug("Mute guard: dropping utterance '%s' (muted during pipeline)", result.text)
             return
 
+        self._publish("llm_thinking")
         plan = self._llm_router.route(result.text)
         if plan is None:
             self._feedback.on_miss(result.text, ())
@@ -255,18 +268,24 @@ class StreamingDaemon:
             logger.warning("utt_q full — dropping utterance (%d samples)", len(utterance))
             self._feedback.on_miss("(queue overflow)", ())
 
+    def _heartbeat_loop(self) -> None:
+        while not self._shutdown.wait(1.0):
+            self._publish("daemon_heartbeat")
+
     # ------------------------------------------------------------------
     # Run / shutdown
     # ------------------------------------------------------------------
 
     def run(self, hotkey_key: str, mute_key: str = "") -> None:
         # Load models before accepting hotkey presses.
+        self._publish("warmup_start")
         try:
             self._transcriber.load()
         except Exception as e:
             logger.exception("Transcriber.load() failed; aborting startup")
             self._feedback.on_error("transcriber.load", e)
             raise
+        self._publish("warmup_done")
 
         # Start pipeline worker thread.
         self._pipeline_thread = threading.Thread(
@@ -275,6 +294,14 @@ class StreamingDaemon:
             daemon=True,
         )
         self._pipeline_thread.start()
+
+        # Start heartbeat producer thread (1 Hz).
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name="vc-heartbeat",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
 
         # Start embedded web server (if configured) before the hotkey listener
         # so the UI is responsive as soon as the daemon is ready for input.
@@ -425,7 +452,9 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     # so focus/open read focus_fuzzy_threshold / open_fuzzy_threshold from TOML.
     param_resolver._set_config(cfg.llm)
 
-    dispatcher = Dispatcher(feedback)
+    event_bus = EventBus()
+
+    dispatcher = Dispatcher(feedback, event_bus=event_bus)
 
     # LLM Router — always created.
     llm_router = LLMRouter(cfg.llm, registry)
@@ -438,7 +467,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     # Web server — enabled by config + not suppressed by env var.
     web_server: WebServer | None = None
     if cfg.web.enabled and os.environ.get("VOICE_COMMANDER_WEB_DISABLED") != "1":
-        app = create_app(registry, store, reload_lock)
+        app = create_app(registry, store, reload_lock, event_bus=event_bus)
         web_server = WebServer(app, host=cfg.web.host, port=cfg.web.port)
 
     # Build daemon without a recorder first so _on_utterance is available,
@@ -455,6 +484,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         max_no_speech_prob=cfg.vad.gates.max_no_speech_prob,
         output_dir=cfg.audio.output_dir,
         web_server=web_server,
+        event_bus=event_bus,
     )
     daemon._recorder = StreamingRecorder(
         device=cfg.audio.device if cfg.audio.device >= 0 else None,

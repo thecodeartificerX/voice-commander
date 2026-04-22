@@ -93,6 +93,10 @@ def _base_patch_kwargs(
     ``torch.set_num_threads`` is patched separately (see _full_patches) because
     torch is a local import inside build_streaming_daemon(), not a module attr.
     """
+    mock_registry = MagicMock(name="registry")
+    mock_registry.all.return_value = []
+    mock_store = MagicMock(name="store")
+    mock_store.load_all.return_value = {}
     kwargs: dict[str, Any] = dict(
         load_silero_vad=MagicMock(return_value=MagicMock(name="silero_model")),
         WindowsFeedbackSink=MagicMock(return_value=MagicMock(name="feedback")),
@@ -102,6 +106,8 @@ def _base_patch_kwargs(
         validate_or_die=MagicMock(),
         create_app=MagicMock(return_value=MagicMock(name="fastapi_app")),
         WebServer=MagicMock(return_value=MagicMock(name="web_server")),
+        discover=MagicMock(return_value=mock_registry),
+        ToolMetadataStore=MagicMock(return_value=mock_store),
     )
     if llm_router_cls is not None:
         kwargs["LLMRouter"] = llm_router_cls
@@ -268,3 +274,23 @@ def test_factory_idempotent_independent_state(base_cfg: Config, tmp_path: Path) 
     # --- LLMRouter independence ---
     # Each daemon gets its own LLMRouter instance, even though they share the global registry.
     assert daemon1._llm_router is not daemon2._llm_router, "_llm_router must be distinct per daemon"
+
+
+# ---------------------------------------------------------------------------
+# EventBus wiring
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_daemon_factory_creates_event_bus(base_cfg: Config) -> None:
+    """Event bus is always created."""
+    with _full_patches(**_base_patch_kwargs()):
+        daemon = build_streaming_daemon(base_cfg)
+    assert daemon._event_bus is not None
+
+
+@pytest.mark.integration
+def test_daemon_factory_event_bus_passed_to_dispatcher(base_cfg: Config) -> None:
+    with _full_patches(**_base_patch_kwargs()):
+        daemon = build_streaming_daemon(base_cfg)
+    assert daemon._dispatcher._event_bus is daemon._event_bus

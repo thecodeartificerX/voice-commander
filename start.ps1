@@ -78,7 +78,12 @@ param(
     [Parameter(ParameterSetName = 'Interactive')]
     [Parameter(ParameterSetName = 'NoMenu')]
     [Parameter(ParameterSetName = 'DirectDevice')]
-    [switch]$NoOpenBrowser
+    [switch]$NoOpenBrowser,
+
+    [Parameter(ParameterSetName = 'Interactive')]
+    [Parameter(ParameterSetName = 'NoMenu')]
+    [Parameter(ParameterSetName = 'DirectDevice')]
+    [switch]$NoSprite
 )
 
 Set-StrictMode -Version Latest
@@ -467,6 +472,16 @@ function Start-VoiceWithUI {
         Start-Job -ScriptBlock {
             Start-Sleep -Milliseconds 1500
             Start-Process $using:webUrl
+        } | Out-Null
+    }
+
+    # Spawn sprite companion unless disabled
+    if (-not $NoSprite -and -not $NoUI) {
+        Write-Verbose "Scheduling sprite companion spawn (after 500 ms)"
+        Start-Job -ScriptBlock {
+            Start-Sleep -Milliseconds 500
+            $spriteProcess = Start-Process -FilePath "uv" -ArgumentList "run","voice-sprite" -PassThru -WindowStyle Hidden
+            # Sprite runs independently — daemon does not track it
         } | Out-Null
     }
 

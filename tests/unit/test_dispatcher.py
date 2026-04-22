@@ -2,6 +2,7 @@ import logging
 from unittest.mock import patch
 
 from voice_commander.dispatcher import Dispatcher
+from voice_commander.event_bus import EventBus
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.plan import Plan, ToolCall
 from voice_commander.registry import ToolEntry, ToolRegistry
@@ -213,3 +214,60 @@ def test_run_plan_logs_per_step(caplog):
     assert "plan step 1/3: focus" in text, f"Missing step-1 log line; got:\n{text}"
     assert "plan step 2/3: press" in text, f"Missing step-2 log line; got:\n{text}"
     assert "plan step 3/3: type" in text, f"Missing step-3 log line; got:\n{text}"
+
+
+# ---------------------------------------------------------------------------
+# EventBus integration
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_plan_publishes_tool_fired():
+    bus = EventBus()
+    sink = CapturingFeedbackSink()
+    d = Dispatcher(feedback=sink, event_bus=bus)
+    fired: list[int] = []
+    entry = ToolEntry("copy", ("copy",), lambda: fired.append(1), "m", None)
+    registry = _make_registry(entry)
+    plan = Plan(steps=(ToolCall(name="copy", kwargs={}),), raw_response={})
+    d.run_plan("copy", plan, registry)
+    events = bus.replay_after(0)
+    assert any(e.type == "tool_fired" and e.data["name"] == "copy" for e in events)
+
+
+def test_dispatch_plan_unknown_tool_publishes_tool_error():
+    bus = EventBus()
+    sink = CapturingFeedbackSink()
+    d = Dispatcher(feedback=sink, event_bus=bus)
+    registry = _make_registry()  # empty
+    plan = Plan(steps=(ToolCall(name="ghost", kwargs={}),), raw_response={})
+    d.run_plan("ghost", plan, registry)
+    events = bus.replay_after(0)
+    assert any(e.type == "tool_error" and e.data["name"] == "ghost" for e in events)
+
+
+def test_dispatch_plan_tool_exception_publishes_tool_error():
+    bus = EventBus()
+    sink = CapturingFeedbackSink()
+    d = Dispatcher(feedback=sink, event_bus=bus)
+
+    def bad_func():
+        raise RuntimeError("boom")
+
+    entry = ToolEntry("boom", ("boom",), bad_func, "m", None)
+    registry = _make_registry(entry)
+    plan = Plan(steps=(ToolCall(name="boom", kwargs={}),), raw_response={})
+    d.run_plan("boom", plan, registry)
+    events = bus.replay_after(0)
+    assert any(e.type == "tool_error" and e.data["name"] == "boom" for e in events)
+
+
+def test_dispatch_no_event_bus_still_works():
+    """Dispatcher works fine without an event_bus (backward compatibility)."""
+    sink = CapturingFeedbackSink()
+    d = Dispatcher(feedback=sink)  # no event_bus
+    fired: list[int] = []
+    entry = ToolEntry("copy", ("copy",), lambda: fired.append(1), "m", None)
+    registry = _make_registry(entry)
+    plan = Plan(steps=(ToolCall(name="copy", kwargs={}),), raw_response={})
+    d.run_plan("copy", plan, registry)
+    assert fired == [1]

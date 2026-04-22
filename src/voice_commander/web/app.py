@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import asyncio
+import json as json_mod
 import logging
 import threading
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, Form, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..registry import ToolRegistry
 from ..tool_metadata import ToolMetadata, ToolMetadataError, ToolMetadataStore
+
+if TYPE_CHECKING:
+    from ..event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +29,7 @@ def create_app(
     registry: ToolRegistry,
     store: ToolMetadataStore,
     reload_lock: threading.Lock,
+    event_bus: EventBus | None = None,
 ) -> FastAPI:
     """Create and return the FastAPI application for the command management dashboard."""
 
@@ -67,6 +74,61 @@ def create_app(
     @app.get("/healthz")
     async def healthz() -> JSONResponse:
         return JSONResponse({"status": "ok"})
+
+    # ------------------------------------------------------------------
+    # GET /events — Server-Sent Events stream for sprite companion
+    # ------------------------------------------------------------------
+
+    @app.get("/events", response_model=None)
+    async def events(request: Request) -> StreamingResponse | JSONResponse:
+        if event_bus is None:
+            return JSONResponse({"error": "EventBus not configured"}, status_code=503)
+
+        last_id_str = request.headers.get("Last-Event-ID", "0")
+        try:
+            last_id = int(last_id_str)
+        except ValueError:
+            last_id = 0
+
+        q = event_bus.subscribe()
+
+        async def generate():  # type: ignore[return]
+            try:
+                # Replay missed events from ring buffer
+                for ev in event_bus.replay_after(last_id):
+                    if await request.is_disconnected():
+                        return
+                    yield (
+                        f"id: {ev.id}\n"
+                        f"event: {ev.type}\n"
+                        f"data: {json_mod.dumps(ev.data | {'ts': ev.ts})}\n\n"
+                    )
+                # Stream new events
+                while True:
+                    if await request.is_disconnected():
+                        return
+                    try:
+                        ev = await asyncio.wait_for(q.get(), timeout=1.0)
+                        yield (
+                            f"id: {ev.id}\n"
+                            f"event: {ev.type}\n"
+                            f"data: {json_mod.dumps(ev.data | {'ts': ev.ts})}\n\n"
+                        )
+                    except TimeoutError:
+                        # Check disconnect before keepalive
+                        if await request.is_disconnected():
+                            return
+                        yield ": keepalive\n\n"
+            except asyncio.CancelledError:
+                pass
+            finally:
+                event_bus.unsubscribe(q)
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     # ------------------------------------------------------------------
     # GET /tool/{name}/edit — swap card to edit form

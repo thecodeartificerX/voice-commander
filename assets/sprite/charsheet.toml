@@ -1,0 +1,78 @@
+# Metadata for the sprite companion character sheet.
+# Each [states.*] entry maps a SpriteState to a row in charsheet.png.
+# Regenerate charsheet.png using the prompt template in README.md.
+
+frame_width = 128
+frame_height = 128
+fps = 12
+
+[states.idle]
+row = 0
+frames = 4
+
+[states.listening]
+row = 1
+frames = 6
+
+[states.hearing_speech]
+row = 2
+frames = 4
+
+[states.thinking]
+row = 3
+frames = 6
+
+[states.llm_thinking]
+row = 4
+frames = 6
+
+[states.success]
+row = 5
+frames = 3
+
+[states.miss]
+row = 6
+frames = 3
+
+[states.tool_error]
+row = 7
+frames = 3
+
+[states.warmup]
+row = 8
+frames = 4
+
+[states.crashed]
+row = 9
+frames = 2
+
+# Transition animations (optional — pairs not listed use instant swap)
+[transitions."idle->listening"]
+row = 10
+frames = 4
+once = true
+
+[transitions."listening->idle"]
+row = 11
+frames = 4
+once = true
+
+[transitions."listening->hearing_speech"]
+row = 12
+frames = 3
+once = true
+
+[transitions."hearing_speech->thinking"]
+row = 13
+frames = 4
+once = true
+
+[transitions."thinking->success"]
+row = 14
+frames = 3
+once = true
+
+[transitions."thinking->miss"]
+row = 15
+frames = 3
+once = true

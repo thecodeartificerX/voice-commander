@@ -2,17 +2,30 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from .feedback import FeedbackSink
 from .plan import Plan
 from .registry import ToolRegistry
 
+if TYPE_CHECKING:
+    from .event_bus import EventBus
+
 logger = logging.getLogger(__name__)
 
 
 class Dispatcher:
-    def __init__(self, feedback: FeedbackSink) -> None:
+    def __init__(
+        self,
+        feedback: FeedbackSink,
+        event_bus: EventBus | None = None,
+    ) -> None:
         self._feedback = feedback
+        self._event_bus = event_bus
+
+    def _publish(self, event_type: str, data: dict | None = None) -> None:
+        if self._event_bus is not None:
+            self._event_bus.publish(event_type, data)
 
     def run_plan(self, transcript: str, plan: Plan, registry: ToolRegistry) -> None:
         """Execute a multi-step plan from the LLM router."""
@@ -26,6 +39,7 @@ class Dispatcher:
                     f"plan:unknown_tool:{step.name}",
                     ValueError(f"Tool '{step.name}' not found in registry"),
                 )
+                self._publish("tool_error", {"name": step.name, "msg": "unknown tool"})
                 break
             logger.info(
                 "plan step %d/%d: %s(%s)",
@@ -36,8 +50,10 @@ class Dispatcher:
             )
             try:
                 tool.func(**step.kwargs)
+                self._publish("tool_fired", {"name": step.name})
             except Exception as e:
                 self._feedback.on_error(f"plan:step:{step.name}", e)
+                self._publish("tool_error", {"name": step.name, "msg": str(e)})
                 break
             executed += 1
             if tool.settle_ms > 0:

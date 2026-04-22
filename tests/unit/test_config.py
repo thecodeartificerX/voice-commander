@@ -1,4 +1,5 @@
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -322,3 +323,36 @@ def test_llm_warmup_timeout_ms_independent_of_timeout_ms(tmp_path):
     # per-call timeout changed, warmup timeout unchanged
     assert cfg.llm.timeout_ms == 300
     assert cfg.llm.warmup_timeout_ms == 5000
+
+
+# ---------------------------------------------------------------------------
+# SpriteConfig parsing
+# ---------------------------------------------------------------------------
+
+
+def test_sprite_config_defaults():
+    cfg = Config.load(Path("/nonexistent.toml"))
+    assert cfg.sprite.enabled is True
+    assert cfg.sprite.corner == "bottom_right"
+    assert cfg.sprite.base_size_px == 128
+    assert cfg.sprite.offset_x == 16
+    assert cfg.sprite.offset_y == 16
+    assert cfg.sprite.asset_path == "assets/sprite"
+    assert cfg.sprite.bubble_fade_ms == 2000
+    assert cfg.sprite.heartbeat_timeout_ms == 3000
+
+
+def test_sprite_config_override(tmp_path):
+    toml_file = tmp_path / "config.toml"
+    toml_file.write_text('[sprite]\ncorner = "top_left"\nbase_size_px = 64\n')
+    cfg = Config.load(toml_file)
+    assert cfg.sprite.corner == "top_left"
+    assert cfg.sprite.base_size_px == 64
+    assert cfg.sprite.enabled is True  # default preserved
+
+
+def test_sprite_config_invalid_key(tmp_path):
+    toml_file = tmp_path / "config.toml"
+    toml_file.write_text("[sprite]\nbogus = 42\n")
+    with pytest.raises(ValueError, match="Unknown config key 'bogus'"):
+        Config.load(toml_file)

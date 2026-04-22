@@ -1,0 +1,109 @@
+from __future__ import annotations
+
+import logging
+import platform
+from typing import TYPE_CHECKING
+
+import pyglet
+
+if TYPE_CHECKING:
+    from .speech_bubble import SpeechBubble
+    from .sprite_renderer import SpriteRenderer
+
+logger = logging.getLogger(__name__)
+
+
+class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
+    """Transparent, borderless, always-on-top sprite window."""
+
+    def __init__(
+        self,
+        width: int,
+        height: int,
+        x: int,
+        y: int,
+        renderer: SpriteRenderer,
+        bubble: SpeechBubble,
+    ) -> None:
+        super().__init__(
+            width=width,
+            height=height,
+            style=pyglet.window.Window.WINDOW_STYLE_BORDERLESS,
+            vsync=False,
+        )
+        self.set_location(x, y)
+        self._renderer = renderer
+        self._bubble = bubble
+        self._image: pyglet.image.AbstractImage | None = None
+        self._sprite: pyglet.sprite.Sprite | None = None
+        self._label: pyglet.text.Label | None = None
+        self._muted = False
+        self._mute_color = (128, 128, 128)
+
+    def load_charsheet_image(self, png_path: str) -> None:
+        """Load the charsheet PNG into a pyglet image."""
+        self._image = pyglet.image.load(png_path)
+
+    def set_muted(self, muted: bool) -> None:
+        self._muted = muted
+
+    def on_draw(self) -> None:
+        self.clear()
+        if self._image is None:
+            return
+
+        x, y, w, h = self._renderer.frame_region
+        # pyglet uses bottom-left origin; charsheet uses top-left rows
+        img_h = self._image.height
+        region = self._image.get_region(x, img_h - y - h, w, h)
+
+        if self._sprite is None:
+            self._sprite = pyglet.sprite.Sprite(region, x=0, y=0)
+        else:
+            self._sprite.image = region
+
+        if self._muted:
+            self._sprite.color = self._mute_color
+        else:
+            self._sprite.color = (255, 255, 255)
+
+        self._sprite.draw()
+
+        # Speech bubble
+        if self._bubble.visible:
+            if self._label is None:
+                self._label = pyglet.text.Label(
+                    self._bubble.text,
+                    font_name="Segoe UI",
+                    font_size=10,
+                    x=w // 2,
+                    y=h + 4,
+                    anchor_x="center",
+                    anchor_y="bottom",
+                    color=(255, 255, 255, int(self._bubble.opacity * 255)),
+                )
+            else:
+                self._label.text = self._bubble.text
+                self._label.color = (
+                    255,
+                    255,
+                    255,
+                    int(self._bubble.opacity * 255),
+                )
+            self._label.draw()
+
+    def apply_win32_flags(self) -> None:
+        """Apply click-through, topmost, no-taskbar flags (Windows only)."""
+        if platform.system() != "Windows":
+            logger.warning("Win32 flags only apply on Windows")
+            return
+        from .win32_flags import apply_click_through
+
+        hwnd = self.canvas.hwnd if hasattr(self.canvas, "hwnd") else None
+        if hwnd is None:
+            # pyglet 2.x: access via _hwnd
+            hwnd = getattr(self, "_hwnd", None)
+        if hwnd is None:
+            logger.error("Could not obtain HWND for sprite window")
+            return
+        apply_click_through(hwnd)
