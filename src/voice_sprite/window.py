@@ -29,14 +29,24 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         render_scale: float = 1.0,
         y_nudge_px: int = 0,
     ) -> None:
-        # WINDOW_STYLE_OVERLAY (pyglet 2.1+) = borderless + per-pixel alpha +
+        # WINDOW_STYLE_OVERLAY (pyglet 2.1+) = borderless + DWM blur-behind +
         # topmost + click-through + no-activate in one flag. WINDOW_STYLE_BORDERLESS
         # alone leaves the window opaque; WINDOW_STYLE_TRANSPARENT keeps the
-        # title bar. Only OVERLAY gives the HUD-style compositing we need.
+        # title bar. OVERLAY gives the HUD-style compositing we need — BUT
+        # only if the GL framebuffer actually has an alpha channel to write
+        # into. Default pyglet Config has alpha_size=0; explicitly request
+        # alpha_size=8 so our glClearColor(0, 0, 0, 0) and sprite alpha blend
+        # compose into the layered-window alpha the DWM reads for compositing.
+        gl_config = pyglet.gl.Config(  # type: ignore[abstract]
+            double_buffer=True,
+            alpha_size=8,
+            transparent_framebuffer=True,
+        )
         super().__init__(
             width=width,
             height=height,
             style=pyglet.window.Window.WINDOW_STYLE_OVERLAY,
+            config=gl_config,
             vsync=False,
         )
         # Pyglet's default clear colour is opaque black; replace with fully
