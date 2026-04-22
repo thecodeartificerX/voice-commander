@@ -471,3 +471,30 @@ def test_process_utterance_no_miss_event_on_no_speech_gate(tmp_path):
 
     outcomes = [e for e in bus.replay_after(0) if e.type == "plan_outcome"]
     assert outcomes == [], "no_speech_prob gate must not emit plan_outcome"
+
+
+def test_process_utterance_publishes_error_when_registry_none(tmp_path):
+    """When _registry is None after routing, plan_outcome status=error is published
+    and dispatcher.run_plan is never called."""
+    bus = EventBus()
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+        output_dir=str(tmp_path), event_bus=bus
+    )
+    daemon._registry = None  # force the error path
+
+    result = _fake_transcription_result("open spotify", confidence=0.95)
+    transcriber.transcribe.return_value = result
+    plan = Plan(steps=(ToolCall(name="open", kwargs={"target": "spotify"}),), raw_response={})
+    llm_router.route.return_value = plan
+
+    _run_process_utterance(daemon, tmp_path)
+
+    outcomes = [e for e in bus.replay_after(0) if e.type == "plan_outcome"]
+    assert len(outcomes) == 1
+    payload = outcomes[0].data
+    assert payload["status"] == "error"
+    assert payload["error_msg"] == "registry not initialized"
+    assert payload["transcript"] == "open spotify"
+    assert payload["failed_step_index"] is None
+    assert payload["duration_ms"] >= 0
+    dispatcher.run_plan.assert_not_called()

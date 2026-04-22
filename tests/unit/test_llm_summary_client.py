@@ -74,3 +74,58 @@ def test_strips_and_truncates_content():
     assert out is not None
     assert len(out) <= 80
     assert out.startswith("x")
+
+
+def test_log_once_offline_first_call_warns_second_call_debugs(caplog):
+    """First ConnectError → WARNING; second → DEBUG; flag flips exactly once."""
+    import logging
+
+    client = LLMSummaryClient("http://localhost:1234/v1", "m", timeout_ms=800)
+    mock_post = MagicMock(side_effect=httpx.ConnectError("refused"))
+
+    with patch.object(client, "_client", MagicMock(post=mock_post)), caplog.at_level(
+        logging.DEBUG, logger="voice_sprite.llm_summary_client"
+    ):
+        result1 = client.summarize(_outcome())
+        result2 = client.summarize(_outcome())
+
+    assert result1 is None
+    assert result2 is None
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    debug_records = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.DEBUG and "HTTP error" in r.message
+    ]
+    assert len(warning_records) == 1, "expected exactly one WARNING"
+    assert len(debug_records) == 1, "expected exactly one DEBUG on second call"
+    assert client._warned_offline is True
+
+
+def test_log_once_malformed_first_call_warns_second_call_debugs(caplog):
+    """First malformed response → WARNING; second → DEBUG; flag flips exactly once."""
+    import logging
+
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.side_effect = ValueError("bad json")
+
+    client = LLMSummaryClient("http://localhost:1234/v1", "m", timeout_ms=800)
+
+    with patch.object(
+        client, "_client", MagicMock(post=MagicMock(return_value=resp))
+    ), caplog.at_level(logging.DEBUG, logger="voice_sprite.llm_summary_client"):
+        result1 = client.summarize(_outcome())
+        result2 = client.summarize(_outcome())
+
+    assert result1 is None
+    assert result2 is None
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    debug_records = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.DEBUG and "malformed" in r.message
+    ]
+    assert len(warning_records) == 1, "expected exactly one WARNING"
+    assert len(debug_records) == 1, "expected exactly one DEBUG on second call"
+    assert client._warned_malformed is True

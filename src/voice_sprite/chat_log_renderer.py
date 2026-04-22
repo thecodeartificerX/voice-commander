@@ -58,8 +58,6 @@ class ChatLogRenderer:
 
     def draw(self) -> None:
         entries = self._log.entries()  # newest-first
-        if not entries:
-            return
         self._ensure_labels(len(entries))
         now = time.monotonic()
 
