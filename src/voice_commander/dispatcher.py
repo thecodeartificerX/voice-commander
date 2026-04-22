@@ -5,7 +5,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from .feedback import FeedbackSink
-from .plan import Plan
+from .plan import Plan, PlanOutcome
 from .registry import ToolRegistry
 
 if TYPE_CHECKING:
@@ -30,8 +30,13 @@ class Dispatcher:
     def run_plan(self, transcript: str, plan: Plan, registry: ToolRegistry) -> None:
         """Execute a multi-step plan from the LLM router."""
         self._feedback.on_plan_start(transcript, len(plan.steps))
+        start_s = time.perf_counter()
         executed = 0
         total = len(plan.steps)
+        status: str = "ok"
+        failed_index: int | None = None
+        error_msg: str | None = None
+
         for i, step in enumerate(plan.steps):
             tool = registry.by_name(step.name)
             if tool is None:
@@ -40,6 +45,9 @@ class Dispatcher:
                     ValueError(f"Tool '{step.name}' not found in registry"),
                 )
                 self._publish("tool_error", {"name": step.name, "msg": "unknown tool"})
+                status = "error"
+                failed_index = i
+                error_msg = f"unknown tool: {step.name}"
                 break
             logger.info(
                 "plan step %d/%d: %s(%s)",
@@ -54,8 +62,22 @@ class Dispatcher:
             except Exception as e:
                 self._feedback.on_error(f"plan:step:{step.name}", e)
                 self._publish("tool_error", {"name": step.name, "msg": str(e)})
+                status = "error"
+                failed_index = i
+                error_msg = f"{type(e).__name__}: {e}"
                 break
             executed += 1
             if tool.settle_ms > 0:
                 time.sleep(tool.settle_ms / 1000.0)
+
         self._feedback.on_plan_complete(transcript, executed)
+
+        outcome = PlanOutcome(
+            transcript=transcript,
+            steps=plan.steps,
+            status=status,  # type: ignore[arg-type]
+            failed_step_index=failed_index,
+            error_msg=error_msg,
+            duration_ms=int((time.perf_counter() - start_s) * 1000),
+        )
+        self._publish("plan_outcome", outcome.to_event_dict())

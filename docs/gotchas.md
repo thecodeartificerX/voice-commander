@@ -445,3 +445,28 @@ slices every declared state out of the sheet and writes per-state strips to
 produces a single labeled reference PNG of every state for human review.
 
 See ADR 0047 (updated) for the per-state pitch override.
+
+## Win11 Multi-Monitor + DPI Gotchas (Sprite / HUD)
+
+- **`PER_MONITOR_AWARE_V2` ordering.** `SetProcessDpiAwarenessContext(-4)`
+  MUST run before the first pyglet window is created. Otherwise that HWND
+  is forever pinned to system-DPI awareness and `set_location` silently
+  rescales coords across monitors.
+- **`rcWork` vs `rcMonitor`.** `rcWork` is already shrunk to exclude the
+  taskbar on whatever edge it's on (bottom / top / left / right / autohide).
+  Never use `rcMonitor` for docking — you will overlap the taskbar.
+- **Negative virtual-screen coords.** Monitors positioned left of / above
+  the primary have negative `rcWork.left` / `rcWork.top`. `set_location`
+  handles this fine — do NOT clamp to `>= 0`.
+- **Mixed-DPI cross.** `WM_DPICHANGED` fires on monitor change but pyglet
+  2.1 does not auto-rescale its framebuffer. Call `window.set_size` with
+  `base * scale` explicitly on each cross.
+- **Locked workstation.** `GetCursorPos` returns `(0, 0)` with success
+  during lock. Treat this as "no-op" rather than docking to primary
+  monitor origin.
+- **`LowLevelHooksTimeout`.** Do NOT use `WH_MOUSE_LL` for cursor
+  tracking — the OS silently unhooks callbacks that exceed ~300 ms.
+  Polling on `pyglet.clock` is the correct pattern.
+- **Taskbar layered windows.** `WS_EX_LAYERED | WS_EX_TRANSPARENT |
+  WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` survive `set_location` calls —
+  no need to re-apply after moves.

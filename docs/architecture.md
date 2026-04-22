@@ -552,6 +552,55 @@ HotkeyCtrl ──▶ VADGate ──▶ Dispatcher         httpx SSE client
 
 ---
 
+---
+
+## 10. Command HUD
+
+### Components
+
+- **`PlanOutcome`** (daemon — `src/voice_commander/plan.py`) — frozen
+  dataclass carrying the full outcome of one command cycle.
+- **`Summarizer`** (sprite — `src/voice_sprite/summarizer.py`) — routes
+  rule → chain-detector → LLM fallback → raw fallback.
+- **`RULES` + `CHAIN_DETECTORS`** (sprite — `summary_rules.py`).
+- **`LLMSummaryClient`** (sprite — `llm_summary_client.py`) — httpx client
+  for LM Studio; 800 ms deadline; returns None on any failure.
+- **`ChatLog`** (sprite — `chat_log.py`) — ring buffer + fade curve.
+- **`ChatLogRenderer`** (sprite — `chat_log_renderer.py`) — pyglet labels.
+
+### Event
+
+```text
+plan_outcome {
+  transcript: str,
+  steps: [{name, kwargs}, ...],
+  status: "ok" | "error" | "miss",
+  failed_step_index: int | null,
+  error_msg: str | null,
+  duration_ms: int,
+}
+```
+
+Published by `Dispatcher.run_plan` (ok / error) and
+`StreamingDaemon._process_utterance` (miss on `route()=None` and on
+confidence-gate drop).
+
+---
+
+## 11. Cursor-Follow Sprite (Multi-Monitor)
+
+30 Hz `pyglet.clock` tick polls `GetCursorPos`, dispatches to
+`MonitorFromPoint`, and (when the monitor changes) reads `MONITORINFO.rcWork`
++ `GetDpiForMonitor` to compute a new window size + location. Anchor point
+is the sprite column's bottom-right — NOT the window top-left — so the
+HUD's leftward extension does not push the sprite off the monitor.
+
+`PER_MONITOR_AWARE_V2` MUST be set before the first pyglet window is
+constructed; `main()` now calls `SetProcessDpiAwarenessContext(-4)` as
+its first post-logging step. See ADR 0053 for the full gotcha list.
+
+---
+
 ## 9. See Also
 
 - [`../CLAUDE.md`](../CLAUDE.md) — project-wide durable context for agents and contributors

@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import queue
 import sys
+import threading
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -41,6 +44,13 @@ def main() -> None:
 
     _configure_logging()
     logger.info("voice-sprite starting")
+
+    # Must run BEFORE the first pyglet window is constructed.
+    import contextlib
+    import ctypes
+
+    with contextlib.suppress(AttributeError, OSError):
+        ctypes.windll.shcore.SetProcessDpiAwarenessContext(-4)
 
     from .charsheet import CharSheetError, load_charsheet
     from .config import load_sprite_config
@@ -87,6 +97,32 @@ def main() -> None:
     renderer = SpriteRenderer(charsheet)
     bubble = SpeechBubble(fade_ms=cfg.bubble_fade_ms)
 
+    # Chat-log + summarizer stack
+    from .chat_log import ChatLog, ChatLogEntry
+    from .chat_log_renderer import ChatLogRenderer
+    from .llm_summary_client import LLMSummaryClient
+    from .summarizer import Summarizer
+    from .summary_rules import CHAIN_DETECTORS, RULES
+
+    chat_log = ChatLog(
+        max_lines=cfg.hud.max_lines,
+        hold_ms=cfg.hud.hold_ms,
+        fade_ms=cfg.hud.fade_ms,
+    )
+    llm_client: LLMSummaryClient | None = None
+    if cfg.hud.enabled and cfg.hud.llm_fallback_enabled:
+        llm_client = LLMSummaryClient(
+            endpoint_url=cfg.hud.llm_endpoint_url,
+            model_id=cfg.hud.llm_model_id,
+            timeout_ms=cfg.hud.llm_summary_timeout_ms,
+        )
+    summarizer = Summarizer(
+        rules=RULES,
+        chain_detectors=CHAIN_DETECTORS,
+        llm_client=llm_client,
+        llm_fallback_enabled=cfg.hud.llm_fallback_enabled,
+    )
+
     # Deferred pyglet import — avoids display probe at module-load time.
     # ImportError here means pyglet/GL libs missing; surface as startup
     # failure rather than import failure. pyglet 2.x lazy-loads submodules
@@ -97,31 +133,60 @@ def main() -> None:
 
     # Calculate position
     screen = pyglet.display.get_display().get_default_screen()
-    offset_x = int(cfg.offset_x * scale)
-    offset_y = int(cfg.offset_y * scale)
 
-    positions = {
-        "bottom_right": (screen.width - size - offset_x, offset_y),
-        "bottom_left": (offset_x, offset_y),
-        "top_right": (screen.width - size - offset_x, screen.height - size - offset_y),
-        "top_left": (offset_x, screen.height - size - offset_y),
-    }
-    x, y = positions.get(cfg.corner, positions["bottom_right"])
+    # Composite window: HUD to the LEFT of sprite region.
+    hud_w = cfg.hud.width_px if cfg.hud.enabled else 0
+    window_w = size + hud_w
+    window_h = size
+    sprite_region_x = hud_w
+    sprite_region_w = size
+
+    # Start position: primary bottom-right (updated on first CursorDock tick if follow enabled)
+    x = screen.width - window_w - cfg.margin_x
+    y = cfg.margin_y
+
+    hud_renderer: ChatLogRenderer | None = None
+    if cfg.hud.enabled:
+        hud_renderer = ChatLogRenderer(
+            chat_log=chat_log,
+            hud_width_px=hud_w,
+            font_size=cfg.hud.font_size,
+            line_gap_px=4,
+        )
 
     from .window import SpriteWindow
 
     window = SpriteWindow(
-        width=size,
-        height=size,
+        width=window_w,
+        height=window_h,
         x=x,
         y=y,
         renderer=renderer,
         bubble=bubble,
         render_scale=cfg.render_scale,
         y_nudge_px=cfg.y_nudge_px,
+        sprite_region_x=sprite_region_x,
+        sprite_region_w=sprite_region_w,
+        hud_renderer=hud_renderer,
     )
+
     window.load_charsheet_image(str(png_path))
     window.apply_win32_flags()
+
+    # Cursor-follow docking
+    if cfg.follow_cursor:
+        from .cursor_tracker import CursorDock
+
+        dock = CursorDock(
+            window=window,
+            sprite_base_size_px=cfg.base_size_px,
+            window_extra_w_px=cfg.hud.width_px if cfg.hud.enabled else 0,
+            window_extra_h_px=0,
+            margin_x=cfg.margin_x,
+            margin_y=cfg.margin_y,
+        )
+        pyglet.clock.schedule_interval(dock.tick, 1.0 / max(1, cfg.follow_poll_hz))
+        logger.info("CursorDock scheduled at %d Hz", cfg.follow_poll_hz)
 
     # Hot-reload: check charsheet file mtime every 2 seconds
     _last_toml_mtime = toml_path.stat().st_mtime if toml_path.exists() else 0
@@ -144,6 +209,42 @@ def main() -> None:
 
     pyglet.clock.schedule_interval(check_hot_reload, 2.0)
 
+    # Worker thread: summarizes PlanOutcome objects off the SSE thread.
+    _summarize_queue: queue.Queue[Any] = queue.Queue()
+
+    def _summarizer_worker() -> None:
+        import pyglet.clock as _pclock
+
+        while True:
+            item = _summarize_queue.get()
+            if item is None:
+                break
+            outcome, raw_text = item
+            try:
+                summary = summarizer.summarize(outcome)
+            except Exception:
+                logger.exception("Summarizer failed — using last-resort text")
+                summary = raw_text
+            if summary:
+
+                def _append(dt: float, _s: str = summary, _st: Any = outcome.status) -> None:
+                    chat_log.append(
+                        ChatLogEntry(
+                            text=_s,
+                            status=_st,
+                            born_at_s=time.monotonic(),
+                        )
+                    )
+
+                _pclock.schedule_once(_append, 0)
+            _summarize_queue.task_done()
+
+    _summarizer_thread = threading.Thread(
+        target=_summarizer_worker,
+        name="summarizer-worker",
+        daemon=True,
+    )
+
     # SSE event handler
     def on_event(event_type: str, data: dict[str, Any]) -> None:
         result = sm.on_event(event_type, data)
@@ -152,6 +253,24 @@ def main() -> None:
             logger.info("State → %s", result.value)
         window.set_muted(sm.muted)
         renderer.set_muted(sm.muted)
+        if event_type == "plan_outcome":
+            from voice_commander.plan import PlanOutcome
+
+            raw_text: str = data.get("transcript", "")
+            try:
+                outcome = PlanOutcome.from_event_dict(data)
+            except (KeyError, ValueError, TypeError):
+                logger.exception("Failed to parse PlanOutcome — falling back to raw transcript")
+                if raw_text:
+                    chat_log.append(
+                        ChatLogEntry(
+                            text=raw_text,
+                            status="error",
+                            born_at_s=time.monotonic(),
+                        )
+                    )
+            else:
+                _summarize_queue.put((outcome, raw_text))
         if event_type == "tool_fired" and "name" in data:
             bubble.show(data["name"])
 
@@ -175,16 +294,22 @@ def main() -> None:
             renderer.set_state(sm.current_state)
         renderer.tick(dt)
         bubble.tick(dt)
+        chat_log.tick(time.monotonic())
 
     pyglet.clock.schedule_interval(update, 1 / 60.0)
 
     logger.info("Sprite window open at (%d, %d), size=%d", x, y, size)
 
+    _summarizer_thread.start()
     try:
         pyglet.app.run()
     except KeyboardInterrupt:
         pass
     finally:
+        _summarize_queue.put(None)  # signal worker to exit
+        _summarizer_thread.join(timeout=5.0)
+        if llm_client is not None:
+            llm_client.close()
         sse.stop()
         logger.info("voice-sprite exiting")
 

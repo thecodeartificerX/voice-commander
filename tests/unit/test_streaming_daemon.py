@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 import numpy as np
 
 from voice_commander.daemon import StreamingDaemon
+from voice_commander.event_bus import EventBus
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.llm_router import LLMRouter
 from voice_commander.plan import Plan, ToolCall
@@ -27,7 +28,7 @@ from voice_commander.transcriber import TranscriptionResult
 
 
 def _make_daemon(
-    *, output_dir: str = "outputs"
+    *, output_dir: str = "outputs", event_bus: EventBus | None = None
 ) -> tuple[
     StreamingDaemon,
     CapturingFeedbackSink,
@@ -53,6 +54,7 @@ def _make_daemon(
         dispatcher=dispatcher,
         registry=MagicMock(),
         output_dir=output_dir,
+        event_bus=event_bus,
     )
     return daemon, feedback, recorder, transcriber, llm_router, dispatcher
 
@@ -366,3 +368,106 @@ def test_pipeline_mute_guard_drops_utterance(tmp_path):
     assert triggered, "pipeline did not process utterance within 5 s"
     transcriber.transcribe.assert_called_once()  # transcription still runs
     dispatcher.run_plan.assert_not_called()  # but dispatch is blocked by mute guard
+
+
+# ---------------------------------------------------------------------------
+# plan_outcome SSE event tests (miss paths)
+# ---------------------------------------------------------------------------
+
+
+def _run_process_utterance(daemon: StreamingDaemon, tmp_path) -> None:
+    """Run _process_utterance synchronously via the pipeline thread."""
+    done = threading.Event()
+    original = daemon._process_utterance
+
+    def _patched(utt):
+        original(utt)
+        done.set()
+
+    daemon._process_utterance = _patched
+
+    thread = threading.Thread(target=daemon._pipeline_loop, daemon=True)
+    thread.start()
+    daemon._utt_q.put(_fake_utterance())
+    done.wait(timeout=5.0)
+    daemon._utt_q.put(None)
+    thread.join(timeout=3.0)
+
+
+def test_process_utterance_publishes_miss_on_route_none(tmp_path):
+    """When LLM router returns None, plan_outcome status=miss is published."""
+    bus = EventBus()
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+        output_dir=str(tmp_path), event_bus=bus
+    )
+
+    result = _fake_transcription_result("gobbledygook", confidence=0.95)
+    transcriber.transcribe.return_value = result
+    llm_router.route.return_value = None
+
+    _run_process_utterance(daemon, tmp_path)
+
+    outcomes = [e for e in bus.replay_after(0) if e.type == "plan_outcome"]
+    assert len(outcomes) == 1
+    payload = outcomes[0].data
+    assert payload["status"] == "miss"
+    assert payload["transcript"] == "gobbledygook"
+    assert payload["steps"] == []
+    assert payload["failed_step_index"] is None
+    assert payload["error_msg"] is None
+    assert payload["duration_ms"] >= 0
+    dispatcher.run_plan.assert_not_called()
+
+
+def test_process_utterance_publishes_miss_on_confidence_gate(tmp_path):
+    """When confidence is below threshold, plan_outcome status=miss is published."""
+    bus = EventBus()
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+        output_dir=str(tmp_path), event_bus=bus
+    )
+
+    # confidence below default min_confidence of 0.30
+    result = _fake_transcription_result("something", confidence=0.10)
+    transcriber.transcribe.return_value = result
+
+    _run_process_utterance(daemon, tmp_path)
+
+    outcomes = [e for e in bus.replay_after(0) if e.type == "plan_outcome"]
+    assert len(outcomes) == 1
+    payload = outcomes[0].data
+    assert payload["status"] == "miss"
+    assert payload["transcript"] == "something"
+    assert payload["steps"] == []
+    dispatcher.run_plan.assert_not_called()
+
+
+def test_process_utterance_no_miss_event_on_word_count_gate(tmp_path):
+    """Word-count gate is infra noise — no plan_outcome published when it fires."""
+    bus = EventBus()
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+        output_dir=str(tmp_path), event_bus=bus
+    )
+    # min_word_count defaults to 1; empty string has 0 words
+    result = _fake_transcription_result("", confidence=0.95)
+    transcriber.transcribe.return_value = result
+
+    _run_process_utterance(daemon, tmp_path)
+
+    outcomes = [e for e in bus.replay_after(0) if e.type == "plan_outcome"]
+    assert outcomes == [], "word-count gate must not emit plan_outcome"
+
+
+def test_process_utterance_no_miss_event_on_no_speech_gate(tmp_path):
+    """no_speech_prob gate is infra noise — no plan_outcome published when it fires."""
+    bus = EventBus()
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+        output_dir=str(tmp_path), event_bus=bus
+    )
+    # no_speech_prob above default max of 0.6
+    result = _fake_transcription_result("noise", confidence=0.95, no_speech_prob=0.9)
+    transcriber.transcribe.return_value = result
+
+    _run_process_utterance(daemon, tmp_path)
+
+    outcomes = [e for e in bus.replay_after(0) if e.type == "plan_outcome"]
+    assert outcomes == [], "no_speech_prob gate must not emit plan_outcome"
