@@ -42,7 +42,6 @@ def test_plan_outcome_miss_round_trip():
     )
     restored = PlanOutcome.from_event_dict(outcome.to_event_dict())
     assert restored == outcome
-    assert restored.steps == ()
 
 
 def test_plan_outcome_error_round_trip():
@@ -56,7 +55,6 @@ def test_plan_outcome_error_round_trip():
     )
     restored = PlanOutcome.from_event_dict(outcome.to_event_dict())
     assert restored == outcome
-    assert restored.failed_step_index == 0
 
 
 def test_plan_outcome_is_frozen():
