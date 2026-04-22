@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from voice_sprite.config import load_sprite_config
+import pytest
+
+from voice_sprite.config import SpriteConfigError, load_sprite_config
 
 
 def test_defaults():
@@ -69,3 +71,104 @@ def test_sprite_follow_cursor_defaults(tmp_path):
     assert cfg.follow_poll_hz == 30
     assert cfg.margin_x == 8
     assert cfg.margin_y == 8
+
+
+# --- Negative values → raise ---
+@pytest.mark.parametrize("toml_text", [
+    "[hud]\nmax_lines = -1\n",
+    "[hud]\nhold_ms = -500\n",
+    "[hud]\nfade_ms = -1\n",
+    "[hud]\nfont_size = -5\n",
+    "[hud]\nwidth_px = 0\n",
+    "[hud]\nllm_summary_timeout_ms = 0\n",
+    "[sprite]\nbase_size_px = -10\n",
+    "[sprite]\nbubble_fade_ms = -1\n",
+    "[sprite]\nheartbeat_timeout_ms = 0\n",
+    "[sprite]\nmargin_x = -1\n",
+    "[sprite]\nmargin_y = -3\n",
+])
+def test_negative_or_zero_invalid_raises(tmp_path, toml_text):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(toml_text, encoding="utf-8")
+    with pytest.raises(SpriteConfigError):
+        load_sprite_config(cfg_file)
+
+
+# --- Zero values that ARE valid ---
+@pytest.mark.parametrize("toml_text,attr_path,expected", [
+    ("[hud]\nfade_ms = 0\n", ("hud", "fade_ms"), 0),
+    ("[hud]\nhold_ms = 0\n", ("hud", "hold_ms"), 0),
+    ("[sprite]\nbubble_fade_ms = 0\n", ("bubble_fade_ms",), 0),
+    ("[sprite]\nmargin_x = 0\n", ("margin_x",), 0),
+    ("[sprite]\nmargin_y = 0\n", ("margin_y",), 0),
+])
+def test_zero_valid_values(tmp_path, toml_text, attr_path, expected):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(toml_text, encoding="utf-8")
+    cfg = load_sprite_config(cfg_file)
+    obj = cfg
+    for attr in attr_path:
+        obj = getattr(obj, attr)
+    assert obj == expected
+
+
+# --- Type mismatches → raise ---
+@pytest.mark.parametrize("toml_text", [
+    '[hud]\nmax_lines = "five"\n',
+    '[hud]\nhold_ms = "fast"\n',
+    "[sprite]\nfollow_poll_hz = true\n",   # bool not valid for int field
+    "[sprite]\nrender_scale = true\n",      # bool not valid for float field
+    '[sprite]\nfollow_cursor = "yes"\n',    # str not valid for bool field
+    '[hud]\nenabled = "false"\n',           # str not valid for bool field
+])
+def test_type_mismatch_raises(tmp_path, toml_text):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(toml_text, encoding="utf-8")
+    with pytest.raises(SpriteConfigError):
+        load_sprite_config(cfg_file)
+
+
+# --- Out-of-range ---
+@pytest.mark.parametrize("toml_text", [
+    "[sprite]\nfollow_poll_hz = 10000\n",
+    "[sprite]\nfollow_poll_hz = 0\n",
+    "[sprite]\nrender_scale = 0.0\n",
+    "[sprite]\nrender_scale = -1.5\n",
+])
+def test_out_of_range_raises(tmp_path, toml_text):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(toml_text, encoding="utf-8")
+    with pytest.raises(SpriteConfigError):
+        load_sprite_config(cfg_file)
+
+
+# --- Missing tables entirely → defaults ---
+def test_missing_sprite_table_uses_defaults(tmp_path):
+    """[sprite] section absent → all sprite fields fall back to defaults."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[web]\nport = 8765\n", encoding="utf-8")
+    cfg = load_sprite_config(cfg_file)
+    assert cfg.corner == "bottom_right"
+    assert cfg.base_size_px == 128
+    assert cfg.follow_poll_hz == 30
+    assert cfg.render_scale == 0.75
+
+
+def test_missing_hud_table_uses_defaults(tmp_path):
+    """[hud] section absent → all hud fields fall back to defaults."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[sprite]\nbase_size_px = 128\n", encoding="utf-8")
+    cfg = load_sprite_config(cfg_file)
+    assert cfg.hud.max_lines == 5
+    assert cfg.hud.hold_ms == 4000
+    assert cfg.hud.fade_ms == 3000
+    assert cfg.hud.enabled is True
+
+
+# --- Error message quality ---
+def test_error_message_contains_field_name(tmp_path):
+    """SpriteConfigError message must identify table and field."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[hud]\nmax_lines = "five"\n', encoding="utf-8")
+    with pytest.raises(SpriteConfigError, match=r"\[hud\].*max_lines"):
+        load_sprite_config(cfg_file)
