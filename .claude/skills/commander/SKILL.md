@@ -1,27 +1,36 @@
 ---
 name: commander
-description: Interactive skill for creating, editing, renaming, moving, disabling, or deleting voice-commander tools in this repo. Walks the user through an interview, then writes or patches the Python function, sidecar TOML metadata, and unit test, and verifies with pytest. Use whenever the user says “new voice command”, “add voice command”, “create a voice tool”, “edit voice command”, “change a phrase”, “rename command”, “disable command”, “delete command”, “move command to a different group”, “extend the voice commander”, “/commander”, or otherwise wants to wire up, modify, or remove a spoken-phrase action in this repo. Invoke even when the user does not name the skill — any request to add, change, or remove a phrase-triggered action here should trigger it.
+description: Interactive skill for creating, editing, renaming, disabling, or deleting voice-commander LLM-visible verbs in this repo. Walks the user through a short interview, then writes or patches the Python function in `tools/primitives.py`, its sidecar TOML entry in `tools/primitives.toml`, its unit test in `tests/unit/test_tools_primitives.py`, and (when disambiguation is involved) the system prompt in `llm_router.py`. Verifies with `pytest` + `--validate`. Use whenever the user says "new voice command", "add a verb", "create a voice tool", "edit voice command", "change tool description", "rename command", "disable command", "delete command", "extend the voice commander", "/commander", or otherwise wants to wire up, modify, or remove an LLM-routable verb. Invoke even when the user does not name the skill — any request to add, change, or remove an LLM-visible verb here should trigger it.
 ---
 
-# Commander — Voice Tool Creator & Editor
+# Commander — Verb Catalog Editor (LLM-only world)
 
-Guides the user through an interactive interview and produces or patches a voice-commander tool (Python function + sidecar TOML + unit test) with all paths, patterns, and library choices hard-coded. Do not discover anything; this file has the facts.
+Guides the user through a terse interview and produces or patches a voice-commander verb
+(Python function + sidecar TOML entry + unit test; optional prompt edit) with all paths,
+decorator shape, resolver touchpoints, and safety blocklists hard-coded below. Do not
+discover anything — this file has the facts.
+
+The repo is post-rework: rapidfuzz no longer routes commands, there are no tool groups,
+there is no `phrases_only` / `both` routing mode. A single LLM plans tool chains from a
+small verb catalog. See ADRs 0040–0044 for the full history. This skill reflects `main`
+today.
 
 ## Trigger
 
-- **Create**: “new voice command”, “add voice command”, “make a voice tool”
-- **Edit**: “change the phrases for X”, “rename command”, “move X to a different group”, “edit the action for X”, “update description for X”
-- **Toggle**: “disable command X”, “enable command X”, “turn off X”
-- **Delete**: “remove command X”, “delete voice tool X”
-- **Locate**: “where is the command for X”, “which file holds X”
-- “/commander”
-- Any request to add, change, or remove a phrase-triggered action in this repo
+- **Create**: "new voice command", "add a verb", "add tool", "make a primitive"
+- **Edit**: "change the description for X", "rename verb X", "edit the action for X",
+  "update prompt disambiguation for X"
+- **Toggle**: "disable verb X", "enable verb X"
+- **Delete**: "remove verb X", "delete tool X"
+- **Locate**: "where is the tool for X", "which function handles X"
+- "/commander"
+- Any request to add, change, or remove an LLM-visible verb in this repo
 
 ## Mode selection (first question after trigger)
 
-If the user’s opening message does not already pin it down, ask:
+If the user's message does not already pin it down, ask:
 
-> “Are we **creating**, **editing**, **toggling enabled/disabled**, or **deleting** a command?”
+> "Are we **creating**, **editing**, **toggling**, or **deleting** a verb?"
 
 Each mode below is self-contained. Skip straight to the matching section.
 
@@ -31,402 +40,554 @@ Each mode below is self-contained. Skip straight to the matching section.
 
 | What | Where |
 |---|---|
-| Tool modules | `src/voice_commander/tools/<group>.py` |
-| Sidecar TOML | `src/voice_commander/tools/<group>.toml` |
-| Unit tests | `tests/unit/test_tools_<group>.py` |
-| Dependencies | `pyproject.toml` — add via `uv add <pkg>`, never hand-edit |
-| Registry pair test | `tests/unit/test_discover_pairing.py` (validates Python ↔ TOML sync) |
+| Tool module (canonical) | `src/voice_commander/tools/primitives.py` |
+| Sidecar TOML | `src/voice_commander/tools/primitives.toml` |
+| Tests | `tests/unit/test_tools_primitives.py` |
+| Resolver (fuzzy param grounding) | `src/voice_commander/resolver.py` |
+| Resolver tests | `tests/unit/test_resolver.py` |
+| Dispatcher | `src/voice_commander/dispatcher.py` |
+| System prompt (LLM surface) | `src/voice_commander/llm_router.py` — `_SYSTEM_PROMPT_TEMPLATE` |
+| Config + source logging | `src/voice_commander/config.py` (`LLMConfig`, `log_llm_sources`) |
+| Default config | `config.toml` (committed) |
+| Per-machine override | `config.local.toml` (gitignored) |
+| Env-var prefix | `VC_LLM_<FIELD_UPPER>` |
+| Add a dependency | `uv add <pkg>` — NEVER hand-edit `pyproject.toml` |
+| Validate registry | `uv run python -m voice_commander --validate` |
+| Run verb tests | `uv run pytest tests/unit/test_tools_primitives.py -q` |
+| Run resolver tests | `uv run pytest tests/unit/test_resolver.py -q` |
 
-### Existing tool groups
+### One home for verbs
 
-- `clipboard` — copy, paste, cut, select_all
-- `window` — focus_browser, focus_terminal, minimize, maximize
-- `browser` — new_tab, close_tab, reopen_tab, reload
-- `system` — lock_screen, take_screenshot
+All LLM-visible tools live in **one** module: `src/voice_commander/tools/primitives.py`
+plus its sidecar `primitives.toml` and test file `test_tools_primitives.py`. There are no
+tool groups — `tools/window.py`, `tools/browser.py`, `tools/clipboard.py`, `tools/system.py`,
+`tools/mouse.py` were deleted in the ADR-0040 rework.
 
-User either appends to one of these or creates a new group.
+Exception — a brand-new *domain* with distinct dependencies (e.g. `tools/audio.py` for a
+hypothetical audio-device verb) can justify a new module. Default is "add to primitives".
+If the user proposes a new module, ask why, and only approve it when the dep set would
+pollute primitives.
 
-### Libraries already installed
+### Current verb catalog (reference)
 
-| Library | Use for |
-|---|---|
-| `pyautogui` | Keystrokes, hotkeys, mouse. `pyautogui.hotkey("ctrl", "c")`. First choice for keyboard shortcuts. |
-| `psutil` | Process enumeration, PID lookup. |
-| `pywin32` | `win32gui`, `win32con`, `win32process`, `win32api` — Windows-specific window / focus / shell ops. |
-| `subprocess` (stdlib) | Launch external binaries. |
-| `webbrowser` (stdlib) | Open URLs in the default browser. |
+Read `primitives.toml` for truth; this table is a cheat sheet.
 
-If the action needs something else, run `uv add <pkg>` and announce it before writing code. Never edit `pyproject.toml` by hand.
+| LLM-visible name | Python symbol | Params | Self-verify | settle_ms |
+|---|---|---|---|---|
+| `focus` | `focus` | `target: str` | yes (`_verify_foreground`) | 200 |
+| `type` | `type_text` | `text: str` | no | 50 |
+| `open` | `open_target` | `target: str` | yes (`_verify_open`, best-effort) | 500 |
+| `close` | `close` | — | yes (fg hwnd change poll) | 100 |
+| `close_window` | `close_window` | — | yes (fg hwnd change poll) | 100 |
+| `minimize` | `minimize` | `target: str \| None = None` | — (ShowWindow is synchronous) | 100 |
+| `maximize` | `maximize` | `target: str \| None = None` | — | 100 |
+| `press` | `press` | `combo: str` | no | 50 |
+| `wait` | `wait` | `ms: int` | — | 0 |
+| `click` | `click` | `button: str = "left"` | no | 50 |
+| `scroll` | `scroll` | `direction: str, amount: int = 3` | no | 0 |
+| `no_match` | `no_match` | `reason: str` | — (router intercepts, body is no-op) | 0 |
 
-### Function pattern (exact)
+`type` and `open` shadow Python builtins — their Python symbols are `type_text` and
+`open_target`, and they are registered under the short LLM-visible names via
+`@tool(name=...)`. Keep new verbs under plain `@tool` unless the Python name would collide
+with a builtin or stdlib symbol.
 
-Bare `@tool` decorator. Returns `None`. Docstring optional — first sentence is a useful fallback description. Phrases do **not** live in the decorator; they live in the sidecar TOML.
+## `@tool` decorator semantics
 
-**Argument-free tool** (phrases_only routing):
+Signature lives in `src/voice_commander/registry.py`. Two forms:
 
 ```python
-from __future__ import annotations
-
-import pyautogui
-
-from ..registry import tool
-
-
+# Bare — Python symbol == LLM-visible name. Default for new verbs.
 @tool
-def copy() -> None:
-    """Sends Ctrl+C to copy the current selection."""
-    pyautogui.hotkey("ctrl", "c")
+def minimize(target: str | None = None) -> None: ...
+
+# Named — LLM-visible name differs from the Python symbol.
+# Use ONLY when the Python symbol would shadow a builtin / stdlib import.
+@tool(name="type")
+def type_text(text: str) -> None: ...
 ```
 
-**Argument-bearing tool** (llm_only or both routing):
+`@tool(name=...)` is optional kwargs only. Positional form `@tool("type")` does not work —
+pass `name=` explicitly.
 
-```python
-from __future__ import annotations
+The decorator registers into the **global registry** at import time. Don't instantiate
+your own `ToolRegistry` in `primitives.py` — the daemon constructs one and `discover()`
+binds sidecar metadata.
 
-import subprocess
+## Sidecar TOML shape (primitives.toml)
 
-from ..registry import tool
-
-
-@tool
-def open_app(app_name: str) -> None:
-    """Launches an application by name."""
-    subprocess.Popen(["start", app_name], shell=True)
-```
-
-Typed parameters appear directly in the function signature. Use Python built-in types (`str`, `int`, `float`, `bool`) or `Literal[...]` from `typing` for enumerated choices. Keep parameters minimal — the LLM router fills them from the utterance; the user never types them.
-
-### Sidecar TOML pattern (exact)
-
-Top-level `category = "<group>"`, then one `[tools.<fn_name>]` table per function. Table key must match the Python function name character-for-character. Phrases lowercase, short, natural.
-
-**Argument-free tool (phrases_only)**:
+One `[tools.<llm-visible-name>]` table per verb. The table key must match the LLM-visible
+name (not the Python symbol) — i.e. `[tools.type]` for `@tool(name="type") def type_text`.
 
 ```toml
-category = "clipboard"
+category = "primitives"
 
-[tools.copy]
-phrases = ["copy", "copy that", "yank"]
-description = "Copy selected text to clipboard."
+[tools.<name>]
+phrases = []            # Kept for TOML round-trip back-compat. Never used for routing.
+description = "..."     # Prompt surface. Authored carefully. See below.
 enabled = true
-settle_ms = 0
-llm_only = false
-```
+settle_ms = 100
+llm_only = true         # Only valid value on main.
 
-**Argument-bearing tool (llm_only)**:
-
-```toml
-category = "system"
-
-[tools.open_app]
-phrases = []
-description = "Launches an application by name."
-enabled = true
-settle_ms = 300
-llm_only = true
-
-[tools.open_app.args.app_name]
-type = "str"
-description = "The name or path of the application to launch."
-required = true
-```
-
-**Tool registered for both rapidfuzz phrases AND LLM routing**:
-
-```toml
-category = "browser"
-
-[tools.navigate_to]
-phrases = ["go to", "open site", "navigate to"]
-description = "Opens a URL in the default browser."
-enabled = true
-settle_ms = 0
-llm_only = false
-
-[tools.navigate_to.args.url]
-type = "str"
-description = "The URL to open."
-required = true
+[tools.<name>.args.<param>]
+description = "..."     # Prompt surface — the LLM reads this to fill the param.
+required = true         # or false (then add `default = ...`)
+type = "string"         # or "integer", "boolean", "number"
+# default = ...         # only when required = false
 ```
 
 **Key rules:**
-- `llm_only = true` → set `phrases = []`. The rapidfuzz matcher ignores it; the LLM router may invoke it from natural utterances.
-- `settle_ms` — milliseconds to wait after execution before the daemon accepts the next command. Use 0 for instant keyboard shortcuts; 200–500 for focus/launch actions.
-- `[tools.<fn>.args.<param>]` sub-tables mirror the Python signature. Each entry must have `type`, `description`, and `required`. Optional args also include `default`.
-- The registry pairs Python ↔ TOML by function name at daemon startup. A function with no TOML entry (or a TOML entry with no function) raises at startup. Keep them in sync on every edit.
 
-### Test pattern (exact)
+- `llm_only = true` is the **only** routing mode. There is no hybrid, no phrases-only, no
+  both. `phrases = []` stays present purely for TOML round-trip; the matcher is gone.
+- `settle_ms` governs `time.sleep(settle_ms / 1000)` in `Dispatcher.run_plan()` after the
+  step executes. 0 for pure waits / no-ops, 50–100 ms for keystroke verbs, 200–500 ms for
+  focus / launch verbs (so the next step lands against a settled window).
+- Every arg needs its own `[tools.<name>.args.<arg>]` sub-table with `description`,
+  `required`, `type`, and `default` when `required = false`. The registry uses these to
+  build the OpenAI-style tools array the LLM sees.
 
-One test per tool function. Mock the external side-effect so tests stay hermetic. For argument-bearing tools, also assert the function signature matches expectations.
+### `description` is prompt surface
 
-**Argument-free tool**:
+The LLM picks a tool by reading its `description`. Write for the model, not for humans:
+
+- State what the tool does in one sentence.
+- State **DEFAULTS** explicitly. Example from `primitives.toml`:
+  > "Close the current tab/document via Ctrl+W. **DEFAULT for any bare 'close' utterance.**"
+- State **BANS** explicitly. Example:
+  > "ALWAYS use this tool for 'minimize' utterances. **NEVER emit press(combo='win+d')**
+  > or press(combo='win+m') — those minimize everything."
+- State explicit **"use X not Y"** disambiguation when the verb overlaps another verb's
+  natural-language surface. See `close` vs `close_window` for the canonical example.
+
+When you write or edit a description with "DEFAULT / ALWAYS / NEVER" guidance, the LLM
+system prompt usually needs a matching rule — see the **System prompt integration**
+section below.
+
+## Self-verifying verbs
+
+Any verb that changes foreground, creates a window, closes something, or modifies visible
+state should verify its outcome and log a WARNING on failure. Do NOT raise on self-verify
+timeout for best-effort verbs — raising halts the plan chain.
+
+Helpers already in `primitives.py`:
+
+- `_verify_foreground(hwnd)` — `focus` delegates to this. Polls `GetForegroundWindow`
+  for ~200 ms. Raises `FocusWindowError` on mismatch (focus is strict — wrong foreground
+  means keystrokes go to the wrong app).
+- `_verify_open(target)` — after `os.startfile`, polls `EnumWindows` for up to 500 ms
+  looking for a title whose `WRatio(target, title) >= 60`. Logs INFO on success,
+  WARNING on timeout, never raises.
+- `_close_with_verify(combo, verb=...)` — snapshots `GetForegroundWindow` pre-hotkey,
+  issues the chord, then polls for ~100 ms expecting the fg hwnd to change or the
+  previous hwnd to become invalid. WARNING on timeout.
+- `_show_window(target, action="minimize"|"maximize")` — delegates to resolver when
+  `target` is provided; falls back to `GetForegroundWindow()` when `target is None`.
+  ShowWindow is synchronous, so no post-call poll is needed.
+
+For a new window-touching verb, pattern-match on the closest existing helper. Pure
+keystroke verbs (`press`, `type`, `click`, `scroll`, `wait`) are intentionally NOT
+self-verifying — there is nothing to verify without a round trip to the UI.
+
+## Resolver integration — don't roll your own enumeration
+
+If the verb takes a target that is a human utterance (e.g. "comet", "notepad", "spotify",
+"chrome"), route it through `voice_commander.resolver`:
+
+- `resolver.resolve_window(target) -> int` — enumerate visible windows, fuzzy-match
+  `target` against `max(WRatio(target, proc_name), WRatio(target, title))`, return the
+  hwnd above `focus_fuzzy_threshold`. Raises `FocusWindowError` with top-3 candidates
+  on miss.
+- `resolver.resolve_app(target) -> str` — URI pass-through, existing-path pass-through,
+  else fuzzy-match against Start Menu `.lnk` stems + `shell:AppsFolder` display names
+  (cached for daemon lifetime on first call). Returns a launch token. Raises
+  `OpenResolveError` with top-3 on miss.
+
+Canonical usage:
+
+```python
+# Window verb — focus / minimize(target) / maximize(target)
+from .. import resolver
+hwnd = resolver.resolve_window(target)  # raises FocusWindowError on miss
+
+# Launch verb — open
+token = resolver.resolve_app(target)    # raises OpenResolveError on miss
+os.startfile(token)
+```
+
+Thresholds come from `LLMConfig.focus_fuzzy_threshold` / `open_fuzzy_threshold` via the
+daemon-injected `resolver._config_ref`. Default 70.
+
+**The resolver already filters destructive display names** via
+`_DANGEROUS_DISPLAY_PATTERNS` (uninstall / repair / setup / diskmgmt / regedit / gpedit /
+services / event viewer / etc.). A new launch-style verb gets that filter for free when
+it calls `resolve_app`.
+
+## Four safety blocklists (know all of them)
+
+All live in `primitives.py` and `resolver.py`. When adding a new verb, consider whether
+it intersects any of these:
+
+1. **`_LAUNCH_BLOCKLIST`** (`primitives.py`) — basenames rejected by `open`. Applied to
+   both the raw user-provided target AND the resolved launch token. Covers interpreters
+   (cmd, powershell, wscript, cscript, rundll32), destructive utilities (regedit,
+   diskmgmt, diskpart, format, cipher, gpedit, secpol, services, shutdown, taskkill,
+   msconfig). Extend if your verb can launch executables.
+2. **`_SYSTEM_PATH_RE`** (`primitives.py`) — regex rejecting resolved paths under
+   `\System32\`, `\SysWOW64\`, `\WinSxS\`. Catches renamed copies of blocked utilities.
+   Already applied post-resolve inside `open`.
+3. **`_PRESS_BLOCKLIST`** (`primitives.py`) — set of `frozenset({...})` destructive
+   chords rejected by `press` (`shift+delete`, `win+r`). Normalized to sorted lowercase
+   token set. Extend if a new chord class is destructive (e.g. `ctrl+alt+delete` is
+   already intercepted by the OS so no need; `win+r` opens a script-entry surface).
+4. **`_DANGEROUS_DISPLAY_PATTERNS`** (`resolver.py`) — regex over Start Menu +
+   AppsFolder display names; filtered **at cache-build time**, so `resolve_app` never
+   even scores destructive entries. Covers the uninstall / repair / setup / admin-panel
+   surface.
+
+**Rule for new verbs:** any tool that introduces a *new* destructive capability
+(file deletion, process kill, registry write, arbitrary shell exec) must require a
+`confirm: bool = False` param with a guard that logs + no-ops when False, AND get an
+entry in the relevant blocklist. Flag this in the interview (red flags section).
+
+## System prompt integration
+
+The LLM learns the verb catalog from **two** surfaces:
+
+1. **Tools array** — auto-generated from `primitives.toml` via `tool_schema.py` → passed
+   in the OpenAI-style `tools=[...]` field of the chat completion. Descriptions and arg
+   schemas come from here.
+2. **System prompt** — `_SYSTEM_PROMPT_TEMPLATE` in `llm_router.py`. Contains:
+   - Principles (prefer precise verbs; bans on window-sweep chords).
+   - Disambiguation rules (close vs close_window; "browser" → default_browser).
+   - Hard bans (destructive chords / launches).
+   - Few-shot examples with `{default_browser}` templated.
+
+### When to edit the system prompt
+
+Edit `_SYSTEM_PROMPT_TEMPLATE` when the new / edited verb introduces any of:
+
+- **Disambiguation vs another verb.** Canonical example: `close` vs `close_window`. The
+  prompt says *"When 'close' is ambiguous, prefer close() (tab). Only use close_window()
+  when the user explicitly says window, app, or quit."*
+- **Hard ban against a chord that would otherwise look tempting.** Canonical example:
+  `press(combo='win+d')` / `press(combo='win+m')` / `press(combo='win+up')` are banned
+  in favor of `minimize()` / `maximize()`.
+- **A new natural-language surface** the few-shot examples don't already cover (e.g. a
+  new "send" / "submit" / "search" intent that should chain verbs).
+
+Do NOT edit the prompt for a verb that is an additive keystroke with no overlap — the
+tools array carries the description through on its own.
+
+### How to edit
+
+Find `_SYSTEM_PROMPT_TEMPLATE` in `src/voice_commander/llm_router.py`. It is a
+module-level constant, interpolated once in `LLMRouter._build_system_prompt()` with
+`{default_browser}`. Any other `{...}` in the string WILL break formatting — keep curly
+braces out, or double them (`{{`, `}}`) if you need literal braces.
+
+After editing, run the prompt test suite (`test_llm_router_prompt.py`) and update the
+golden file / assertions as needed.
+
+## Config — when the verb needs a tunable
+
+Tools read config via the daemon-injected `resolver._config_ref`. Do not pass config
+through the tool signature — the LLM builds calls from the TOML schema, and adding a
+config-shaped param breaks the router.
+
+If a new verb needs a tunable (threshold, timeout, default target), add a field to
+`LLMConfig` in `src/voice_commander/config.py`:
+
+1. Add the field to the `@dataclass(frozen=True) class LLMConfig:` with a default.
+2. The `_resolve_llm_fields()` helper picks it up automatically — env var
+   (`VC_LLM_<FIELD_UPPER>`), then `config.local.toml`, then `config.toml`, then default.
+3. Add a row to committed `config.toml` under `[llm]` so the default is documented.
+4. Read it from the resolver or verb via `resolver._config_ref.<field>` (with a
+   `hasattr` guard for tests that don't wire config).
+5. Log-format validation is automatic: `log_llm_sources(cfg)` emits one INFO line per
+   field at daemon startup, with the winning source name. Verify after edit with
+   `uv run python -m voice_commander --validate` and check the log.
+
+## Testing patterns
+
+Exemplars live in `tests/unit/test_tools_primitives.py` and `tests/unit/test_resolver.py`.
+Mirror their shape.
+
+### Keystroke / mouse / wait verbs
+
+Patch the pyautogui symbol on the primitives module (not the `pyautogui` package), so
+imports resolve through the same path the verb uses:
 
 ```python
 from unittest.mock import patch
+from voice_commander.tools.primitives import press
 
-from voice_commander.tools import clipboard
-
-
-def test_copy_sends_ctrl_c():
-    with patch("voice_commander.tools.clipboard.pyautogui.hotkey") as hk:
-        clipboard.copy()
-    hk.assert_called_once_with("ctrl", "c")
+def test_press_splits_on_plus() -> None:
+    with patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey:
+        press("ctrl+shift+t")
+    mock_hotkey.assert_called_once_with("ctrl", "shift", "t")
 ```
 
-**Argument-bearing tool**:
+Same shape for `pyautogui.write` (`type_text`), `pyautogui.click` (`click`),
+`pyautogui.scroll` (`scroll`). For `wait`, patch `primitives.time.sleep`.
+
+### `focus`-style verbs (resolver + win32)
+
+1. Monkeypatch `resolver.resolve_window` on the primitives module.
+2. Stub `_do_focus` with a fake that calls the mocked `win32gui` surface you want to
+   assert against. This sidesteps the real AttachThreadInput / Alt-tap routine.
+3. Stub `_verify_foreground` to return `True` (or `False` for the failure-path test).
+4. Use `patch.dict("sys.modules", {"win32gui": mock_win32gui, ...})` to satisfy the
+   inline `import win32gui` inside the verb body.
+
+See `test_focus_calls_resolver_and_routes_hwnd` for the full pattern.
+
+### `open`-style verbs
+
+Mock `resolver.resolve_app` to return a fake launch token. Patch `os.startfile` on the
+primitives module. Neutralize `_verify_open` to a no-op so the test doesn't block on the
+poll loop. See `test_open_uri_shortcut` and `test_open_calls_resolve_app`.
+
+### Resolver-touching tests
+
+Use the `_install_fake_win32` helper in `test_resolver.py`. It installs fake
+`win32gui` / `win32process` / `win32api` / `win32con` AND a fake `psutil` (resolver
+prefers psutil for proc names — if you mock only the win32 surface, the test hits the
+real psutil and flakes). The helper also handles `denied_pids` for simulating permission
+denial.
+
+### Arg-bearing verbs — signature assertion
+
+Always include a signature assertion so arg renames fail loudly:
 
 ```python
 import inspect
-from unittest.mock import patch
+from voice_commander.tools import primitives
 
-from voice_commander.tools import system
-
-
-def test_open_app_signature():
-    sig = inspect.signature(system.open_app)
-    assert "app_name" in sig.parameters
-    assert sig.parameters["app_name"].annotation is str
-
-
-def test_open_app_launches_process():
-    with patch("voice_commander.tools.system.subprocess.Popen") as popen:
-        system.open_app("notepad")
-    popen.assert_called_once_with(["start", "notepad"], shell=True)
+def test_myverb_signature() -> None:
+    sig = inspect.signature(primitives.myverb)
+    assert "target" in sig.parameters
+    assert sig.parameters["target"].annotation is str
 ```
 
-For subprocess-based tools, patch `subprocess.Popen` / `subprocess.run`. For `webbrowser`, patch `webbrowser.open`. For `pywin32`, patch the specific `win32gui.*` call.
+### Config-reading verbs
 
-## Locating an existing command
+Use `voice_commander.resolver._set_config(LLMConfig(...))` to wire a test-only config
+into the resolver; reset via the `_reset_resolver_state` autouse fixture in
+`test_resolver.py`.
 
-Whenever a mode needs to find a tool the user named (by function name, phrase, or rough description), use this deterministic lookup — do not guess.
+## Locating an existing verb
 
-1. **Grep the sidecar TOMLs** for a phrase or the function name:
-   ```
-   rg -n "^\[tools\.<fn>\]|"<phrase>"" src/voice_commander/tools/*.toml
-   ```
-   The file that matches tells you the group. The `[tools.<fn>]` table name is the Python function name.
+`primitives.toml` is small — read it end-to-end before grepping. If you prefer a targeted
+search:
 
-2. **Open the matching `.py`** (`src/voice_commander/tools/<group>.py`) to see the current implementation.
+```bash
+rg -n "^\[tools\.<name>\]|<description fragment>" src/voice_commander/tools/primitives.toml
+rg -n "^def <name>|@tool\(name=\"<name>\"\)" src/voice_commander/tools/primitives.py
+```
 
-3. **Open `tests/unit/test_tools_<group>.py`** to see the current test(s) for that function.
-
-4. **Show the user a one-line confirmation** before changing anything: `"Found <fn> in <group>.py, phrases = [...]. Proceed?"`
-
-If the user only gives a vague description (“the clipboard one that copies”), list every `[tools.*]` table in the most likely TOML and ask them to pick.
+Show the user a one-line confirmation before changing anything: `"Found <name> in
+primitives.py (Python symbol: <symbol>), settle_ms=<n>, description=<oneline>. Proceed?"`
 
 ## Mode: Create
 
-Ask one question at a time. Stay terse. Propose defaults from prior answers so the user can confirm with one word.
+Ask one question at a time. Propose defaults from prior answers so the user can confirm
+with one word.
 
-1. **Describe the command** — “What should it do? Plain language.”
-2. **Phrases** — “Which spoken phrases? Give 2–5 natural variants. (Skip if LLM-only.)”
-3. **Function name** — propose a `snake_case` name from the description. Confirm.
-4. **Group** — “Which group: `clipboard`, `window`, `browser`, `system`, or a new one?” If new, ask for a short name.
-5. **Action mechanism** — “How does it fire? Keystroke / launch app / URL / subprocess / win32 call / other?”
-6. **Library** — pick from the installed set. If a new one is needed, name it and confirm `uv add <pkg>` before writing code.
-7. **One targeted edge-case question** based on mechanism:
-   - Keystroke → “Modifier variants? Need a `time.sleep` between keys?”
-   - Launch → “Full path or rely on `PATH`? Detach from daemon (`subprocess.Popen` without `.wait()`)?”
-   - URL → “Which URL? New tab or reuse?”
-   - Subprocess → “Check return code? Timeout?”
-   - win32 → “Which window-class / exe name to target?”
-8. **Arguments** — “Does this tool take arguments? For each argument provide: name, type (`str` / `int` / `float` / `bool` / `Literal[...]`), description, required or optional, and default value (if optional).” If none, record as argument-free.
-9. **Settle delay** — “Does this tool need a settle delay after execution? (e.g., focus and launch tools typically need ~200–500 ms before the next action is safe.) Enter the delay in milliseconds, or 0 for none.”
-10. **Routing mode** — “Is this tool LLM-only (triggered by natural-language intent, no fixed voice phrase), rapidfuzz-only (phrase-triggered, no argument parsing), or both?” — `llm_only`, `phrases_only`, or `both`.
+1. **Intent sentence** — "One sentence the LLM will read as the tool description. State
+   the default utterance this tool owns; state any hard bans (e.g. 'NEVER emit press
+   for this')."
+2. **Python symbol** — propose a `snake_case` name. Only diverges from the LLM-visible
+   name when it would shadow a builtin.
+3. **LLM-visible name** — same as Python symbol unless shadowed. If different, confirm
+   and plan `@tool(name="<llm-name>")`.
+4. **Parameters** — for each: name, type (`str` / `int` / `bool`), required or optional
+   + default. If the value is a human utterance that names a window / app / file, flag
+   it for the resolver.
+5. **Action mechanism** — keystroke (pyautogui.hotkey / write / click / scroll), window
+   op (win32gui.ShowWindow / SetForegroundWindow via `_do_focus`), shell launch
+   (os.startfile after `resolve_app`), or other. Only add a new library via `uv add`,
+   never hand-edit `pyproject.toml`.
+6. **Resolver use** — does the tool take a fuzzy-matched target? Call
+   `resolver.resolve_window(target)` or `resolver.resolve_app(target)` — do NOT roll new
+   enumeration logic. If the author proposes "iterate EnumWindows here" in their
+   description, redirect them to the resolver.
+7. **Self-verify** — required for any tool that changes foreground, creates a window,
+   closes something, or types into an input. Pick the matching helper pattern
+   (`_verify_foreground` raises; `_verify_open` / `_close_with_verify` log + return).
+8. **settle_ms** — 0 for no-ops / pure waits; 50–100 ms for keystrokes; 200–500 ms for
+   focus / launch.
+9. **Disambiguation bans** — any utterance that should NOT map here? E.g. "should the
+   LLM ever pick `press(combo='win+d')` instead of this? If no, that's a ban." If yes,
+   plan a `_SYSTEM_PROMPT_TEMPLATE` edit in the same PR.
+10. **Config fields** — need a tunable? Propose `LLMConfig.<field>` shape; pick a
+    default; confirm you'll add a `config.toml` row.
+11. **Safety** — does the verb introduce a new destructive capability (delete, kill,
+    write, exec)? If yes, require `confirm=True` default-False, and identify which
+    blocklist gets a new entry.
 
 Then run the **Create checklist** below.
 
 ### Create checklist
 
-1. **Add dependency** (only if a new library is required): `uv add <pkg>`. Announce success. Stop on failure and surface the error.
-2. **Edit or create `<group>.py`** — add imports + `@tool` function with typed parameters in the signature (omit parameters for argument-free tools). New group: start the file with `from __future__ import annotations`, the library import, and `from ..registry import tool`.
-3. **Edit or create `<group>.toml`** — add the `[tools.<fn>]` table with `settle_ms` and `llm_only`. Add `[tools.<fn>.args.<param>]` sub-tables for every argument. New group: start with `category = "<group>"` on line 1. Set `phrases = []` when `llm_only = true`.
-4. **Edit or create `tests/unit/test_tools_<group>.py`** — one mocked test per new function. For argument-bearing tools, include a signature validation assertion.
-5. **Verify** — run the shared verification block below.
-6. **Post-write validation** — run `uv run python -m voice_commander --validate` to confirm the registry loads cleanly with the new tool. Surface any error before reporting done.
-7. **Report** — see reporting block below.
+1. **Add dependency if needed**: `uv add <pkg>`. Announce success. Stop on failure.
+2. **Edit `primitives.py`** — add the `@tool` (or `@tool(name="...")`) function. Import
+   anything lazily at the top of the function body if it is Windows-only (see how
+   `focus` and `minimize` do their `import win32gui` inside the function).
+3. **Edit `primitives.toml`** — add `[tools.<name>]` with `phrases = []`,
+   `description`, `enabled = true`, `settle_ms`, `llm_only = true`, plus
+   `[tools.<name>.args.<arg>]` sub-tables. Descriptions on this side are prompt
+   surface — author them for the LLM (DEFAULTS / BANS / "use X not Y").
+4. **Edit `test_tools_primitives.py`** — one mocked test per behavior you care about
+   (happy path, verify success, verify-timeout WARNING, resolver-miss error). Include
+   a signature assertion for arg-bearing verbs.
+5. **Edit `_SYSTEM_PROMPT_TEMPLATE`** in `llm_router.py` — ONLY if the verb introduces
+   disambiguation, a hard ban, or a new natural-language surface. Update any golden
+   fixture for the prompt test.
+6. **Edit `config.py` + `config.toml`** — ONLY if the verb needs a new `LLMConfig` field.
+7. **Verify** — shared verification block below.
+8. **Post-write validation** — `uv run python -m voice_commander --validate`. Scan the
+   log for a source line for any new config field.
+9. **Report** — reporting block below.
 
 ## Mode: Edit
 
-First, run the **Locate** steps to fix the target. Then ask which fields are changing. Supported edits and the exact files each one touches:
+Run the Locate steps first. Then ask only the questions the edit requires. Edit matrix:
 
-| Edit | `<group>.py` | `<group>.toml` | `test_tools_<group>.py` | `pyproject.toml` |
-|---|---|---|---|---|
-| Rename function | yes (def + any internal refs) | yes (rename `[tools.<old>]` → `[tools.<new>]`) | yes (test function + patched module attr) | no |
-| Change phrases | no | yes (only the `phrases` list) | no | no |
-| Change description | no | yes (only `description`) | no (unless docstring sync required) | no |
-| Change category label | no | yes (top-level `category = ...`) | no | no |
-| Change action body | yes | no (unless description reflects behaviour) | yes (update mocks + assertions) | maybe (`uv add` if new lib) |
-| Swap library | yes (import + call) | no | yes (patch target moves) | yes (`uv add <new>`; leave old unless confirmed unused elsewhere) |
-| Move to a different group | yes (delete from old `.py`, add to new `.py`) | yes (delete table from old, add to new) | yes (delete test from old, add to new) | no |
-| Add / change arguments | yes (update signature types) | yes (add/update `[tools.<fn>.args.*]` sub-tables) | yes (add signature assertion + update call mocks) | no |
-| Change settle_ms | no | yes (only `settle_ms`) | no | no |
-| Change llm_only / routing mode | no | yes (`llm_only`, and `phrases` if switching to/from `[]`) | no | no |
+| Edit | `primitives.py` | `primitives.toml` | `test_tools_primitives.py` | `llm_router.py` | `config.py` + `config.toml` |
+|---|---|---|---|---|---|
+| Rename Python symbol (LLM name unchanged) | yes | no | yes (import + patch targets) | no | no |
+| Rename LLM-visible name | maybe (`@tool(name=...)` if symbol stays) | yes (`[tools.<old>]` → `[tools.<new>]`) | yes | yes (all prompt mentions) | no |
+| Change description | no | yes | no (unless docstring kept in sync) | maybe (if disambiguation changed) | no |
+| Change action body | yes | no | yes (mocks / assertions) | no | maybe |
+| Swap library | yes | no | yes | no | maybe (`uv add`) |
+| Add / change arguments | yes (signature) | yes (args sub-tables) | yes (signature assertion + call mocks) | maybe | no |
+| Change settle_ms | no | yes | no | no | no |
+| Add disambiguation / ban | no | yes (reflect in description) | no | yes | no |
+| Add a tunable | maybe (read it) | no | yes | no | yes |
 
-Interview questions for Edit are the minimal set needed for the selected edit — skip anything unchanged. Always show a unified before/after summary before writing, so the user can abort cheaply.
+Always show a unified before/after summary before writing.
 
 ### Edit checklist
 
-1. **Apply the edits** to the files listed in the table above.
-2. **If renaming a function**, also update every `patch("voice_commander.tools.<group>.<oldname>...")` string in the test module and any import elsewhere that names the function (grep first).
-3. **If moving to a different group**, ensure the old `.toml` does not end up with an orphan entry and the old `.py` does not export a dangling function. Delete the relevant lines from the old module/test.
-4. **Verify** — shared verification block below.
-5. **Post-write validation** — run `uv run python -m voice_commander --validate`.
-6. **Report** — reporting block below.
+1. Apply edits per the matrix.
+2. If renaming the **LLM-visible name**: grep `_SYSTEM_PROMPT_TEMPLATE` and the
+   `llm_router.py` examples for the old name — they use bare-verb mentions (e.g.
+   `close_window()`) that will silently rot if skipped.
+3. If renaming the **Python symbol**: grep `src/` + `tests/` for the old name. Any
+   `patch("voice_commander.tools.primitives.<old>")` strings need updating.
+4. Verify — shared block below.
+5. Post-write validation — `uv run python -m voice_commander --validate`.
+6. Report — reporting block below.
 
 ## Mode: Toggle (enable / disable)
 
-No code change. Flip the `enabled` flag in the sidecar TOML for the target function.
+No code change. Flip `enabled` in the sidecar TOML.
 
-1. Locate the `[tools.<fn>]` table (see Locate steps).
-2. Edit `enabled = true` ↔ `enabled = false`.
-3. Verify — just the pairing test (the unit test does not care about `enabled`):
+1. Locate the `[tools.<name>]` table.
+2. `enabled = true` ↔ `enabled = false`.
+3. Verify — primitives test file suffices:
+   ```bash
+   uv run pytest tests/unit/test_tools_primitives.py -q
    ```
-   uv run pytest tests/unit/test_discover_pairing.py -q
-   ```
-4. Report — one line: `"<fn> now enabled=<bool>; restart daemon to pick up."`
+4. Report — one line: `"<name> now enabled=<bool>; disabled verbs are filtered out of
+   the LLM's tools array on next daemon start."`
 
-Disabled tools stay in the registry but are skipped by the matcher, so phrases will not trigger until re-enabled.
+Disabled verbs stay registered but `ToolRegistry.all_llm_visible()` skips them, so the
+LLM never sees them in the tools array.
 
 ## Mode: Delete
 
-Remove a tool entirely. Destructive. Confirm the function name and group with the user verbatim before touching files.
+Destructive. Confirm the verb name with the user verbatim before touching files.
 
-1. **Locate** (see Locate steps).
-2. **Confirm** — “Delete `<fn>` from `<group>` and remove its test? This cannot be undone without git.” Wait for explicit yes.
-3. **Remove from `<group>.py`** — delete the `@tool`-decorated function. If that was the last tool in the file, also delete the file itself and its sidecar TOML (the registry pairing test will fail otherwise).
-4. **Remove from `<group>.toml`** — delete the `[tools.<fn>]` table and any `[tools.<fn>.args.*]` sub-tables beneath it. If the file is now empty of tool tables but still has `category = ...`, leave the file as-is (harmless) or delete it if the `.py` was also deleted.
-5. **Remove from `tests/unit/test_tools_<group>.py`** — delete the test(s) for that function.
-6. **Verify** — shared verification block below.
-7. **Report** — `"Deleted <fn> from <group>; N tests remain; pairing test green."`
+1. Locate.
+2. Confirm — "Delete `<name>` from primitives, its test, and any prompt mentions? This
+   cannot be undone without git." Wait for explicit yes.
+3. **Remove from `primitives.py`** — delete the decorated function. If it has private
+   helpers (`_verify_X`, `_show_X`) used only by this verb, delete those too.
+4. **Remove from `primitives.toml`** — delete `[tools.<name>]` and any
+   `[tools.<name>.args.*]` sub-tables.
+5. **Remove from `test_tools_primitives.py`** — delete tests referencing the verb.
+   Also delete the symbol from the `test_imports_expose_expected_symbols` list at the
+   bottom of the file (it will fail otherwise).
+6. **Remove from `_SYSTEM_PROMPT_TEMPLATE`** in `llm_router.py` — any few-shot example,
+   principle, or hard-ban line mentioning the verb. Update the prompt golden test.
+7. **Remove from `config.py` + `config.toml`** — any `LLMConfig` field only this verb
+   used. Update `log_llm_sources` tests.
+8. Verify — shared block.
+9. Post-write validation — `uv run python -m voice_commander --validate`. Must not list
+   the deleted verb.
+10. Report.
 
 ## Shared verification block
 
-Run both, in order. Do not claim done until both are green.
+Run, in order. Do not claim done until all green.
 
+```bash
+uv run pytest tests/unit/test_tools_primitives.py -q
+# When the edit touches the resolver or a resolver-reading verb:
+uv run pytest tests/unit/test_resolver.py -q
+# When the edit touches the prompt:
+uv run pytest tests/unit/test_llm_router_prompt.py -q
+# Always:
+uv run python -m voice_commander --validate
 ```
-uv run pytest tests/unit/test_tools_<group>.py -q
-uv run pytest tests/unit/test_discover_pairing.py -q
-```
 
-If the group test is red, read the failure and fix the code (not the test, unless the test itself is wrong). If the pairing test is red, a TOML table name no longer matches a Python function name — reconcile the two.
-
-For cross-group moves, run the test for both groups.
+If a test is red, read the failure and fix the code (not the test, unless the test
+itself is wrong). If `--validate` fails, the registry and TOML are out of sync — the
+most common cause is a Python symbol renamed without updating the `[tools.<name>]`
+table, or a `@tool(name=...)` override the TOML doesn't know about.
 
 ## Shared reporting block
 
-4 lines max:
+Four lines max:
 
-- Files changed (paths, relative to repo root)
-- Tests passing (count)
-- Phrases registered or removed (comma-separated); note `llm_only` tools have no phrases
-- How to try it: `"Restart the daemon (uv run voice-commander), press Scroll Lock, say <phrase>."` For LLM-only tools: `"Restart the daemon; invoke via natural utterance (e.g., ‘<example utterance>’)."` For delete/disable, skip the phrase line.
+- Files changed (paths, relative to repo root).
+- Tests passing (count).
+- Prompt changed: Y / N (and which rule/example if Y).
+- How to try it: `"Restart the daemon (uv run voice-commander), press Scroll Lock, say
+  '<example utterance>'. The LLM should emit <expected tool chain>."` For delete, skip
+  the utterance line.
 
 ## Red flags — stop and ask
 
-- **Command writes, deletes, or moves files** outside a clearly scoped path: confirm blast radius and target directory.
-- **Command sends network traffic** to a non-local endpoint: confirm URL, auth, and purpose.
-- **Edit would rename a function used elsewhere in `src/`**: grep for the old name across the whole source tree before renaming. If it is imported from anywhere other than the registry, surface that and ask how to handle it.
-- **Delete would leave a phrase collision** (another tool already owns a similar phrase): mention it so the user can decide whether to reassign phrases.
-- **Argument-bearing tool with `llm_only = false` and no `phrases`**: the rapidfuzz matcher will never reach it and the LLM router will not reach it either — confirm routing intent before writing.
+- **Writes, deletes, or moves files** outside a clearly scoped, user-provided path →
+  demand a `confirm: bool = False` param. Document blast radius in the description.
+  Consider whether the filename belongs in a blocklist.
+- **Network traffic to a non-local endpoint** → demand `confirm: bool = False` and URL
+  logging at INFO. The LLM prompt needs a rule so it doesn't emit the call for
+  ambiguous utterances.
+- **Rename of a Python symbol that's imported elsewhere in `src/`** → grep the whole
+  source tree before renaming. The primitives module is intentionally self-contained,
+  but private helpers occasionally get referenced from tests.
+- **New destructive capability** (delete_file, kill_process, write_registry,
+  arbitrary_exec) → require `confirm=True` default-False; AND add to the relevant
+  blocklist (`_LAUNCH_BLOCKLIST` / `_PRESS_BLOCKLIST` / a new verb-specific blocklist).
+  Update the system prompt with a hard ban.
+- **Verb signature that can't express via JSON schema** (nested objects, unions beyond
+  `str | None`, callables) → flatten. The OpenAI tools array doesn't carry complex
+  shapes cleanly across LM Studio backends.
+- **Description collides with an existing verb's natural-language surface** (e.g. a new
+  "close something" verb, or a new "open X" variant) → design the disambiguation rule
+  BEFORE writing code; update `_SYSTEM_PROMPT_TEMPLATE` in the same PR. See how
+  `close` vs `close_window` and `minimize` vs `press(combo='win+d')` are spelled out —
+  mimic that prose shape.
+- **Verb takes a human utterance but doesn't call the resolver** → redirect to
+  `resolver.resolve_window` / `resolver.resolve_app`. Rolling a new EnumWindows / Start
+  Menu scan is almost always a mistake (misses the `_DANGEROUS_DISPLAY_PATTERNS` filter,
+  misses threshold config, bypasses caching).
 
-## Code-gen examples
+## Why this skill is shaped like this
 
-### Argument-free tool (rapidfuzz phrases_only)
-
-```python
-# src/voice_commander/tools/clipboard.py
-@tool
-def copy() -> None:
-    """Sends Ctrl+C to copy the current selection."""
-    pyautogui.hotkey("ctrl", "c")
-```
-
-```toml
-# src/voice_commander/tools/clipboard.toml
-[tools.copy]
-phrases = ["copy", "copy that", "yank"]
-description = "Copy selected text to clipboard."
-enabled = true
-settle_ms = 0
-llm_only = false
-```
-
-### Argument-bearing tool (LLM-only)
-
-```python
-# src/voice_commander/tools/window.py
-@tool
-def focus_app(app_name: str) -> None:
-    """Brings the named application window to the foreground."""
-    import win32gui, win32con
-    def callback(hwnd, extra):
-        if app_name.lower() in win32gui.GetWindowText(hwnd).lower():
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            win32gui.SetForegroundWindow(hwnd)
-    win32gui.EnumWindows(callback, None)
-```
-
-```toml
-# src/voice_commander/tools/window.toml
-[tools.focus_app]
-phrases = []
-description = "Brings the named application window to the foreground."
-enabled = true
-settle_ms = 250
-llm_only = true
-
-[tools.focus_app.args.app_name]
-type = "str"
-description = "Partial window title of the application to focus."
-required = true
-```
-
-```python
-# tests/unit/test_tools_window.py
-import inspect
-from unittest.mock import MagicMock, patch
-
-from voice_commander.tools import window
-
-
-def test_focus_app_signature():
-    sig = inspect.signature(window.focus_app)
-    assert "app_name" in sig.parameters
-    assert sig.parameters["app_name"].annotation is str
-
-
-def test_focus_app_calls_enum_windows():
-    with patch("voice_commander.tools.window.win32gui") as mock_gui:
-        mock_gui.GetWindowText.return_value = "Notepad"
-        window.focus_app("notepad")
-    mock_gui.EnumWindows.assert_called_once()
-```
-
-### Tool registered for both rapidfuzz AND LLM routing
-
-```toml
-[tools.navigate_to]
-phrases = ["go to", "open site", "navigate to"]
-description = "Opens a URL in the default browser."
-enabled = true
-settle_ms = 0
-llm_only = false
-
-[tools.navigate_to.args.url]
-type = "str"
-description = "The URL to open."
-required = true
-```
-
-When `llm_only = false` and `phrases` is non-empty, the rapidfuzz matcher can fire the tool phrase-first (without arguments), while the LLM router can also fill `url` from a natural utterance like “navigate to github dot com”.
-
-## Why the shape of this skill
-
-- Hard-coded paths, decorator shape, and sidecar schema mean zero filesystem discovery per invocation.
-- Mode selection up front keeps the interview short — disable should not ask seven questions.
-- The Locate step is the one piece of search the skill must do, and it is deterministic (`rg` on sidecar TOMLs), so it does not drift.
-- Two verification steps (group unit test + pairing test) catch the two realistic failure modes: broken call and Python ↔ TOML drift.
-- The post-write `--validate` step catches registry-level mismatches (missing arg sub-tables, type mismatches) that the unit tests cannot see.
-- The red-flag list reflects the real traps users fall into (network actions, cross-module renames, orphaned routing config) — catching those before writing code avoids rework.
-- `llm_only = true` tools use `phrases = []` so the rapidfuzz matcher never wastes cycles on them. The LLM router reads the TOML schema to know what arguments to extract.
+- Hard-coded paths and decorator shape mean zero filesystem discovery per invocation.
+  The verb home is one file pair, not a tree.
+- Mode selection up front keeps the interview short — Toggle should not ask nine
+  questions.
+- Resolver + safety-blocklist rules catch the two realistic "new destructive verb"
+  traps (launching cmd.exe, sweep-window chords) before code is written.
+- The "edit prompt when disambiguation changes" rule closes the loop between
+  `primitives.toml` description authoring and the prose surface the LLM reads at
+  inference time — the two always drift otherwise.
+- Config + `log_llm_sources` ensures no silent default ever lands on a user's machine
+  without a visible log line at startup. A new tunable without a `config.toml` row is
+  a bug.
