@@ -79,6 +79,142 @@
 
 ---
 
+## Phase 0: Research & Reference Docs (REQUIRED — do first)
+
+Per CLAUDE.md: *"If a library is new to the repo, land its reference in docs/references/ before writing code against it."* Both pyglet and httpx-sse are new to this repo. No implementation code may land before this phase is complete. Parallelize research with Haiku sub-agents — do not serialize.
+
+### Task 0a: Pyglet 2.x reference doc
+
+**Files:**
+- Create: `docs/references/pyglet.md`
+
+**Goal:** Authoritative vendored reference for every pyglet API the plan uses. Any agent implementing Tasks 14–15 must be able to read this doc and write correct code without guessing.
+
+- [ ] **Step 1: Pull upstream docs**
+
+Sources to consult (via Haiku sub-agent / WebFetch — prefer the latest 2.x stable, currently 2.0.x):
+- https://pyglet.readthedocs.io/en/latest/programming_guide/windowing.html
+- https://pyglet.readthedocs.io/en/latest/programming_guide/image.html (sprite sheets, TextureRegion, TextureGrid, ImageGrid)
+- https://pyglet.readthedocs.io/en/latest/programming_guide/graphics.html (Sprite class)
+- https://pyglet.readthedocs.io/en/latest/programming_guide/text.html (Label)
+- https://pyglet.readthedocs.io/en/latest/programming_guide/time.html (clock.schedule_interval)
+- https://pyglet.readthedocs.io/en/latest/programming_guide/app.html (event loop)
+- https://pyglet.readthedocs.io/en/latest/modules/window.html (Window API + WINDOW_STYLE_BORDERLESS / WINDOW_STYLE_TRANSPARENT)
+
+- [ ] **Step 2: Verify claims the plan makes**
+
+The plan asserts each of these — each must be verified against upstream docs or a minimal smoke test, and the verified answer written into the reference doc:
+
+| Plan assertion | Verify |
+|---|---|
+| `WINDOW_STYLE_BORDERLESS` exists on 2.x Window | Check `pyglet.window.Window.WINDOW_STYLE_*` constants list |
+| `Window` supports transparent background | Confirm style/flag name, platform caveats |
+| Access native HWND via `window._hwnd` on pyglet 2.x Windows backend | Confirm attribute path — may be `._view_hwnd`, `._hwnd`, or require `display.get_platform_window()` |
+| `pyglet.image.load(path)` returns `AbstractImage` | Confirm return type + how to slice into grid |
+| `pyglet.sprite.Sprite(region, x, y)` renders a texture region at absolute coords | Confirm constructor signature |
+| `pyglet.text.Label(...)` for in-window labels | Confirm kwargs actually available |
+| `pyglet.clock.schedule_interval(fn, seconds)` | Confirm signature and callback arg (`dt`) |
+| `pyglet.app.run()` is blocking, single-threaded | Confirm + threading caveats |
+
+- [ ] **Step 3: Cover the Windows-specific gaps**
+
+Pyglet + Win32 interop isn't documented well upstream. Collect:
+- How to get the Win32 HWND from a pyglet 2.x Window reliably.
+- Whether pyglet's transparent-background flag works on Windows 11 (or requires custom Win32 flags).
+- Known pyglet-on-Windows gotchas (DPI, display probe at import time, multi-monitor layout origin).
+
+- [ ] **Step 4: Write the reference doc**
+
+Use `docs/references/` existing files as style template. Include: canonical import paths, minimal runnable window snippet, sprite-sheet slicing snippet, clock snippet, Win32 HWND retrieval snippet, version compatibility matrix, known issues.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add docs/references/pyglet.md
+git commit -m "docs(references): vendor pyglet 2.x reference for sprite companion"
+```
+
+### Task 0b: httpx-sse reference doc
+
+**Files:**
+- Create: `docs/references/httpx-sse.md`
+
+**Goal:** Vendored reference covering every httpx-sse API the plan uses — connect, iterate, reconnect, timeouts, async client.
+
+- [ ] **Step 1: Pull upstream docs**
+
+Sources (Haiku sub-agent):
+- https://github.com/florimondmanca/httpx-sse (README — primary reference)
+- https://www.python-httpx.org/async/ (async client basics, since httpx-sse wraps httpx)
+- https://www.python-httpx.org/advanced/timeouts/ (timeout semantics)
+
+- [ ] **Step 2: Verify claims the plan makes**
+
+| Plan assertion | Verify |
+|---|---|
+| `httpx_sse.aconnect_sse(client, "GET", url)` yields an async context manager | Confirm exact API surface + version |
+| Event stream has `.aiter_sse()` yielding objects with `.event` and `.data` | Confirm attribute names |
+| Reconnect-on-disconnect is the caller's responsibility (not built in) | Confirm — plan relies on this |
+| `httpx.AsyncClient(timeout=httpx.Timeout(...))` per-connect timeout works with SSE long-poll | Confirm — SSE streams must not hit read timeout mid-stream |
+
+- [ ] **Step 3: Write the reference doc**
+
+Include: install line, minimal async subscriber snippet, reconnect loop pattern, per-event handling, timeout configuration for long-lived SSE streams, error-type catalog.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add docs/references/httpx-sse.md
+git commit -m "docs(references): vendor httpx-sse reference for sprite companion"
+```
+
+### Task 0c: Pyglet smoke test
+
+**Files:**
+- Create: `scripts/pyglet-smoke.py` (throwaway; delete after Task 15)
+
+**Goal:** Before Task 15 claims "pyglet window works," prove the exact required flags (borderless + transparent + topmost + click-through on Windows 11) work on the target machine. This is the single highest-risk unknown in the plan.
+
+- [ ] **Step 1: Write smoke script**
+
+Tiny script: open a 256×256 borderless transparent pyglet window in the bottom-right corner, apply the Win32 `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` via ctypes on the HWND the reference doc describes, draw a red square, run the event loop.
+
+- [ ] **Step 2: Run on target hardware**
+
+Confirm:
+- Window appears, background is transparent (desktop visible behind red square).
+- Window stays above other windows.
+- Clicking on the red square passes the click through to the app beneath.
+- Window does not grab taskbar focus.
+
+- [ ] **Step 3: Record findings**
+
+Append a "Smoke-test results" section to `docs/references/pyglet.md` with the exact working flag combination and any deviations from what the plan assumes.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add scripts/pyglet-smoke.py docs/references/pyglet.md
+git commit -m "chore(sprite): pyglet Win32 click-through flags smoke test"
+```
+
+### Task 0d: Reconcile plan with research findings
+
+- [ ] **Step 1: Re-read Tasks 14 and 15**
+
+If the reference docs or smoke test contradict any snippet in Tasks 14 (sprite renderer) or 15 (pyglet window), patch those tasks in this plan file BEFORE starting Phase 1. Record reconciliation notes inline.
+
+- [ ] **Step 2: Commit plan amendments if any**
+
+```bash
+git add docs/superpowers/plans/2026-04-21-sprite-companion-plan.md
+git commit -m "docs(plan): reconcile sprite companion plan with pyglet/httpx-sse research"
+```
+
+Phase 0 exit gate: `docs/references/pyglet.md` and `docs/references/httpx-sse.md` exist on the branch; pyglet smoke test passed on target hardware; Tasks 14 & 15 reflect verified APIs. Only then may Phase 1 begin.
+
+---
+
 ## Phase 1: Daemon-Side EventBus + SSE
 
 ### Task 1: Add SpriteConfig to config system
@@ -3121,9 +3257,10 @@ print("Placeholder charsheet.png created")
 
 | Phase | Tasks | What's delivered |
 |-------|-------|-----------------|
+| 0 | 0a-0d | Pyglet + httpx-sse reference docs, Win32 click-through smoke test, plan reconciliation |
 | 1 | 1-6 | SpriteConfig, EventBus, SSE endpoint, daemon wiring, deps |
 | 2 | 7-13 | State machine, speech bubble, charsheet, SSE client, sprite config, DPI, Win32 flags |
 | 3 | 14-15 | Sprite renderer, pyglet window, CLI entry point |
 | 4 | 16-20 | start.ps1 integration, ADRs, architecture docs, full test suite, human validation |
 
-**Total:** 20 tasks, ~100 steps, estimated 4-6 hours for an experienced engineer.
+**Total:** 24 tasks, ~115 steps, estimated 5-7 hours for an experienced engineer (Phase 0 adds ~1 hour of parallelizable research).
