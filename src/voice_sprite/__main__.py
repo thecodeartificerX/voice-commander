@@ -87,6 +87,32 @@ def main() -> None:
     renderer = SpriteRenderer(charsheet)
     bubble = SpeechBubble(fade_ms=cfg.bubble_fade_ms)
 
+    # Chat-log + summarizer stack
+    from .chat_log import ChatLog, ChatLogEntry
+    from .chat_log_renderer import ChatLogRenderer
+    from .llm_summary_client import LLMSummaryClient
+    from .summarizer import Summarizer
+    from .summary_rules import CHAIN_DETECTORS, RULES
+
+    chat_log = ChatLog(
+        max_lines=cfg.hud.max_lines,
+        hold_ms=cfg.hud.hold_ms,
+        fade_ms=cfg.hud.fade_ms,
+    )
+    llm_client: LLMSummaryClient | None = None
+    if cfg.hud.enabled and cfg.hud.llm_fallback_enabled:
+        llm_client = LLMSummaryClient(
+            endpoint_url="http://localhost:1234/v1",
+            model_id="google/gemma-4-e4b",
+            timeout_ms=cfg.hud.llm_summary_timeout_ms,
+        )
+    summarizer = Summarizer(
+        rules=RULES,
+        chain_detectors=CHAIN_DETECTORS,
+        llm_client=llm_client,
+        llm_fallback_enabled=cfg.hud.llm_fallback_enabled,
+    )
+
     # Deferred pyglet import — avoids display probe at module-load time.
     # ImportError here means pyglet/GL libs missing; surface as startup
     # failure rather than import failure. pyglet 2.x lazy-loads submodules
@@ -97,29 +123,44 @@ def main() -> None:
 
     # Calculate position
     screen = pyglet.display.get_display().get_default_screen()
-    offset_x = int(cfg.offset_x * scale)
-    offset_y = int(cfg.offset_y * scale)
 
-    positions = {
-        "bottom_right": (screen.width - size - offset_x, offset_y),
-        "bottom_left": (offset_x, offset_y),
-        "top_right": (screen.width - size - offset_x, screen.height - size - offset_y),
-        "top_left": (offset_x, screen.height - size - offset_y),
-    }
-    x, y = positions.get(cfg.corner, positions["bottom_right"])
+    # Composite window: HUD to the LEFT of sprite region.
+    hud_w = cfg.hud.width_px if cfg.hud.enabled else 0
+    window_w = size + hud_w
+    window_h = size
+    sprite_region_x = hud_w
+    sprite_region_w = size
+
+    # Start position: primary bottom-right (updated on first CursorDock tick if follow enabled)
+    x = screen.width - window_w - cfg.margin_x
+    y = cfg.margin_y
 
     from .window import SpriteWindow
 
     window = SpriteWindow(
-        width=size,
-        height=size,
+        width=window_w,
+        height=window_h,
         x=x,
         y=y,
         renderer=renderer,
         bubble=bubble,
         render_scale=cfg.render_scale,
         y_nudge_px=cfg.y_nudge_px,
+        sprite_region_x=sprite_region_x,
+        sprite_region_w=sprite_region_w,
     )
+
+    hud_renderer: ChatLogRenderer | None = None
+    if cfg.hud.enabled:
+        hud_renderer = ChatLogRenderer(
+            chat_log=chat_log,
+            window=window,
+            hud_width_px=hud_w,
+            font_size=cfg.hud.font_size,
+            line_gap_px=4,
+        )
+        window._hud_renderer = hud_renderer  # inject post-construction
+
     window.load_charsheet_image(str(png_path))
     window.apply_win32_flags()
 
@@ -152,6 +193,20 @@ def main() -> None:
             logger.info("State → %s", result.value)
         window.set_muted(sm.muted)
         renderer.set_muted(sm.muted)
+        if event_type == "plan_outcome":
+            try:
+                from voice_commander.plan import PlanOutcome
+                import time as _time
+                outcome = PlanOutcome.from_event_dict(data)
+                summary = summarizer.summarize(outcome)
+                if summary:
+                    chat_log.append(ChatLogEntry(
+                        text=summary,
+                        status=outcome.status,  # type: ignore[arg-type]
+                        born_at_s=_time.monotonic(),
+                    ))
+            except Exception:
+                logger.exception("Failed to process plan_outcome event")
         if event_type == "tool_fired" and "name" in data:
             bubble.show(data["name"])
 
@@ -175,6 +230,8 @@ def main() -> None:
             renderer.set_state(sm.current_state)
         renderer.tick(dt)
         bubble.tick(dt)
+        import time as _time
+        chat_log.tick(_time.monotonic())
 
     pyglet.clock.schedule_interval(update, 1 / 60.0)
 
@@ -185,6 +242,8 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        if llm_client is not None:
+            llm_client.close()
         sse.stop()
         logger.info("voice-sprite exiting")
 
