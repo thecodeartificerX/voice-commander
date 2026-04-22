@@ -44,7 +44,7 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         render_scale: float = 1.0,
         y_nudge_px: int = 0,
         *,
-        hud_renderer: "ChatLogRenderer | None" = None,
+        hud_renderer: ChatLogRenderer | None = None,
         sprite_region_x: int = 0,
         sprite_region_w: int | None = None,
     ) -> None:

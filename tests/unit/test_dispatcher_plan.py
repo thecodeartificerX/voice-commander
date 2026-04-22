@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from voice_commander.dispatcher import Dispatcher
+from voice_commander.event_bus import EventBus
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.plan import Plan, ToolCall
 from voice_commander.registry import ToolEntry, ToolRegistry
@@ -207,9 +208,6 @@ def test_run_plan_extra_kwargs_fires_error():
     # Chain stopped; executed == 0
     complete_calls = [c for c in sink.calls if c[0] == "on_plan_complete"]
     assert complete_calls[0][1][1] == 0
-
-
-from voice_commander.event_bus import EventBus
 
 
 def _drain_bus(bus: EventBus) -> list[tuple[str, dict]]:

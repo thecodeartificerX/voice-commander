@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import ctypes
 import ctypes.wintypes as wt
+from unittest.mock import MagicMock, patch
 
 
 def _make_fake_ctypes(cursor_xy=(100, 100), rcwork=(0, 0, 1920, 1040), hmon=1, dpi=96):
@@ -11,10 +12,9 @@ def _make_fake_ctypes(cursor_xy=(100, 100), rcwork=(0, 0, 1920, 1040), hmon=1, d
     fake = MagicMock()
 
     def set_pt(ptr):
-        # ptr is ctypes.byref(POINT) — we need to set the underlying obj
         ptr._obj.x = cursor_xy[0]
         ptr._obj.y = cursor_xy[1]
-        return 1  # BOOL success
+        return 1
 
     fake.windll.user32.GetCursorPos.side_effect = set_pt
     fake.windll.user32.MonitorFromPoint.return_value = hmon
@@ -28,7 +28,6 @@ def _make_fake_ctypes(cursor_xy=(100, 100), rcwork=(0, 0, 1920, 1040), hmon=1, d
         return 1
 
     fake.windll.user32.GetMonitorInfoW.side_effect = get_mi
-    # Preserve real wintypes for POINT and Structure creation
     fake.wintypes = wt
     fake.sizeof.side_effect = ctypes.sizeof
     fake.byref.side_effect = ctypes.byref

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from voice_sprite.dpi import get_primary_dpi
+from voice_sprite.dpi import get_dpi_for_monitor, get_primary_dpi
 
 
 def test_get_primary_dpi_returns_96_on_fallback():
@@ -24,12 +24,7 @@ def test_get_primary_dpi_reads_real_value():
     assert result == 144
 
 
-from voice_sprite.dpi import get_dpi_for_monitor
-
-
 def test_get_dpi_for_monitor_returns_dpi_x(monkeypatch):
-    import ctypes as real_ctypes
-    original_windll = real_ctypes.windll
 
     class FakeShcore:
         def GetDpiForMonitor(self, hmon, dpi_type, dpi_x_ptr, dpi_y_ptr):

@@ -6,7 +6,7 @@ import time
 
 import pyglet
 
-from .chat_log import ChatLog, ChatLogEntry
+from .chat_log import ChatLog
 
 _COLOR_OK = (143, 215, 127)      # #8fd77f — success
 _COLOR_ERROR = (255, 118, 118)   # #ff7676 — error

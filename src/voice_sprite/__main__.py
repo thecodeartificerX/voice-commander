@@ -43,7 +43,8 @@ def main() -> None:
     logger.info("voice-sprite starting")
 
     # Must run BEFORE the first pyglet window is constructed.
-    import ctypes, contextlib
+    import contextlib
+    import ctypes
     with contextlib.suppress(AttributeError, OSError):
         ctypes.windll.shcore.SetProcessDpiAwarenessContext(-4)
 
@@ -214,8 +215,9 @@ def main() -> None:
         renderer.set_muted(sm.muted)
         if event_type == "plan_outcome":
             try:
-                from voice_commander.plan import PlanOutcome
                 import time as _time
+
+                from voice_commander.plan import PlanOutcome
                 outcome = PlanOutcome.from_event_dict(data)
                 summary = summarizer.summarize(outcome)
                 if summary:

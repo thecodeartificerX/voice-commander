@@ -5,12 +5,11 @@ Pyglet Label is stubbed so tests run headless.
 
 from __future__ import annotations
 
-import importlib
 import time
 from unittest.mock import MagicMock, patch
 
-from voice_sprite.chat_log import ChatLog, ChatLogEntry
 import voice_sprite.chat_log_renderer as _mod
+from voice_sprite.chat_log import ChatLog, ChatLogEntry
 
 
 def test_draw_creates_label_per_entry():

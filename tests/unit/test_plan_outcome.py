@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from voice_commander.plan import PlanOutcome, ToolCall
@@ -66,5 +68,5 @@ def test_plan_outcome_is_frozen():
         error_msg=None,
         duration_ms=0,
     )
-    with pytest.raises(Exception):
+    with pytest.raises((AttributeError, TypeError, dataclasses.FrozenInstanceError)):
         outcome.status = "ok"  # type: ignore[misc]
