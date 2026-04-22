@@ -27,6 +27,13 @@ config.local.toml
 # Claude Code ephemeral state
 .claude/scheduled_tasks.lock
 
+# Purchased sprite asset packs — not redistributable; keep local only.
+# charsheet.png is the single file extracted + shipped for the sprite to run.
+assets/sprite/CatPackFree/
+assets/sprite/CatPackPaid/
+assets/sprite/CatRoomPaid/
+assets/sprite/Gemini_Generated_Image_*.png
+
 # Superpowers brainstorming mockups + session state
 .superpowers/
 

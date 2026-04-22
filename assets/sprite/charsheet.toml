@@ -1,78 +1,94 @@
 # Metadata for the sprite companion character sheet.
-# Each [states.*] entry maps a SpriteState to a row in charsheet.png.
-# Regenerate charsheet.png using the prompt template in ./README.md.
+# Source: CatPackPaid/Sprites/Halloween/witch.png (witch-hat pixel-art cat).
+# Each [states.*] entry maps a SpriteState to a row (0-indexed) in charsheet.png.
+# Cells are 32x32 px; sheet is 512x1024 px (16 cols × 32 rows).
+# Regenerate / swap art per ./README.md.
 
-frame_width = 128
-frame_height = 128
-fps = 12
+frame_width = 32
+frame_height = 32
+fps = 8
 
+# -- Canonical states -------------------------------------------------------
+# row 0 — sitting witch cat, breathing loop (10 frames available, use 4).
 [states.idle]
 row = 0
 frames = 4
 
+# row 2 — alt sitting / reactive pose (10 frames).
 [states.listening]
-row = 1
-frames = 6
-
-[states.hearing_speech]
 row = 2
-frames = 4
-
-[states.thinking]
-row = 3
 frames = 6
 
-[states.llm_thinking]
+# row 4 — active / leaning forward (12 frames) — responds to heard speech.
+[states.hearing_speech]
 row = 4
-frames = 6
-
-[states.success]
-row = 5
-frames = 3
-
-[states.miss]
-row = 6
-frames = 3
-
-[states.tool_error]
-row = 7
-frames = 3
-
-[states.warmup]
-row = 8
 frames = 4
 
-[states.crashed]
+# row 8 — standing / pawing (12 frames) — mid processing.
+[states.thinking]
+row = 8
+frames = 6
+
+# row 7 — witch on broom (12 frames) — magical "spellcasting" animation for LLM call.
+[states.llm_thinking]
+row = 7
+frames = 6
+
+# row 15 — reactive bright pose (12 frames) — happy outcome.
+[states.success]
+row = 15
+frames = 3
+
+# row 11 — confused / question pose (9 frames).
+[states.miss]
+row = 11
+frames = 3
+
+# row 3 — crouch / spooked (6 frames).
+[states.tool_error]
+row = 3
+frames = 3
+
+# row 9 — standing stretch (15 frames) — initial warmup cycle.
+[states.warmup]
 row = 9
+frames = 4
+
+# row 6 — lying down / sleep (8 frames) — daemon gone, sprite crashed.
+[states.crashed]
+row = 6
 frames = 2
 
-# Transition animations (optional — pairs not listed use instant swap)
+# -- Transitions (optional) -------------------------------------------------
+# Transitions between states that play ONCE before settling into target state's loop.
+# Not all state pairs have transitions; unlisted pairs snap instantly.
+
 [transitions."idle->listening"]
-row = 10
+row = 16
 frames = 4
 once = true
 
 [transitions."listening->idle"]
-row = 11
+row = 17
 frames = 4
 once = true
 
 [transitions."listening->hearing_speech"]
-row = 12
-frames = 3
+row = 18
+frames = 4
 once = true
 
 [transitions."hearing_speech->thinking"]
-row = 13
+row = 19
 frames = 4
 once = true
 
 [transitions."thinking->success"]
-row = 14
+row = 20
 frames = 3
 once = true
 
 [transitions."thinking->miss"]
-row = 15
+row = 21
 frames = 3
 once = true
