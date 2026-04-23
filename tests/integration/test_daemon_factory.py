@@ -27,6 +27,7 @@ imported at the top of ``daemon.py`` and is patchable via
 from __future__ import annotations
 
 import queue
+import threading
 from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace
@@ -224,8 +225,6 @@ def test_factory_wires_reload_lock_to_llm_router(base_cfg: Config) -> None:
     refactor drops the third argument, LLMRouter raises TypeError at runtime
     with no test signal — this test catches that regression.
     """
-    import threading
-
     captured: dict[str, Any] = {}
 
     def capture_router(cfg: Any, registry: Any, reload_lock: Any) -> MagicMock:

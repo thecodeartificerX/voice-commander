@@ -306,9 +306,7 @@ def _get_app_cache() -> list[tuple[str, str]]:
         cached = _cache["apps"]  # re-check under lock — snapshot
         if cached is not None:
             return cached
-        raw: list[tuple[str, str]] = []
-        raw.extend(_enumerate_start_menu())
-        raw.extend(_enumerate_apps_folder())
+        raw = _enumerate_start_menu() + _enumerate_apps_folder()
         apps: list[tuple[str, str]] = []
         dropped = 0
         for display, token in raw:

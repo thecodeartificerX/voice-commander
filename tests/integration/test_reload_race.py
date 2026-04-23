@@ -3,6 +3,7 @@
 Asserts that the reload_lock wiring eliminates the race described in
 GitHub issue #11. No real HTTP traffic — LLMRouter._client is patched.
 """
+
 from __future__ import annotations
 
 import threading
@@ -79,7 +80,6 @@ def test_concurrent_route_and_reload_no_crash() -> None:
         ]
     }
     mock_resp = MagicMock(spec=httpx.Response)
-    mock_resp.raise_for_status = MagicMock()
     mock_resp.json.return_value = no_match_response
 
     errors: list[Exception] = []
@@ -123,7 +123,6 @@ def test_concurrent_warmup_and_reload_no_crash() -> None:
     router = LLMRouter(config, registry, reload_lock)
 
     mock_resp = MagicMock(spec=httpx.Response)
-    mock_resp.raise_for_status = MagicMock()
     mock_resp.json.return_value = {"choices": [{"message": {"tool_calls": []}}]}
 
     errors: list[Exception] = []
