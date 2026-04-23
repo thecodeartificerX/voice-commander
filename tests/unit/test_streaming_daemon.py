@@ -143,12 +143,12 @@ def test_pipeline_processes_utterance(tmp_path):
     thread = threading.Thread(target=daemon._pipeline_loop, daemon=True)
     thread.start()
 
-    daemon._utt_q.put(_fake_utterance())
-    triggered = pipeline_done.wait(timeout=5.0)
-
-    # Poison pill to stop the thread.
-    daemon._utt_q.put(None)
-    thread.join(timeout=3.0)
+    try:
+        daemon._utt_q.put(_fake_utterance())
+        triggered = pipeline_done.wait(timeout=5.0)
+    finally:
+        daemon._utt_q.put(None)
+        thread.join(timeout=3.0)
 
     assert triggered, "pipeline did not process utterance within 5 s"
     transcriber.transcribe.assert_called_once()
@@ -176,16 +176,15 @@ def test_pipeline_handles_transcribe_error(tmp_path):
     thread = threading.Thread(target=daemon._pipeline_loop, daemon=True)
     thread.start()
 
-    daemon._utt_q.put(_fake_utterance())
+    try:
+        daemon._utt_q.put(_fake_utterance())
+        triggered = error_seen.wait(timeout=5.0)
+        assert triggered, "on_error was never called after transcribe exception"
+    finally:
+        daemon._utt_q.put(None)
+        thread.join(timeout=3.0)
 
-    triggered = error_seen.wait(timeout=5.0)
-    assert triggered, "on_error was never called after transcribe exception"
-
-    # Send poison pill and confirm thread exits gracefully.
-    daemon._utt_q.put(None)
-    thread.join(timeout=3.0)
     assert not thread.is_alive(), "pipeline thread did not exit after poison pill"
-
     assert any(c[0] == "on_error" for c in feedback.calls)
     dispatcher.run_plan.assert_not_called()
 
@@ -359,11 +358,12 @@ def test_pipeline_mute_guard_drops_utterance(tmp_path):
     thread = threading.Thread(target=daemon._pipeline_loop, daemon=True)
     thread.start()
 
-    daemon._utt_q.put(_fake_utterance())
-    triggered = pipeline_done.wait(timeout=5.0)
-
-    daemon._utt_q.put(None)
-    thread.join(timeout=3.0)
+    try:
+        daemon._utt_q.put(_fake_utterance())
+        triggered = pipeline_done.wait(timeout=5.0)
+    finally:
+        daemon._utt_q.put(None)
+        thread.join(timeout=3.0)
 
     assert triggered, "pipeline did not process utterance within 5 s"
     transcriber.transcribe.assert_called_once()  # transcription still runs
@@ -388,10 +388,12 @@ def _run_process_utterance(daemon: StreamingDaemon, tmp_path) -> None:
 
     thread = threading.Thread(target=daemon._pipeline_loop, daemon=True)
     thread.start()
-    daemon._utt_q.put(_fake_utterance())
-    done.wait(timeout=5.0)
-    daemon._utt_q.put(None)
-    thread.join(timeout=3.0)
+    try:
+        daemon._utt_q.put(_fake_utterance())
+        done.wait(timeout=5.0)
+    finally:
+        daemon._utt_q.put(None)
+        thread.join(timeout=3.0)
 
 
 def test_process_utterance_publishes_miss_on_route_none(tmp_path):
