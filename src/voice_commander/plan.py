@@ -20,6 +20,7 @@ class Plan:
 
     steps: tuple[ToolCall, ...]
     raw_response: dict[str, Any]
+    strict: bool = True
 
 
 PlanStatus = Literal["ok", "error", "miss"]

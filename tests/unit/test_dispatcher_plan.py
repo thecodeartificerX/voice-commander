@@ -277,3 +277,153 @@ def test_run_plan_publishes_plan_outcome_on_unknown_tool():
     assert payload["status"] == "error"
     assert payload["failed_step_index"] == 1
     assert "nonexistent" in payload["error_msg"]
+
+
+# ---------------------------------------------------------------------------
+# Non-strict (continue-on-error) mode
+# ---------------------------------------------------------------------------
+
+
+def test_non_strict_continues_after_step_error():
+    """strict=False: failing step 2 does NOT prevent step 3 from running."""
+    call_log: list[str] = []
+
+    def boom():
+        raise RuntimeError("step_b failed")
+
+    reg = _make_registry(
+        _entry("step_a", func=lambda: call_log.append("a")),
+        _entry("step_b", func=boom),
+        _entry("step_c", func=lambda: call_log.append("c")),
+    )
+    sink = CapturingFeedbackSink()
+    d = Dispatcher(feedback=sink)
+    plan = Plan(
+        steps=(
+            ToolCall(name="step_a", kwargs={}),
+            ToolCall(name="step_b", kwargs={}),
+            ToolCall(name="step_c", kwargs={}),
+        ),
+        raw_response={},
+        strict=False,
+    )
+
+    d.run_plan("three steps non-strict", plan, reg)
+
+    # Both step_a and step_c executed; step_b failed but did not abort step_c.
+    assert call_log == ["a", "c"], f"Expected a and c to run, got {call_log}"
+
+    # on_error fired exactly once (step_b)
+    error_calls = [c for c in sink.calls if c[0] == "on_error"]
+    assert len(error_calls) == 1
+    subsystem, exc = error_calls[0][1]
+    assert subsystem == "plan:step:step_b"
+    assert isinstance(exc, RuntimeError)
+
+    # on_plan_complete: executed == 2 (step_a + step_c succeeded)
+    complete_calls = [c for c in sink.calls if c[0] == "on_plan_complete"]
+    assert len(complete_calls) == 1
+    _transcript, steps_executed = complete_calls[0][1]
+    assert steps_executed == 2, f"Expected 2 executed, got {steps_executed}"
+
+
+def test_non_strict_continues_after_unknown_tool():
+    """strict=False: unknown tool step does NOT prevent subsequent steps from running."""
+    call_log: list[str] = []
+
+    reg = _make_registry(
+        _entry("step_a", func=lambda: call_log.append("a")),
+        # "ghost" intentionally absent
+        _entry("step_c", func=lambda: call_log.append("c")),
+    )
+    sink = CapturingFeedbackSink()
+    d = Dispatcher(feedback=sink)
+    plan = Plan(
+        steps=(
+            ToolCall(name="step_a", kwargs={}),
+            ToolCall(name="ghost", kwargs={}),
+            ToolCall(name="step_c", kwargs={}),
+        ),
+        raw_response={},
+        strict=False,
+    )
+
+    d.run_plan("unknown tool non-strict", plan, reg)
+
+    assert call_log == ["a", "c"], f"Expected a and c to run, got {call_log}"
+
+    error_calls = [c for c in sink.calls if c[0] == "on_error"]
+    assert len(error_calls) == 1
+    subsystem, exc = error_calls[0][1]
+    assert subsystem == "plan:unknown_tool:ghost"
+    assert isinstance(exc, ValueError)
+
+    complete_calls = [c for c in sink.calls if c[0] == "on_plan_complete"]
+    _transcript, steps_executed = complete_calls[0][1]
+    assert steps_executed == 2
+
+
+def test_non_strict_first_failure_recorded_in_outcome():
+    """strict=False: PlanOutcome records the FIRST failure (failed_step_index=1),
+    even though step_c also fails."""
+    def boom_b(): raise RuntimeError("b failed")
+    def boom_c(): raise RuntimeError("c failed")
+
+    reg = _make_registry(
+        _entry("step_a", func=lambda: None),
+        _entry("step_b", func=boom_b),
+        _entry("step_c", func=boom_c),
+    )
+    bus = EventBus()
+    d = Dispatcher(feedback=CapturingFeedbackSink(), event_bus=bus)
+    plan = Plan(
+        steps=(
+            ToolCall(name="step_a", kwargs={}),
+            ToolCall(name="step_b", kwargs={}),
+            ToolCall(name="step_c", kwargs={}),
+        ),
+        raw_response={},
+        strict=False,
+    )
+
+    d.run_plan("two failures", plan, reg)
+
+    outcomes = [(t, data) for (t, data) in _drain_bus(bus) if t == "plan_outcome"]
+    assert len(outcomes) == 1
+    _, payload = outcomes[0]
+    assert payload["status"] == "error"
+    # First failure is step_b at index 1.
+    assert payload["failed_step_index"] == 1
+    assert "b failed" in payload["error_msg"]
+
+
+def test_strict_true_is_default_and_still_halts():
+    """Plan() default (strict=True) preserves halt-on-first-error semantics."""
+    call_log: list[str] = []
+
+    def boom(): raise RuntimeError("boom")
+
+    reg = _make_registry(
+        _entry("step_a", func=lambda: call_log.append("a")),
+        _entry("step_b", func=boom),
+        _entry("step_c", func=lambda: call_log.append("c")),
+    )
+    sink = CapturingFeedbackSink()
+    d = Dispatcher(feedback=sink)
+    # Default strict=True — must behave identically to before this change.
+    plan = Plan(
+        steps=(
+            ToolCall(name="step_a", kwargs={}),
+            ToolCall(name="step_b", kwargs={}),
+            ToolCall(name="step_c", kwargs={}),
+        ),
+        raw_response={},
+    )
+
+    d.run_plan("strict default", plan, reg)
+
+    # step_c must NOT have run (halt semantics preserved)
+    assert call_log == ["a"], f"Expected only a, got {call_log}"
+    complete_calls = [c for c in sink.calls if c[0] == "on_plan_complete"]
+    _transcript, steps_executed = complete_calls[0][1]
+    assert steps_executed == 1

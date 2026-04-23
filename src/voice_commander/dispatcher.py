@@ -45,10 +45,13 @@ class Dispatcher:
                     ValueError(f"Tool '{step.name}' not found in registry"),
                 )
                 self._publish("tool_error", {"name": step.name, "msg": "unknown tool"})
-                status = "error"
-                failed_index = i
-                error_msg = f"unknown tool: {step.name}"
-                break
+                if failed_index is None:
+                    status = "error"
+                    failed_index = i
+                    error_msg = f"unknown tool: {step.name}"
+                if plan.strict:
+                    break
+                continue
             logger.info(
                 "plan step %d/%d: %s(%s)",
                 i + 1,
@@ -62,10 +65,13 @@ class Dispatcher:
             except Exception as e:
                 self._feedback.on_error(f"plan:step:{step.name}", e)
                 self._publish("tool_error", {"name": step.name, "msg": str(e)})
-                status = "error"
-                failed_index = i
-                error_msg = f"{type(e).__name__}: {e}"
-                break
+                if failed_index is None:
+                    status = "error"
+                    failed_index = i
+                    error_msg = f"{type(e).__name__}: {e}"
+                if plan.strict:
+                    break
+                continue
             executed += 1
             if tool.settle_ms > 0:
                 time.sleep(tool.settle_ms / 1000.0)
