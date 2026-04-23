@@ -1,0 +1,8 @@
+[audio]
+device = 8
+
+[hotkey]
+mute_key = "ctrl_r"
+
+[llm]
+default_browser = "comet"
