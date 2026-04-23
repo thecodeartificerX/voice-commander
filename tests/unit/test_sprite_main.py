@@ -29,10 +29,10 @@ class TestShouldReload:
     @pytest.mark.parametrize(
         "old,new,threshold,expected",
         [
-            (1000.0, 1000.5, 1.0, False),   # change < threshold → no reload
-            (1000.0, 1001.0, 1.0, False),   # change == threshold → no reload (strict >)
-            (1000.0, 1001.1, 1.0, True),    # change > threshold → reload
-            (1000.0, 1000.0, 0.0, False),   # zero threshold, no change
+            (1000.0, 1000.5, 1.0, False),  # change < threshold → no reload
+            (1000.0, 1001.0, 1.0, False),  # change == threshold → no reload (strict >)
+            (1000.0, 1001.1, 1.0, True),  # change > threshold → reload
+            (1000.0, 1000.0, 0.0, False),  # zero threshold, no change
             (1000.0, 1000.001, 0.0, True),  # zero threshold, any change
         ],
     )

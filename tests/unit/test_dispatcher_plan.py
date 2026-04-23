@@ -366,8 +366,12 @@ def test_non_strict_continues_after_unknown_tool():
 def test_non_strict_first_failure_recorded_in_outcome():
     """strict=False: PlanOutcome records the FIRST failure (failed_step_index=1),
     even though step_c also fails."""
-    def boom_b(): raise RuntimeError("b failed")
-    def boom_c(): raise RuntimeError("c failed")
+
+    def boom_b():
+        raise RuntimeError("b failed")
+
+    def boom_c():
+        raise RuntimeError("c failed")
 
     reg = _make_registry(
         _entry("step_a", func=lambda: None),
@@ -401,7 +405,8 @@ def test_strict_true_is_default_and_still_halts():
     """Plan() default (strict=True) preserves halt-on-first-error semantics."""
     call_log: list[str] = []
 
-    def boom(): raise RuntimeError("boom")
+    def boom():
+        raise RuntimeError("boom")
 
     reg = _make_registry(
         _entry("step_a", func=lambda: call_log.append("a")),
