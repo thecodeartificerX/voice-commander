@@ -28,7 +28,12 @@ def _configure_logging() -> None:
     )
 
 
-def main() -> None:
+def _should_reload(mtime_old: float, mtime_new: float, threshold: float = 0.0) -> bool:
+    """Return True if mtimes differ by more than *threshold* seconds (strict >)."""
+    return abs(mtime_new - mtime_old) > threshold
+
+
+def _make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="voice-sprite",
         description="On-screen sprite companion for Voice Commander.",
@@ -38,7 +43,11 @@ def main() -> None:
         default="config.toml",
         help="Path to Voice Commander config.toml (default: config.toml)",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = _make_parser().parse_args()
 
     _configure_logging()
     logger.info("voice-sprite starting")
@@ -196,7 +205,7 @@ def main() -> None:
         try:
             toml_mt = toml_path.stat().st_mtime if toml_path.exists() else 0
             png_mt = png_path.stat().st_mtime if png_path.exists() else 0
-            if toml_mt != _last_toml_mtime or png_mt != _last_png_mtime:
+            if _should_reload(_last_toml_mtime, toml_mt) or _should_reload(_last_png_mtime, png_mt):
                 logger.info("Charsheet changed — hot-reloading")
                 charsheet = load_charsheet(toml_path, png_path)
                 renderer.reload_charsheet(charsheet)
