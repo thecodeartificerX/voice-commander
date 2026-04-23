@@ -49,6 +49,10 @@ def test_happy_path(fake_user32, fake_dwmapi):
     fake_user32.SetWindowPos.assert_called_once_with(
         42, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE
     )
+    # DWM_BLURBEHIND struct fields (dwFlags=DWM_BB_ENABLE, fEnable=True,
+    # hRgnBlur=0) are not verified here — ctypes byref() makes struct
+    # inspection via MagicMock fragile. The struct construction is 5 straight-
+    # line assignments with no branching; risk of silent regression is low.
     fake_dwmapi.DwmEnableBlurBehindWindow.assert_called_once()
 
 
@@ -65,7 +69,7 @@ def test_user32_oserror_logs_and_continues_to_dwm(fake_user32, fake_dwmapi, capl
     """OSError in user32 block logs but does not skip DWM block."""
     fake_user32.GetWindowLongW.side_effect = OSError("boom")
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(logging.ERROR):
         apply_click_through(1)
 
     assert "Failed core click-through flags" in caplog.text

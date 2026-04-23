@@ -63,6 +63,7 @@ def apply_click_through(hwnd: int) -> None:
     against an opaque black bg even when alpha=0 everywhere (pyglet
     issue #693).
     """
+    user32_ok = True
     try:
         # Add WS_EX_TOOLWINDOW (no taskbar entry) + WS_EX_NOACTIVATE (no
         # focus steal) on top of pyglet's WS_EX_LAYERED|WS_EX_TRANSPARENT.
@@ -76,6 +77,7 @@ def apply_click_through(hwnd: int) -> None:
         user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
         user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
     except OSError:
+        user32_ok = False
         logger.exception("Failed core click-through flags on hwnd=%d", hwnd)
 
     # DwmExtendFrameIntoClientArea is useless here — it requires a window
@@ -88,6 +90,7 @@ def apply_click_through(hwnd: int) -> None:
     # flag and tries to apply blur to an empty region. Canonical pattern =
     # DWM_BB_ENABLE only, NULL region — tells DWM to composite the
     # framebuffer's alpha channel directly.
+    dwm_ok = True
     try:
         bb = DWM_BLURBEHIND()
         bb.dwFlags = DWM_BB_ENABLE
@@ -98,6 +101,15 @@ def apply_click_through(hwnd: int) -> None:
         if hr != 0:
             logger.warning("DwmEnableBlurBehindWindow HRESULT=0x%08x", hr & 0xFFFFFFFF)
     except OSError:
+        dwm_ok = False
         logger.exception("DwmEnableBlurBehindWindow failed on hwnd=%d", hwnd)
 
-    logger.info("Applied click-through + DWM sheet-of-glass flags to hwnd=%d", hwnd)
+    if user32_ok and dwm_ok:
+        logger.info("Applied click-through + DWM sheet-of-glass flags to hwnd=%d", hwnd)
+    else:
+        logger.warning(
+            "Partial/failed click-through setup on hwnd=%d (user32=%s dwm=%s)",
+            hwnd,
+            user32_ok,
+            dwm_ok,
+        )
