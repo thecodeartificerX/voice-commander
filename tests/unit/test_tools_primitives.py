@@ -18,10 +18,12 @@ from voice_commander.tools.primitives import (
     close,
     close_window,
     last,
+    mute,
     no_match,
     open_target,
     press,
     scroll,
+    summon_commander,
     type_text,
     wait,
 )
@@ -411,12 +413,63 @@ def test_scroll_unknown_direction_logs_warning(caplog: pytest.LogCaptureFixture)
 
 
 # ---------------------------------------------------------------------------
+# summon_commander
+# ---------------------------------------------------------------------------
+
+
+def test_summon_commander_spawns_powershell_in_repo() -> None:
+    import subprocess as _subprocess
+
+    with patch("subprocess.Popen") as mock_popen:
+        summon_commander()
+
+    mock_popen.assert_called_once_with(
+        ["pwsh.exe", "-NoExit", "-Command", "ccd"],
+        cwd=r"F:\Tools\Projects\voice-commander",
+        creationflags=_subprocess.CREATE_NEW_CONSOLE,
+    )
+
+
+def test_summon_commander_takes_no_args() -> None:
+    import inspect
+
+    sig = inspect.signature(summon_commander)
+    assert len(sig.parameters) == 0
+
+
+# ---------------------------------------------------------------------------
 # no_match
 # ---------------------------------------------------------------------------
 
 
 def test_no_match_is_noop() -> None:
     assert no_match("casual chit-chat") is None
+
+
+# ---------------------------------------------------------------------------
+# mute
+# ---------------------------------------------------------------------------
+
+
+def test_mute_invokes_injected_callback() -> None:
+    from voice_commander.tools import primitives as _p
+
+    fake = MagicMock()
+    _p._set_mute_callback(fake)
+    try:
+        mute()
+    finally:
+        _p._set_mute_callback(None)
+    fake.assert_called_once_with()
+
+
+def test_mute_noop_when_callback_unset(caplog: pytest.LogCaptureFixture) -> None:
+    from voice_commander.tools import primitives as _p
+
+    _p._set_mute_callback(None)
+    with caplog.at_level(logging.WARNING, logger="voice_commander.tools.primitives"):
+        mute()
+    assert any("no daemon callback wired" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -433,10 +486,12 @@ def test_imports_expose_expected_symbols() -> None:
         "close",
         "close_window",
         "last",
+        "mute",
         "no_match",
         "open_target",
         "press",
         "scroll",
+        "summon_commander",
         "type_text",
         "wait",
     ):

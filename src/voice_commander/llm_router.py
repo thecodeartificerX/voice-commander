@@ -58,6 +58,7 @@ Principles
 - "Last" / "previous" / "go back" → use `last()`. Bare "last" or
   "last window" → `last()` (Alt+Tab, previous window). "Last tab" /
   "next tab" / "switch tab" → `last(tab=true)` (Ctrl+Tab).
+- "Mute" / "stop listening" / "shut up" → `mute()`.
 - Hard bans — these chords sweep more windows than the user meant or
   bypass a dedicated verb:
   * `press(combo="win+d")` / `press(combo="win+m")` — use `minimize()`
@@ -116,6 +117,9 @@ Tools: last()
 
 User: "last tab"
 Tools: last(tab=true)
+
+User: "shut up"
+Tools: mute()
 """
 
 

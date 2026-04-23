@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import time
+from collections.abc import Callable
 from typing import Any, cast
 
 import pyautogui
@@ -29,6 +30,17 @@ from ._win32 import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Daemon-injected callback that mutes the active voice session. Wired at
+# startup by :func:`voice_commander.daemon.build_streaming_daemon` to the
+# daemon's own ``on_mute_toggle``. None in tests / early import.
+_mute_callback: Callable[[], None] | None = None
+
+
+def _set_mute_callback(fn: Callable[[], None] | None) -> None:
+    """Inject the daemon's mute callback. Called once at daemon startup."""
+    global _mute_callback
+    _mute_callback = fn
 
 _MAX_TYPE_TEXT_LEN = 500
 
@@ -474,6 +486,49 @@ def scroll(direction: str, amount: int = 3) -> None:
         logger.warning("scroll: unknown direction %r; no-op", direction)
         return
     pyautogui.scroll(clicks)
+
+
+# ---------------------------------------------------------------------------
+# summon_commander
+# ---------------------------------------------------------------------------
+
+
+_COMMANDER_CWD = r"F:\Tools\Projects\voice-commander"
+_COMMANDER_CMD = "ccd"
+
+
+@tool
+def summon_commander() -> None:
+    """Spawn a visible PowerShell window in the voice-commander repo and run ``ccd``.
+
+    Dev shortcut. Uses ``-NoExit`` so the window stays open after ``ccd`` returns.
+    ``ccd`` must be on PATH (user's PS profile registers it).
+    """
+    import subprocess
+
+    subprocess.Popen(
+        ["pwsh.exe", "-NoExit", "-Command", _COMMANDER_CMD],
+        cwd=_COMMANDER_CWD,
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+    )
+
+
+# ---------------------------------------------------------------------------
+# mute
+# ---------------------------------------------------------------------------
+
+
+@tool
+def mute() -> None:
+    """End the active voice session by firing the Scroll Lock handler.
+
+    Equivalent to the user pressing Scroll Lock — closes the session. The
+    user reopens a new session with the Scroll Lock hotkey.
+    """
+    if _mute_callback is None:
+        logger.warning("mute: no daemon callback wired; ignoring")
+        return
+    _mute_callback()
 
 
 # ---------------------------------------------------------------------------

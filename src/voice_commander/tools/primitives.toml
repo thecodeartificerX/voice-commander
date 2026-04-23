@@ -124,6 +124,20 @@ required = false
 type = "string"
 default = "left"
 
+[tools.summon_commander]
+phrases = []
+description = "Spawn a visible PowerShell window in the voice-commander repo and run `ccd`. ONLY use for exact utterances 'summon commander', 'spawn commander', or 'summon the commander'. NEVER use for 'open commander', 'focus commander', or any generic 'open X' / 'focus X' utterance — those go to open() or focus() respectively."
+enabled = true
+settle_ms = 500
+llm_only = true
+
+[tools.mute]
+phrases = []
+description = "End the voice session — equivalent to pressing the Scroll Lock hotkey. DEFAULT for utterances like 'mute', 'mute yourself', 'stop listening', 'shut up', 'be quiet'. No arguments."
+enabled = true
+settle_ms = 0
+llm_only = true
+
 [tools.no_match]
 phrases = []
 description = "Signal that the utterance is not an executable command (casual speech, nonsense)."

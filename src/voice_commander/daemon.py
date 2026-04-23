@@ -19,6 +19,7 @@ from silero_vad import load_silero_vad
 
 from . import resolver as param_resolver
 from .config import Config, log_llm_sources
+from .tools import primitives as tool_primitives
 from .dispatcher import Dispatcher
 from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
@@ -528,4 +529,10 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         vad_gate=vad_gate,
         utterance_sink=daemon._on_utterance,
     )
+
+    # Wire the mute() primitive to the daemon's scroll-lock handler so a
+    # voice-driven "mute" utterance ends the session exactly like pressing
+    # the Scroll Lock hotkey.
+    tool_primitives._set_mute_callback(daemon.on_scroll_lock)
+
     return daemon
