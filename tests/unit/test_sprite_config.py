@@ -167,7 +167,7 @@ def test_zero_valid_values(tmp_path, toml_text, attr_path, expected):
         "[sprite]\nfollow_cursor = 0\n",
         # str not valid for offset int fields
         '[sprite]\noffset_x = "left"\n',
-        '[sprite]\noffset_y = true\n',
+        "[sprite]\noffset_y = true\n",
     ],
 )
 def test_type_mismatch_raises(tmp_path, toml_text):
