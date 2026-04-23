@@ -57,6 +57,7 @@ packages = ["src/voice_commander", "src/voice_sprite"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 addopts = "-ra --strict-markers"
 markers = [
     "hardware: requires microphone/GPU/real OS integration",
