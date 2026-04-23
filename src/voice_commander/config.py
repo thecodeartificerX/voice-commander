@@ -100,6 +100,8 @@ class LLMConfig:
 
 @dataclass(frozen=True)
 class SpriteConfig:
+    # Fields are consumed by the voice_sprite process; daemon carries them
+    # only so Config.load() doesn't reject the shared config.toml.
     enabled: bool = True
     corner: str = "bottom_right"
     base_size_px: int = 128
@@ -110,6 +112,10 @@ class SpriteConfig:
     heartbeat_timeout_ms: int = 3000
     render_scale: float = 0.75
     y_nudge_px: int = 16
+    follow_cursor: bool = True
+    follow_poll_hz: int = 30
+    margin_x: int = 8
+    margin_y: int = 8
 
 
 @dataclass(frozen=True)
