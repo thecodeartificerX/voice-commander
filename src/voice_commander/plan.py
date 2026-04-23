@@ -16,11 +16,17 @@ class ToolCall:
 
 @dataclass(frozen=True)
 class Plan:
-    """Ordered sequence of tool calls produced by the LLM router."""
+    """Ordered sequence of tool calls produced by the LLM router.
+
+    Attributes:
+        strict: When True (default), the dispatcher halts on the first failed
+            step. When False, it continues executing remaining steps and records
+            only the first failure in PlanOutcome.
+    """
 
     steps: tuple[ToolCall, ...]
     raw_response: dict[str, Any]
-    strict: bool = True
+    strict: bool = True  # True → halt on first error; False → continue-on-error
 
 
 PlanStatus = Literal["ok", "error", "miss"]

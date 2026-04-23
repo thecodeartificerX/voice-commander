@@ -33,11 +33,12 @@ def _entry(name: str, func=None, settle_ms: int = 0) -> ToolEntry:
     )
 
 
-def _plan(*steps: tuple[str, dict]) -> Plan:
+def _plan(*steps: tuple[str, dict], strict: bool = True) -> Plan:
     """Build a Plan from (name, kwargs) pairs."""
     return Plan(
         steps=tuple(ToolCall(name=n, kwargs=kw) for n, kw in steps),
         raw_response={},
+        strict=strict,
     )
 
 
@@ -298,15 +299,7 @@ def test_non_strict_continues_after_step_error():
     )
     sink = CapturingFeedbackSink()
     d = Dispatcher(feedback=sink)
-    plan = Plan(
-        steps=(
-            ToolCall(name="step_a", kwargs={}),
-            ToolCall(name="step_b", kwargs={}),
-            ToolCall(name="step_c", kwargs={}),
-        ),
-        raw_response={},
-        strict=False,
-    )
+    plan = _plan(("step_a", {}), ("step_b", {}), ("step_c", {}), strict=False)
 
     d.run_plan("three steps non-strict", plan, reg)
 
@@ -338,15 +331,7 @@ def test_non_strict_continues_after_unknown_tool():
     )
     sink = CapturingFeedbackSink()
     d = Dispatcher(feedback=sink)
-    plan = Plan(
-        steps=(
-            ToolCall(name="step_a", kwargs={}),
-            ToolCall(name="ghost", kwargs={}),
-            ToolCall(name="step_c", kwargs={}),
-        ),
-        raw_response={},
-        strict=False,
-    )
+    plan = _plan(("step_a", {}), ("ghost", {}), ("step_c", {}), strict=False)
 
     d.run_plan("unknown tool non-strict", plan, reg)
 
@@ -380,15 +365,7 @@ def test_non_strict_first_failure_recorded_in_outcome():
     )
     bus = EventBus()
     d = Dispatcher(feedback=CapturingFeedbackSink(), event_bus=bus)
-    plan = Plan(
-        steps=(
-            ToolCall(name="step_a", kwargs={}),
-            ToolCall(name="step_b", kwargs={}),
-            ToolCall(name="step_c", kwargs={}),
-        ),
-        raw_response={},
-        strict=False,
-    )
+    plan = _plan(("step_a", {}), ("step_b", {}), ("step_c", {}), strict=False)
 
     d.run_plan("two failures", plan, reg)
 
@@ -399,6 +376,12 @@ def test_non_strict_first_failure_recorded_in_outcome():
     # First failure is step_b at index 1.
     assert payload["failed_step_index"] == 1
     assert "b failed" in payload["error_msg"]
+
+    # Verify on_error fired for BOTH failures (not just the first).
+    tool_errors = [(t, data) for (t, data) in _drain_bus(bus) if t == "tool_error"]
+    assert len(tool_errors) == 2, f"Expected 2 tool_error events, got {len(tool_errors)}"
+    assert tool_errors[0][1]["name"] == "step_b"
+    assert tool_errors[1][1]["name"] == "step_c"
 
 
 def test_strict_true_is_default_and_still_halts():
@@ -416,14 +399,7 @@ def test_strict_true_is_default_and_still_halts():
     sink = CapturingFeedbackSink()
     d = Dispatcher(feedback=sink)
     # Default strict=True — must behave identically to before this change.
-    plan = Plan(
-        steps=(
-            ToolCall(name="step_a", kwargs={}),
-            ToolCall(name="step_b", kwargs={}),
-            ToolCall(name="step_c", kwargs={}),
-        ),
-        raw_response={},
-    )
+    plan = _plan(("step_a", {}), ("step_b", {}), ("step_c", {}))
 
     d.run_plan("strict default", plan, reg)
 
@@ -432,3 +408,36 @@ def test_strict_true_is_default_and_still_halts():
     complete_calls = [c for c in sink.calls if c[0] == "on_plan_complete"]
     _transcript, steps_executed = complete_calls[0][1]
     assert steps_executed == 1
+
+
+def test_non_strict_all_steps_fail():
+    """strict=False, every step raises: executed==0, status==error, first failure recorded."""
+
+    def boom_a():
+        raise RuntimeError("a failed")
+
+    def boom_b():
+        raise RuntimeError("b failed")
+
+    reg = _make_registry(
+        _entry("step_a", func=boom_a),
+        _entry("step_b", func=boom_b),
+    )
+    bus = EventBus()
+    sink = CapturingFeedbackSink()
+    d = Dispatcher(feedback=sink, event_bus=bus)
+    plan = _plan(("step_a", {}), ("step_b", {}), strict=False)
+
+    d.run_plan("all fail", plan, reg)
+
+    complete_calls = [c for c in sink.calls if c[0] == "on_plan_complete"]
+    assert len(complete_calls) == 1
+    _transcript, steps_executed = complete_calls[0][1]
+    assert steps_executed == 0
+
+    outcomes = [(t, data) for (t, data) in _drain_bus(bus) if t == "plan_outcome"]
+    assert len(outcomes) == 1
+    _, payload = outcomes[0]
+    assert payload["status"] == "error"
+    assert payload["failed_step_index"] == 0  # first step
+    assert "a failed" in payload["error_msg"]

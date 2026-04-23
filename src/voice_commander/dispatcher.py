@@ -28,7 +28,12 @@ class Dispatcher:
             self._event_bus.publish(event_type, data)
 
     def run_plan(self, transcript: str, plan: Plan, registry: ToolRegistry) -> None:
-        """Execute a multi-step plan from the LLM router."""
+        """Execute a multi-step plan from the LLM router.
+
+        If ``plan.strict`` is True (default), execution halts on the first failed
+        step. If False, errors are recorded but remaining steps continue to run;
+        only the first failure is captured in the published ``plan_outcome`` event.
+        """
         self._feedback.on_plan_start(transcript, len(plan.steps))
         start_s = time.perf_counter()
         executed = 0

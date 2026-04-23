@@ -300,7 +300,7 @@ class Dispatcher:
     def run_plan(self, transcript: str, plan: Plan, registry: ToolRegistry) -> None: ...
 ```
 
-**What it does:** The final step in the pipeline. `run_plan()` executes a multi-step `Plan` from the LLM router. It calls `feedback.on_plan_start()`, iterates through plan steps looking up each tool by name in the registry, emits a per-step `INFO` log of the form `plan step <i>/<total>: <name>(<kwargs>)`, invokes `tool.func(**step.kwargs)`, sleeps `settle_ms` between steps, and calls `feedback.on_plan_complete()`. If a step fails or a tool is unknown, `on_error` fires and the chain stops. Tool functions run on the worker thread and must complete in a few hundred milliseconds (they perform keystroke sends via `pyautogui`).
+**What it does:** The final step in the pipeline. `run_plan()` executes a multi-step `Plan` from the LLM router. It calls `feedback.on_plan_start()`, iterates through plan steps looking up each tool by name in the registry, emits a per-step `INFO` log of the form `plan step <i>/<total>: <name>(<kwargs>)`, invokes `tool.func(**step.kwargs)`, sleeps `settle_ms` between steps, and calls `feedback.on_plan_complete()`. If a step fails or a tool is unknown, `on_error` fires and the chain stops (when `plan.strict` is `True`, the default) or continues to the next step (when `plan.strict` is `False`). Only the first failure is recorded in the plan outcome regardless of mode. Tool functions run on the worker thread and must complete in a few hundred milliseconds (they perform keystroke sends via `pyautogui`).
 
 Miss handling is owned by the pipeline worker (`StreamingDaemon._process_utterance` calls `FeedbackSink.on_miss()` directly when `LLMRouter.route()` returns `None`). `Dispatcher` only receives valid `Plan` objects.
 
@@ -409,9 +409,10 @@ class ToolCall:
 class Plan:
     steps: tuple[ToolCall, ...]
     raw_response: dict[str, Any]
+    strict: bool = True   # halt on first step failure (True) or continue-on-error (False)
 ```
 
-**What it does:** Immutable value objects representing the LLM router's output. `Plan` holds an ordered tuple of `ToolCall` steps. `raw_response` preserves the full LLM JSON for debugging.
+**What it does:** Immutable value objects representing the LLM router's output. `Plan` holds an ordered tuple of `ToolCall` steps and a `strict` flag (default `True`) that controls whether `Dispatcher.run_plan()` halts on the first step failure or continues executing remaining steps. `raw_response` preserves the full LLM JSON for debugging.
 
 ---
 
