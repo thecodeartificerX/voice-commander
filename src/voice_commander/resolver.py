@@ -302,7 +302,7 @@ def _get_app_cache() -> list[tuple[str, str]]:
     if _cache["apps"] is not None:
         return _cache["apps"]
     with _cache_lock:
-        if _cache["apps"] is not None:   # re-check under lock
+        if _cache["apps"] is not None:  # re-check under lock
             return _cache["apps"]
         raw: list[tuple[str, str]] = []
         raw.extend(_enumerate_start_menu())

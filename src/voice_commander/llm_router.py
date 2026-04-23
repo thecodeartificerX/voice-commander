@@ -122,7 +122,9 @@ Tools: last(tab=true)
 class LLMRouter:
     """One-shot tool-call planner via local LM Studio."""
 
-    def __init__(self, config: LLMConfig, registry: ToolRegistry, reload_lock: threading.Lock) -> None:
+    def __init__(
+        self, config: LLMConfig, registry: ToolRegistry, reload_lock: threading.Lock
+    ) -> None:
         self._config = config
         self._registry = registry
         self._reload_lock = reload_lock
