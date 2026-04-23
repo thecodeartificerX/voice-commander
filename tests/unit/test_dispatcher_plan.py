@@ -89,10 +89,7 @@ def test_run_plan_mid_chain_error():
 
     d.run_plan("do three things", plan, reg)
 
-    # Only step_a ran
     assert call_log == ["a"]
-    # step_c must NOT have run
-    assert "c" not in call_log
 
     # on_error fired with the right subsystem key
     error_calls = [c for c in sink.calls if c[0] == "on_error"]
