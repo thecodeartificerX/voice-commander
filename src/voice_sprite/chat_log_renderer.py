@@ -58,8 +58,6 @@ class ChatLogRenderer:
 
     def draw(self) -> None:
         entries = self._log.entries()  # newest-first
-        if not entries:
-            return
         self._ensure_labels(len(entries))
         now = time.monotonic()
 
@@ -79,3 +77,5 @@ class ChatLogRenderer:
             label.y = bottom_y + i * line_h
             label.color = (r, g, b, int(255 * opacity))
             label.draw()
+        for label in self._labels[len(entries):]:
+            label.text = ""

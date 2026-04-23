@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import ctypes
 import ctypes.wintypes
 import logging
@@ -25,9 +24,6 @@ def get_dpi_for_monitor(hmon: int) -> int:
 
 def get_primary_dpi() -> int:
     """Return the DPI of the primary monitor. Falls back to 96 on failure."""
-    with contextlib.suppress(AttributeError, OSError):
-        ctypes.windll.shcore.SetProcessDpiAwarenessContext(-4)
-
     try:
         hmon = ctypes.windll.user32.MonitorFromPoint(
             ctypes.wintypes.POINT(0, 0),

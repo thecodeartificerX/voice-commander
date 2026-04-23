@@ -33,6 +33,9 @@ class LLMSummaryClient:
             base_url=self._endpoint_url,
             timeout=httpx.Timeout(connect=0.1, read=read_s, write=1.0, pool=1.0),
         )
+        # Log-once gates: first error → WARNING, subsequent → DEBUG
+        self._warned_offline: bool = False
+        self._warned_malformed: bool = False
 
     def summarize(self, outcome: PlanOutcome) -> str | None:
         body: dict[str, Any] = {
@@ -50,13 +53,21 @@ class LLMSummaryClient:
             resp = self._client.post("/chat/completions", json=body)
             resp.raise_for_status()
         except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPError) as exc:
-            logger.debug("LLM summary HTTP error: %s", exc)
+            if not self._warned_offline:
+                logger.warning("LLM summary unavailable (first occurrence): %s", exc)
+                self._warned_offline = True
+            else:
+                logger.debug("LLM summary HTTP error: %s", exc)
             return None
         try:
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as exc:
-            logger.debug("LLM summary malformed response: %s", exc)
+            if not self._warned_malformed:
+                logger.warning("LLM summary malformed response (first occurrence): %s", exc)
+                self._warned_malformed = True
+            else:
+                logger.debug("LLM summary malformed response: %s", exc)
             return None
         if not isinstance(content, str):
             return None

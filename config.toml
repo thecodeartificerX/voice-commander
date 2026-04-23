@@ -66,10 +66,10 @@ render_scale = 0.75  # fraction of window the cat fills (1.0 = edge-to-edge, 0.7
 y_nudge_px = 16  # pixels to shift the cat upward from centre (positive = up)
 
 # --- Cursor follow (sprite-side) -----------------------------------------------
-# follow_cursor  = true
-# follow_poll_hz = 30
-# margin_x       = 8
-# margin_y       = 8
+follow_cursor  = true
+follow_poll_hz = 30
+margin_x       = 8
+margin_y       = 8
 
 # --- HUD overlay (sprite-side) -----------------------------------------------
 [hud]
@@ -79,7 +79,5 @@ hold_ms                 = 4000
 fade_ms                 = 3000
 font_size               = 13
 width_px                = 220
-offset_x                = -230
-offset_y                = 0
 llm_summary_timeout_ms  = 800
 llm_fallback_enabled    = true

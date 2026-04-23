@@ -204,7 +204,7 @@ def main() -> None:
                 window.load_charsheet_image(str(png_path))
                 _last_toml_mtime = toml_mt
                 _last_png_mtime = png_mt
-        except (OSError, FileNotFoundError, ValueError):
+        except (OSError, ValueError):
             logger.exception("Hot-reload failed")
 
     pyglet.clock.schedule_interval(check_hot_reload, 2.0)

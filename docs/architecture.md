@@ -581,9 +581,10 @@ plan_outcome {
 }
 ```
 
-Published by `Dispatcher.run_plan` (ok / error) and
+Published by `Dispatcher.run_plan` (ok / error),
 `StreamingDaemon._process_utterance` (miss on `route()=None` and on
-confidence-gate drop).
+confidence-gate drop), and `StreamingDaemon._process_utterance`
+(error when `_registry is None` after routing).
 
 ---
 

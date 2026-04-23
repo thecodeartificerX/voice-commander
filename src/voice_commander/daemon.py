@@ -24,7 +24,7 @@ from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
 from .llm_router import LLMRouter
-from .plan import Plan
+from .plan import Plan, PlanOutcome
 from .registry import ToolRegistry, discover
 from .streaming_recorder import StreamingRecorder
 from .tool_metadata import ToolMetadataStore
@@ -194,14 +194,14 @@ class StreamingDaemon:
         def _publish_miss(transcript: str) -> None:
             self._publish(
                 "plan_outcome",
-                {
-                    "transcript": transcript,
-                    "steps": [],
-                    "status": "miss",
-                    "failed_step_index": None,
-                    "error_msg": None,
-                    "duration_ms": int((time.perf_counter() - start_s) * 1000),
-                },
+                PlanOutcome(
+                    transcript=transcript,
+                    steps=(),
+                    status="miss",
+                    failed_step_index=None,
+                    error_msg=None,
+                    duration_ms=int((time.perf_counter() - start_s) * 1000),
+                ).to_event_dict(),
             )
 
         self._publish("transcribing")
@@ -242,6 +242,17 @@ class StreamingDaemon:
             return
         if self._registry is None:
             logger.error("Registry not set — cannot execute plan for '%s'", result.text)
+            self._publish(
+                "plan_outcome",
+                PlanOutcome(
+                    transcript=result.text,
+                    steps=plan.steps,
+                    status="error",
+                    failed_step_index=None,
+                    error_msg="registry not initialized",
+                    duration_ms=int((time.perf_counter() - start_s) * 1000),
+                ).to_event_dict(),
+            )
             return
         self._dispatcher.run_plan(result.text, plan, self._registry)
         self._write_plan_async(result.text, plan)
