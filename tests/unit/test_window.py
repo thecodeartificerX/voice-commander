@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import voice_sprite.window as _mod
 
 
@@ -109,3 +111,283 @@ def test_set_muted_toggles_flag():
     assert win._muted is True
     win.set_muted(False)
     assert win._muted is False
+
+
+# ---------------------------------------------------------------------------
+# Pure rendering-math helpers — tested directly via _mod._function_name
+# ---------------------------------------------------------------------------
+
+
+def test_flip_y_first_row():
+    """Top row (y=0, h=32) of a 96-px image maps to y_bottom=64."""
+    assert _mod._flip_y(96, 0, 32) == 64
+
+
+def test_flip_y_second_row():
+    """Second row (y=32, h=32) maps to y_bottom=32."""
+    assert _mod._flip_y(96, 32, 32) == 32
+
+
+def test_compute_fit_scale_width_constrained():
+    """Region is wider than tall relative to frame — height is the bottleneck."""
+    assert _mod._compute_fit_scale(100, 96, 32, 48) == pytest.approx(2.0)
+
+
+def test_compute_fit_scale_height_constrained():
+    """Region is taller than wide relative to frame — width is the bottleneck."""
+    assert _mod._compute_fit_scale(64, 100, 32, 16) == pytest.approx(2.0)
+
+
+def test_compute_display_size():
+    """Frame 32x48 at scale 2.0 → (64.0, 96.0)."""
+    dw, dh = _mod._compute_display_size(32, 48, 2.0)
+    assert dw == pytest.approx(64.0)
+    assert dh == pytest.approx(96.0)
+
+
+def test_compute_sprite_xy_centred():
+    """Frame centred in region with no nudge — x and y symmetric."""
+    sx, sy = _mod._compute_sprite_xy(0, 100, 100, 60, 60, 0)
+    assert sx == pytest.approx(20.0)
+    assert sy == pytest.approx(20.0)
+
+
+def test_compute_sprite_xy_with_nudge():
+    """Vertical nudge shifts sprite_y by nudge amount."""
+    _, sy_no_nudge = _mod._compute_sprite_xy(0, 100, 100, 60, 60, 0)
+    _, sy_nudge = _mod._compute_sprite_xy(0, 100, 100, 60, 60, 10)
+    assert sy_nudge == pytest.approx(sy_no_nudge + 10)
+
+
+def test_compute_sprite_xy_region_offset():
+    """Non-zero sprite_region_x shifts sprite_x."""
+    sx, _ = _mod._compute_sprite_xy(50, 100, 100, 60, 60, 0)
+    assert sx == pytest.approx(70.0)
+
+
+def test_compute_label_xy():
+    """Label anchor is (width//2, height-4)."""
+    assert _mod._compute_label_xy(200, 150) == (100, 146)
+
+
+def test_compute_label_color_full_opacity():
+    """opacity=1.0 → alpha=255."""
+    assert _mod._compute_label_color(1.0) == (255, 255, 255, 255)
+
+
+def test_compute_label_color_half_opacity():
+    """opacity=0.5 → alpha=127 (truncated int)."""
+    assert _mod._compute_label_color(0.5) == (255, 255, 255, 127)
+
+
+def test_compute_label_color_zero_opacity():
+    """opacity=0.0 → alpha=0."""
+    assert _mod._compute_label_color(0.0) == (255, 255, 255, 0)
+
+
+# ---------------------------------------------------------------------------
+# on_draw() branch coverage — bubble, cached region, sprite update, muted
+# ---------------------------------------------------------------------------
+
+
+def test_on_draw_bubble_visible_creates_label():
+    """on_draw with bubble.visible=True and no existing label creates a Label."""
+    renderer = MagicMock()
+    renderer.frame_region = (0, 0, 32, 48)
+    bubble = MagicMock()
+    bubble.visible = True
+    bubble.opacity = 0.8
+
+    with patch.object(_mod, "pyglet") as pg:
+        fake_region = MagicMock()
+        fake_image = MagicMock()
+        fake_image.height = 96
+        fake_image.get_region.return_value = fake_region
+        pg.sprite.Sprite.return_value = MagicMock()
+
+        win = _make_window(renderer, bubble, image=fake_image)
+        win.clear = MagicMock()
+        win.on_draw()
+
+    pg.text.Label.assert_called_once()
+
+
+def test_on_draw_bubble_visible_updates_existing_label():
+    """on_draw with bubble.visible=True and existing label updates text/color."""
+    renderer = MagicMock()
+    renderer.frame_region = (0, 0, 32, 48)
+    bubble = MagicMock()
+    bubble.visible = True
+    bubble.text = "hello"
+    bubble.opacity = 1.0
+
+    with patch.object(_mod, "pyglet") as pg:
+        fake_region = MagicMock()
+        fake_image = MagicMock()
+        fake_image.height = 96
+        fake_image.get_region.return_value = fake_region
+        pg.sprite.Sprite.return_value = MagicMock()
+
+        win = _make_window(renderer, bubble, image=fake_image)
+        existing_label = MagicMock()
+        win._label = existing_label
+        win.clear = MagicMock()
+        win.on_draw()
+
+    existing_label.draw.assert_called_once()
+    assert existing_label.text == "hello"
+
+
+def test_on_draw_uses_cached_region_on_same_frame():
+    """on_draw skips get_region() when frame_key is unchanged."""
+    renderer = MagicMock()
+    renderer.frame_region = (0, 0, 32, 48)
+    bubble = MagicMock()
+    bubble.visible = False
+
+    with patch.object(_mod, "pyglet") as pg:
+        cached = MagicMock()
+        fake_image = MagicMock()
+        fake_image.height = 96
+        pg.sprite.Sprite.return_value = MagicMock()
+
+        win = _make_window(renderer, bubble, image=fake_image)
+        win._cached_frame_key = (0, 0, 32, 48)  # pre-warm cache
+        win._cached_region = cached
+        win.clear = MagicMock()
+        win.on_draw()
+
+    # get_region must NOT be called — we used the cache
+    fake_image.get_region.assert_not_called()
+
+
+def test_on_draw_sprite_update_when_image_changes():
+    """on_draw updates sprite.image when region changes between frames."""
+    renderer = MagicMock()
+    renderer.frame_region = (0, 0, 32, 48)
+    bubble = MagicMock()
+    bubble.visible = False
+
+    with patch.object(_mod, "pyglet") as pg:
+        new_region = MagicMock()
+        fake_image = MagicMock()
+        fake_image.height = 96
+        fake_image.get_region.return_value = new_region
+
+        existing_sprite = MagicMock()
+        existing_sprite.image = MagicMock()  # different object → triggers elif
+
+        win = _make_window(renderer, bubble, image=fake_image)
+        win._sprite = existing_sprite
+        win.clear = MagicMock()
+        win.on_draw()
+
+    assert existing_sprite.image is new_region
+
+
+def test_on_draw_muted_color():
+    """on_draw sets sprite color to mute_color when _muted=True."""
+    renderer = MagicMock()
+    renderer.frame_region = (0, 0, 32, 48)
+    bubble = MagicMock()
+    bubble.visible = False
+
+    with patch.object(_mod, "pyglet") as pg:
+        fake_region = MagicMock()
+        fake_image = MagicMock()
+        fake_image.height = 96
+        fake_image.get_region.return_value = fake_region
+        fake_sprite = MagicMock()
+        pg.sprite.Sprite.return_value = fake_sprite
+
+        win = _make_window(renderer, bubble, image=fake_image)
+        win._muted = True
+        win.clear = MagicMock()
+        win.on_draw()
+
+    assert fake_sprite.color == (128, 128, 128)
+
+
+# ---------------------------------------------------------------------------
+# load_charsheet_image coverage
+# ---------------------------------------------------------------------------
+
+
+def test_load_charsheet_image_sets_image_and_clears_cache():
+    """load_charsheet_image stores _image and resets cached state."""
+    renderer = MagicMock()
+    bubble = MagicMock()
+    win = _make_window(renderer, bubble)
+    win._cached_frame_key = (0, 0, 32, 32)
+    win._cached_region = MagicMock()
+    win._sprite = MagicMock()
+
+    with patch.object(_mod, "pyglet") as pg:
+        fake_image = MagicMock()
+        pg.image.load.return_value = fake_image
+        fake_texture = MagicMock()
+        fake_image.get_texture.return_value = fake_texture
+
+        win.load_charsheet_image("fake/path.png")
+
+    assert win._image is fake_image
+    assert win._cached_frame_key is None
+    assert win._cached_region is None
+    assert win._sprite is None
+
+
+# ---------------------------------------------------------------------------
+# apply_win32_flags coverage
+# ---------------------------------------------------------------------------
+
+
+def test_apply_win32_flags_non_windows_logs_warning():
+    """apply_win32_flags on non-Windows logs a warning and returns early."""
+    renderer = MagicMock()
+    bubble = MagicMock()
+    win = _make_window(renderer, bubble)
+
+    with patch("voice_sprite.window.platform") as mock_platform, \
+         patch("voice_sprite.window.logger") as mock_logger:
+        mock_platform.system.return_value = "Linux"
+        win.apply_win32_flags()
+
+    mock_logger.warning.assert_called_once()
+
+
+def test_apply_win32_flags_no_hwnd_logs_error():
+    """apply_win32_flags logs an error when HWND cannot be obtained."""
+    renderer = MagicMock()
+    bubble = MagicMock()
+    win = _make_window(renderer, bubble)
+
+    # canvas with no 'hwnd' attr, no '_hwnd' fallback either
+    win.canvas = MagicMock(spec=[])  # spec=[] → hasattr returns False for anything
+
+    with patch("voice_sprite.window.platform") as mock_platform, \
+         patch("voice_sprite.window.logger") as mock_logger, \
+         patch.dict("sys.modules", {"voice_sprite.win32_flags": MagicMock()}):
+        mock_platform.system.return_value = "Windows"
+        win.apply_win32_flags()
+
+    mock_logger.error.assert_called_once()
+
+
+def test_apply_win32_flags_calls_apply_click_through():
+    """apply_win32_flags delegates to apply_click_through when HWND found."""
+    renderer = MagicMock()
+    bubble = MagicMock()
+    win = _make_window(renderer, bubble)
+
+    fake_hwnd = 12345
+    win.canvas = MagicMock()
+    win.canvas.hwnd = fake_hwnd
+
+    mock_win32 = MagicMock()
+
+    with patch("voice_sprite.window.platform") as mock_platform, \
+         patch.dict("sys.modules", {"voice_sprite.win32_flags": mock_win32}):
+        mock_platform.system.return_value = "Windows"
+        win.apply_win32_flags()
+
+    mock_win32.apply_click_through.assert_called_once_with(fake_hwnd)
