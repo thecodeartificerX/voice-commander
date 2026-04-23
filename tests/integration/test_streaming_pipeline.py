@@ -248,6 +248,9 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
     from voice_commander.registry import ToolEntry, ToolRegistry
 
     # -- Registry: minimal set with no_match + one real tool (llm_only) ------
+    # "copy" is required: LLMRouter._build_tools_array() returns None early when
+    # the tools array is empty, bypassing the HTTP call entirely. At least one
+    # non-no_match tool must be registered to force the request to be made.
     registry = ToolRegistry()
     registry.register(
         ToolEntry(
@@ -372,6 +375,12 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
     )
 
     # No tool should have executed — noise should not match any real command.
+    # Note: on_plan_start absent means Dispatcher.run_plan() was never called,
+    # regardless of *which* gate triggered the miss (confidence, word-count, or
+    # LLM no_match). On CPU-only runs Whisper often returns low confidence on
+    # white noise, so the confidence gate may fire before the LLM is reached.
+    # The structural guarantee — _process_utterance is the single code path
+    # under test — holds either way.
     assert "on_plan_start" not in event_names, (
         "Expected no tool execution for gibberish/noise input"
     )
