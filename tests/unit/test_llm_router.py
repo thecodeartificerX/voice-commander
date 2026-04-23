@@ -7,6 +7,7 @@ httpx.Client instance — no real network traffic is made.
 from __future__ import annotations
 
 import json
+import threading
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -81,7 +82,7 @@ def _make_router(max_plan_steps: int = 8, warmup_timeout_ms: int = 5000) -> LLMR
         max_plan_steps=max_plan_steps,
         warmup_on_startup=False,
     )
-    return LLMRouter(cfg, _make_registry())
+    return LLMRouter(cfg, _make_registry(), threading.Lock())
 
 
 def _mock_response(tool_calls: list[dict]) -> MagicMock:
@@ -471,7 +472,7 @@ class TestBuildToolsArray:
             )
         )
         cfg = LLMConfig(timeout_ms=600)
-        router = LLMRouter(cfg, reg)
+        router = LLMRouter(cfg, reg, threading.Lock())
         assert router._build_tools_array() == []
 
     def test_tools_array_includes_llm_only_entries(self):

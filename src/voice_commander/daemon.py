@@ -493,7 +493,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     dispatcher = Dispatcher(feedback, event_bus=event_bus)
 
     # LLM Router — always created.
-    llm_router = LLMRouter(cfg.llm, registry)
+    llm_router = LLMRouter(cfg.llm, registry, reload_lock)
     if cfg.llm.warmup_on_startup:
         if llm_router.warmup():
             logger.info("LLM router warmup succeeded")

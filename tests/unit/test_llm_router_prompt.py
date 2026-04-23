@@ -10,6 +10,8 @@ Covers:
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from voice_commander.config import LLMConfig
@@ -19,7 +21,7 @@ from voice_commander.registry import ToolRegistry
 
 def _make_router(default_browser: str = "chrome") -> LLMRouter:
     cfg = LLMConfig(default_browser=default_browser, warmup_on_startup=False)
-    return LLMRouter(cfg, ToolRegistry())
+    return LLMRouter(cfg, ToolRegistry(), threading.Lock())
 
 
 def test_prompt_substitutes_default_browser() -> None:
