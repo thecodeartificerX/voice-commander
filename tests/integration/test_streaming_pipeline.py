@@ -232,36 +232,118 @@ def test_silence_produces_no_utterances(silero_model):
 def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
     """Noise detected by VAD → Whisper can't match → on_miss is fired.
 
-    Wires a minimal pipeline: VADGate (real silero) + Transcriber (real
-    faster-whisper) + Matcher + Dispatcher + CapturingFeedbackSink. White
-    noise is used as the "gibberish" audio source.
+    Drives a real StreamingDaemon._process_utterance() so that gate + routing
+    logic is exercised through the actual implementation, not duplicated inline.
+    httpx.MockTransport injects a no_match LLM response for every request.
     """
-    from unittest.mock import MagicMock
+    import json
 
+    import httpx
+
+    from voice_commander.config import LLMConfig
+    from voice_commander.daemon import StreamingDaemon
     from voice_commander.dispatcher import Dispatcher
     from voice_commander.feedback import CapturingFeedbackSink
     from voice_commander.llm_router import LLMRouter
     from voice_commander.registry import ToolEntry, ToolRegistry
 
-    # Build a minimal registry with one known tool.
+    # -- Registry: minimal set with no_match + one real tool (llm_only) ------
+    # "copy" is required: LLMRouter._build_tools_array() returns None early when
+    # the tools array is empty, bypassing the HTTP call entirely. At least one
+    # non-no_match tool must be registered to force the request to be made.
     registry = ToolRegistry()
     registry.register(
         ToolEntry(
-            name="press",
-            phrases=(),
-            func=lambda **_: None,
+            name="copy",
+            phrases=("copy",),
+            func=lambda: None,
             module="test",
             docstring=None,
+            description="Copy",
+            llm_only=True,
+            params_schema={
+                "type": "function",
+                "function": {
+                    "name": "copy",
+                    "description": "Copy",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                },
+            },
         )
     )
-    feedback = CapturingFeedbackSink()
-    # Use a stub LLM router that always returns None (miss) so the test exercises
-    # the miss path without requiring LM Studio.
-    stub_router = MagicMock(spec=LLMRouter)
-    stub_router.route.return_value = None
-    dispatcher = Dispatcher(feedback)
+    registry.register(
+        ToolEntry(
+            name="no_match",
+            phrases=(),
+            func=lambda reason: None,
+            module="test",
+            docstring=None,
+            description="No match",
+            llm_only=True,
+            params_schema={
+                "type": "function",
+                "function": {
+                    "name": "no_match",
+                    "description": "No match",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"reason": {"type": "string"}},
+                        "required": ["reason"],
+                    },
+                },
+            },
+        )
+    )
 
-    # Generate noisy audio that silero may detect as speech.
+    # -- LLM router with mock transport returning no_match -------------------
+    cfg = LLMConfig(
+        endpoint_url="http://mock-llm/v1",
+        model_id="test-model",
+        timeout_ms=600,
+        warmup_on_startup=False,
+    )
+    router = LLMRouter(cfg, registry)
+
+    def _no_match_handler(request: httpx.Request) -> httpx.Response:
+        body = json.dumps({
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "function": {
+                            "name": "no_match",
+                            "arguments": '{"reason": "gibberish input"}',
+                        }
+                    }]
+                }
+            }]
+        })
+        return httpx.Response(
+            200, text=body, headers={"content-type": "application/json"}
+        )
+
+    router._client = httpx.Client(
+        base_url="http://mock-llm/v1",
+        transport=httpx.MockTransport(_no_match_handler),
+    )
+
+    # -- Daemon wiring -------------------------------------------------------
+    feedback = CapturingFeedbackSink()
+    dispatcher = Dispatcher(feedback)
+    daemon = StreamingDaemon(
+        feedback=feedback,
+        recorder=None,
+        transcriber=real_transcriber,
+        llm_router=router,
+        dispatcher=dispatcher,
+        registry=registry,
+        output_dir=str(tmp_path),
+    )
+
+    # -- Generate noisy audio and feed through VAD ---------------------------
     audio = np.concatenate(
         [
             _generate_silence(0.1),
@@ -279,35 +361,32 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
             "pipeline wiring is correct; VAD gate is working as intended."
         )
 
-    # Process each detected utterance through the pipeline.
+    # -- Drive real _process_utterance for each VAD segment ------------------
     for utterance in utterances:
-        result = real_transcriber.transcribe(utterance)
-        feedback.on_transcript(result.text, result.confidence)
+        daemon._process_utterance(utterance)
 
-        # Gate: confidence
-        if result.confidence < 0.30:
-            feedback.on_miss(result.text, ())
-            continue
+    # Clean up thread pool to avoid resource-warning noise.
+    daemon._wav_executor.shutdown(wait=True)
 
-        # Gate: no_speech_prob
-        if result.no_speech_prob > 0.6:
-            continue
-
-        plan = stub_router.route(result.text)
-        if plan is None:
-            feedback.on_miss(result.text, ())
-        else:
-            dispatcher.run_plan(result.text, plan, registry)
-
-    # At minimum, on_transcript must have been called.
+    # -- Assertions ----------------------------------------------------------
     event_names = [name for name, _ in feedback.calls]
     assert "on_transcript" in event_names, (
         "Expected at least one on_transcript call from pipeline processing"
     )
 
+    # No tool should have executed — noise should not match any real command.
+    # Note: on_plan_start absent means Dispatcher.run_plan() was never called,
+    # regardless of *which* gate triggered the miss (confidence, word-count, or
+    # LLM no_match). On CPU-only runs Whisper often returns low confidence on
+    # white noise, so the confidence gate may fire before the LLM is reached.
+    # The structural guarantee — _process_utterance is the single code path
+    # under test — holds either way.
+    assert "on_plan_start" not in event_names, (
+        "Expected no tool execution for gibberish/noise input"
+    )
+
     # For white noise, we expect a miss (either low-confidence gate or no match).
     # This assertion is soft: the key thing is the pipeline didn't crash.
-    # on_miss may or may not fire depending on what Whisper makes of the noise.
     has_match = any(name == "on_match" for name in event_names)
     if has_match:
         pytest.xfail(
