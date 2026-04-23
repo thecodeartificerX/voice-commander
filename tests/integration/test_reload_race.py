@@ -10,7 +10,6 @@ import time
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from voice_commander.config import LLMConfig
 from voice_commander.llm_router import LLMRouter
@@ -108,3 +107,46 @@ def test_concurrent_route_and_reload_no_crash() -> None:
     t.join(timeout=5.0)
     assert not t.is_alive(), "route_worker thread hung — possible deadlock"
     assert not errors, f"route_worker raised: {errors}"
+
+
+def test_concurrent_warmup_and_reload_no_crash() -> None:
+    """warmup() must not deadlock when called concurrently with reload_metadata().
+
+    warmup() acquires reload_lock before building the tools array, same as
+    route().  This test verifies that concurrent warmup + reload calls do not
+    hang or raise — catching any future regression that moves the HTTP call
+    inside the lock scope.
+    """
+    registry = _make_registry()
+    reload_lock = threading.Lock()
+    config = _make_config()
+    router = LLMRouter(config, registry, reload_lock)
+
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {"choices": [{"message": {"tool_calls": []}}]}
+
+    errors: list[Exception] = []
+
+    def warmup_worker() -> None:
+        with patch.object(router._client, "post", return_value=mock_resp):
+            for _ in range(20):
+                try:
+                    router.warmup()
+                except Exception as exc:
+                    errors.append(exc)
+                    return
+
+    t = threading.Thread(target=warmup_worker, daemon=True)
+    t.start()
+
+    store = MagicMock(spec=ToolMetadataStore)
+    store.load_all.return_value = {}
+    for _ in range(5):
+        with reload_lock:
+            registry.reload_metadata(store)
+        time.sleep(0.001)
+
+    t.join(timeout=5.0)
+    assert not t.is_alive(), "warmup_worker thread hung — possible deadlock"
+    assert not errors, f"warmup_worker raised: {errors}"

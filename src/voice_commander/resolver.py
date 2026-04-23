@@ -299,11 +299,13 @@ def _is_dangerous_candidate(display: str) -> bool:
 
 def _get_app_cache() -> list[tuple[str, str]]:
     """Return the cached (display_name, launch_token) list, enumerating on first call."""
-    if _cache["apps"] is not None:
-        return _cache["apps"]
+    cached = _cache["apps"]  # snapshot — single atomic read
+    if cached is not None:
+        return cached
     with _cache_lock:
-        if _cache["apps"] is not None:  # re-check under lock
-            return _cache["apps"]
+        cached = _cache["apps"]  # re-check under lock — snapshot
+        if cached is not None:
+            return cached
         raw: list[tuple[str, str]] = []
         raw.extend(_enumerate_start_menu())
         raw.extend(_enumerate_apps_folder())
@@ -325,7 +327,8 @@ def _get_app_cache() -> list[tuple[str, str]]:
 
 def _invalidate_app_cache() -> None:
     """Test hook — clear the app cache so subsequent calls re-enumerate."""
-    _cache["apps"] = None
+    with _cache_lock:
+        _cache["apps"] = None
 
 
 def _enumerate_start_menu() -> list[tuple[str, str]]:

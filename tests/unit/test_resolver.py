@@ -8,6 +8,8 @@ resolve_app, and the daemon-lifetime app cache.
 from __future__ import annotations
 
 import sys
+import threading
+import time
 import types
 from typing import Any
 
@@ -374,3 +376,38 @@ def test_resolve_app_custom_threshold_blocks_weak_match(
     _set_config(LLMConfig(open_fuzzy_threshold=95))
     with pytest.raises(OpenResolveError):
         resolve_app("spotify")
+
+
+def test_cache_invalidation_thread_safe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_invalidate_app_cache() must be safe to call while _get_app_cache() runs.
+
+    Verifies that the _cache_lock in _invalidate_app_cache() prevents a race
+    with concurrent _get_app_cache() calls — no crash, no hang.
+    """
+    call_count = {"n": 0}
+
+    def slow_start_menu() -> list[tuple[str, str]]:
+        call_count["n"] += 1
+        time.sleep(0.005)  # simulate enumeration latency
+        return [("Spotify", r"C:\fake\Spotify.lnk")]
+
+    monkeypatch.setattr(resolver, "_enumerate_start_menu", slow_start_menu)
+    monkeypatch.setattr(resolver, "_enumerate_apps_folder", lambda: [])
+
+    errors: list[Exception] = []
+
+    def invalidator() -> None:
+        for _ in range(10):
+            try:
+                _invalidate_app_cache()
+            except Exception as exc:
+                errors.append(exc)
+                return
+            time.sleep(0.001)
+
+    t = threading.Thread(target=invalidator, daemon=True)
+    t.start()
+    resolver._get_app_cache()
+    t.join(timeout=3.0)
+    assert not t.is_alive(), "invalidator thread hung"
+    assert not errors, f"invalidator raised: {errors}"
