@@ -268,7 +268,7 @@ def test_on_draw_sprite_update_when_image_changes():
     bubble = MagicMock()
     bubble.visible = False
 
-    with patch.object(_mod, "pyglet") as pg:
+    with patch.object(_mod, "pyglet"):
         new_region = MagicMock()
         fake_image = MagicMock()
         fake_image.height = 96
