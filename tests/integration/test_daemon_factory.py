@@ -235,8 +235,15 @@ def test_factory_wires_reload_lock_to_llm_router(base_cfg: Config) -> None:
         build_streaming_daemon(base_cfg)
 
     assert "lock" in captured, "LLMRouter constructor was never called"
-    assert isinstance(captured["lock"], threading.Lock), (
-        f"Expected threading.Lock as third arg, got {type(captured['lock'])}"
+    # threading.Lock is a factory, not a type; duck-type on the context-manager
+    # protocol instead.
+    lock = captured["lock"]
+    assert lock is not None, "reload_lock was None"
+    assert callable(getattr(lock, "acquire", None)), (
+        f"Expected a lock-like object with .acquire(), got {type(lock)}"
+    )
+    assert callable(getattr(lock, "release", None)), (
+        f"Expected a lock-like object with .release(), got {type(lock)}"
     )
 
 
