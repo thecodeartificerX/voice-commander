@@ -113,8 +113,6 @@ omit = [
     "src/voice_commander/tools/_win32.py",
     "src/voice_sprite/dpi.py",
     "src/voice_sprite/win32_flags.py",
-    "src/voice_sprite/window.py",
-    "src/voice_sprite/__main__.py",
 ]
 
 [tool.coverage.report]
