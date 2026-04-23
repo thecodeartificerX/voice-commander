@@ -57,6 +57,7 @@ class TestMakeParser:
         parser = _make_parser()
         assert parser.prog == "voice-sprite"
 
-    def test_unknown_flag_raises_system_exit(self) -> None:
+    def test_unknown_flag_raises_system_exit(self, capsys: pytest.CaptureFixture[str]) -> None:
         with pytest.raises(SystemExit):
             _make_parser().parse_args(["--unknown-flag"])
+        # stderr consumed; argparse error message does not pollute test output
