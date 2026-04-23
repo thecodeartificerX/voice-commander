@@ -61,9 +61,7 @@ def test_exstyle_or_mask_preserves_existing_bits(fake_user32):
     fake_user32.SetWindowLongW.assert_called_once_with(99, GWL_EXSTYLE, expected)
 
 
-def test_user32_oserror_logs_and_continues_to_dwm(
-    fake_user32, fake_dwmapi, caplog
-):
+def test_user32_oserror_logs_and_continues_to_dwm(fake_user32, fake_dwmapi, caplog):
     """OSError in user32 block logs but does not skip DWM block."""
     fake_user32.GetWindowLongW.side_effect = OSError("boom")
 

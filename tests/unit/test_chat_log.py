@@ -64,8 +64,8 @@ def test_fade_ms_zero_drops_to_zero_at_hold_boundary():
     log = ChatLog(max_lines=3, hold_ms=1000, fade_ms=0)
     e = _entry("x", 0.0)
     log.append(e)
-    assert log.opacity_of(e, 0.5) == 1.0   # inside hold window
-    assert log.opacity_of(e, 1.0) == 0.0   # exactly at hold boundary → instant drop
+    assert log.opacity_of(e, 0.5) == 1.0  # inside hold window
+    assert log.opacity_of(e, 1.0) == 0.0  # exactly at hold boundary → instant drop
 
 
 def test_hold_ms_zero_fades_immediately():
@@ -73,10 +73,10 @@ def test_hold_ms_zero_fades_immediately():
     log = ChatLog(max_lines=3, hold_ms=0, fade_ms=1000)
     e = _entry("x", 0.0)
     log.append(e)
-    assert log.opacity_of(e, 0.0) == pytest.approx(1.0)               # age=0 → t=0 → full
-    assert log.opacity_of(e, 0.5) == pytest.approx(0.5)               # halfway through fade
-    assert log.opacity_of(e, 1.0) == pytest.approx(0.0, abs=1e-9)    # fully faded
-    assert log.opacity_of(e, 2.0) == pytest.approx(0.0, abs=1e-9)    # clamped
+    assert log.opacity_of(e, 0.0) == pytest.approx(1.0)  # age=0 → t=0 → full
+    assert log.opacity_of(e, 0.5) == pytest.approx(0.5)  # halfway through fade
+    assert log.opacity_of(e, 1.0) == pytest.approx(0.0, abs=1e-9)  # fully faded
+    assert log.opacity_of(e, 2.0) == pytest.approx(0.0, abs=1e-9)  # clamped
 
 
 def test_max_lines_one_always_keeps_only_latest():
@@ -101,8 +101,8 @@ def test_reverse_time_order_entries_newest_appended_first():
     """Appending entries with decreasing born_at_s: entries() is newest-appended-first,
     and opacity is computed from each entry's own born_at_s regardless of insert order."""
     log = ChatLog(max_lines=3, hold_ms=1000, fade_ms=1000)
-    first_inserted = _entry("first_inserted", born_at_s=5.0)   # older born_at, appended first
-    second_inserted = _entry("second_inserted", born_at_s=1.0) # newer born_at, appended second
+    first_inserted = _entry("first_inserted", born_at_s=5.0)  # older born_at, appended first
+    second_inserted = _entry("second_inserted", born_at_s=1.0)  # newer born_at, appended second
     log.append(first_inserted)
     log.append(second_inserted)
     # second_inserted is newest-appended → appears first
@@ -148,7 +148,7 @@ def test_both_zero_ms_entry_instantly_invisible():
     log = ChatLog(max_lines=3, hold_ms=0, fade_ms=0)
     e = _entry("x", 0.0)
     log.append(e)
-    assert log.opacity_of(e, 0.0) == 0.0   # instantly invisible at birth
+    assert log.opacity_of(e, 0.0) == 0.0  # instantly invisible at birth
     assert log.opacity_of(e, 1.0) == 0.0
     log.tick(0.0)
-    assert log.entries() == []              # immediately evicted
+    assert log.entries() == []  # immediately evicted

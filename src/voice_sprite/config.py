@@ -88,9 +88,7 @@ def _require_int(
     if isinstance(raw, float):
         raise SpriteConfigError(f"[{table}] {key}: expected int, got float {raw!r}")
     if not isinstance(raw, int):
-        raise SpriteConfigError(
-            f"[{table}] {key}: expected int, got {type(raw).__name__} {raw!r}"
-        )
+        raise SpriteConfigError(f"[{table}] {key}: expected int, got {type(raw).__name__} {raw!r}")
     if min_val is not None and raw < min_val:
         raise SpriteConfigError(f"[{table}] {key}: must be >= {min_val}, got {raw}")
     if max_val is not None and raw > max_val:
