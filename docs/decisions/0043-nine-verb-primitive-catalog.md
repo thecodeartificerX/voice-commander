@@ -1,6 +1,6 @@
 # ADR 0043: Nine-Verb Primitive Catalog
 
-**Status:** Accepted
+**Status:** Accepted (amended by [ADR 0054](0054-last-primitive.md), which adds a tenth verb `last`)
 **Date:** 2026-04-21
 
 ## Context

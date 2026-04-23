@@ -378,6 +378,29 @@ def _close_with_verify(combo: tuple[str, ...], *, verb: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# last
+# ---------------------------------------------------------------------------
+
+
+@tool
+def last(tab: bool = False) -> None:
+    """Switch back to the previous window (Alt+Tab), or to another tab (Ctrl+Tab).
+
+    Default (``tab=False``) issues Alt+Tab and verifies the foreground hwnd
+    changed — mirrors the "go back to what I was just on" semantic.
+
+    ``tab=True`` issues Ctrl+Tab, which cycles to the next tab inside the
+    currently focused app (browsers, editors, terminals). No self-verify —
+    tab switches stay inside the same process and do not change foreground
+    hwnd.
+    """
+    if tab:
+        pyautogui.hotkey("ctrl", "tab")
+        return
+    _close_with_verify(("alt", "tab"), verb="last")
+
+
+# ---------------------------------------------------------------------------
 # press
 # ---------------------------------------------------------------------------
 

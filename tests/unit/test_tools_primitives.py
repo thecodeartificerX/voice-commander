@@ -17,6 +17,7 @@ from voice_commander.tools.primitives import (
     click,
     close,
     close_window,
+    last,
     no_match,
     open_target,
     press,
@@ -297,6 +298,64 @@ def test_close_self_verify_logs_when_fg_unchanged(
 
 
 # ---------------------------------------------------------------------------
+# last
+# ---------------------------------------------------------------------------
+
+
+def test_last_default_sends_alt_tab() -> None:
+    """Bare last() → Alt+Tab; _close_with_verify snapshots fg and polls for change."""
+    mock_win32gui = MagicMock()
+    mock_win32gui.GetForegroundWindow.side_effect = [11, 22]
+    mock_win32gui.IsWindow.return_value = True
+
+    with (
+        patch.dict("sys.modules", {"win32gui": mock_win32gui}),
+        patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey,
+    ):
+        last()
+    mock_hotkey.assert_called_once_with("alt", "tab")
+
+
+def test_last_tab_true_sends_ctrl_tab() -> None:
+    """last(tab=True) → Ctrl+Tab, no self-verify (no fg change expected)."""
+    with patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey:
+        last(tab=True)
+    mock_hotkey.assert_called_once_with("ctrl", "tab")
+
+
+def test_last_default_verify_logs_when_fg_unchanged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Alt+Tab that leaves fg hwnd unchanged → WARNING, no raise."""
+    mock_win32gui = MagicMock()
+    mock_win32gui.GetForegroundWindow.return_value = 77  # unchanged
+    mock_win32gui.IsWindow.return_value = True
+
+    monkeypatch.setattr("voice_commander.tools.primitives._CLOSE_VERIFY_TIMEOUT_MS", 10)
+    monkeypatch.setattr("voice_commander.tools.primitives._CLOSE_VERIFY_POLL_INTERVAL_MS", 5)
+
+    with (
+        patch.dict("sys.modules", {"win32gui": mock_win32gui}),
+        patch("voice_commander.tools.primitives.pyautogui.hotkey"),
+        caplog.at_level(logging.WARNING, logger="voice_commander.tools.primitives"),
+    ):
+        last()
+    assert "verify timeout" in caplog.text
+    assert "last" in caplog.text
+
+
+def test_last_signature() -> None:
+    import inspect
+
+    from voice_commander.tools import primitives
+
+    sig = inspect.signature(primitives.last)
+    assert "tab" in sig.parameters
+    assert sig.parameters["tab"].annotation == "bool"
+    assert sig.parameters["tab"].default is False
+
+
+# ---------------------------------------------------------------------------
 # click
 # ---------------------------------------------------------------------------
 
@@ -373,6 +432,7 @@ def test_imports_expose_expected_symbols() -> None:
         "click",
         "close",
         "close_window",
+        "last",
         "no_match",
         "open_target",
         "press",

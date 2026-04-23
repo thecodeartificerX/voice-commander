@@ -54,9 +54,15 @@ Principles
   → enter; cancel → escape; undo → ctrl+z; save → ctrl+s; find →
   ctrl+f; refresh → f5. Bare key names (enter, escape, tab, space,
   delete, backspace, f5) → press them directly.
-- Hard bans — these chords sweep more windows than the user meant:
+- "Last" / "previous" / "go back" → use `last()`. Bare "last" or
+  "last window" → `last()` (Alt+Tab, previous window). "Last tab" /
+  "next tab" / "switch tab" → `last(tab=true)` (Ctrl+Tab).
+- Hard bans — these chords sweep more windows than the user meant or
+  bypass a dedicated verb:
   * `press(combo="win+d")` / `press(combo="win+m")` — use `minimize()`
   * `press(combo="win+up")` — use `maximize()`
+  * `press(combo="alt+tab")` — use `last()`
+  * `press(combo="ctrl+tab")` / `press(combo="ctrl+shift+tab")` — use `last(tab=true)`
 - Destructive bans. Never emit these; tool guards reject them anyway.
   `press` chords: shift+delete, win+r. `open` targets: cmd,
   powershell, regedit, diskmgmt, diskpart, format, cipher, gpedit,
@@ -103,6 +109,12 @@ Tools: press(combo="escape")
 
 User: "focus browser"
 Tools: focus(target="{default_browser}")
+
+User: "last"
+Tools: last()
+
+User: "last tab"
+Tools: last(tab=true)
 """
 
 

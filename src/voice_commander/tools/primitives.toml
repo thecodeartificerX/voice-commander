@@ -74,6 +74,19 @@ description = "Optional process name or window title (fuzzy-matched). Omit to ma
 required = false
 type = "string"
 
+[tools.last]
+phrases = []
+description = "Switch back. DEFAULT (no args) issues Alt+Tab to return to the previous window. With tab=true, issues Ctrl+Tab to switch to the next tab inside the currently focused app. DEFAULT for 'last', 'last window', 'previous window', 'go back', 'last tab', 'next tab', 'switch tab' utterances. NEVER emit press(combo='alt+tab'), press(combo='ctrl+tab'), or press(combo='ctrl+shift+tab') — always use last()."
+enabled = true
+settle_ms = 100
+llm_only = true
+
+[tools.last.args.tab]
+description = "When true, switch tab in the current app via Ctrl+Tab. When false (default), switch to the previous window via Alt+Tab."
+required = false
+type = "boolean"
+default = false
+
 [tools.press]
 phrases = []
 description = "Press a key combination like 'ctrl+c', 'alt+tab', 'win+l'."
