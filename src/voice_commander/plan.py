@@ -53,6 +53,14 @@ class PlanOutcome:
 
     @classmethod
     def from_event_dict(cls, d: dict[str, Any]) -> PlanOutcome:
+        """Parse a ``PlanOutcome`` from a raw SSE event dict.
+
+        Raises:
+            KeyError: if ``transcript``, ``status``, or a step's ``name`` is absent.
+            TypeError: if ``steps`` is not iterable or a step's ``kwargs`` is not
+                dict-constructible.
+            ValueError: if ``duration_ms`` cannot be converted to ``int``.
+        """
         steps = tuple(
             ToolCall(name=s["name"], kwargs=dict(s.get("kwargs", {}))) for s in d.get("steps", [])
         )
@@ -64,3 +72,20 @@ class PlanOutcome:
             error_msg=d.get("error_msg"),
             duration_ms=int(d.get("duration_ms", 0)),
         )
+
+    @classmethod
+    def try_from_event_dict(cls, d: dict[str, Any]) -> PlanOutcome | None:
+        """Return a PlanOutcome parsed from *d*, or ``None`` on any parse failure.
+
+        Catches ``KeyError``, ``ValueError``, and ``TypeError`` — the three
+        exceptions ``from_event_dict`` can raise on malformed input.  Callers
+        that cannot guarantee a well-formed dict should prefer this over a bare
+        ``try/except``.
+
+        Note: parse failures are swallowed silently.  Callers that need
+        diagnostic logging should log at the call site when ``None`` is returned.
+        """
+        try:
+            return cls.from_event_dict(d)
+        except (KeyError, ValueError, TypeError):
+            return None

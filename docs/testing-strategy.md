@@ -81,6 +81,7 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 | `FeedbackSink` | `tests/unit/test_feedback.py` | `NullFeedbackSink` methods callable without error, `CapturingFeedbackSink` records calls in order. `WindowsFeedbackSink` is pure `winsound` + logger side-effects — covered via the `CapturingFeedbackSink` pattern in `Dispatcher` tests and through the Phase-3 GATE (human hears the chimes). | No hardware-marked `FeedbackSink` test needed after ADR 0013 (toasts removed) |
 | `Config` | `tests/unit/test_config.py` | Round-trip: write TOML → `Config.load()` → values match, defaults applied when keys absent, invalid types raise `ConfigError`, `Config` is frozen (mutation raises `FrozenInstanceError`) | `tmp_path` fixture for temp `config.toml`; no external deps |
 | `Daemon` | `tests/unit/test_daemon.py` | `Daemon.shutdown()` sets shutdown event and worker drains; all subsystem constructors called with values from `Config`; worker thread restarted once on death then exits | All subsystems mocked with `MagicMock`; `threading.Event` used to control shutdown timing |
+| `PlanOutcome` | `tests/unit/test_plan_outcome.py` | `from_event_dict` round-trip (ok/miss/error), frozen dataclass mutation raises, 7 parametrized malformed-input cases (KeyError / ValueError / TypeError), `try_from_event_dict` returns None on bad input and populated outcome on valid input | No external deps; pure dataclass tests |
 
 ---
 
