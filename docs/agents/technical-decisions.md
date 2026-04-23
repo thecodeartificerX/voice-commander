@@ -74,5 +74,7 @@ When you touch any row, also update the corresponding ADR (never the other way a
 | Command HUD surface | Standalone chat-log overlay rendered in the same pyglet window as the sprite | Glanceable RPG-chat feedback per command; sharing the window avoids a second HWND | [0051](../decisions/0051-command-hud-overlay.md) |
 | HUD summarization | Hybrid: rule table covers nine-verb catalog, LLM fallback on errors / unknown verbs | Cheap hot path, rich error explanations, bounded worst case | [0052](../decisions/0052-hybrid-rule-llm-summarization.md) |
 | Multi-monitor docking | 30 Hz `GetCursorPos` poll → `MonitorFromPoint` → `rcWork` → `set_location` + `set_size`; PMv2 awareness mandatory | Sprite + HUD track the cursor; taskbar-excluded docking works on any taskbar edge | [0053](../decisions/0053-sprite-follows-cursor-monitor.md) |
+| LLM plan dispatch mode | `Plan.strict=True` halts on first error; `strict=False` continues and records only first failure in `PlanOutcome` | [0054](../decisions/0054-last-primitive.md) |
+| Dispatcher continue-on-error | `Plan.strict=False` enables continue-on-error; `strict=True` default preserves existing halt semantics | [0055](../decisions/0055-plan-strict-continue-on-error.md) |
 
 All ADRs live in [`../decisions/`](../decisions/). Add a new row here whenever you add a new ADR.

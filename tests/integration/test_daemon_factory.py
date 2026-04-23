@@ -27,7 +27,6 @@ imported at the top of ``daemon.py`` and is patchable via
 from __future__ import annotations
 
 import queue
-import threading
 from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace

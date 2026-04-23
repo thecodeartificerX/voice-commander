@@ -310,21 +310,25 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
     router = LLMRouter(cfg, registry, threading.Lock())
 
     def _no_match_handler(request: httpx.Request) -> httpx.Response:
-        body = json.dumps({
-            "choices": [{
-                "message": {
-                    "tool_calls": [{
-                        "function": {
-                            "name": "no_match",
-                            "arguments": '{"reason": "gibberish input"}',
+        body = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "no_match",
+                                        "arguments": '{"reason": "gibberish input"}',
+                                    }
+                                }
+                            ]
                         }
-                    }]
-                }
-            }]
-        })
-        return httpx.Response(
-            200, text=body, headers={"content-type": "application/json"}
+                    }
+                ]
+            }
         )
+        return httpx.Response(200, text=body, headers={"content-type": "application/json"})
 
     router._client = httpx.Client(
         base_url="http://mock-llm/v1",
