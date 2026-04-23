@@ -29,18 +29,11 @@ def _configure_logging() -> None:
 
 
 def _should_reload(mtime_old: float, mtime_new: float, threshold: float = 0.0) -> bool:
-    """Return True if *mtime_new* differs from *mtime_old* by more than *threshold* seconds.
-
-    Pure function — no I/O, no side effects. Extracted for unit testing.
-    """
+    """Return True if mtimes differ by more than *threshold* seconds (strict >)."""
     return abs(mtime_new - mtime_old) > threshold
 
 
 def _make_parser() -> argparse.ArgumentParser:
-    """Return a configured CLI argument parser for voice-sprite.
-
-    Pure factory — no side effects. Extracted for unit testing.
-    """
     parser = argparse.ArgumentParser(
         prog="voice-sprite",
         description="On-screen sprite companion for Voice Commander.",
