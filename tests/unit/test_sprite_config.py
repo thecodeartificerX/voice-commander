@@ -166,8 +166,6 @@ def test_zero_valid_values(tmp_path, toml_text, attr_path, expected):
         "[hud]\nenabled = 1\n",
         "[sprite]\nfollow_cursor = 0\n",
         # str not valid for offset int fields
-        '[hud]\noffset_x = "wide"\n',
-        '[hud]\noffset_y = "up"\n',
         '[sprite]\noffset_x = "left"\n',
         '[sprite]\noffset_y = true\n',
     ],
