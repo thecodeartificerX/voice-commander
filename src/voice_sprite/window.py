@@ -13,6 +13,57 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Pure rendering-math helpers — no GL, no self, fully unit-testable.
+# ---------------------------------------------------------------------------
+
+
+def _flip_y(img_h: int, y: int, h: int) -> int:
+    """Convert top-down charsheet row to pyglet's bottom-up y coordinate.
+
+    pyglet's get_region() measures y from the *bottom* of the image, but
+    charsheet cell metadata uses top-down rows (row 0 = top of PNG).
+    """
+    return img_h - (y + h)
+
+
+def _compute_fit_scale(
+    region_w: float, region_h: float, frame_w: float, frame_h: float
+) -> float:
+    """Largest uniform scale that fits *frame* inside *region* without clipping."""
+    return min(region_w / frame_w, region_h / frame_h)
+
+
+def _compute_display_size(
+    frame_w: float, frame_h: float, scale: float
+) -> tuple[float, float]:
+    """Pixel dimensions of the frame after applying *scale*."""
+    return frame_w * scale, frame_h * scale
+
+
+def _compute_sprite_xy(
+    sprite_region_x: int,
+    region_w: float,
+    region_h: float,
+    disp_w: float,
+    disp_h: float,
+    y_nudge_px: int,
+) -> tuple[float, float]:
+    """Centre the sprite inside its sub-region and apply the vertical nudge."""
+    x = sprite_region_x + (region_w - disp_w) / 2
+    y = (region_h - disp_h) / 2 + y_nudge_px
+    return x, y
+
+
+def _compute_label_xy(window_w: int, window_h: int) -> tuple[int, int]:
+    """Anchor point for the speech-bubble label: centred, 4 px from the top."""
+    return window_w // 2, window_h - 4
+
+
+def _compute_label_color(opacity: float) -> tuple[int, int, int, int]:
+    """RGBA white with the given opacity (0.0–1.0) for the speech-bubble label."""
+    return (255, 255, 255, int(opacity * 255))
+
 
 class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
     """Transparent, borderless, always-on-top sprite window.
@@ -156,7 +207,7 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         # top-down rows (row 0 = top of PNG). Convert with img_h - (y + h).
         if frame_key != self._cached_frame_key or self._cached_region is None:
             img_h = self._image.height
-            self._cached_region = self._image.get_region(x, img_h - (y + h), w, h)
+            self._cached_region = self._image.get_region(x, _flip_y(img_h, y, h), w, h)
             self._cached_frame_key = frame_key
         region = self._cached_region
 
@@ -165,12 +216,12 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         # render_scale=1.0 fills the region edge-to-edge; 0.75 adds margin.
         region_w = self._sprite_region_w
         region_h = self.height
-        fit_scale = min(region_w / w, region_h / h)
+        fit_scale = _compute_fit_scale(region_w, region_h, w, h)
         final_scale = fit_scale * self._render_scale
-        disp_w = w * final_scale
-        disp_h = h * final_scale
-        sprite_x = self._sprite_region_x + (region_w - disp_w) / 2
-        sprite_y = (region_h - disp_h) / 2 + self._y_nudge_px
+        disp_w, disp_h = _compute_display_size(w, h, final_scale)
+        sprite_x, sprite_y = _compute_sprite_xy(
+            self._sprite_region_x, region_w, region_h, disp_w, disp_h, self._y_nudge_px
+        )
 
         if self._sprite is None:
             self._sprite = pyglet.sprite.Sprite(region, x=sprite_x, y=sprite_y)
@@ -194,25 +245,22 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
             self._hud_renderer.draw()
 
         if self._bubble.visible:
+            lx, ly = _compute_label_xy(self.width, self.height)
+            lc = _compute_label_color(self._bubble.opacity)
             if self._label is None:
                 self._label = pyglet.text.Label(
                     self._bubble.text,
                     font_name="Segoe UI",
                     font_size=10,
-                    x=self.width // 2,
-                    y=self.height - 4,
+                    x=lx,
+                    y=ly,
                     anchor_x="center",
                     anchor_y="top",
-                    color=(255, 255, 255, int(self._bubble.opacity * 255)),
+                    color=lc,
                 )
             else:
                 self._label.text = self._bubble.text
-                self._label.color = (
-                    255,
-                    255,
-                    255,
-                    int(self._bubble.opacity * 255),
-                )
+                self._label.color = lc
             self._label.draw()
 
     def apply_win32_flags(self) -> None:

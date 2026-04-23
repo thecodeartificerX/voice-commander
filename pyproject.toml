@@ -111,6 +111,7 @@ omit = [
     "src/voice_commander/hotkey.py",
     "src/voice_commander/transcriber.py",
     "src/voice_commander/tools/_win32.py",
+    "src/voice_sprite/__main__.py",
     "src/voice_sprite/dpi.py",
 ]
 
