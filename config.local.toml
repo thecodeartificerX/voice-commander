@@ -1,5 +1,5 @@
 [audio]
-device = 8
+device = 11
 
 [hotkey]
 mute_key = "ctrl_r"
