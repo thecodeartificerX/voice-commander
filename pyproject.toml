@@ -112,7 +112,6 @@ omit = [
     "src/voice_commander/transcriber.py",
     "src/voice_commander/tools/_win32.py",
     "src/voice_sprite/dpi.py",
-    "src/voice_sprite/win32_flags.py",
 ]
 
 [tool.coverage.report]
