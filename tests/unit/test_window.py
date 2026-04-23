@@ -128,12 +128,12 @@ def test_flip_y_second_row():
     assert _mod._flip_y(96, 32, 32) == 32
 
 
-def test_compute_fit_scale_width_constrained():
+def test_compute_fit_scale_height_constrained():
     """Region is wider than tall relative to frame — height is the bottleneck."""
     assert _mod._compute_fit_scale(100, 96, 32, 48) == pytest.approx(2.0)
 
 
-def test_compute_fit_scale_height_constrained():
+def test_compute_fit_scale_width_constrained():
     """Region is taller than wide relative to frame — width is the bottleneck."""
     assert _mod._compute_fit_scale(64, 100, 32, 16) == pytest.approx(2.0)
 
@@ -209,7 +209,16 @@ def test_on_draw_bubble_visible_creates_label():
         win.clear = MagicMock()
         win.on_draw()
 
-    pg.text.Label.assert_called_once()
+    pg.text.Label.assert_called_once_with(
+        bubble.text,
+        font_name="Segoe UI",
+        font_size=10,
+        x=50,
+        y=96,
+        anchor_x="center",
+        anchor_y="top",
+        color=(255, 255, 255, 204),
+    )
 
 
 def test_on_draw_bubble_visible_updates_existing_label():
@@ -236,6 +245,7 @@ def test_on_draw_bubble_visible_updates_existing_label():
 
     existing_label.draw.assert_called_once()
     assert existing_label.text == "hello"
+    assert existing_label.color == (255, 255, 255, 255)
 
 
 def test_on_draw_uses_cached_region_on_same_frame():
