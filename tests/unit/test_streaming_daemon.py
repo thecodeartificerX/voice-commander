@@ -146,11 +146,12 @@ def test_pipeline_processes_utterance(tmp_path):
     try:
         daemon._utt_q.put(_fake_utterance())
         triggered = pipeline_done.wait(timeout=5.0)
+        assert triggered, "pipeline did not process utterance within 5 s"
     finally:
         daemon._utt_q.put(None)
         thread.join(timeout=3.0)
 
-    assert triggered, "pipeline did not process utterance within 5 s"
+    assert not thread.is_alive(), "pipeline thread did not exit after poison pill"
     transcriber.transcribe.assert_called_once()
     dispatcher.run_plan.assert_called_once()
 
@@ -361,11 +362,12 @@ def test_pipeline_mute_guard_drops_utterance(tmp_path):
     try:
         daemon._utt_q.put(_fake_utterance())
         triggered = pipeline_done.wait(timeout=5.0)
+        assert triggered, "pipeline did not process utterance within 5 s"
     finally:
         daemon._utt_q.put(None)
         thread.join(timeout=3.0)
 
-    assert triggered, "pipeline did not process utterance within 5 s"
+    assert not thread.is_alive(), "pipeline thread did not exit after poison pill"
     transcriber.transcribe.assert_called_once()  # transcription still runs
     dispatcher.run_plan.assert_not_called()  # but dispatch is blocked by mute guard
 
@@ -390,10 +392,12 @@ def _run_process_utterance(daemon: StreamingDaemon, tmp_path) -> None:
     thread.start()
     try:
         daemon._utt_q.put(_fake_utterance())
-        done.wait(timeout=5.0)
+        assert done.wait(timeout=5.0), "pipeline did not process utterance within 5 s"
     finally:
         daemon._utt_q.put(None)
         thread.join(timeout=3.0)
+
+    assert not thread.is_alive(), "pipeline thread did not exit after poison pill"
 
 
 def test_process_utterance_publishes_miss_on_route_none(tmp_path):
