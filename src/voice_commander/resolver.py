@@ -20,6 +20,7 @@ import contextlib
 import logging
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -203,6 +204,7 @@ _URI_RE = re.compile(r"^[a-z][a-z0-9+\-.]*://", re.IGNORECASE)
 
 # Daemon-lifetime cache. Populated on first resolve_app() call that needs it.
 _cache: dict[str, list[tuple[str, str]] | None] = {"apps": None}
+_cache_lock = threading.Lock()
 
 
 def resolve_app(target: str) -> str:
@@ -297,34 +299,34 @@ def _is_dangerous_candidate(display: str) -> bool:
 
 def _get_app_cache() -> list[tuple[str, str]]:
     """Return the cached (display_name, launch_token) list, enumerating on first call."""
-    cached = _cache["apps"]
+    cached = _cache["apps"]  # snapshot — single atomic read
     if cached is not None:
         return cached
-
-    raw: list[tuple[str, str]] = []
-    raw.extend(_enumerate_start_menu())
-    raw.extend(_enumerate_apps_folder())
-
-    apps: list[tuple[str, str]] = []
-    dropped = 0
-    for display, token in raw:
-        if _is_dangerous_candidate(display):
-            dropped += 1
-            continue
-        apps.append((display, token))
-
-    _cache["apps"] = apps
-    logger.info(
-        "resolve_app cache populated: %d entries (dropped %d dangerous)",
-        len(apps),
-        dropped,
-    )
-    return apps
+    with _cache_lock:
+        cached = _cache["apps"]  # re-check under lock — snapshot
+        if cached is not None:
+            return cached
+        raw = _enumerate_start_menu() + _enumerate_apps_folder()
+        apps: list[tuple[str, str]] = []
+        dropped = 0
+        for display, token in raw:
+            if _is_dangerous_candidate(display):
+                dropped += 1
+                continue
+            apps.append((display, token))
+        _cache["apps"] = apps
+        logger.info(
+            "resolve_app cache populated: %d entries (dropped %d dangerous)",
+            len(apps),
+            dropped,
+        )
+        return apps
 
 
 def _invalidate_app_cache() -> None:
     """Test hook — clear the app cache so subsequent calls re-enumerate."""
-    _cache["apps"] = None
+    with _cache_lock:
+        _cache["apps"] = None
 
 
 def _enumerate_start_menu() -> list[tuple[str, str]]:

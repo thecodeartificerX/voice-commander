@@ -25,6 +25,7 @@ the model's core speech-detection logic.
 from __future__ import annotations
 
 import inspect
+import threading
 from typing import Any
 from unittest.mock import patch
 
@@ -306,7 +307,7 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
         timeout_ms=600,
         warmup_on_startup=False,
     )
-    router = LLMRouter(cfg, registry)
+    router = LLMRouter(cfg, registry, threading.Lock())
 
     def _no_match_handler(request: httpx.Request) -> httpx.Response:
         body = json.dumps({

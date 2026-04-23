@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from typing import Any
 
@@ -121,9 +122,12 @@ Tools: last(tab=true)
 class LLMRouter:
     """One-shot tool-call planner via local LM Studio."""
 
-    def __init__(self, config: LLMConfig, registry: ToolRegistry) -> None:
+    def __init__(
+        self, config: LLMConfig, registry: ToolRegistry, reload_lock: threading.Lock
+    ) -> None:
         self._config = config
         self._registry = registry
+        self._reload_lock = reload_lock
         # Metrics (simple counters, no external lib)
         self._total_calls: int = 0
         self._total_timeouts: int = 0
@@ -169,7 +173,8 @@ class LLMRouter:
 
     def route(self, transcript: str) -> Plan | None:
         """Route a transcript through the LLM. Returns Plan or None on failure/no_match."""
-        tools = self._build_tools_array()
+        with self._reload_lock:
+            tools = self._build_tools_array()
         if not tools:
             return None
 
@@ -298,7 +303,8 @@ class LLMRouter:
         Does NOT mutate any router state visible to subsequent ``route()`` calls —
         the stateless-per-call contract is preserved.
         """
-        tools = self._build_tools_array()
+        with self._reload_lock:
+            tools = self._build_tools_array()
         if not tools:
             logger.debug("LLM router warmup skipped: no tools in registry")
             return False

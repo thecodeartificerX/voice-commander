@@ -27,6 +27,7 @@ imported at the top of ``daemon.py`` and is patchable via
 from __future__ import annotations
 
 import queue
+import threading
 from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace
@@ -213,6 +214,29 @@ def test_factory_propagates_llm_timeout(base_cfg: Config) -> None:
     router_cfg_arg = mock_router_cls.call_args.args[0]
     assert router_cfg_arg.timeout_ms == 800, (
         f"Expected LLMConfig.timeout_ms=800, got {router_cfg_arg.timeout_ms}"
+    )
+
+
+@pytest.mark.integration
+def test_factory_wires_reload_lock_to_llm_router(base_cfg: Config) -> None:
+    """LLMRouter must receive a threading.Lock as its third argument (reload_lock).
+
+    The lock wiring is the core change in PR #39 / issue #11.  If a future
+    refactor drops the third argument, LLMRouter raises TypeError at runtime
+    with no test signal — this test catches that regression.
+    """
+    captured: dict[str, Any] = {}
+
+    def capture_router(cfg: Any, registry: Any, reload_lock: Any) -> MagicMock:
+        captured["lock"] = reload_lock
+        return MagicMock(spec=LLMRouter)
+
+    with _full_patches(**_base_patch_kwargs(llm_router_cls=capture_router)):
+        build_streaming_daemon(base_cfg)
+
+    assert "lock" in captured, "LLMRouter constructor was never called"
+    assert isinstance(captured["lock"], threading.Lock), (
+        f"Expected threading.Lock as third arg, got {type(captured['lock'])}"
     )
 
 
