@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ..commands.store import CommandStore, WorkflowStore
     from ..dispatcher import Dispatcher
     from ..event_bus import EventBus
+    from ..llm_router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ def create_app(
     dispatcher: Dispatcher | None = None,
     llm_context: dict[str, object] | None = None,
     config_path: Path | None = None,
+    llm_router: LLMRouter | None = None,
 ) -> FastAPI:
     """Create and return the FastAPI application for the command management dashboard.
 
@@ -341,6 +343,17 @@ def create_app(
             dispatcher=dispatcher,
             llm_context=dict(llm_context or {}),
             config_path=config_path,
+            event_bus=event_bus,
+        )
+
+    if llm_router is not None:
+        from .prompt import attach_prompt_routes
+
+        attach_prompt_routes(
+            app,
+            templates=templates,
+            llm_router=llm_router,
+            reload_lock=reload_lock,
             event_bus=event_bus,
         )
 

@@ -6,6 +6,7 @@ import json
 import logging
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -16,8 +17,9 @@ from .registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+_TEMPLATE_PATH = Path(__file__).resolve().parent / "prompt_template.txt"
 
-_SYSTEM_PROMPT_TEMPLATE = """You are an intent matcher for a Windows voice assistant.
+_FALLBACK_TEMPLATE = """You are an intent matcher for a Windows voice assistant.
 
 You do not plan multi-step actions. You do not choose keyboard
 shortcuts. You pick exactly ONE tool from the list below whose
@@ -41,6 +43,21 @@ Rules
   not force a match when none is appropriate.
 - Never invent tool names. Only call tools that appear in the list.
 """
+
+
+def _load_template() -> str:
+    """Read the prompt template from the external file.
+
+    Falls back to ``_FALLBACK_TEMPLATE`` if the file is missing, logging a
+    warning so operators notice the degraded state.
+    """
+    try:
+        return _TEMPLATE_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        logger.warning(
+            "prompt template file not found at %s — using fallback", _TEMPLATE_PATH
+        )
+        return _FALLBACK_TEMPLATE
 
 
 class LLMRouter:
@@ -77,15 +94,45 @@ class LLMRouter:
         self._system_prompt = self._build_system_prompt()
 
     def _build_system_prompt(self) -> str:
-        """Assemble the system prompt from the module-level template.
+        """Assemble the system prompt from the external template file.
 
-        ``default_browser`` is interpolated from config at construction time.
-        Kept as a method (not an inline f-string) so tests can exercise the
-        prompt surface without booting an LLMRouter.
+        ``default_browser`` is interpolated from config.  Re-reads the file
+        each time so ``reload_prompt()`` picks up on-disk changes.
         """
-        return _SYSTEM_PROMPT_TEMPLATE.format(
+        return _load_template().format(
             default_browser=self._config.default_browser,
         )
+
+    def reload_prompt(self) -> None:
+        """Re-read the template file and rebuild the cached system prompt.
+
+        Called under reload_lock by the web layer after a template save.
+        """
+        self._system_prompt = self._build_system_prompt()
+
+    def composed_prompt_data(self) -> dict[str, Any]:
+        """Return structured data for the prompt inspector UI.
+
+        Returns dict with keys:
+        - template_raw: str — raw template text with placeholders
+        - template_resolved: str — template with placeholders filled
+        - placeholders: dict[str, str] — placeholder name → resolved value
+        - tools: list[dict] — the tools JSON array as sent to LLM
+        - tools_count: int
+        - model_id: str
+        - endpoint_url: str
+        """
+        with self._reload_lock:
+            tools = self._build_tools_array()
+        return {
+            "template_raw": _load_template(),
+            "template_resolved": self._system_prompt,
+            "placeholders": {"default_browser": self._config.default_browser},
+            "tools": tools,
+            "tools_count": len(tools),
+            "model_id": self._config.model_id,
+            "endpoint_url": self._config.endpoint_url,
+        }
 
     def _build_tools_array(self) -> list[dict[str, Any]]:
         """Build OpenAI-compatible tools array from registry.
