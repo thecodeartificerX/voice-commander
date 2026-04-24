@@ -1,0 +1,29 @@
+category = "perception"
+
+[tools.get_focused_window]
+description = "Return the currently focused window title and process name."
+phrases = []
+enabled = true
+llm_only = true
+settle_ms = 0
+
+[tools.list_windows]
+description = "List all visible, non-minimized windows (title + process, max 20)."
+phrases = []
+enabled = true
+llm_only = true
+settle_ms = 0
+
+[tools.get_clipboard]
+description = "Return current clipboard text content (max 500 chars)."
+phrases = []
+enabled = true
+llm_only = true
+settle_ms = 0
+
+[tools.list_processes]
+description = "List running processes that have visible windows."
+phrases = []
+enabled = true
+llm_only = true
+settle_ms = 0

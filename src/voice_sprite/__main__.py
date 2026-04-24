@@ -108,7 +108,7 @@ def main() -> None:
     from .chat_log import ChatLog
     from .chat_log_renderer import ChatLogRenderer
     from .llm_summary_client import LLMSummaryClient
-    from .plan_outcome_handler import handle_plan_outcome
+    from .plan_outcome_handler import handle_ask_user, handle_plan_outcome
     from .summarizer import Summarizer
     from .summary_rules import CHAIN_DETECTORS, RULES
 
@@ -227,6 +227,8 @@ def main() -> None:
         renderer.set_muted(sm.muted)
         if event_type == "plan_outcome":
             handle_plan_outcome(data, summarizer, chat_log)
+        if event_type == "ask_user":
+            handle_ask_user(data, chat_log)
         if event_type == "tool_fired" and "name" in data:
             bubble.show(data["name"])
 

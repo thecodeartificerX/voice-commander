@@ -167,3 +167,36 @@ description = "Number of scroll clicks."
 required = false
 type = "integer"
 default = 3
+
+[tools.done]
+description = "Signal that the agentic loop has completed its goal. Use done(success=true) when the goal is achieved, done(success=false) when the goal is impossible."
+phrases = []
+enabled = true
+llm_only = true
+settle_ms = 0
+
+[tools.done.args.success]
+description = "Whether the goal was achieved."
+type = "boolean"
+default = true
+
+[tools.done.args.summary]
+description = "Optional one-line summary of what was accomplished."
+type = "string"
+default = ""
+
+[tools.ask_user]
+description = "Ask the user a clarifying question via HUD overlay. Use when ambiguity cannot be resolved from context (e.g. multiple matching windows)."
+phrases = []
+enabled = true
+llm_only = true
+settle_ms = 0
+
+[tools.ask_user.args.question]
+description = "The question to display to the user."
+type = "string"
+
+[tools.ask_user.args.options]
+description = "Comma-separated numbered options (e.g. '1. VS Code, 2. Terminal, 3. Notepad'). Empty string if free-form answer expected."
+type = "string"
+default = ""

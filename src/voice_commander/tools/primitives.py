@@ -544,3 +544,35 @@ def no_match(reason: str) -> None:
     """
     # Body intentionally empty — router treats no_match as the "None plan" signal.
     return
+
+
+# ---------------------------------------------------------------------------
+# done
+# ---------------------------------------------------------------------------
+
+
+@tool
+def done(success: bool = True, summary: str = "") -> None:
+    """Signal that the agentic loop has completed its goal.
+
+    Intercepted by :class:`AgenticRouter` — body is a no-op.
+    ``success=False`` triggers a miss chime.
+    """
+    # Body intentionally empty — AgenticRouter intercepts done before dispatch.
+    return
+
+
+# ---------------------------------------------------------------------------
+# ask_user
+# ---------------------------------------------------------------------------
+
+
+@tool
+def ask_user(question: str, options: str = "") -> None:
+    """Ask the user a clarifying question via HUD overlay.
+
+    Intercepted by :class:`AgenticRouter` — body is a no-op.
+    The question and numbered options are rendered in the sprite overlay.
+    """
+    # Body intentionally empty — AgenticRouter intercepts ask_user before dispatch.
+    return

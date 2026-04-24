@@ -18,8 +18,8 @@ import soundfile as sf
 from silero_vad import load_silero_vad
 
 from . import resolver as param_resolver
+from .agentic_router import AgenticRouter
 from .config import Config, log_llm_sources
-from .tools import primitives as tool_primitives
 from .dispatcher import Dispatcher
 from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
@@ -30,6 +30,7 @@ from .registry import ToolRegistry, discover
 from .streaming_recorder import StreamingRecorder
 from .tool_metadata import ToolMetadataStore
 from .tool_schema import sig_to_json_schema
+from .tools import primitives as tool_primitives
 from .transcriber import Transcriber, TranscriptionResult
 from .vad_gate import VADGate
 from .validator import validate_config_or_die, validate_or_die
@@ -68,6 +69,7 @@ class StreamingDaemon:
         output_dir: str = "outputs",
         web_server: WebServer | None = None,
         event_bus: EventBus | None = None,
+        agentic_router: AgenticRouter | None = None,
     ) -> None:
         self._feedback = feedback
         self._recorder = recorder
@@ -82,6 +84,7 @@ class StreamingDaemon:
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._web_server = web_server
         self._event_bus = event_bus
+        self._agentic_router = agentic_router
 
         self._utt_q: queue.Queue[npt.NDArray[np.float32] | None] = queue.Queue(maxsize=8)
         self._pipeline_thread: threading.Thread | None = None
@@ -255,7 +258,9 @@ class StreamingDaemon:
                 ).to_event_dict(),
             )
             return
-        self._dispatcher.run_plan(result.text, plan, self._registry)
+        outcome = self._dispatcher.run_plan(result.text, plan, self._registry)
+        if outcome.status in ("miss", "error") and self._agentic_router is not None:
+            self._agentic_router.run(result.text, failed_plan=outcome)
         self._write_plan_async(result.text, plan)
 
     def _write_utterance_async(self, utterance: npt.NDArray[np.float32]) -> None:
@@ -481,8 +486,8 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     validate_config_or_die(cfg)
     validate_or_die(registry, store)
 
-    # Log every [llm].* field and its winning source (env / config.local.toml /
-    # config.toml / default) before anything reads cfg.llm at runtime.
+    # Log every [llm].* field and its winning source (env / config.toml /
+    # default) before anything reads cfg.llm at runtime.
     log_llm_sources(cfg)
 
     # Wire the parameter resolver's threshold accessors to the live LLMConfig
@@ -500,6 +505,18 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
             logger.info("LLM router warmup succeeded")
         else:
             logger.warning("LLM router warmup failed — LM Studio may be offline")
+
+    # Agentic Router — gated by config flag.
+    agentic_router: AgenticRouter | None = None
+    if cfg.llm.agentic_fallback:
+        agentic_router = AgenticRouter(
+            config=cfg.llm,
+            registry=registry,
+            dispatcher=dispatcher,
+            event_bus=event_bus,
+            max_steps=cfg.llm.max_agentic_steps,
+        )
+        logger.info("Agentic fallback router enabled (max_steps=%d)", cfg.llm.max_agentic_steps)
 
     # Web server — enabled by config + not suppressed by env var.
     web_server: WebServer | None = None
@@ -522,6 +539,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         output_dir=cfg.audio.output_dir,
         web_server=web_server,
         event_bus=event_bus,
+        agentic_router=agentic_router,
     )
     daemon._recorder = StreamingRecorder(
         device=cfg.audio.device if cfg.audio.device >= 0 else None,

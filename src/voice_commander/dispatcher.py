@@ -27,7 +27,7 @@ class Dispatcher:
         if self._event_bus is not None:
             self._event_bus.publish(event_type, data)
 
-    def run_plan(self, transcript: str, plan: Plan, registry: ToolRegistry) -> None:
+    def run_plan(self, transcript: str, plan: Plan, registry: ToolRegistry) -> PlanOutcome:
         """Execute a multi-step plan from the LLM router.
 
         If ``plan.strict`` is True (default), execution halts on the first failed
@@ -92,3 +92,4 @@ class Dispatcher:
             duration_ms=int((time.perf_counter() - start_s) * 1000),
         )
         self._publish("plan_outcome", outcome.to_event_dict())
+        return outcome
