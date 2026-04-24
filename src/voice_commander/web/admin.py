@@ -420,8 +420,6 @@ def _parse_command_form(
     ``kwargs_json``.  Returns the validated ``CommandDef`` on success or an
     error string on validation failure.
     """
-    from ..tool_metadata import ArgMetadata as _ArgMeta
-
     synonyms_list = tuple(s.strip() for s in synonyms.splitlines() if s.strip())
 
     kwargs: dict[str, Any]
@@ -435,15 +433,15 @@ def _parse_command_form(
     else:
         kwarg_fields = kwarg_fields or {}
         kwargs = {}
-        for arg_name, arg_meta in (args_meta or {}).items():
+        for arg_name, arg_meta in args_meta.items():
             raw = kwarg_fields.get(arg_name)
-            if isinstance(arg_meta, _ArgMeta) and arg_meta.type_str == "boolean":
+            if arg_meta.type_str == "boolean":
                 kwargs[arg_name] = raw is not None
             elif raw is None or raw.strip() == "":
-                if isinstance(arg_meta, _ArgMeta) and not arg_meta.required:
+                if not arg_meta.required:
                     continue
                 return f"required kwarg '{arg_name}' is missing"
-            elif isinstance(arg_meta, _ArgMeta) and arg_meta.type_str == "integer":
+            elif arg_meta.type_str == "integer":
                 try:
                     kwargs[arg_name] = int(raw)
                 except ValueError:

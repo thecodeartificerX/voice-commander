@@ -7,6 +7,8 @@ through the integration fixture.
 
 from __future__ import annotations
 
+import json
+
 from voice_commander.commands.store import CommandDef
 from voice_commander.tool_metadata import ArgMetadata
 from voice_commander.web.admin import _parse_command_form
@@ -179,8 +181,6 @@ def test_guided_optional_absent_omitted():
 
 
 def test_advanced_mode_parses_json():
-    import json
-
     result = _parse_command_form(
         name="cmd",
         description="",
@@ -234,8 +234,6 @@ def test_advanced_mode_non_object_json_returns_error():
 
 
 def test_no_args_meta_falls_through_to_json():
-    import json
-
     result = _parse_command_form(
         name="cmd",
         description="",
