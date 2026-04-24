@@ -297,6 +297,72 @@ def test_command_toggle_flips_enabled(client: TestClient, tmp_path: Path) -> Non
     assert raw["commands"]["copy"]["enabled"] is False
 
 
+def test_kwargs_form_returns_fragment_for_known_primitive(client: TestClient) -> None:
+    """GET /command/kwargs-form renders an HTML fragment (200, not full page)."""
+    resp = client.get(
+        "/command/kwargs-form",
+        params={"primitive": "press"},
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+    assert "<html" not in resp.text
+
+
+def test_kwargs_form_unknown_primitive_returns_raw_json_fallback(
+    client: TestClient,
+) -> None:
+    """Unknown primitive (no ArgMetadata) falls back to raw JSON field."""
+    resp = client.get(
+        "/command/kwargs-form",
+        params={"primitive": "nonexistent"},
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+    assert 'name="kwargs_json"' in resp.text
+
+
+def test_command_save_guided_mode_coerces_types(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """Guided mode: kwarg_* fields are accepted and saved correctly."""
+    resp = client.post(
+        "/command/guided_cmd",
+        data={
+            "description": "Guided test",
+            "synonyms": "",
+            "primitive": "press",
+            "kwargs_mode": "guided",
+            "enabled": "true",
+        },
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200, resp.text
+    raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
+    assert "guided_cmd" in raw["commands"]
+    assert raw["commands"]["guided_cmd"]["kwargs"] == {}
+
+
+def test_command_save_advanced_mode_parses_json(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """Advanced mode still accepts kwargs_json — backwards compat."""
+    resp = client.post(
+        "/command/adv_cmd",
+        data={
+            "description": "Advanced test",
+            "synonyms": "",
+            "primitive": "press",
+            "kwargs_json": json.dumps({"combo": "ctrl+z"}),
+            "kwargs_mode": "advanced",
+            "enabled": "true",
+        },
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200, resp.text
+    raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
+    assert raw["commands"]["adv_cmd"]["kwargs"] == {"combo": "ctrl+z"}
+
+
 # ---------------------------------------------------------------------------
 # Workflows CRUD
 # ---------------------------------------------------------------------------

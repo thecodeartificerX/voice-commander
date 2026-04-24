@@ -82,8 +82,11 @@ def attach_admin_routes(
         cmd = cmds.get(name)
         if cmd is None:
             return HTMLResponse(content=f"Command {name!r} not found", status_code=404)
+        entry = registry.by_name(cmd.primitive)
+        args_meta = entry.args_meta if entry is not None else {}
         return templates.TemplateResponse(
-            request, "_command_edit.html", {"cmd": cmd, "is_new": False}
+            request, "_command_edit.html",
+            {"cmd": cmd, "is_new": False, "args_meta": args_meta, "kwargs": cmd.kwargs, "mode": "guided"},
         )
 
     @app.get("/command/new", response_class=HTMLResponse)
@@ -95,8 +98,11 @@ def attach_admin_routes(
             primitive="press",
             kwargs={"combo": ""},
         )
+        entry = registry.by_name("press")
+        args_meta = entry.args_meta if entry is not None else {}
         return templates.TemplateResponse(
-            request, "_command_edit.html", {"cmd": blank, "is_new": True}
+            request, "_command_edit.html",
+            {"cmd": blank, "is_new": True, "args_meta": args_meta, "kwargs": blank.kwargs, "mode": "guided"},
         )
 
     @app.get("/command/{name}/cancel", response_class=HTMLResponse)
@@ -107,6 +113,20 @@ def attach_admin_routes(
             return HTMLResponse(status_code=200)
         return templates.TemplateResponse(request, "_command_card.html", {"cmd": cmd})
 
+    @app.get("/command/kwargs-form", response_class=HTMLResponse)
+    async def command_kwargs_form(
+        request: Request,
+        primitive: str = "press",
+        mode: str = "guided",
+    ) -> HTMLResponse:
+        entry = registry.by_name(primitive)
+        args_meta = entry.args_meta if entry is not None else {}
+        return templates.TemplateResponse(
+            request,
+            "_kwargs_fields.html",
+            {"args_meta": args_meta, "kwargs": {}, "mode": mode},
+        )
+
     @app.post("/command/{name}", response_class=HTMLResponse)
     async def command_save(
         request: Request,
@@ -115,6 +135,7 @@ def attach_admin_routes(
         synonyms: str = Form(default=""),
         primitive: str = Form(default="press"),
         kwargs_json: str = Form(default="{}"),
+        kwargs_mode: str = Form(default="guided"),
         enabled: str = Form(default="true"),
     ) -> HTMLResponse:
         if name == "new":
@@ -122,12 +143,23 @@ def attach_admin_routes(
             if isinstance(resolved, HTMLResponse):
                 return resolved
             name = resolved
+        form_data = await request.form()
+        kwarg_fields = {
+            k[len("kwarg_"):]: str(v)
+            for k, v in form_data.items()
+            if k.startswith("kwarg_")
+        }
+        entry = registry.by_name(primitive)
+        args_meta = entry.args_meta if entry is not None else {}
         parsed = _parse_command_form(
             name=name,
             description=description,
             synonyms=synonyms,
             primitive=primitive,
             kwargs_json=kwargs_json,
+            kwargs_mode=kwargs_mode,
+            kwarg_fields=kwarg_fields,
+            args_meta=args_meta,
             enabled=enabled,
         )
         if isinstance(parsed, str):
@@ -355,15 +387,41 @@ def _parse_command_form(
     synonyms: str,
     primitive: str,
     kwargs_json: str,
+    kwargs_mode: str = "guided",
+    kwarg_fields: dict[str, str] | None = None,
+    args_meta: dict[str, Any] | None = None,
     enabled: str,
 ) -> CommandDef | str:
+    from ..tool_metadata import ArgMetadata as _ArgMeta
+
     synonyms_list = tuple(s.strip() for s in synonyms.splitlines() if s.strip())
-    try:
-        kwargs = json_mod.loads(kwargs_json) if kwargs_json.strip() else {}
-    except json_mod.JSONDecodeError as exc:
-        return f"kwargs JSON invalid: {exc}"
-    if not isinstance(kwargs, dict):
-        return "kwargs must decode to a JSON object"
+
+    if kwargs_mode == "advanced" or not args_meta:
+        try:
+            kwargs = json_mod.loads(kwargs_json) if kwargs_json.strip() else {}
+        except json_mod.JSONDecodeError as exc:
+            return f"kwargs JSON invalid: {exc}"
+        if not isinstance(kwargs, dict):
+            return "kwargs must decode to a JSON object"
+    else:
+        kwarg_fields = kwarg_fields or {}
+        kwargs: dict[str, Any] = {}
+        for arg_name, arg_meta in (args_meta or {}).items():
+            raw = kwarg_fields.get(arg_name)
+            if isinstance(arg_meta, _ArgMeta) and arg_meta.type_str == "boolean":
+                kwargs[arg_name] = raw is not None
+            elif raw is None or raw.strip() == "":
+                if isinstance(arg_meta, _ArgMeta) and not arg_meta.required:
+                    continue
+                return f"required kwarg '{arg_name}' is missing"
+            elif isinstance(arg_meta, _ArgMeta) and arg_meta.type_str == "integer":
+                try:
+                    kwargs[arg_name] = int(raw)
+                except ValueError:
+                    return f"kwarg '{arg_name}' must be an integer, got: {raw!r}"
+            else:
+                kwargs[arg_name] = raw
+
     return CommandDef(
         name=name.strip(),
         description=description.strip(),

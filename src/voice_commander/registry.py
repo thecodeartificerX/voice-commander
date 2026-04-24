@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
 
 if TYPE_CHECKING:
-    from .tool_metadata import ToolMetadataStore
+    from .tool_metadata import ArgMetadata, ToolMetadataStore
 
 F = TypeVar("F", bound=Callable[..., None])
 
@@ -42,6 +42,7 @@ class ToolEntry:
     # LLM only ever sees user-curated commands + workflows.
     internal: bool = False
     origin: Origin = "primitive"
+    args_meta: dict[str, "ArgMetadata"] = field(default_factory=dict)
 
 
 class ToolRegistry:
@@ -126,6 +127,7 @@ class ToolRegistry:
             entry.settle_ms = md.settle_ms
             entry.llm_only = md.llm_only
             entry.internal = md.internal
+            entry.args_meta = dict(md.args)
 
     def reload_metadata(self, store: ToolMetadataStore) -> None:
         """Re-read all TOML and update existing entries.
@@ -146,6 +148,7 @@ class ToolRegistry:
             entry.settle_ms = md.settle_ms
             entry.llm_only = md.llm_only
             entry.internal = md.internal
+            entry.args_meta = dict(md.args)
 
     def __len__(self) -> int:
         return len(self._by_name)
