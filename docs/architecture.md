@@ -240,7 +240,7 @@ class ToolEntry:
     params_schema: dict | None  # OpenAI tool JSON schema (built by tool_schema)
     internal: bool            # True → hidden from LLM tool list; still dispatchable
     origin: Literal["primitive", "command", "workflow"]  # source of entry
-    args_meta: dict[str, ArgMetadata]  # per-param schema for web UI guided kwargs form (ADR 0056)
+    args_meta: dict[str, ArgMetadata]  # per-param schema for web UI guided kwargs form (ADR 0057)
 
 class ToolRegistry:
     def register(self, entry: ToolEntry) -> None: ...
@@ -490,7 +490,7 @@ reload_lock                                    shares ToolRegistry   uses reload
 ### Data Flow (Save Cycle)
 
 1. User clicks Edit → `GET /tool/{name}/edit` → HTMX swaps card to form.
-2. User selects a primitive → `GET /command/kwargs-form?primitive=<name>&mode=guided` → HTMX swaps `#kwargs-section` with schema-driven field inputs sourced from `ToolEntry.args_meta` (ADR 0056).
+2. User selects a primitive → `GET /command/kwargs-form?primitive=<name>&mode=guided` → HTMX swaps `#kwargs-section` with schema-driven field inputs sourced from `ToolEntry.args_meta` (ADR 0057).
 3. User edits → Save → `POST /tool/{name}` with form data (either `kwarg_*` guided fields or `kwargs_json` in advanced mode).
 4. Server validates (non-empty phrases, no duplicates).
 5. Acquires per-tool file lock → atomic TOML write → release.

@@ -1,4 +1,4 @@
-# ADR 0056 — Schema-driven kwargs form for the web UI
+# ADR 0057 — Schema-driven kwargs form for the web UI
 
 **Status**: Accepted
 **Date**: 2026-04-24
