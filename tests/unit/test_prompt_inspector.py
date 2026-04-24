@@ -124,3 +124,23 @@ def test_prompt_template_saved_event_published(
     # Check event was published
     event = q.get(timeout=2)
     assert event.type == "prompt_template_saved"
+
+
+def test_post_prompt_template_oserror_escapes_html(
+    _prompt_env: tuple[TestClient, EventBus, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OSError messages in save failure response are HTML-escaped."""
+    client, _, _ = _prompt_env
+
+    # Point _TEMPLATE_PATH to a non-existent directory so write fails with OSError
+    bogus = Path("Z:/no/such/dir/prompt_template.txt")
+    monkeypatch.setattr("voice_commander.web.prompt._TEMPLATE_PATH", bogus)
+
+    resp = client.post(
+        "/prompt/template",
+        data={"template_text": "Valid template with {default_browser}."},
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 500
+    assert "Save failed" in resp.text

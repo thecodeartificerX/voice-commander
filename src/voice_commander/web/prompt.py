@@ -129,8 +129,15 @@ def attach_prompt_routes(
             os.replace(str(tmp_path), str(_TEMPLATE_PATH))
         except OSError as exc:
             logger.exception("Failed to write prompt template")
+            escaped_exc = (
+                str(exc)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;")
+            )
             return HTMLResponse(
-                content=f'<div class="text-red-400 text-sm">Save failed: {exc}</div>',
+                content=f'<div class="text-red-400 text-sm">Save failed: {escaped_exc}</div>',
                 status_code=500,
             )
 

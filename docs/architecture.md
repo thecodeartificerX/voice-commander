@@ -379,15 +379,17 @@ class StreamingDaemon:
 
 ```python
 class LLMRouter:
-    def __init__(self, config: LLMRouterConfig, registry: ToolRegistry) -> None: ...
-    def route(self, transcript: str) -> Plan | None: ...
+    def __init__(self, config: LLMRouterConfig, registry: ToolRegistry, reload_lock: threading.Lock) -> None: ...
+    def route(self, transcript: str, env_context: str | None = None) -> Plan | None: ...
+    def reload_prompt(self) -> None: ...
+    def composed_prompt_data(self) -> dict[str, Any]: ...
     def warmup(self) -> bool: ...
     def close(self) -> None: ...
     @property
     def metrics(self) -> dict[str, Any]: ...
 ```
 
-**What it does:** One-shot tool-call planner via local LM Studio. `route()` sends the transcript to the configured LM Studio endpoint as an OpenAI-compatible chat completion with `tool_choice="required"`. It parses the response into a `Plan` of `ToolCall` steps. Returns `None` on timeout, connection error, HTTP error, malformed response, no tool_calls in response, or if the LLM calls `no_match`. `warmup()` posts a real chat-completion request with a synthetic transcript and `max_tokens=1` to prefill LM Studio's KV cache before the first real utterance. Returns `True` on success, `False` on any error. `close()` shuts down the underlying `httpx.Client`. Tracks simple metrics (total calls, timeouts, errors, avg latency).
+**What it does:** One-shot tool-call planner via local LM Studio. `route()` sends the transcript to the configured LM Studio endpoint as an OpenAI-compatible chat completion with `tool_choice="required"`. It parses the response into a `Plan` of `ToolCall` steps. Returns `None` on timeout, connection error, HTTP error, malformed response, no tool_calls in response, or if the LLM calls `no_match`. `warmup()` posts a real chat-completion request with a synthetic transcript and `max_tokens=1` to prefill LM Studio's KV cache before the first real utterance. Returns `True` on success, `False` on any error. `close()` shuts down the underlying `httpx.Client`. Tracks simple metrics (total calls, timeouts, errors, avg latency). `reload_prompt()` re-reads the external template file and rebuilds the cached system prompt — called by the web layer under `reload_lock` after a template save. `composed_prompt_data()` returns structured data (raw template, resolved template, placeholders, tools array, model/endpoint info) for the Prompt Inspector UI.
 
 **Who calls it:** `StreamingDaemon._process_utterance()` directly, on every utterance that passes the confidence/word-count gates.
 
@@ -479,7 +481,7 @@ reload_lock                                    shares ToolRegistry   uses reload
 
 - **`ToolMetadataStore`** — reads/writes sidecar TOML files next to tool Python modules. Atomic writes via tmp+rename. Per-tool file locking via `portalocker`.
 - **`WebServer`** — wraps uvicorn on a daemon thread. Port-bump fallback (8765 → 8775). Graceful shutdown via `should_exit`.
-- **`FastAPI app`** — 6 routes: dashboard, healthz, edit form, cancel edit, save, toggle. HTMX fragments for partial page updates.
+- **`FastAPI app`** — 10 routes: dashboard, healthz, edit form, cancel edit, save, toggle, prompt inspect, prompt edit, prompt save, prompt tools. HTMX fragments for partial page updates.
 - **`reload_lock`** — `threading.Lock` guards registry mutations. Held μs for reads, ms for saves.
 
 ### Data Flow (Save Cycle)

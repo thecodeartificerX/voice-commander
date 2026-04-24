@@ -162,3 +162,38 @@ def test_composed_prompt_data_includes_tools() -> None:
     assert data["tools_count"] >= 1
     tool_names = [t["function"]["name"] for t in data["tools"]]
     assert "test_tool" in tool_names
+
+
+def test_fallback_when_template_file_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Falls back to _FALLBACK_TEMPLATE when file raises a non-FileNotFoundError OSError."""
+    from unittest.mock import patch
+
+    template_file = tmp_path / "prompt_template.txt"
+    template_file.write_text("content", encoding="utf-8")
+    monkeypatch.setattr(
+        "voice_commander.llm_router._TEMPLATE_PATH",
+        template_file,
+    )
+
+    with patch.object(Path, "read_text", side_effect=PermissionError("Access denied")):
+        text = _load_template()
+    assert text == _FALLBACK_TEMPLATE
+
+
+def test_build_system_prompt_fallback_on_stray_placeholder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stray {foo} in template causes fallback, not crash."""
+    template_file = tmp_path / "prompt_template.txt"
+    template_file.write_text(
+        "Prompt with {default_browser} and stray {foo}.", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "voice_commander.llm_router._TEMPLATE_PATH", template_file
+    )
+    router = _make_router(default_browser="firefox")
+    # Should have fallen back to _FALLBACK_TEMPLATE, not crashed
+    assert "'firefox'" in router._system_prompt
+    assert "{foo}" not in router._system_prompt

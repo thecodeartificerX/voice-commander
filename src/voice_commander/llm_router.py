@@ -53,9 +53,9 @@ def _load_template() -> str:
     """
     try:
         return _TEMPLATE_PATH.read_text(encoding="utf-8")
-    except FileNotFoundError:
+    except (OSError, UnicodeDecodeError):
         logger.warning(
-            "prompt template file not found at %s — using fallback", _TEMPLATE_PATH
+            "prompt template not readable at %s — using fallback", _TEMPLATE_PATH
         )
         return _FALLBACK_TEMPLATE
 
@@ -98,10 +98,21 @@ class LLMRouter:
 
         ``default_browser`` is interpolated from config.  Re-reads the file
         each time so ``reload_prompt()`` picks up on-disk changes.
+        Falls back to ``_FALLBACK_TEMPLATE`` if the template has stray placeholders.
         """
-        return _load_template().format(
-            default_browser=self._config.default_browser,
-        )
+        template = _load_template()
+        try:
+            return template.format(
+                default_browser=self._config.default_browser,
+            )
+        except (KeyError, ValueError, IndexError) as exc:
+            logger.warning(
+                "prompt template has invalid placeholders (%s) — using fallback",
+                exc,
+            )
+            return _FALLBACK_TEMPLATE.format(
+                default_browser=self._config.default_browser,
+            )
 
     def reload_prompt(self) -> None:
         """Re-read the template file and rebuild the cached system prompt.
@@ -123,10 +134,12 @@ class LLMRouter:
         - endpoint_url: str
         """
         with self._reload_lock:
+            template_raw = _load_template()
+            template_resolved = self._system_prompt
             tools = self._build_tools_array()
         return {
-            "template_raw": _load_template(),
-            "template_resolved": self._system_prompt,
+            "template_raw": template_raw,
+            "template_resolved": template_resolved,
             "placeholders": {"default_browser": self._config.default_browser},
             "tools": tools,
             "tools_count": len(tools),
