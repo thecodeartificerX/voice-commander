@@ -64,9 +64,7 @@ def _substitute_string(template: str, context: Mapping[str, Any]) -> str:
     def _replace(match: re.Match[str]) -> str:
         key = match.group(1)
         if key not in context:
-            raise TemplateError(
-                f"Unknown placeholder {{{key}}} in template {template!r}"
-            )
+            raise TemplateError(f"Unknown placeholder {{{key}}} in template {template!r}")
         return str(context[key])
 
     return _PLACEHOLDER.sub(_replace, template)

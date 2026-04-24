@@ -357,8 +357,10 @@ def test_apply_win32_flags_non_windows_logs_warning():
     bubble = MagicMock()
     win = _make_window(renderer, bubble)
 
-    with patch("voice_sprite.window.platform") as mock_platform, \
-         patch("voice_sprite.window.logger") as mock_logger:
+    with (
+        patch("voice_sprite.window.platform") as mock_platform,
+        patch("voice_sprite.window.logger") as mock_logger,
+    ):
         mock_platform.system.return_value = "Linux"
         win.apply_win32_flags()
 
@@ -374,9 +376,11 @@ def test_apply_win32_flags_no_hwnd_logs_error():
     # canvas with no 'hwnd' attr, no '_hwnd' fallback either
     win.canvas = MagicMock(spec=[])  # spec=[] → hasattr returns False for anything
 
-    with patch("voice_sprite.window.platform") as mock_platform, \
-         patch("voice_sprite.window.logger") as mock_logger, \
-         patch.dict("sys.modules", {"voice_sprite.win32_flags": MagicMock()}):
+    with (
+        patch("voice_sprite.window.platform") as mock_platform,
+        patch("voice_sprite.window.logger") as mock_logger,
+        patch.dict("sys.modules", {"voice_sprite.win32_flags": MagicMock()}),
+    ):
         mock_platform.system.return_value = "Windows"
         win.apply_win32_flags()
 
@@ -395,8 +399,10 @@ def test_apply_win32_flags_calls_apply_click_through():
 
     mock_win32 = MagicMock()
 
-    with patch("voice_sprite.window.platform") as mock_platform, \
-         patch.dict("sys.modules", {"voice_sprite.win32_flags": mock_win32}):
+    with (
+        patch("voice_sprite.window.platform") as mock_platform,
+        patch.dict("sys.modules", {"voice_sprite.win32_flags": mock_win32}),
+    ):
         mock_platform.system.return_value = "Windows"
         win.apply_win32_flags()
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -25,7 +24,6 @@ from voice_commander.commands.template import TemplateError
 from voice_commander.dispatcher import Dispatcher
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.registry import ToolEntry, ToolRegistry
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -271,9 +269,7 @@ def test_workflow_uses_context_for_default_browser(tmp_path: Path) -> None:
                 synonyms=(),
                 args=(),
                 steps=(
-                    WorkflowStep(
-                        ref="primitive:focus", kwargs={"target": "{default_browser}"}
-                    ),
+                    WorkflowStep(ref="primitive:focus", kwargs={"target": "{default_browser}"}),
                 ),
             )
         ],

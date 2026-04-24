@@ -31,9 +31,7 @@ def test_prompt_token_budget() -> None:
     """Stays well under the 4000-char soft cap — intent matching is cheap."""
     router = _make_router()
     prompt = router._build_system_prompt()
-    assert len(prompt) < 4000, (
-        f"System prompt length {len(prompt)} exceeds the 4000-char soft cap"
-    )
+    assert len(prompt) < 4000, f"System prompt length {len(prompt)} exceeds the 4000-char soft cap"
 
 
 def test_prompt_explains_intent_matching() -> None:

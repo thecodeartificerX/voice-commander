@@ -61,9 +61,7 @@ def attach_admin_routes(
     def _reload() -> None:
         """Reload commands + workflows under reload_lock."""
         with reload_lock:
-            reload_commands_all(
-                registry, command_store, workflow_store, dispatcher, llm_context
-            )
+            reload_commands_all(registry, command_store, workflow_store, dispatcher, llm_context)
 
     # ------------------------------------------------------------------
     # Commands
@@ -107,9 +105,7 @@ def attach_admin_routes(
         cmd = cmds.get(name)
         if cmd is None:
             return HTMLResponse(status_code=200)
-        return templates.TemplateResponse(
-            request, "_command_card.html", {"cmd": cmd}
-        )
+        return templates.TemplateResponse(request, "_command_card.html", {"cmd": cmd})
 
     @app.post("/command/{name}", response_class=HTMLResponse)
     async def command_save(
@@ -121,6 +117,11 @@ def attach_admin_routes(
         kwargs_json: str = Form(default="{}"),
         enabled: str = Form(default="true"),
     ) -> HTMLResponse:
+        if name == "new":
+            resolved = await _resolve_new_name(request, "command_save")
+            if isinstance(resolved, HTMLResponse):
+                return resolved
+            name = resolved
         parsed = _parse_command_form(
             name=name,
             description=description,
@@ -137,9 +138,7 @@ def attach_admin_routes(
             return HTMLResponse(content=str(exc), status_code=400)
         _reload()
         _publish("command_saved", {"name": parsed.name})
-        return templates.TemplateResponse(
-            request, "_command_card.html", {"cmd": parsed}
-        )
+        return templates.TemplateResponse(request, "_command_card.html", {"cmd": parsed})
 
     @app.post("/command/{name}/toggle", response_class=HTMLResponse)
     async def command_toggle(request: Request, name: str) -> HTMLResponse:
@@ -158,9 +157,7 @@ def attach_admin_routes(
         command_store.save_one(flipped)
         _reload()
         _publish("command_saved", {"name": cmd.name})
-        return templates.TemplateResponse(
-            request, "_command_card.html", {"cmd": flipped}
-        )
+        return templates.TemplateResponse(request, "_command_card.html", {"cmd": flipped})
 
     @app.post("/command/{name}/delete", response_class=HTMLResponse)
     async def command_delete(request: Request, name: str) -> HTMLResponse:
@@ -222,6 +219,11 @@ def attach_admin_routes(
         steps_json: str = Form(default="[]"),
         enabled: str = Form(default="true"),
     ) -> HTMLResponse:
+        if name == "new":
+            resolved = await _resolve_new_name(request, "workflow_save")
+            if isinstance(resolved, HTMLResponse):
+                return resolved
+            name = resolved
         parsed = _parse_workflow_form(
             name=name,
             description=description,
@@ -238,9 +240,7 @@ def attach_admin_routes(
             return HTMLResponse(content=str(exc), status_code=400)
         _reload()
         _publish("workflow_saved", {"name": parsed.name})
-        return templates.TemplateResponse(
-            request, "_workflow_card.html", {"wf": parsed}
-        )
+        return templates.TemplateResponse(request, "_workflow_card.html", {"wf": parsed})
 
     @app.post("/workflow/{name}/toggle", response_class=HTMLResponse)
     async def workflow_toggle(request: Request, name: str) -> HTMLResponse:
@@ -259,9 +259,7 @@ def attach_admin_routes(
         workflow_store.save_one(flipped)
         _reload()
         _publish("workflow_saved", {"name": wf.name})
-        return templates.TemplateResponse(
-            request, "_workflow_card.html", {"wf": flipped}
-        )
+        return templates.TemplateResponse(request, "_workflow_card.html", {"wf": flipped})
 
     @app.post("/workflow/{name}/delete", response_class=HTMLResponse)
     async def workflow_delete(request: Request, name: str) -> HTMLResponse:
@@ -283,9 +281,7 @@ def attach_admin_routes(
         if config_path.exists():
             with config_path.open("rb") as fh:
                 raw = tomllib.load(fh)
-        return templates.TemplateResponse(
-            request, "_config_form.html", {"cfg": raw}
-        )
+        return templates.TemplateResponse(request, "_config_form.html", {"cfg": raw})
 
     @app.post("/config", response_class=HTMLResponse)
     async def config_save(
@@ -336,6 +332,20 @@ def attach_admin_routes(
 # ---------------------------------------------------------------------------
 # Form parsers
 # ---------------------------------------------------------------------------
+
+
+async def _resolve_new_name(request: Request, handler: str) -> str | HTMLResponse:
+    """Read the 'name' field from the form body for POST /*/new routes."""
+    try:
+        form_data = await request.form()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("%s: failed to read form body: %s", handler, exc)
+        return HTMLResponse(content="could not read form data", status_code=400)
+    form_name = str(form_data.get("name", "")).strip()
+    if not form_name:
+        return HTMLResponse(content="'name' field is required", status_code=400)
+    logger.debug("%s: resolved name %r from form field", handler, form_name)
+    return form_name
 
 
 def _parse_command_form(

@@ -27,8 +27,8 @@ from voice_commander.commands.store import (
     CommandDef,
     CommandStore,
     WorkflowDef,
-    WorkflowStore,
     WorkflowStep,
+    WorkflowStore,
 )
 from voice_commander.commands.template import TemplateError, substitute
 from voice_commander.dispatcher import Dispatcher
@@ -208,9 +208,7 @@ def _build_workflow_plan(
         try:
             resolved = substitute(step.kwargs, merged_ctx)
         except TemplateError as exc:
-            raise TemplateError(
-                f"workflow {wf.name!r} step {i} ({step.ref}): {exc}"
-            ) from exc
+            raise TemplateError(f"workflow {wf.name!r} step {i} ({step.ref}): {exc}") from exc
         target_name = _resolve_step_ref(step, registry)
         steps.append(ToolCall(name=target_name, kwargs=resolved))
     return Plan(
@@ -240,9 +238,7 @@ def _resolve_step_ref(step: WorkflowStep, registry: ToolRegistry) -> str:
         # We can't unwrap that plan here without re-parsing, so we invoke
         # the command's func directly via a same-name dispatch.
         return name
-    raise ValueError(
-        f"Unknown workflow step ref kind {kind!r} (expected 'primitive' or 'command')"
-    )
+    raise ValueError(f"Unknown workflow step ref kind {kind!r} (expected 'primitive' or 'command')")
 
 
 def _make_workflow_func(

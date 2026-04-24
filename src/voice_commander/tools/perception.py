@@ -200,6 +200,7 @@ def list_processes() -> list[dict[str, str | int]]:
     visible_pids: set[int] = set()
     try:
         import win32process
+
         for w in visible_windows:
             hwnd = w.get("hwnd")
             if hwnd:
@@ -248,6 +249,7 @@ def list_processes() -> list[dict[str, str | int]]:
     capped = results[:20]
     logger.debug(
         "list_processes: returning %d entries (visible_pids=%d)",
-        len(capped), len(visible_pids),
+        len(capped),
+        len(visible_pids),
     )
     return capped

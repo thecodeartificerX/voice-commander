@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 import os
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Mapping, TypeVar, get_type_hints
+from typing import Any, TypeVar, get_type_hints
 
 T = TypeVar("T")
 
@@ -172,9 +173,7 @@ class Config:
 _ENV_PREFIX = "VC_LLM_"
 
 
-def _resolve_llm_fields(
-    *, file_llm: dict[str, Any]
-) -> tuple[dict[str, Any], dict[str, str]]:
+def _resolve_llm_fields(*, file_llm: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     """Resolve every LLMConfig field from env / config.toml / default.
 
     Returns ``(values, sources)`` where ``sources[field]`` is one of:
@@ -352,9 +351,7 @@ def update_user_config(path: Path, updates: Mapping[str, Mapping[str, Any]]) -> 
         allowed = _USER_EDITABLE_SECTIONS[section]
         for key in payload:
             if key not in allowed:
-                raise ConfigWriteError(
-                    f"Key '[{section}].{key}' is not user-editable"
-                )
+                raise ConfigWriteError(f"Key '[{section}].{key}' is not user-editable")
 
     existing: dict[str, Any] = _read_toml(path) if path.exists() else {}
     for section, payload in updates.items():
