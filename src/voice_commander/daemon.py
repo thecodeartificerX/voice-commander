@@ -542,6 +542,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
             dispatcher=dispatcher,
             llm_context=dict(llm_context),
             config_path=repo_root / "config.toml",
+            llm_router=llm_router,
         )
         web_server = WebServer(app, host=cfg.web.host, port=cfg.web.port)
 

@@ -40,6 +40,7 @@ voice-commander/
 │   ├── dispatcher.py               # runs matched tool, reports to feedback sink
 │   ├── feedback.py                 # Windows / Null / Capturing feedback sinks
 │   ├── llm_router.py               # LM Studio tool-call planner (httpx client)
+│   ├── prompt_template.txt         # external system prompt template (hot-reloadable)
 │   ├── registry.py                 # @tool decorator + auto-discovery
 │   ├── tool_metadata.py            # sidecar TOML read/write + per-tool file locking
 │   ├── tool_schema.py              # Python sig → OpenAI JSON Schema generator
@@ -56,9 +57,11 @@ voice-commander/
 │   │   └── primitives.py + .toml
 │   └── web/                        # embedded FastAPI management UI
 │       ├── app.py                  # routes
+│       ├── prompt.py               # Prompt Inspector routes (inspect/edit/save)
 │       ├── server.py               # uvicorn daemon thread
 │       ├── static/                 # htmx + tailwind bundles, app.css
-│       └── templates/              # Jinja2 templates (HTMX fragments)
+│       ├── templates/              # Jinja2 templates (HTMX fragments)
+│       │   └── _prompt_inspector.html  # Prompt Inspector panel template
 │   └── event_bus.py                # in-process pub/sub for SSE consumers
 │
 ├── src/voice_sprite/                 # sprite companion process (separate from daemon)
