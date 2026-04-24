@@ -158,6 +158,51 @@ def test_command_save_roundtrip(client: TestClient, tmp_path: Path) -> None:
     assert raw["commands"]["new_tab"]["kwargs"] == {"combo": "ctrl+t"}
 
 
+def test_new_command_name_from_form(client: TestClient, tmp_path: Path) -> None:
+    """POST /command/new must use the form-field 'name', not the literal 'new'."""
+    resp = client.post(
+        "/command/new",
+        data={
+            "name": "mute_mic",
+            "description": "Mute the microphone",
+            "synonyms": "mute mic\nmute",
+            "primitive": "press",
+            "kwargs_json": json.dumps({"combo": "ctrl+shift+m"}),
+            "enabled": "true",
+        },
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert "mute_mic" in resp.text
+
+    raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
+    assert "mute_mic" in raw["commands"], "name from form field must be persisted"
+    assert "new" not in raw["commands"], "literal 'new' must not be saved as a command"
+
+
+def test_new_workflow_name_from_form(client: TestClient, tmp_path: Path) -> None:
+    """POST /workflow/new must use the form-field 'name', not the literal 'new'."""
+    resp = client.post(
+        "/workflow/new",
+        data={
+            "name": "morning_routine",
+            "description": "Run morning routine",
+            "synonyms": "morning\nwake up",
+            "args_json": json.dumps([]),
+            "steps_json": json.dumps(
+                [{"ref": "primitive:type", "kwargs": {"text": "Good morning"}}]
+            ),
+            "enabled": "true",
+        },
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
+    assert "morning_routine" in raw["workflows"], "name from form field must be persisted"
+    assert "new" not in raw["workflows"], "literal 'new' must not be saved as a workflow"
+
+
 def test_command_delete_removes_file_entry(
     client: TestClient, tmp_path: Path
 ) -> None:

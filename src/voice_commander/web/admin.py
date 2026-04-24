@@ -121,6 +121,11 @@ def attach_admin_routes(
         kwargs_json: str = Form(default="{}"),
         enabled: str = Form(default="true"),
     ) -> HTMLResponse:
+        if name == "new":
+            form_data = await request.form()
+            form_name = str(form_data.get("name", "")).strip()
+            if form_name:
+                name = form_name
         parsed = _parse_command_form(
             name=name,
             description=description,
@@ -222,6 +227,11 @@ def attach_admin_routes(
         steps_json: str = Form(default="[]"),
         enabled: str = Form(default="true"),
     ) -> HTMLResponse:
+        if name == "new":
+            form_data = await request.form()
+            form_name = str(form_data.get("name", "")).strip()
+            if form_name:
+                name = form_name
         parsed = _parse_workflow_form(
             name=name,
             description=description,
