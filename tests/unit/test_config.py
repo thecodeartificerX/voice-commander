@@ -61,6 +61,23 @@ def test_vad_defaults(tmp_path):
     assert cfg.vad.gates.max_no_speech_prob == 0.6
 
 
+def test_local_file_ignored(tmp_path):
+    """config.local.toml is no longer merged — base values always win."""
+    base = tmp_path / "config.toml"
+    base.write_text("[audio]\ndevice = 13\n")
+    local = tmp_path / "config.local.toml"
+    local.write_text("[audio]\ndevice = 8\n")
+    cfg = Config.load(base)
+    assert cfg.audio.device == 13  # local file ignored
+
+
+def test_local_missing_uses_base(tmp_path):
+    base = tmp_path / "config.toml"
+    base.write_text("[audio]\ndevice = 5\n")
+    cfg = Config.load(base)
+    assert cfg.audio.device == 5
+
+
 def test_vad_overrides(tmp_path):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(

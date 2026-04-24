@@ -19,7 +19,7 @@ from voice_commander.daemon import StreamingDaemon
 from voice_commander.event_bus import EventBus
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.llm_router import LLMRouter
-from voice_commander.plan import Plan, ToolCall
+from voice_commander.plan import Plan, PlanOutcome, ToolCall
 from voice_commander.transcriber import TranscriptionResult
 
 # ---------------------------------------------------------------------------
@@ -504,3 +504,26 @@ def test_process_utterance_publishes_error_when_registry_none(tmp_path):
     assert payload["failed_step_index"] is None
     assert payload["duration_ms"] >= 0
     dispatcher.run_plan.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Miss path — fast-path None goes straight to feedback.on_miss (no agentic).
+# ---------------------------------------------------------------------------
+
+
+def test_process_utterance_calls_on_miss_when_plan_is_none(tmp_path):
+    """Fast-path None → feedback.on_miss once; no retry, no agentic."""
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+        output_dir=str(tmp_path)
+    )
+
+    result = _fake_transcription_result("hello friend", confidence=0.95)
+    transcriber.transcribe.return_value = result
+    llm_router.route.return_value = None  # no matching command/workflow
+
+    daemon._process_utterance(_fake_utterance())
+
+    dispatcher.run_plan.assert_not_called()
+    assert any(name == "on_miss" for name, _ in feedback.calls), (
+        f"Expected an on_miss call on the feedback sink; got {feedback.calls}"
+    )

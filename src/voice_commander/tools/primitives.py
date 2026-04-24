@@ -156,7 +156,7 @@ def focus(target: str) -> None:
     if not _verify_foreground(target_hwnd):
         raise FocusWindowError(
             f"Focus verification failed for target={target!r} "
-            f"hwnd={target_hwnd} (GetForegroundWindow did not match after 200 ms)"
+            f"hwnd={target_hwnd} (GetForegroundWindow did not match after 500 ms)"
         )
 
 
@@ -543,4 +543,36 @@ def no_match(reason: str) -> None:
     The router intercepts ``no_match`` before dispatch — the body is a no-op.
     """
     # Body intentionally empty — router treats no_match as the "None plan" signal.
+    return
+
+
+# ---------------------------------------------------------------------------
+# done
+# ---------------------------------------------------------------------------
+
+
+@tool
+def done(success: bool = True, summary: str = "") -> None:
+    """Signal that the agentic loop has completed its goal.
+
+    Intercepted by :class:`AgenticRouter` — body is a no-op.
+    ``success=False`` triggers a miss chime.
+    """
+    # Body intentionally empty — AgenticRouter intercepts done before dispatch.
+    return
+
+
+# ---------------------------------------------------------------------------
+# ask_user
+# ---------------------------------------------------------------------------
+
+
+@tool
+def ask_user(question: str, options: str = "") -> None:
+    """Ask the user a clarifying question via HUD overlay.
+
+    Intercepted by :class:`AgenticRouter` — body is a no-op.
+    The question and numbered options are rendered in the sprite overlay.
+    """
+    # Body intentionally empty — AgenticRouter intercepts ask_user before dispatch.
     return

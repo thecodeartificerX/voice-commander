@@ -1,4 +1,4 @@
-"""plan_outcome SSE event handler — extracted for testability."""
+"""plan_outcome and ask_user SSE event handlers — extracted for testability."""
 
 from __future__ import annotations
 
@@ -56,6 +56,36 @@ def handle_plan_outcome(
         ChatLogEntry(
             text=summary,
             status=outcome.status,
+            born_at_s=now_provider(),
+        )
+    )
+
+
+def handle_ask_user(
+    data: dict[str, Any],
+    chat_log: ChatLog,
+    now_provider: Callable[[], float] = time.monotonic,
+) -> None:
+    """Process an ``ask_user`` SSE event dict into a HUD ChatLog entry.
+
+    Renders the question and any options as a single chat-log entry with
+    status ``"ok"`` so the user sees the clarification prompt in the overlay.
+    """
+    question = data.get("question", "")
+    options = data.get("options", "")
+
+    if not question:
+        logger.warning("ask_user event with empty question; ignoring")
+        return
+
+    text = question
+    if options:
+        text = f"{question}\n{options}"
+
+    chat_log.append(
+        ChatLogEntry(
+            text=text,
+            status="ok",
             born_at_s=now_provider(),
         )
     )

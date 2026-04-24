@@ -1,18 +1,14 @@
-"""Tests for LLMRouter system-prompt assembly (ADR 0043 few-shot prompt).
+"""Tests for the intent-matcher system prompt used by LLMRouter.
 
-Covers:
-- default_browser substitution in the template.
-- Presence of all three canonical few-shot examples.
-- Approximate token budget (prompt fits well under the LM Studio prefix cap).
-- Prompt mentions strict execution order per the spec.
-- No legacy tool names (focus_browser, new_tab, type_text, press_keys) remain.
+The prompt is now minimal — no few-shot examples, no shortcut cheat-sheet.
+Commands and workflows supply the per-intent description/phrases directly
+through their tool schemas, so the prompt only needs to explain the task
+(pick one tool whose description matches the transcript).
 """
 
 from __future__ import annotations
 
 import threading
-
-import pytest
 
 from voice_commander.config import LLMConfig
 from voice_commander.llm_router import LLMRouter
@@ -27,40 +23,37 @@ def _make_router(default_browser: str = "chrome") -> LLMRouter:
 def test_prompt_substitutes_default_browser() -> None:
     router = _make_router(default_browser="comet")
     prompt = router._build_system_prompt()
-    assert "'comet'" in prompt, "Expected default_browser='comet' in prompt"
-    assert "{default_browser}" not in prompt, (
-        "Placeholder {default_browser} was not fully substituted"
-    )
-
-
-def test_prompt_includes_all_three_examples() -> None:
-    router = _make_router(default_browser="chrome")
-    prompt = router._build_system_prompt()
-    assert "search how to lose weight" in prompt
-    assert "copy that and paste it in notepad" in prompt
-    assert "open spotify" in prompt
+    assert "'comet'" in prompt
+    assert "{default_browser}" not in prompt
 
 
 def test_prompt_token_budget() -> None:
-    """~4 chars/token rule-of-thumb → len(prompt) < 4000 keeps us under 1000 tokens."""
+    """Stays well under the 4000-char soft cap — intent matching is cheap."""
     router = _make_router()
     prompt = router._build_system_prompt()
-    assert len(prompt) < 4000, f"System prompt length {len(prompt)} exceeds the 4000-char soft cap"
-
-
-def test_prompt_mentions_strict_execution_order() -> None:
-    router = _make_router()
-    prompt = router._build_system_prompt()
-    assert "strict execution order" in prompt
-
-
-@pytest.mark.parametrize(
-    "legacy_name",
-    ["focus_browser", "new_tab", "type_text", "press_keys"],
-)
-def test_prompt_no_legacy_tool_names(legacy_name: str) -> None:
-    router = _make_router()
-    prompt = router._build_system_prompt()
-    assert legacy_name not in prompt, (
-        f"Legacy tool name {legacy_name!r} still appears in the few-shot prompt"
+    assert len(prompt) < 4000, (
+        f"System prompt length {len(prompt)} exceeds the 4000-char soft cap"
     )
+
+
+def test_prompt_explains_intent_matching() -> None:
+    """Prompt must steer the model toward single-tool selection."""
+    router = _make_router()
+    prompt = router._build_system_prompt()
+    assert "no_match" in prompt
+    assert "Phrases:" in prompt
+    # No multi-step chaining instructions — the old few-shot prompt leaked
+    # phrases like "Tools:" or "ctrl+t" into the prompt itself, which the
+    # commands-based architecture replaces with per-tool schemas.
+    assert "shortcut cheat-sheet" not in prompt.lower()
+
+
+def test_prompt_no_primitive_leakage() -> None:
+    """The intent-matcher prompt should not hand-roll primitive examples;
+    tool descriptions carry that info now."""
+    router = _make_router()
+    prompt = router._build_system_prompt()
+    for primitive in ("ctrl+t", "ctrl+w", "alt+f4", "win+down"):
+        assert primitive not in prompt, (
+            f"Primitive shortcut {primitive!r} leaked into the system prompt"
+        )

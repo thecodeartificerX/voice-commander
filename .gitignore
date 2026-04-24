@@ -18,6 +18,17 @@ outputs/*
 *.log
 voice-commander.log
 
+# User-owned command + workflow catalogs — seeded from *.default.json on first
+# run. Not tracked so fresh clones regenerate them cleanly and local edits
+# don't leak into commits.
+commands.json
+workflows.json
+commands.json.lock
+workflows.json.lock
+
+# Archon worktree per-clone config
+.archon/
+
 # start.ps1 last-choice persistence
 .last-router-mode
 

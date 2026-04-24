@@ -97,3 +97,91 @@ def test_all_llm_visible_filters_correctly():
         f"Expected all_llm_visible() to return only the enabled+llm_only tool "
         f"('alpha'), got {visible_names}"
     )
+
+
+def test_all_llm_visible_excludes_internal():
+    """internal=True tools must stay hidden from the LLM even if llm_only+enabled."""
+    registry = ToolRegistry()
+    registry.register(
+        ToolEntry(
+            name="public_cmd",
+            phrases=(),
+            func=lambda: None,
+            module="t",
+            docstring=None,
+            enabled=True,
+            llm_only=True,
+            internal=False,
+            origin="command",
+        )
+    )
+    registry.register(
+        ToolEntry(
+            name="hidden_primitive",
+            phrases=(),
+            func=lambda: None,
+            module="t",
+            docstring=None,
+            enabled=True,
+            llm_only=True,
+            internal=True,
+            origin="primitive",
+        )
+    )
+    names = [e.name for e in registry.all_llm_visible()]
+    assert names == ["public_cmd"]
+
+
+def test_by_origin_groups_entries():
+    registry = ToolRegistry()
+    registry.register(
+        ToolEntry(
+            name="press",
+            phrases=(),
+            func=lambda: None,
+            module="t",
+            docstring=None,
+            origin="primitive",
+        )
+    )
+    registry.register(
+        ToolEntry(
+            name="new_tab",
+            phrases=(),
+            func=lambda: None,
+            module="t",
+            docstring=None,
+            origin="command",
+        )
+    )
+    registry.register(
+        ToolEntry(
+            name="search_web",
+            phrases=(),
+            func=lambda: None,
+            module="t",
+            docstring=None,
+            origin="workflow",
+        )
+    )
+    assert [e.name for e in registry.by_origin("primitive")] == ["press"]
+    assert [e.name for e in registry.by_origin("command")] == ["new_tab"]
+    assert [e.name for e in registry.by_origin("workflow")] == ["search_web"]
+
+
+def test_remove_drops_entry():
+    registry = ToolRegistry()
+    registry.register(
+        ToolEntry(
+            name="ephemeral",
+            phrases=(),
+            func=lambda: None,
+            module="t",
+            docstring=None,
+        )
+    )
+    assert registry.by_name("ephemeral") is not None
+    assert registry.remove("ephemeral") is True
+    assert registry.by_name("ephemeral") is None
+    # Second remove returns False (no-op).
+    assert registry.remove("ephemeral") is False
