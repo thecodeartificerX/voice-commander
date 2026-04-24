@@ -19,7 +19,7 @@ from voice_commander.daemon import StreamingDaemon
 from voice_commander.event_bus import EventBus
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.llm_router import LLMRouter
-from voice_commander.plan import Plan, PlanOutcome, ToolCall
+from voice_commander.plan import Plan, ToolCall
 from voice_commander.transcriber import TranscriptionResult
 
 # ---------------------------------------------------------------------------

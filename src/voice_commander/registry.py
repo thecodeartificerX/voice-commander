@@ -74,11 +74,7 @@ class ToolRegistry:
         them dispatchable for commands/workflows that reference them.
         """
         return sorted(
-            (
-                e
-                for e in self._by_name.values()
-                if e.enabled and e.llm_only and not e.internal
-            ),
+            (e for e in self._by_name.values() if e.enabled and e.llm_only and not e.internal),
             key=lambda e: e.name,
         )
 

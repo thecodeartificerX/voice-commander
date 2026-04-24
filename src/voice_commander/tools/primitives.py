@@ -42,6 +42,7 @@ def _set_mute_callback(fn: Callable[[], None] | None) -> None:
     global _mute_callback
     _mute_callback = fn
 
+
 _MAX_TYPE_TEXT_LEN = 500
 
 # Applied to the RESOLVED launch token basename (post-resolver.resolve_app)

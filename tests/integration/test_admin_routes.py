@@ -26,7 +26,6 @@ from voice_commander.commands.store import (
     WorkflowDef,
     WorkflowStep,
     WorkflowStore,
-    seed_if_missing,
 )
 from voice_commander.dispatcher import Dispatcher
 from voice_commander.event_bus import EventBus
@@ -34,7 +33,6 @@ from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.registry import ToolEntry, ToolRegistry
 from voice_commander.tool_metadata import ToolMetadataStore
 from voice_commander.web.app import create_app
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -203,9 +201,7 @@ def test_new_workflow_name_from_form(client: TestClient, tmp_path: Path) -> None
     assert "new" not in raw["workflows"], "literal 'new' must not be saved as a workflow"
 
 
-def test_command_delete_removes_file_entry(
-    client: TestClient, tmp_path: Path
-) -> None:
+def test_command_delete_removes_file_entry(client: TestClient, tmp_path: Path) -> None:
     resp = client.post(
         "/command/copy/delete",
         headers={"HX-Request": "true"},
@@ -237,9 +233,7 @@ def test_workflow_save_with_args(client: TestClient, tmp_path: Path) -> None:
             "description": "Say goodbye",
             "synonyms": "bye {name}",
             "args_json": json.dumps([{"name": "name", "type": "string", "required": True}]),
-            "steps_json": json.dumps(
-                [{"ref": "primitive:type", "kwargs": {"text": "Bye {name}"}}]
-            ),
+            "steps_json": json.dumps([{"ref": "primitive:type", "kwargs": {"text": "Bye {name}"}}]),
             "enabled": "true",
         },
         headers={"HX-Request": "true"},

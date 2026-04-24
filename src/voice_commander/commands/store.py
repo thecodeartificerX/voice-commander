@@ -50,11 +50,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import portalocker
 
@@ -167,9 +167,7 @@ def _validate_name(kind: str, name: str) -> None:
     if not name:
         raise CommandStoreError(f"{kind} name cannot be empty")
     if not set(name).issubset(_NAME_ALLOWED):
-        raise CommandStoreError(
-            f"{kind} name {name!r}: only lowercase a-z, 0-9, and _ allowed"
-        )
+        raise CommandStoreError(f"{kind} name {name!r}: only lowercase a-z, 0-9, and _ allowed")
     if name[0].isdigit():
         raise CommandStoreError(f"{kind} name {name!r}: cannot start with a digit")
 
@@ -193,9 +191,7 @@ class CommandStore:
         raw = _read_json(self._path)
         commands_raw = raw.get("commands", {})
         if not isinstance(commands_raw, dict):
-            raise CommandStoreError(
-                f"{self._path}: 'commands' key must map to an object"
-            )
+            raise CommandStoreError(f"{self._path}: 'commands' key must map to an object")
 
         out: dict[str, CommandDef] = {}
         for name, cdata in commands_raw.items():
@@ -212,9 +208,7 @@ class CommandStore:
             raw = _read_json(self._path)
             commands_raw = raw.setdefault("commands", {})
             if not isinstance(commands_raw, dict):
-                raise CommandStoreError(
-                    f"{self._path}: 'commands' must be an object"
-                )
+                raise CommandStoreError(f"{self._path}: 'commands' must be an object")
             commands_raw[cmd.name] = {
                 "description": cmd.description,
                 "synonyms": list(cmd.synonyms),
@@ -282,9 +276,7 @@ class WorkflowStore:
         raw = _read_json(self._path)
         workflows_raw = raw.get("workflows", {})
         if not isinstance(workflows_raw, dict):
-            raise CommandStoreError(
-                f"{self._path}: 'workflows' key must map to an object"
-            )
+            raise CommandStoreError(f"{self._path}: 'workflows' key must map to an object")
 
         out: dict[str, WorkflowDef] = {}
         for name, wdata in workflows_raw.items():
@@ -300,9 +292,7 @@ class WorkflowStore:
             raw = _read_json(self._path)
             workflows_raw = raw.setdefault("workflows", {})
             if not isinstance(workflows_raw, dict):
-                raise CommandStoreError(
-                    f"{self._path}: 'workflows' must be an object"
-                )
+                raise CommandStoreError(f"{self._path}: 'workflows' must be an object")
             workflows_raw[wf.name] = {
                 "description": wf.description,
                 "synonyms": list(wf.synonyms),
@@ -316,9 +306,7 @@ class WorkflowStore:
                     }
                     for a in wf.args
                 ],
-                "steps": [
-                    {"ref": s.ref, "kwargs": dict(s.kwargs)} for s in wf.steps
-                ],
+                "steps": [{"ref": s.ref, "kwargs": dict(s.kwargs)} for s in wf.steps],
             }
             _write_json_atomic(self._path, raw)
 
@@ -368,19 +356,13 @@ def _parse_workflow(name: str, raw: Mapping[str, Any]) -> WorkflowDef:
         steps: list[WorkflowStep] = []
         for i, s in enumerate(steps_raw):
             if not isinstance(s, dict):
-                raise CommandStoreError(
-                    f"workflow {name!r} step {i}: must be an object"
-                )
+                raise CommandStoreError(f"workflow {name!r} step {i}: must be an object")
             ref = str(s.get("ref", ""))
             if not ref:
-                raise CommandStoreError(
-                    f"workflow {name!r} step {i}: ref is required"
-                )
+                raise CommandStoreError(f"workflow {name!r} step {i}: ref is required")
             kwargs_raw = s.get("kwargs", {})
             if not isinstance(kwargs_raw, dict):
-                raise CommandStoreError(
-                    f"workflow {name!r} step {i}: kwargs must be an object"
-                )
+                raise CommandStoreError(f"workflow {name!r} step {i}: kwargs must be an object")
             steps.append(WorkflowStep(ref=ref, kwargs=dict(kwargs_raw)))
     except TypeError as exc:
         raise CommandStoreError(f"workflow {name!r}: {exc}") from exc

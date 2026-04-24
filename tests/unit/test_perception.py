@@ -7,7 +7,7 @@ the imports are lazy (inside each function body) and CI environments lack pywin3
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from voice_commander.tools.perception import (
     get_clipboard,
@@ -15,7 +15,6 @@ from voice_commander.tools.perception import (
     list_processes,
     list_windows,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -126,8 +125,7 @@ def _build_enum_windows_side_effect(windows: list[tuple[int, bool, bool, str]]):
     """Build a side_effect for EnumWindows given a list of (hwnd, visible, iconic, title)."""
 
     def _side_effect(callback, param):
-        for hwnd, visible, iconic, title in windows:
-            mock_gui = callback.__self__ if hasattr(callback, "__self__") else None
+        for hwnd, _visible, _iconic, _title in windows:
             # callback is the _enum closure defined inside list_windows; we call it directly
             callback(hwnd, param)
 
@@ -138,11 +136,11 @@ def test_list_windows_filters_invisible_and_minimized():
     """Only visible, non-minimized, titled windows are included in results."""
     # Windows: (hwnd, visible, iconic, title)
     windows = [
-        (1, True, False, "Notepad"),      # included
-        (2, False, False, "Hidden"),      # excluded — invisible
-        (3, True, True, "Minimized"),     # excluded — iconic
-        (4, True, False, ""),             # excluded — empty title
-        (5, True, False, "Chrome"),       # included
+        (1, True, False, "Notepad"),  # included
+        (2, False, False, "Hidden"),  # excluded — invisible
+        (3, True, True, "Minimized"),  # excluded — iconic
+        (4, True, False, ""),  # excluded — empty title
+        (5, True, False, "Chrome"),  # included
     ]
 
     mock_win32gui = MagicMock()

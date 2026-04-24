@@ -27,16 +27,12 @@ def _flip_y(img_h: int, y: int, h: int) -> int:
     return img_h - (y + h)
 
 
-def _compute_fit_scale(
-    region_w: float, region_h: float, frame_w: float, frame_h: float
-) -> float:
+def _compute_fit_scale(region_w: float, region_h: float, frame_w: float, frame_h: float) -> float:
     """Largest uniform scale that fits *frame* inside *region* without clipping."""
     return min(region_w / frame_w, region_h / frame_h)
 
 
-def _compute_display_size(
-    frame_w: float, frame_h: float, scale: float
-) -> tuple[float, float]:
+def _compute_display_size(frame_w: float, frame_h: float, scale: float) -> tuple[float, float]:
     """Pixel dimensions of the frame after applying *scale*."""
     return frame_w * scale, frame_h * scale
 
