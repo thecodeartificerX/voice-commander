@@ -35,7 +35,7 @@ class HudConfig:
     llm_summary_timeout_ms: int = 800
     llm_fallback_enabled: bool = True
     llm_endpoint_url: str = "http://localhost:1234/v1"
-    llm_model_id: str = "google/gemma-4-e4b"
+    llm_model_id: str = "google/gemma-4-26b-a4b"
 
 
 @dataclass(frozen=True)
@@ -163,7 +163,7 @@ def _build_hud(hud_raw: dict[str, Any]) -> HudConfig:
         llm_summary_timeout_ms=_opt_int("hud", hud_raw, "llm_summary_timeout_ms", 800, min_val=1),
         llm_fallback_enabled=_opt_bool("hud", hud_raw, "llm_fallback_enabled", True),
         llm_endpoint_url=str(hud_raw.get("llm_endpoint_url", "http://localhost:1234/v1")),
-        llm_model_id=str(hud_raw.get("llm_model_id", "google/gemma-4-e4b")),
+        llm_model_id=str(hud_raw.get("llm_model_id", "google/gemma-4-26b-a4b")),
     )
 
 

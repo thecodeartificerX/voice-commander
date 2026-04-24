@@ -95,14 +95,16 @@ def _attach_thread_input(attach_from: int, attach_to: int, attach: bool) -> None
         logger.debug("AttachThreadInput failed attach=%s", attach, exc_info=True)
 
 
-def _verify_foreground(target_hwnd: int, polls: int = 10, interval_ms: int = 20) -> bool:
+def _verify_foreground(target_hwnd: int, polls: int = 25, interval_ms: int = 20) -> bool:
     """Poll GetForegroundWindow up to *polls* times; return True if it equals target_hwnd.
 
-    Defaults to ~200 ms total (10 × 20 ms). Windows' foreground state can
+    Defaults to ~500 ms total (25 × 20 ms). Windows' foreground state can
     lag behind the SetForegroundWindow call, especially for Chromium-based
     apps (Comet, Chrome, Edge, Slack, VS Code) which do their own window
     management between the kernel notification and the foreground change
-    becoming observable.
+    becoming observable. 200 ms was too tight for Comet — bumped to 500 ms.
+    Success path returns early on first match, so the extra window only
+    extends the failure path.
     """
     try:
         import win32gui
@@ -231,7 +233,7 @@ def focus_window_by_exe(exe_name: str, launch_path: str | Sequence[str] | None =
     if not _verify_foreground(hwnd):
         raise FocusWindowError(
             f"Focus verification failed for '{exe_name}' hwnd={hwnd} "
-            "(GetForegroundWindow did not match after 200 ms)"
+            "(GetForegroundWindow did not match after 500 ms)"
         )
 
     return True

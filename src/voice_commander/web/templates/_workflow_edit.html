@@ -1,0 +1,62 @@
+<form id="workflow-{{ wf.name or 'new' }}"
+      hx-post="/workflow/{{ wf.name or 'new' }}"
+      hx-target="this" hx-swap="outerHTML"
+      class="bg-neutral-900 border border-indigo-800 rounded-lg p-4 space-y-3">
+    <div class="flex items-center justify-between">
+        <h3 class="text-lg font-medium text-indigo-300">{{ "New workflow" if is_new else "Edit " + wf.name }}</h3>
+        {% if not is_new %}
+        <button type="button" hx-get="/workflow/{{ wf.name }}/cancel"
+                hx-target="#workflow-{{ wf.name }}" hx-swap="outerHTML"
+                class="text-sm px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700">Cancel</button>
+        {% endif %}
+    </div>
+
+    {% if is_new %}
+    <label class="block">
+        <span class="text-xs uppercase text-neutral-400">Name (snake_case)</span>
+        <input name="name" required pattern="[a-z][a-z0-9_]*" value="{{ wf.name }}"
+               class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2 text-neutral-100"/>
+    </label>
+    {% endif %}
+
+    <label class="block">
+        <span class="text-xs uppercase text-neutral-400">Description</span>
+        <input name="description" value="{{ wf.description }}"
+               class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2 text-neutral-100"/>
+    </label>
+
+    <label class="block">
+        <span class="text-xs uppercase text-neutral-400">Synonyms (one per line, use &#123;arg&#125; placeholders)</span>
+        <textarea name="synonyms" rows="4"
+                  class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2 text-neutral-100 font-mono text-sm">{% for s in wf.synonyms %}{{ s }}
+{% endfor %}</textarea>
+    </label>
+
+    <label class="block">
+        <span class="text-xs uppercase text-neutral-400">Args (JSON array)</span>
+        <textarea name="args_json" rows="3"
+                  class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2 text-neutral-100 font-mono text-xs">[{% for a in wf.args %}{{ "," if not loop.first else "" }}
+  {"name": "{{ a.name }}", "type": "{{ a.type_str }}", "required": {{ "true" if a.required else "false" }}, "description": "{{ a.description }}"}{% endfor %}
+]</textarea>
+    </label>
+
+    <label class="block">
+        <span class="text-xs uppercase text-neutral-400">Steps (JSON array)</span>
+        <textarea name="steps_json" rows="8"
+                  class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2 text-neutral-100 font-mono text-xs">[{% for s in wf.steps %}{{ "," if not loop.first else "" }}
+  {"ref": "{{ s.ref }}", "kwargs": {{ s.kwargs | tojson }}}{% endfor %}
+]</textarea>
+    </label>
+
+    <input type="hidden" name="enabled" value="{{ 'true' if wf.enabled else 'false' }}"/>
+
+    <div class="flex gap-2 pt-2">
+        <button type="submit" class="px-4 py-2 rounded bg-indigo-700 hover:bg-indigo-600 text-white">Save</button>
+    </div>
+
+    <p class="text-xs text-neutral-500 mt-2">
+        Step refs use <code>primitive:press</code> / <code>primitive:focus</code> / <code>primitive:type</code> / <code>primitive:open</code>
+        or <code>command:&lt;name&gt;</code>. Placeholders like <code>&#123;query&#125;</code> in step kwargs
+        resolve from workflow args at dispatch time.
+    </p>
+</form>

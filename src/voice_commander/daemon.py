@@ -18,7 +18,6 @@ import soundfile as sf
 from silero_vad import load_silero_vad
 
 from . import resolver as param_resolver
-from .agentic_router import AgenticRouter
 from .config import Config, log_llm_sources
 from .dispatcher import Dispatcher
 from .event_bus import EventBus
@@ -69,7 +68,6 @@ class StreamingDaemon:
         output_dir: str = "outputs",
         web_server: WebServer | None = None,
         event_bus: EventBus | None = None,
-        agentic_router: AgenticRouter | None = None,
     ) -> None:
         self._feedback = feedback
         self._recorder = recorder
@@ -84,7 +82,6 @@ class StreamingDaemon:
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._web_server = web_server
         self._event_bus = event_bus
-        self._agentic_router = agentic_router
 
         self._utt_q: queue.Queue[npt.NDArray[np.float32] | None] = queue.Queue(maxsize=8)
         self._pipeline_thread: threading.Thread | None = None
@@ -241,6 +238,9 @@ class StreamingDaemon:
         self._publish("llm_thinking")
         plan = self._llm_router.route(result.text)
         if plan is None:
+            # No match in the command/workflow catalog. Chime once and stop —
+            # no agentic retry, no env-seeded second call. The user can either
+            # rephrase or add a command for the missing intent via the UI.
             self._feedback.on_miss(result.text, ())
             _publish_miss(result.text)
             return
@@ -258,10 +258,7 @@ class StreamingDaemon:
                 ).to_event_dict(),
             )
             return
-        outcome = self._dispatcher.run_plan(result.text, plan, self._registry)
-        if outcome.status in ("miss", "error") and self._agentic_router is not None:
-            agentic_outcome = self._agentic_router.run(result.text, failed_plan=outcome)
-            self._publish("plan_outcome", agentic_outcome.to_event_dict())
+        self._dispatcher.run_plan(result.text, plan, self._registry)
         self._write_plan_async(result.text, plan)
 
     def _write_utterance_async(self, utterance: npt.NDArray[np.float32]) -> None:
@@ -507,22 +504,45 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         else:
             logger.warning("LLM router warmup failed — LM Studio may be offline")
 
-    # Agentic Router — gated by config flag.
-    agentic_router: AgenticRouter | None = None
-    if cfg.llm.agentic_fallback:
-        agentic_router = AgenticRouter(
-            config=cfg.llm,
-            registry=registry,
-            dispatcher=dispatcher,
-            event_bus=event_bus,
-            max_steps=cfg.llm.max_agentic_steps,
+    # Load user-defined commands + workflows (first-run seeding + registration).
+    from voice_commander.commands import CommandStore, WorkflowStore
+    from voice_commander.commands.registrar import reload_all as reload_commands_all
+    from voice_commander.commands.store import seed_if_missing
+
+    repo_root = Path(__file__).resolve().parents[2]
+    commands_path = repo_root / "commands.json"
+    workflows_path = repo_root / "workflows.json"
+    seed_if_missing(commands_path, repo_root / "commands.default.json")
+    seed_if_missing(workflows_path, repo_root / "workflows.default.json")
+
+    command_store = CommandStore(commands_path)
+    workflow_store = WorkflowStore(workflows_path)
+    llm_context = {"default_browser": cfg.llm.default_browser}
+    with reload_lock:
+        cmd_names, wf_names = reload_commands_all(
+            registry, command_store, workflow_store, dispatcher, llm_context
         )
-        logger.info("Agentic fallback router enabled (max_steps=%d)", cfg.llm.max_agentic_steps)
+    logger.info(
+        "Loaded %d commands + %d workflows (default_browser=%s)",
+        len(cmd_names),
+        len(wf_names),
+        cfg.llm.default_browser,
+    )
 
     # Web server — enabled by config + not suppressed by env var.
     web_server: WebServer | None = None
     if cfg.web.enabled and os.environ.get("VOICE_COMMANDER_WEB_DISABLED") != "1":
-        app = create_app(registry, store, reload_lock, event_bus=event_bus)
+        app = create_app(
+            registry,
+            store,
+            reload_lock,
+            event_bus=event_bus,
+            command_store=command_store,
+            workflow_store=workflow_store,
+            dispatcher=dispatcher,
+            llm_context=dict(llm_context),
+            config_path=repo_root / "config.toml",
+        )
         web_server = WebServer(app, host=cfg.web.host, port=cfg.web.port)
 
     # Build daemon without a recorder first so _on_utterance is available,
@@ -540,7 +560,6 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         output_dir=cfg.audio.output_dir,
         web_server=web_server,
         event_bus=event_bus,
-        agentic_router=agentic_router,
     )
     daemon._recorder = StreamingRecorder(
         device=cfg.audio.device if cfg.audio.device >= 0 else None,

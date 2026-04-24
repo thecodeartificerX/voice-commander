@@ -156,7 +156,7 @@ def focus(target: str) -> None:
     if not _verify_foreground(target_hwnd):
         raise FocusWindowError(
             f"Focus verification failed for target={target!r} "
-            f"hwnd={target_hwnd} (GetForegroundWindow did not match after 200 ms)"
+            f"hwnd={target_hwnd} (GetForegroundWindow did not match after 500 ms)"
         )
 
 

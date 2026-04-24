@@ -35,6 +35,10 @@ class ToolMetadata:
     enabled: bool
     settle_ms: int = 0
     llm_only: bool = False
+    # ``internal`` tools stay dispatchable but are hidden from the LLM.
+    # Every primitive in ``primitives.toml`` sets this to True; only
+    # user-defined commands/workflows should remain visible.
+    internal: bool = False
     args: dict[str, ArgMetadata] = field(default_factory=dict)
 
 
@@ -160,6 +164,8 @@ class ToolMetadataStore:
                 tool_entry["settle_ms"] = md.settle_ms
             if md.llm_only:
                 tool_entry["llm_only"] = md.llm_only
+            if md.internal:
+                tool_entry["internal"] = md.internal
             if md.args:
                 tool_entry["args"] = {
                     arg_name: {
@@ -238,6 +244,7 @@ def _parse_tool(
         settle_ms_raw = raw.get("settle_ms", 0)
         settle_ms = int(settle_ms_raw) if isinstance(settle_ms_raw, (int, float)) else 0
         llm_only = bool(raw.get("llm_only", False))
+        internal = bool(raw.get("internal", False))
 
         args: dict[str, ArgMetadata] = {}
         args_raw = raw.get("args")
@@ -264,6 +271,7 @@ def _parse_tool(
         enabled=enabled,
         settle_ms=settle_ms,
         llm_only=llm_only,
+        internal=internal,
         args=args,
     )
 

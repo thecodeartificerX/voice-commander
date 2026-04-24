@@ -17,109 +17,29 @@ from .registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
-_SYSTEM_PROMPT_TEMPLATE = """You are an intelligent agent operating a Windows desktop on behalf
-of a user who speaks commands out loud. Your job is to understand
-what the user wants and accomplish it using the tools you have.
+_SYSTEM_PROMPT_TEMPLATE = """You are an intent matcher for a Windows voice assistant.
 
-You are not a lookup table. When the user speaks, read the intent:
-what are they trying to do, what does their screen likely look like
-right now, which tool or chain of tools best accomplishes the goal?
-Reason first, then act. The examples below show the style — they are
-illustrative, not exhaustive. Generalize from them.
+You do not plan multi-step actions. You do not choose keyboard
+shortcuts. You pick exactly ONE tool from the list below whose
+description best matches the user's spoken transcript.
 
-Principles
-- Understand intent, not just words. "Search how to lose weight" is
-  not one tool — it is a goal that requires focusing the browser,
-  opening a tab, focusing the address bar, typing the query, and
-  pressing enter.
-- Prefer the most precise tool. If a dedicated verb exists (focus,
-  minimize, maximize, close, close_window, open), use it. Fall back
-  to `press` only for key combos without a dedicated verb.
-- Use '{default_browser}' when the intent involves the user's
-  default browser. "browser" on its own (as in "focus browser",
-  "close browser", "minimize browser", "maximize browser") is the
-  user's default browser — pass `target="{default_browser}"` to the
-  window verb. Do NOT pass the literal word "browser".
-- Web services are not installed apps. For names like facebook,
-  gmail, email, youtube, reddit, twitter, linkedin, chatgpt →
-  `open(target="https://<canonical-domain>")`. Do NOT pass the bare
-  service name — the resolver only searches installed apps and will
-  miss or mis-match.
-- Emit tool calls in strict execution order. The dispatcher runs
-  them linearly and cannot replan mid-flight.
-- When "close" is ambiguous, prefer `close()` (tab). Only use
-  `close_window()` when the user explicitly says window, app, or
-  quit.
-- Keypress fallback. A bare key name, or a simple verb that cleanly
-  maps to a key, becomes `press(combo="<key>")`. E.g. send / submit
-  → enter; cancel → escape; undo → ctrl+z; save → ctrl+s; find →
-  ctrl+f; refresh → f5. Bare key names (enter, escape, tab, space,
-  delete, backspace, f5) → press them directly.
-- "Last" / "previous" / "go back" → use `last()`. Bare "last" or
-  "last window" → `last()` (Alt+Tab, previous window). "Last tab" /
-  "next tab" / "switch tab" → `last(tab=true)` (Ctrl+Tab).
-- "Mute" / "stop listening" / "shut up" → `mute()`.
-- Hard bans — these chords sweep more windows than the user meant or
-  bypass a dedicated verb:
-  * `press(combo="win+d")` / `press(combo="win+m")` — use `minimize()`
-  * `press(combo="win+up")` — use `maximize()`
-  * `press(combo="alt+tab")` — use `last()`
-  * `press(combo="ctrl+tab")` / `press(combo="ctrl+shift+tab")` — use `last(tab=true)`
-- Destructive bans. Never emit these; tool guards reject them anyway.
-  `press` chords: shift+delete, win+r. `open` targets: cmd,
-  powershell, regedit, diskmgmt, diskpart, format, cipher, gpedit,
-  shutdown, taskkill, msconfig, rundll32.
-- Call `no_match(reason)` only when the utterance genuinely cannot
-  be executed — greetings, questions to you, or intents whose target
-  cannot be inferred. Do NOT no_match a plausible keypress or a
-  simple verb that maps to `press`.
+The tools are user-curated commands and workflows. Each tool's
+description starts with what it does and, after "Phrases:", lists
+example utterances. Match the transcript to the tool whose phrases
+or description most closely correspond. Paraphrases are fine — focus
+on meaning, not exact wording.
 
-Examples
-
-User: "search how to lose weight"
-Tools: focus(target="{default_browser}"),
-       press(combo="ctrl+t"),
-       press(combo="ctrl+l"),
-       type(text="how to lose weight"),
-       press(combo="enter")
-
-User: "copy that and paste it in notepad"
-Tools: press(combo="ctrl+c"),
-       focus(target="notepad"),
-       press(combo="ctrl+v")
-
-User: "open spotify"
-Tools: open(target="spotify")
-
-User: "facebook"
-Tools: open(target="https://facebook.com")
-
-User: "email"
-Tools: open(target="https://mail.google.com")
-
-User: "close"
-Tools: close()
-
-User: "close window"
-Tools: close_window()
-
-User: "send"
-Tools: press(combo="enter")
-
-User: "escape"
-Tools: press(combo="escape")
-
-User: "focus browser"
-Tools: focus(target="{default_browser}")
-
-User: "last"
-Tools: last()
-
-User: "last tab"
-Tools: last(tab=true)
-
-User: "shut up"
-Tools: mute()
+Rules
+- Pick the SINGLE best tool. Never chain multiple tool calls.
+- If a workflow declares arguments, extract the corresponding
+  substring from the transcript and pass it as the argument.
+  Example: transcript "search how to feed a cat" with a workflow
+  "search_web(query)" → search_web(query="how to feed a cat").
+- Default browser, when referenced generically, is '{default_browser}'.
+- If NO tool matches the intent — greetings, chit-chat, unrelated
+  speech — call `no_match(reason)` with a short explanation. Do
+  not force a match when none is appropriate.
+- Never invent tool names. Only call tools that appear in the list.
 """
 
 
@@ -168,30 +88,47 @@ class LLMRouter:
         )
 
     def _build_tools_array(self) -> list[dict[str, Any]]:
-        """Build OpenAI-compatible tools array from registry."""
+        """Build OpenAI-compatible tools array from registry.
+
+        Only tools marked ``enabled=true`` + ``llm_only=true`` in their sidecar
+        TOML reach the LLM. Perception functions and disabled semantic verbs
+        (close, minimize, maximize, last, etc.) are filtered at this boundary.
+        """
         tools: list[dict[str, Any]] = []
         for entry in self._registry.all_llm_visible():
             if entry.params_schema:
                 tools.append(entry.params_schema)
         return tools
 
-    def route(self, transcript: str) -> Plan | None:
-        """Route a transcript through the LLM. Returns Plan or None on failure/no_match."""
+    def route(self, transcript: str, env_context: str | None = None) -> Plan | None:
+        """Route a transcript through the LLM. Returns Plan or None on failure/no_match.
+
+        When ``env_context`` is provided, it is inserted as an additional user
+        message before the transcript — gives the model ground truth about the
+        focused window and visible windows without burning an extra LLM turn.
+        Called the second time a transcript misses; routes single-shot with
+        richer context so the follow-up doesn't need a multi-turn loop.
+        """
         with self._reload_lock:
             tools = self._build_tools_array()
         if not tools:
             return None
 
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self._system_prompt},
+        ]
+        if env_context:
+            messages.append({"role": "user", "content": env_context})
+        messages.append({"role": "user", "content": transcript})
+
         body: dict[str, Any] = {
             "model": self._config.model_id,
-            "messages": [
-                {"role": "system", "content": self._system_prompt},
-                {"role": "user", "content": transcript},
-            ],
+            "messages": messages,
             "tools": tools,
             "tool_choice": "required",
             "temperature": 0,
             "stream": False,
+            "reasoning_effort": "none",
         }
 
         self._total_calls += 1
@@ -261,6 +198,12 @@ class LLMRouter:
             logger.warning("LLM router: unexpected response structure")
             return None
 
+        # Snapshot valid tool names under reload_lock so we can reject
+        # hallucinated names (e.g. "find_focused_window_title_and_process_name",
+        # "call_none") before they reach the Dispatcher.
+        with self._reload_lock:
+            valid_names = {e.name for e in self._registry.all_llm_visible()}
+
         steps: list[ToolCall] = []
         for i, tc in enumerate(tool_calls):
             if len(steps) >= self._config.max_plan_steps:
@@ -276,6 +219,13 @@ class LLMRouter:
                     kwargs = args_raw
                 else:
                     kwargs = {}
+                if name not in valid_names:
+                    logger.warning(
+                        "llm_router: dropping hallucinated tool name %r at step %d",
+                        name,
+                        i,
+                    )
+                    continue
                 steps.append(ToolCall(name=name, kwargs=kwargs))
             except (json.JSONDecodeError, KeyError, TypeError) as exc:
                 logger.warning("llm_router: skipping malformed tool_call at step %d: %s", i, exc)

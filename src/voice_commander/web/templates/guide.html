@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-neutral-950">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Commander — Guide</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="bg-neutral-950 text-neutral-200 min-h-screen">
+<div class="max-w-4xl mx-auto px-6 py-10 space-y-10">
+
+    <header class="flex items-start justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-emerald-400">Voice Commander — Guide</h1>
+            <p class="text-neutral-400 mt-1">How the pieces actually fit together.</p>
+        </div>
+        <a href="/" class="text-sm text-neutral-400 hover:text-emerald-400">← back to dashboard</a>
+    </header>
+
+    <!-- End-to-end flow -->
+    <section class="space-y-3">
+        <h2 class="text-xl font-semibold text-emerald-400">1. End-to-end flow</h2>
+        <p class="text-sm text-neutral-300">
+            When you press Scroll Lock and speak, the daemon runs this exact path:
+        </p>
+        <pre class="bg-neutral-900 border border-neutral-800 rounded p-4 text-xs text-neutral-300 overflow-x-auto">
+Scroll Lock ──► StreamingRecorder ──► Silero VAD ──► faster-whisper
+                                                         │
+                                                         ▼ transcript
+                                                    LLMRouter.route()
+                                                         │
+                                           match ◄───────┤────► no match
+                                             │                    │
+                                             ▼                    ▼
+                                        Dispatcher           feedback.on_miss()
+                                     runs pre-baked plan    (miss chime, done)
+                                             │
+                                             ▼
+                                      primitive func
+                                  (pyautogui keystroke,
+                                   win32 focus, etc.)</pre>
+        <p class="text-sm text-neutral-400">
+            Source: <code class="text-neutral-200">src/voice_commander/daemon.py</code> → <code class="text-neutral-200">_process_utterance()</code>.
+            If <code class="text-neutral-200">LLMRouter.route()</code> returns <code>None</code>, the daemon plays the miss chime and stops.
+            There is no retry loop.
+        </p>
+    </section>
+
+    <!-- Primitives -->
+    <section class="space-y-3">
+        <h2 class="text-xl font-semibold text-neutral-300">2. Primitives</h2>
+        <p class="text-sm text-neutral-300">
+            Primitives are the seven atomic OS actions. They are plain Python functions in
+            <code class="text-neutral-200">src/voice_commander/tools/primitives.py</code>. They are the only things that actually touch Windows.
+        </p>
+        <ul class="text-sm text-neutral-300 grid grid-cols-2 gap-y-1 gap-x-6 list-disc list-inside">
+            <li><code>press(combo)</code> — send a key combo</li>
+            <li><code>type(text)</code> — synthesize keystrokes</li>
+            <li><code>focus(target)</code> — bring a window forward</li>
+            <li><code>open(target)</code> — launch an app, URL, or file</li>
+            <li><code>click(button)</code> — left/right/middle click</li>
+            <li><code>scroll(direction, amount)</code> — scroll wheel</li>
+            <li><code>wait(ms)</code> — delay between steps</li>
+        </ul>
+        <p class="text-sm text-neutral-400">
+            Every primitive has <code class="text-neutral-200">internal = true</code> in <code>primitives.toml</code>.
+            That flag makes them dispatchable but hidden from the LLM: <code>all_llm_visible()</code> filters
+            <code>internal</code> entries out of the tool list sent to LM Studio.
+        </p>
+    </section>
+
+    <!-- Commands -->
+    <section class="space-y-3">
+        <h2 class="text-xl font-semibold text-emerald-400">3. Commands</h2>
+        <p class="text-sm text-neutral-300">
+            A <strong>command</strong> is a named atomic action that calls exactly one primitive. Stored as
+            JSON in <code class="text-neutral-200">commands.json</code> at the repo root.
+        </p>
+        <pre class="bg-neutral-900 border border-neutral-800 rounded p-4 text-xs text-neutral-300 overflow-x-auto">
+"new_tab": {
+  "description": "Open a new tab in the focused app",
+  "synonyms": ["new tab", "open new tab", "open a new tab"],
+  "enabled": true,
+  "primitive": "press",
+  "kwargs": {"combo": "ctrl+t"}
+}</pre>
+        <p class="text-sm text-neutral-400">
+            On startup (and after each edit from this UI), the <code class="text-neutral-200">commands/registrar.py</code>
+            builds a synthetic <code>ToolEntry</code> per command. The entry's <code>func</code> is a closure
+            that constructs a one-step <code>Plan</code> and hands it to the dispatcher. The LLM sees the
+            command's <code>name</code>, <code>description</code>, and synonyms (appended as <em>Phrases:</em>
+            in the tool description).
+        </p>
+    </section>
+
+    <!-- Workflows -->
+    <section class="space-y-3">
+        <h2 class="text-xl font-semibold text-indigo-300">4. Workflows</h2>
+        <p class="text-sm text-neutral-300">
+            A <strong>workflow</strong> is a named ordered sequence of primitive or command references,
+            optionally parameterised by <code>{placeholder}</code> args. Stored in <code>workflows.json</code>.
+        </p>
+        <pre class="bg-neutral-900 border border-neutral-800 rounded p-4 text-xs text-neutral-300 overflow-x-auto">
+"search_web": {
+  "description": "Search the web via the default browser",
+  "synonyms": ["search {query}", "google {query}"],
+  "enabled": true,
+  "args": [{"name": "query", "type": "string", "required": true}],
+  "steps": [
+    {"ref": "primitive:focus", "kwargs": {"target": "{default_browser}"}},
+    {"ref": "primitive:press", "kwargs": {"combo": "ctrl+t"}},
+    {"ref": "primitive:press", "kwargs": {"combo": "ctrl+l"}},
+    {"ref": "primitive:type",  "kwargs": {"text": "{query}"}},
+    {"ref": "primitive:press", "kwargs": {"combo": "enter"}}
+  ]
+}</pre>
+        <p class="text-sm text-neutral-400">
+            At dispatch time, <code class="text-neutral-200">commands/template.py</code> walks each step's
+            kwargs and replaces <code>{name}</code> tokens using a merged context of
+            <code>{default_browser: …}</code> + the arg values the LLM passed. Unknown placeholders raise
+            <code>TemplateError</code> — the dispatcher halts the workflow instead of typing a literal
+            <code>{foo}</code> into your window.
+        </p>
+        <p class="text-sm text-neutral-400">
+            Step <code>ref</code> values use <code>primitive:&lt;name&gt;</code> or
+            <code>command:&lt;name&gt;</code>. Workflows can build on top of existing commands; commands
+            cannot reference workflows (keeps the dependency graph acyclic).
+        </p>
+    </section>
+
+    <!-- What the LLM sees -->
+    <section class="space-y-3">
+        <h2 class="text-xl font-semibold text-emerald-400">5. What the LLM sees</h2>
+        <p class="text-sm text-neutral-300">
+            The LLM receives only the output of <code class="text-neutral-200">registry.all_llm_visible()</code>,
+            which returns entries where <code>enabled=True</code>, <code>llm_only=True</code>, and
+            <code>internal=False</code>. That list is exactly:
+        </p>
+        <ul class="text-sm text-neutral-300 list-disc list-inside space-y-1">
+            <li>every enabled user-defined command (<code>origin="command"</code>)</li>
+            <li>every enabled user-defined workflow (<code>origin="workflow"</code>)</li>
+            <li><code>no_match</code> — the single non-command tool, used when nothing fits</li>
+        </ul>
+        <p class="text-sm text-neutral-400">
+            The system prompt is a short intent-matcher: <em>"pick one tool whose description or phrases best
+            match the transcript; if nothing fits, call <code>no_match</code>."</em> No few-shot examples,
+            no shortcut cheat-sheet — because tool descriptions already carry that information.
+        </p>
+    </section>
+
+    <!-- Creating a command via UI -->
+    <section class="space-y-3">
+        <h2 class="text-xl font-semibold text-emerald-400">6. Creating a command</h2>
+        <ol class="text-sm text-neutral-300 list-decimal list-inside space-y-1">
+            <li>Go to the dashboard → click <strong>+ New command</strong>.</li>
+            <li>Pick a <code>snake_case</code> name (e.g. <code>focus_editor</code>).</li>
+            <li>Fill in a short description. This goes to the LLM verbatim.</li>
+            <li>Add synonyms — one per line. The LLM sees them appended to the description as <em>Phrases:</em>.</li>
+            <li>Pick a primitive from the dropdown and supply its kwargs as JSON.</li>
+            <li>Click Save. The registrar re-runs under the reload lock; the LLM sees the new tool on the next utterance — no daemon restart required.</li>
+        </ol>
+    </section>
+
+    <!-- Creating a workflow via UI -->
+    <section class="space-y-3">
+        <h2 class="text-xl font-semibold text-indigo-300">7. Creating a workflow</h2>
+        <ol class="text-sm text-neutral-300 list-decimal list-inside space-y-1">
+            <li>Click <strong>+ New workflow</strong>.</li>
+            <li>Name, description, synonyms (use <code>{arg}</code> placeholders to hint at templated forms).</li>
+            <li>Args: JSON array of <code>{name, type, required, description}</code>. The LLM's tool schema is built from this.</li>
+            <li>Steps: JSON array of <code>{ref, kwargs}</code>. Refs are <code>primitive:press</code>, <code>primitive:focus</code>, etc.</li>
+            <li>Use <code>{placeholder}</code> inside any string kwarg to substitute at dispatch time.</li>
+            <li>Save. Hot-reloads the same way commands do.</li>
+        </ol>
+    </section>
+
+    <!-- Config -->
+    <section class="space-y-3">
+        <h2 class="text-xl font-semibold text-amber-300">8. Runtime config</h2>
+        <p class="text-sm text-neutral-300">
+            The Config section edits three sections of <code class="text-neutral-200">config.toml</code>:
+            <code>[llm]</code> (endpoint, model id, default browser, timeout), <code>[audio]</code>
+            (PortAudio device index), and <code>[transcription]</code> (whisper model size, min confidence).
+        </p>
+        <p class="text-sm text-neutral-400">
+            Saving calls <code class="text-neutral-200">update_user_config()</code> which rewrites the file
+            atomically (<code>*.tmp</code> + <code>os.replace</code>) and only accepts a hardcoded allow-list of
+            keys to prevent the UI from clobbering <code>[hotkey]</code>, <code>[vad]</code>, etc.
+        </p>
+        <p class="text-sm text-neutral-400">
+            Audio device changes and whisper model changes need a daemon restart. Click the
+            <strong>Restart daemon</strong> button: the <code>/restart</code> route spawns a detached
+            <code>python -m voice_commander</code> process, sleeps ~500 ms so the HTTP response can flush,
+            then <code>os._exit(0)</code>s the current process.
+        </p>
+    </section>
+
+    <!-- Files on disk -->
+    <section class="space-y-3">
+        <h2 class="text-xl font-semibold text-neutral-300">9. Files on disk</h2>
+        <ul class="text-sm text-neutral-300 list-disc list-inside space-y-1">
+            <li><code>commands.json</code> — user-owned command catalog. Seeded from
+                <code>commands.default.json</code> on first run.</li>
+            <li><code>workflows.json</code> — user-owned workflow catalog. Seeded from
+                <code>workflows.default.json</code>.</li>
+            <li><code>config.toml</code> — runtime config. Hand-edit or use the Config form.</li>
+            <li><code>src/voice_commander/tools/primitives.toml</code> — sidecar metadata for primitive
+                functions. Not user-editable via the UI (primitives are code, not data).</li>
+        </ul>
+    </section>
+
+    <!-- Live UI sync -->
+    <section class="space-y-3">
+        <h2 class="text-xl font-semibold text-neutral-300">10. Live UI sync</h2>
+        <p class="text-sm text-neutral-400">
+            The daemon publishes <code>command_saved</code> / <code>command_deleted</code> /
+            <code>workflow_saved</code> / <code>workflow_deleted</code> events on the internal
+            <code>EventBus</code>. They stream out of <code>GET /events</code> as Server-Sent Events.
+            Every open dashboard tab subscribes and re-fetches the relevant fragment so edits on
+            one machine show up instantly on the other.
+        </p>
+    </section>
+
+    <!-- What was removed -->
+    <section class="space-y-3">
+        <h2 class="text-xl font-semibold text-red-400">11. What this architecture removed</h2>
+        <ul class="text-sm text-neutral-300 list-disc list-inside space-y-1">
+            <li><strong>Agentic fallback loop.</strong> Previously a miss triggered a multi-turn
+                "observe → act → observe" chain (up to 6 LLM calls). Deleted entirely. Match or miss, one call.</li>
+            <li><strong>Legacy semantic verbs.</strong> <code>close</code>, <code>close_window</code>,
+                <code>minimize</code>, <code>maximize</code>, <code>last</code>, <code>summon_commander</code>,
+                <code>mute</code>, <code>done</code>, <code>ask_user</code> are disabled in
+                <code>primitives.toml</code>. Equivalent behaviour is now expressed as commands
+                (e.g. the starter pack's <code>close_window</code> = <code>press(alt+f4)</code>).</li>
+            <li><strong>Perception tools.</strong> <code>get_focused_window</code>, <code>list_windows</code>,
+                <code>get_clipboard</code>, <code>list_processes</code> are disabled — the LLM never observes
+                live desktop state; commands run deterministic plans based on the transcript alone.</li>
+            <li><strong>Few-shot prompt + shortcut cheat-sheet.</strong> Tool descriptions + synonyms do the
+                same job with less prompt real estate.</li>
+        </ul>
+    </section>
+
+</div>
+</body>
+</html>

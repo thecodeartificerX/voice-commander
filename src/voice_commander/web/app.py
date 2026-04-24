@@ -16,8 +16,11 @@ from fastapi.templating import Jinja2Templates
 
 from ..registry import ToolRegistry
 from ..tool_metadata import ToolMetadata, ToolMetadataError, ToolMetadataStore
+from .admin import attach_admin_routes
 
 if TYPE_CHECKING:
+    from ..commands.store import CommandStore, WorkflowStore
+    from ..dispatcher import Dispatcher
     from ..event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -31,8 +34,20 @@ def create_app(
     store: ToolMetadataStore,
     reload_lock: threading.Lock,
     event_bus: EventBus | None = None,
+    *,
+    command_store: CommandStore | None = None,
+    workflow_store: WorkflowStore | None = None,
+    dispatcher: Dispatcher | None = None,
+    llm_context: dict[str, object] | None = None,
+    config_path: Path | None = None,
 ) -> FastAPI:
-    """Create and return the FastAPI application for the command management dashboard."""
+    """Create and return the FastAPI application for the command management dashboard.
+
+    The admin surface (command/workflow CRUD + config editor + restart) is
+    registered only when ``command_store``, ``workflow_store``, ``dispatcher``
+    and ``config_path`` are all provided. Tests that spin up the app with just
+    the core args get a minimal tool-management dashboard.
+    """
 
     app = FastAPI(title="Voice Commander", docs_url=None, redoc_url=None)
 
@@ -67,6 +82,14 @@ def create_app(
             "index.html",
             {"groups": grouped},
         )
+
+    # ------------------------------------------------------------------
+    # GET /guide — in-UI architecture walkthrough
+    # ------------------------------------------------------------------
+
+    @app.get("/guide", response_class=HTMLResponse)
+    async def guide(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "guide.html", {})
 
     # ------------------------------------------------------------------
     # GET /healthz — liveness probe
@@ -296,6 +319,29 @@ def create_app(
             request,
             "_tool_card.html",
             {"tool": tool},
+        )
+
+    # ------------------------------------------------------------------
+    # Admin surface (commands, workflows, config, restart)
+    # ------------------------------------------------------------------
+
+    if (
+        command_store is not None
+        and workflow_store is not None
+        and dispatcher is not None
+        and config_path is not None
+    ):
+        attach_admin_routes(
+            app,
+            templates=templates,
+            registry=registry,
+            reload_lock=reload_lock,
+            command_store=command_store,
+            workflow_store=workflow_store,
+            dispatcher=dispatcher,
+            llm_context=dict(llm_context or {}),
+            config_path=config_path,
+            event_bus=event_bus,
         )
 
     return app

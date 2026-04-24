@@ -5,7 +5,7 @@ import os
 import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, TypeVar, get_type_hints
+from typing import Any, Mapping, TypeVar, get_type_hints
 
 T = TypeVar("T")
 
@@ -96,8 +96,6 @@ class LLMConfig:
     warmup_on_startup: bool = True
     focus_fuzzy_threshold: int = 70
     open_fuzzy_threshold: int = 70
-    agentic_fallback: bool = True
-    max_agentic_steps: int = 6
 
 
 @dataclass(frozen=True)
@@ -310,3 +308,122 @@ def _type_ok(value: Any, expected: Any) -> bool:
     if expected is str:
         return isinstance(value, str)
     return True
+
+
+# ---------------------------------------------------------------------------
+# Config writer — used by the web UI to persist edits made via the dashboard.
+# ---------------------------------------------------------------------------
+
+
+_USER_EDITABLE_SECTIONS: dict[str, set[str]] = {
+    "llm": {
+        "endpoint_url",
+        "model_id",
+        "default_browser",
+        "timeout_ms",
+        "warmup_timeout_ms",
+        "max_plan_steps",
+        "warmup_on_startup",
+        "focus_fuzzy_threshold",
+        "open_fuzzy_threshold",
+    },
+    "audio": {"channels", "device", "output_dir"},
+    "transcription": {"model_size", "device", "compute_type", "min_confidence"},
+}
+
+
+class ConfigWriteError(ValueError):
+    """Raised when an update payload contains unknown keys or bad types."""
+
+
+def update_user_config(path: Path, updates: Mapping[str, Mapping[str, Any]]) -> None:
+    """Merge *updates* into *path*'s TOML and rewrite it atomically.
+
+    Only the subset of sections/keys in ``_USER_EDITABLE_SECTIONS`` may be
+    edited via this function. Anything else raises :class:`ConfigWriteError`
+    so the web UI cannot accidentally clobber ``[hotkey]`` or ``[vad]``.
+    Comments in the original TOML are NOT preserved (stdlib TOML writer
+    limitation); keep opinionated comments out of config.toml or migrate to
+    tomlkit later if comment round-tripping becomes a requirement.
+    """
+    for section, payload in updates.items():
+        if section not in _USER_EDITABLE_SECTIONS:
+            raise ConfigWriteError(f"Section [{section}] is not user-editable")
+        allowed = _USER_EDITABLE_SECTIONS[section]
+        for key in payload:
+            if key not in allowed:
+                raise ConfigWriteError(
+                    f"Key '[{section}].{key}' is not user-editable"
+                )
+
+    existing: dict[str, Any] = _read_toml(path) if path.exists() else {}
+    for section, payload in updates.items():
+        sec = existing.setdefault(section, {})
+        if not isinstance(sec, dict):
+            raise ConfigWriteError(f"Existing [{section}] is not a table")
+        for key, value in payload.items():
+            sec[key] = value
+
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(_render_toml(existing), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _render_toml(data: Mapping[str, Any]) -> str:
+    """Serialise *data* — a nested mapping — as a TOML document.
+
+    Supports two levels:
+    * top-level scalar keys (rare for our config) → written before any section.
+    * ``[section.subsection]`` tables, each a mapping of scalar/list values.
+
+    No arrays of tables, no inline tables, no comments — sufficient for the
+    voice-commander config schema. Unsupported values raise TypeError.
+    """
+    lines: list[str] = []
+
+    top_scalars = {k: v for k, v in data.items() if not isinstance(v, Mapping)}
+    for key, value in top_scalars.items():
+        lines.append(f"{key} = {_toml_value(value)}")
+    if top_scalars:
+        lines.append("")
+
+    for section, body in data.items():
+        if not isinstance(body, Mapping):
+            continue
+        lines.append(f"[{section}]")
+        nested: dict[str, Mapping[str, Any]] = {}
+        for key, value in body.items():
+            if isinstance(value, Mapping):
+                nested[key] = value
+                continue
+            lines.append(f"{key} = {_toml_value(value)}")
+        lines.append("")
+        for sub_name, sub_body in nested.items():
+            lines.append(f"[{section}.{sub_name}]")
+            for key, value in sub_body.items():
+                lines.append(f"{key} = {_toml_value(value)}")
+            lines.append("")
+
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n"
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, str):
+        escaped = (
+            value.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+        )
+        return f'"{escaped}"'
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    raise TypeError(f"Cannot serialise {type(value).__name__} to TOML")

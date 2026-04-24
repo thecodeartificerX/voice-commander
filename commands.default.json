@@ -1,0 +1,158 @@
+{
+  "commands": {
+    "new_tab": {
+      "description": "Open a new tab in the focused app",
+      "synonyms": ["new tab", "open new tab", "open a new tab"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+t"}
+    },
+    "close_tab": {
+      "description": "Close the current tab or document",
+      "synonyms": ["close tab", "close", "close this tab"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+w"}
+    },
+    "reopen_tab": {
+      "description": "Reopen the most recently closed tab",
+      "synonyms": ["reopen tab", "restore tab", "undo close tab"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+shift+t"}
+    },
+    "new_window": {
+      "description": "Open a new window in the focused app",
+      "synonyms": ["new window", "open new window"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+n"}
+    },
+    "close_window": {
+      "description": "Close the focused window (Alt+F4)",
+      "synonyms": ["close window", "close app", "quit", "quit app"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "alt+f4"}
+    },
+    "next_tab": {
+      "description": "Switch to the next tab",
+      "synonyms": ["next tab", "switch tab"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+tab"}
+    },
+    "previous_tab": {
+      "description": "Switch to the previous tab",
+      "synonyms": ["previous tab", "last tab", "prev tab"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+shift+tab"}
+    },
+    "last_window": {
+      "description": "Alt+Tab to the previous window",
+      "synonyms": ["last window", "previous window", "go back", "alt tab"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "alt+tab"}
+    },
+    "select_all": {
+      "description": "Select all (Ctrl+A)",
+      "synonyms": ["select all", "highlight all"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+a"}
+    },
+    "copy": {
+      "description": "Copy to clipboard",
+      "synonyms": ["copy", "copy that"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+c"}
+    },
+    "cut": {
+      "description": "Cut to clipboard",
+      "synonyms": ["cut", "cut that"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+x"}
+    },
+    "paste": {
+      "description": "Paste from clipboard",
+      "synonyms": ["paste", "paste it"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+v"}
+    },
+    "undo": {
+      "description": "Undo last action",
+      "synonyms": ["undo", "undo that"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+z"}
+    },
+    "redo": {
+      "description": "Redo last action",
+      "synonyms": ["redo"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+y"}
+    },
+    "save": {
+      "description": "Save current document",
+      "synonyms": ["save", "save this", "save file"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+s"}
+    },
+    "find": {
+      "description": "Open find dialog",
+      "synonyms": ["find", "search page", "find in page"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+f"}
+    },
+    "address_bar": {
+      "description": "Focus the browser address bar",
+      "synonyms": ["address bar", "url bar", "focus address bar"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+l"}
+    },
+    "refresh": {
+      "description": "Refresh the page",
+      "synonyms": ["refresh", "reload", "reload page"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "f5"}
+    },
+    "minimize": {
+      "description": "Minimize the focused window",
+      "synonyms": ["minimize", "minimise"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "win+down"}
+    },
+    "maximize": {
+      "description": "Maximize the focused window",
+      "synonyms": ["maximize", "maximise", "full screen"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "win+up"}
+    },
+    "screenshot": {
+      "description": "Start Windows screenshot tool",
+      "synonyms": ["screenshot", "take screenshot", "snip"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "win+shift+s"}
+    },
+    "lock_screen": {
+      "description": "Lock the Windows session",
+      "synonyms": ["lock screen", "lock computer"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "win+l"}
+    }
+  }
+}

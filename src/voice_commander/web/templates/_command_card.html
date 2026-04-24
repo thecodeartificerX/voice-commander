@@ -1,0 +1,32 @@
+<div id="command-{{ cmd.name }}" class="bg-neutral-900 border border-neutral-800 rounded-lg p-4 {{ 'opacity-50' if not cmd.enabled else '' }}">
+    <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-2">
+            <h3 class="text-lg font-medium {{ 'line-through text-neutral-500' if not cmd.enabled else 'text-neutral-100' }}">{{ cmd.name }}</h3>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-900 text-emerald-400">command</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-400">{{ cmd.primitive }}</span>
+            {% if not cmd.enabled %}
+            <span class="text-xs px-2 py-0.5 rounded-full bg-red-900 text-red-400">disabled</span>
+            {% endif %}
+        </div>
+        <div class="flex gap-2">
+            <button hx-get="/command/{{ cmd.name }}/edit" hx-target="#command-{{ cmd.name }}" hx-swap="outerHTML"
+                class="text-sm px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300">Edit</button>
+            <button hx-post="/command/{{ cmd.name }}/toggle" hx-target="#command-{{ cmd.name }}" hx-swap="outerHTML"
+                class="text-sm px-3 py-1 rounded {{ 'bg-red-900 hover:bg-red-800 text-red-300' if cmd.enabled else 'bg-emerald-900 hover:bg-emerald-800 text-emerald-300' }}">
+                {{ "Disable" if cmd.enabled else "Enable" }}
+            </button>
+            <button hx-post="/command/{{ cmd.name }}/delete" hx-confirm="Delete command '{{ cmd.name }}'?"
+                    hx-target="#command-{{ cmd.name }}" hx-swap="outerHTML"
+                    class="text-sm px-3 py-1 rounded bg-red-950 hover:bg-red-900 text-red-400">Delete</button>
+        </div>
+    </div>
+    {% if cmd.description %}
+    <p class="text-sm text-neutral-400 mb-2">{{ cmd.description }}</p>
+    {% endif %}
+    <div class="text-xs text-neutral-500 mb-1">kwargs: <code class="text-neutral-300">{{ cmd.kwargs }}</code></div>
+    <div class="flex flex-wrap gap-1">
+        {% for phrase in cmd.synonyms %}
+        <span class="text-xs px-2 py-1 rounded bg-neutral-800 text-neutral-300 {{ 'line-through' if not cmd.enabled else '' }}">{{ phrase }}</span>
+        {% endfor %}
+    </div>
+</div>

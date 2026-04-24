@@ -1,14 +1,33 @@
 category = "primitives"
 
+# Primitive verbs dispatch to the OS (keystrokes, window focus, app launch).
+# They are marked ``internal = true`` so the LLM never sees them directly —
+# user-defined commands and workflows in commands.json / workflows.json are
+# the only surface the LLM routes against.
+#
+# ``no_match`` is the exception: it stays LLM-visible as the "nothing matched"
+# escape hatch. It maps to a no-op Python function.
+#
+# Tools kept enabled=true (still dispatchable via commands/workflows):
+#   focus, type, open, press, wait, click, scroll, no_match
+#
+# Legacy semantic verbs (close, close_window, minimize, maximize, last,
+# summon_commander, mute, done, ask_user) are retained in the registry so
+# their Python functions stay importable, but they are disabled — invisible
+# to every caller. Equivalent behaviour is now expressed as user commands
+# (close_tab → press(ctrl+w), close_window → press(alt+f4), minimize →
+# press(win+down), etc.).
+
 [tools.focus]
 phrases = []
 description = "Focus a window matching the given target (process name or window title, fuzzy-matched)."
 enabled = true
 settle_ms = 200
 llm_only = true
+internal = true
 
 [tools.focus.args.target]
-description = "Human utterance naming the window to focus (e.g. 'notepad', 'chrome', 'spotify'). Fuzzy-matched against process names and window titles."
+description = "Window to focus (e.g. 'notepad', 'chrome', 'spotify'). Fuzzy-matched against process names and window titles."
 required = true
 type = "string"
 
@@ -18,6 +37,7 @@ description = "Type arbitrary text via keystroke synthesis into the currently fo
 enabled = true
 settle_ms = 50
 llm_only = true
+internal = true
 
 [tools.type.args.text]
 description = "The text to type. Truncated to 500 characters with a warning log when exceeded."
@@ -30,62 +50,12 @@ description = "Open an application, file, URI, or Start Menu entry. Resolves fuz
 enabled = true
 settle_ms = 500
 llm_only = true
+internal = true
 
 [tools.open.args.target]
-description = "Application name ('spotify'), URI ('https://example.com'), or file path. App names are fuzzy-matched against Start Menu and AppsFolder entries."
+description = "Application name ('spotify'), URI ('https://example.com'), or file path."
 required = true
 type = "string"
-
-[tools.close]
-phrases = []
-description = "Close the current tab/document via Ctrl+W. DEFAULT for any bare 'close' utterance. Do NOT use close_window for a plain 'close' — only when the user explicitly says 'close window', 'close app', or 'quit'."
-enabled = true
-settle_ms = 100
-llm_only = true
-
-[tools.close_window]
-phrases = []
-description = "Close the entire focused window (Alt+F4). ONLY use when the user explicitly says 'close window', 'close app', 'close application', or 'quit'. For bare 'close', use the `close` tool instead."
-enabled = true
-settle_ms = 100
-llm_only = true
-
-[tools.minimize]
-phrases = []
-description = "Minimize a single window (defaults to the currently focused window). ALWAYS use this tool for 'minimize' utterances. NEVER emit press(combo='win+d') or press(combo='win+m') — those minimize everything."
-enabled = true
-settle_ms = 100
-llm_only = true
-
-[tools.minimize.args.target]
-description = "Optional process name or window title (fuzzy-matched). Omit to minimize the focused window only."
-required = false
-type = "string"
-
-[tools.maximize]
-phrases = []
-description = "Maximize a single window (defaults to the currently focused window). ALWAYS use this tool for 'maximize' utterances. NEVER emit press(combo='win+up')."
-enabled = true
-settle_ms = 100
-llm_only = true
-
-[tools.maximize.args.target]
-description = "Optional process name or window title (fuzzy-matched). Omit to maximize the focused window only."
-required = false
-type = "string"
-
-[tools.last]
-phrases = []
-description = "Switch back. DEFAULT (no args) issues Alt+Tab to return to the previous window. With tab=true, issues Ctrl+Tab to switch to the next tab inside the currently focused app. DEFAULT for 'last', 'last window', 'previous window', 'go back', 'last tab', 'next tab', 'switch tab' utterances. NEVER emit press(combo='alt+tab'), press(combo='ctrl+tab'), or press(combo='ctrl+shift+tab') — always use last()."
-enabled = true
-settle_ms = 100
-llm_only = true
-
-[tools.last.args.tab]
-description = "When true, switch tab in the current app via Ctrl+Tab. When false (default), switch to the previous window via Alt+Tab."
-required = false
-type = "boolean"
-default = false
 
 [tools.press]
 phrases = []
@@ -93,6 +63,7 @@ description = "Press a key combination like 'ctrl+c', 'alt+tab', 'win+l'."
 enabled = true
 settle_ms = 50
 llm_only = true
+internal = true
 
 [tools.press.args.combo]
 description = "Key combination string with '+' separator (e.g. 'ctrl+c', 'alt+tab', 'win+shift+s')."
@@ -105,6 +76,7 @@ description = "Pause execution for the specified milliseconds before the next st
 enabled = true
 settle_ms = 0
 llm_only = true
+internal = true
 
 [tools.wait.args.ms]
 description = "Duration to wait in milliseconds."
@@ -117,6 +89,7 @@ description = "Click the mouse at the current cursor position."
 enabled = true
 settle_ms = 50
 llm_only = true
+internal = true
 
 [tools.click.args.button]
 description = "Mouse button: 'left', 'right', or 'middle'. Defaults to 'left'."
@@ -124,38 +97,13 @@ required = false
 type = "string"
 default = "left"
 
-[tools.summon_commander]
-phrases = []
-description = "Spawn a visible PowerShell window in the voice-commander repo and run `ccd`. ONLY use for exact utterances 'summon commander', 'spawn commander', or 'summon the commander'. NEVER use for 'open commander', 'focus commander', or any generic 'open X' / 'focus X' utterance — those go to open() or focus() respectively."
-enabled = true
-settle_ms = 500
-llm_only = true
-
-[tools.mute]
-phrases = []
-description = "End the voice session — equivalent to pressing the Scroll Lock hotkey. DEFAULT for utterances like 'mute', 'mute yourself', 'stop listening', 'shut up', 'be quiet'. No arguments."
-enabled = true
-settle_ms = 0
-llm_only = true
-
-[tools.no_match]
-phrases = []
-description = "Signal that the utterance is not an executable command (casual speech, nonsense)."
-enabled = true
-settle_ms = 0
-llm_only = true
-
-[tools.no_match.args.reason]
-description = "Brief explanation of why no tool matched."
-required = true
-type = "string"
-
 [tools.scroll]
 phrases = []
 description = "Scroll the active window up or down."
 enabled = true
 settle_ms = 0
 llm_only = true
+internal = true
 
 [tools.scroll.args.direction]
 description = "Scroll direction: 'up' or 'down'."
@@ -168,12 +116,87 @@ required = false
 type = "integer"
 default = 3
 
-[tools.done]
-description = "Signal that the agentic loop has completed its goal. Use done(success=true) when the goal is achieved, done(success=false) when the goal is impossible."
+# --- Legacy semantic verbs (disabled — superseded by user commands) -----------
+
+[tools.close]
 phrases = []
-enabled = true
+description = "[disabled] Use a close_tab command instead (press ctrl+w)."
+enabled = false
+settle_ms = 100
 llm_only = true
+internal = true
+
+[tools.close_window]
+phrases = []
+description = "[disabled] Use a close_window command instead (press alt+f4)."
+enabled = false
+settle_ms = 100
+llm_only = true
+internal = true
+
+[tools.minimize]
+phrases = []
+description = "[disabled] Use a minimize command instead (press win+down)."
+enabled = false
+settle_ms = 100
+llm_only = true
+internal = true
+
+[tools.minimize.args.target]
+description = "Optional process name or window title."
+required = false
+type = "string"
+
+[tools.maximize]
+phrases = []
+description = "[disabled] Use a maximize command instead (press win+up)."
+enabled = false
+settle_ms = 100
+llm_only = true
+internal = true
+
+[tools.maximize.args.target]
+description = "Optional process name or window title."
+required = false
+type = "string"
+
+[tools.last]
+phrases = []
+description = "[disabled] Use a last_window / last_tab command instead."
+enabled = false
+settle_ms = 100
+llm_only = true
+internal = true
+
+[tools.last.args.tab]
+description = "When true, switch tab via Ctrl+Tab. Default false → Alt+Tab."
+required = false
+type = "boolean"
+default = false
+
+[tools.summon_commander]
+phrases = []
+description = "[disabled] Spawn a PowerShell window. Repurpose as a command if still needed."
+enabled = false
+settle_ms = 500
+llm_only = true
+internal = true
+
+[tools.mute]
+phrases = []
+description = "[disabled] End the voice session. Scroll Lock still works as the hardware mute."
+enabled = false
 settle_ms = 0
+llm_only = true
+internal = true
+
+[tools.done]
+phrases = []
+description = "[disabled] Legacy agentic-loop terminator. No longer used."
+enabled = false
+settle_ms = 0
+llm_only = true
+internal = true
 
 [tools.done.args.success]
 description = "Whether the goal was achieved."
@@ -181,22 +204,39 @@ type = "boolean"
 default = true
 
 [tools.done.args.summary]
-description = "Optional one-line summary of what was accomplished."
+description = "Optional one-line summary."
 type = "string"
 default = ""
 
 [tools.ask_user]
-description = "Ask the user a clarifying question via HUD overlay. Use when ambiguity cannot be resolved from context (e.g. multiple matching windows)."
 phrases = []
-enabled = true
-llm_only = true
+description = "[disabled] Legacy HUD clarifying question. Not wired in the command/workflow architecture."
+enabled = false
 settle_ms = 0
+llm_only = true
+internal = true
 
 [tools.ask_user.args.question]
 description = "The question to display to the user."
 type = "string"
 
 [tools.ask_user.args.options]
-description = "Comma-separated numbered options (e.g. '1. VS Code, 2. Terminal, 3. Notepad'). Empty string if free-form answer expected."
+description = "Comma-separated numbered options."
 type = "string"
 default = ""
+
+# --- LLM escape hatch ---------------------------------------------------------
+
+[tools.no_match]
+phrases = []
+description = "Signal that the utterance does not match any command or workflow."
+enabled = true
+settle_ms = 0
+llm_only = true
+# ``no_match`` stays LLM-visible — it is the only non-command tool the LLM sees.
+internal = false
+
+[tools.no_match.args.reason]
+description = "Brief explanation of why no command matched."
+required = true
+type = "string"

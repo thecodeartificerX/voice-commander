@@ -5,12 +5,19 @@ import pkgutil
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
 
 if TYPE_CHECKING:
     from .tool_metadata import ToolMetadataStore
 
 F = TypeVar("F", bound=Callable[..., None])
+
+
+# ``ToolEntry.origin`` discriminates where an entry came from:
+# - "primitive": a raw Python function under ``tools/`` (e.g. ``press``).
+# - "command"  : a user-defined named shortcut synthesised from commands.json.
+# - "workflow" : a user-defined multi-step macro synthesised from workflows.json.
+Origin = Literal["primitive", "command", "workflow"]
 
 
 class DuplicateToolError(Exception):
@@ -30,6 +37,11 @@ class ToolEntry:
     params_schema: dict[str, Any] = field(default_factory=dict)
     settle_ms: int = 0
     llm_only: bool = False
+    # ``internal`` tools stay in the registry so commands/workflows can
+    # dispatch them, but they are hidden from the LLM's tool list — the
+    # LLM only ever sees user-curated commands + workflows.
+    internal: bool = False
+    origin: Origin = "primitive"
 
 
 class ToolRegistry:
@@ -55,14 +67,38 @@ class ToolRegistry:
         return self._by_name.get(name)
 
     def all_llm_visible(self) -> list[ToolEntry]:
-        """Return tools that are both enabled and marked llm_only=True.
+        """Return tools that are enabled, marked llm_only=True, AND NOT internal.
 
         These are the only tools passed to the LLM router's tools array.
+        ``internal=True`` hides raw primitives from the LLM while leaving
+        them dispatchable for commands/workflows that reference them.
         """
         return sorted(
-            (e for e in self._by_name.values() if e.enabled and e.llm_only),
+            (
+                e
+                for e in self._by_name.values()
+                if e.enabled and e.llm_only and not e.internal
+            ),
             key=lambda e: e.name,
         )
+
+    def by_origin(self, origin: Origin) -> list[ToolEntry]:
+        """Return enabled tools that came from *origin*.
+
+        Convenience helper for the Web UI, which groups cards by source.
+        """
+        return sorted(
+            (e for e in self._by_name.values() if e.origin == origin),
+            key=lambda e: e.name,
+        )
+
+    def remove(self, name: str) -> bool:
+        """Drop *name* from the registry if present.
+
+        Used by hot-reload paths when a user deletes a command or workflow
+        from the UI. Returns True when a removal occurred.
+        """
+        return self._by_name.pop(name, None) is not None
 
     def bind_metadata(self, store: ToolMetadataStore) -> None:
         """Load all TOML metadata and pair each entry with its registered tool.
@@ -93,6 +129,7 @@ class ToolRegistry:
             entry.enabled = md.enabled
             entry.settle_ms = md.settle_ms
             entry.llm_only = md.llm_only
+            entry.internal = md.internal
 
     def reload_metadata(self, store: ToolMetadataStore) -> None:
         """Re-read all TOML and update existing entries.
@@ -112,6 +149,7 @@ class ToolRegistry:
             entry.enabled = md.enabled
             entry.settle_ms = md.settle_ms
             entry.llm_only = md.llm_only
+            entry.internal = md.internal
 
     def __len__(self) -> int:
         return len(self._by_name)

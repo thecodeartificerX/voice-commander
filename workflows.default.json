@@ -1,0 +1,24 @@
+{
+  "workflows": {
+    "search_web": {
+      "description": "Focus the default browser and search for a query",
+      "synonyms": [
+        "search {query}",
+        "search web for {query}",
+        "google {query}",
+        "look up {query}"
+      ],
+      "enabled": true,
+      "args": [
+        {"name": "query", "type": "string", "required": true, "description": "What to search for"}
+      ],
+      "steps": [
+        {"ref": "primitive:focus", "kwargs": {"target": "{default_browser}"}},
+        {"ref": "primitive:press", "kwargs": {"combo": "ctrl+t"}},
+        {"ref": "primitive:press", "kwargs": {"combo": "ctrl+l"}},
+        {"ref": "primitive:type",  "kwargs": {"text": "{query}"}},
+        {"ref": "primitive:press", "kwargs": {"combo": "enter"}}
+      ]
+    }
+  }
+}
