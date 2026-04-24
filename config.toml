@@ -4,7 +4,7 @@ mute_key = "ctrl_r"
 
 [audio]
 channels = 1
-device = 11
+device = 8
 output_dir = "outputs"
 
 [transcription]
@@ -46,7 +46,7 @@ auto_open_browser = true
 endpoint_url = "http://localhost:1234/v1"
 model_id = "google/gemma-4-26b-a4b"
 default_browser = "comet"
-timeout_ms = 1200
+timeout_ms = 5000
 warmup_timeout_ms = 5000
 max_plan_steps = 12
 warmup_on_startup = true

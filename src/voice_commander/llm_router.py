@@ -192,6 +192,10 @@ class LLMRouter:
             "tool_choice": "required",
             "temperature": 0,
             "stream": False,
+            # Reasoning models (Gemma 4 26B-A4B, DeepSeek-R1, etc.) would otherwise
+            # burn the token budget on <think> content before emitting the tool call,
+            # blowing past timeout_ms. Non-reasoning models ignore this per OpenAI spec.
+            "reasoning_effort": "none",
         }
 
         self._total_calls += 1
@@ -330,6 +334,8 @@ class LLMRouter:
             # Studio doesn't waste compute producing a full response.
             # Note: some model adapters may reject max_tokens=1; use 2 if needed.
             "max_tokens": 1,
+            # Suppress reasoning tokens on reasoning models; no-op on others.
+            "reasoning_effort": "none",
         }
 
         warmup_timeout = httpx.Timeout(

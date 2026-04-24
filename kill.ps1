@@ -44,8 +44,9 @@ function Invoke-SafeKill {
 
 # --- Stage 1: PID from lock file ------------------------------------------
 if (Test-Path $LockFile) {
-    $raw = (Get-Content $LockFile -Raw -ErrorAction SilentlyContinue).Trim()
-    if ($raw -match '^(\d+):') {
+    $raw = Get-Content $LockFile -Raw -ErrorAction SilentlyContinue
+    if ($raw) { $raw = $raw.Trim() }
+    if ($raw -and $raw -match '^(\d+):') {
         $lockPid = [int]$Matches[1]
         $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$lockPid" -ErrorAction SilentlyContinue
         if ($proc -and $proc.CommandLine -match 'voice_commander|voice-commander') {
