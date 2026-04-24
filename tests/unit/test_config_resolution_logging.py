@@ -50,9 +50,10 @@ def test_env_var_shows_as_source(
     assert "http://foo:1/v1" in text
 
 
-def test_local_toml_shows_as_source(
+def test_local_toml_ignored_in_resolution(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """config.local.toml is no longer merged — values stay at default."""
     for name in list(os_env_with_prefix("VC_LLM_")):
         monkeypatch.delenv(name, raising=False)
     base = tmp_path / "config.toml"
@@ -66,8 +67,9 @@ def test_local_toml_shows_as_source(
     )
     cfg = Config.load(base)
     text = _emit(cfg, caplog)
-    assert "config.local.toml" in text
-    assert "comet" in text
+    assert "config.local.toml" not in text
+    assert "comet" not in text
+    assert "chrome" in text  # default value wins
 
 
 def test_config_toml_shows_as_source(

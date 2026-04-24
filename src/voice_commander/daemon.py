@@ -260,7 +260,8 @@ class StreamingDaemon:
             return
         outcome = self._dispatcher.run_plan(result.text, plan, self._registry)
         if outcome.status in ("miss", "error") and self._agentic_router is not None:
-            self._agentic_router.run(result.text, failed_plan=outcome)
+            agentic_outcome = self._agentic_router.run(result.text, failed_plan=outcome)
+            self._publish("plan_outcome", agentic_outcome.to_event_dict())
         self._write_plan_async(result.text, plan)
 
     def _write_utterance_async(self, utterance: npt.NDArray[np.float32]) -> None:

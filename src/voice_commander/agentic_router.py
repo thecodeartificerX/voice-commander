@@ -35,7 +35,7 @@ receive the current environment state (focused window, visible windows)
 and prior step history. Choose exactly ONE tool call per turn.
 
 You have these tools available:
-- All voice command tools (focus, type, open, close, press, wait,
+- All voice command tools (focus, type, open, press, wait,
   click, scroll, minimize, maximize, last)
 - Perception tools (get_focused_window, list_windows, get_clipboard, list_processes)
 - done(success, summary) — call when your goal is achieved or impossible
@@ -151,24 +151,34 @@ class AgenticRouter:
 
         Always queries focused window and visible windows. Only fetches
         clipboard content when the transcript contains clipboard-related
-        keywords to avoid unnecessary IPC overhead.
+        keywords to avoid unnecessary IPC overhead.  Each perception call
+        is individually guarded so a transient win32 error degrades
+        gracefully instead of aborting the agentic run.
         """
         from .tools.perception import get_focused_window, list_windows
 
-        focused = get_focused_window()
-        windows = list_windows()
+        parts: list[str] = []
+        try:
+            focused = get_focused_window()
+            parts.append(f"Focused window: {json.dumps(focused)}")
+        except Exception:
+            logger.warning("_gather_context: get_focused_window failed", exc_info=True)
 
-        parts = [
-            f"Focused window: {json.dumps(focused)}",
-            f"Visible windows ({len(windows)}): {json.dumps(windows)}",
-        ]
+        try:
+            windows = list_windows()
+            parts.append(f"Visible windows ({len(windows)}): {json.dumps(windows)}")
+        except Exception:
+            logger.warning("_gather_context: list_windows failed", exc_info=True)
 
         clipboard_keywords = {"clipboard", "paste", "copied", "copy"}
         if any(kw in transcript.lower() for kw in clipboard_keywords):
             from .tools.perception import get_clipboard
 
-            clip = get_clipboard()
-            parts.append(f"Clipboard: {json.dumps(clip)}")
+            try:
+                clip = get_clipboard()
+                parts.append(f"Clipboard: {json.dumps(clip)}")
+            except Exception:
+                logger.warning("_gather_context: get_clipboard failed", exc_info=True)
 
         return "\n".join(parts)
 
@@ -365,13 +375,15 @@ class AgenticRouter:
             # ---- Perception tool (observation, no dispatch) ---------------
             if tool_call.name in perception_tools:
                 tool_entry = self._registry.by_name(tool_call.name)
-                result_data = "{}"
                 if tool_entry is not None:
                     try:
                         result = tool_entry.func(**tool_call.kwargs)  # type: ignore[func-returns-value]
                         result_data = json.dumps(result, default=str)
                     except Exception as exc:
                         result_data = json.dumps({"error": str(exc)})
+                else:
+                    logger.warning("Perception tool %r not found in registry", tool_call.name)
+                    result_data = json.dumps({"error": f"tool '{tool_call.name}' not found"})
 
                 tc_id = f"call_{step_num}"
                 messages.append(

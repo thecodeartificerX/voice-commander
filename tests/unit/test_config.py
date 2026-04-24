@@ -61,38 +61,14 @@ def test_vad_defaults(tmp_path):
     assert cfg.vad.gates.max_no_speech_prob == 0.6
 
 
-def test_local_overrides_base(tmp_path):
+def test_local_file_ignored(tmp_path):
+    """config.local.toml is no longer merged — base values always win."""
     base = tmp_path / "config.toml"
-    base.write_text(
-        textwrap.dedent("""
-        [audio]
-        channels = 1
-        device = 13
-
-        [vad]
-        threshold = 0.4
-
-        [vad.gates]
-        min_word_count = 1
-    """)
-    )
+    base.write_text("[audio]\ndevice = 13\n")
     local = tmp_path / "config.local.toml"
-    local.write_text(
-        textwrap.dedent("""
-        [audio]
-        device = 8
-
-        [vad.gates]
-        min_word_count = 3
-    """)
-    )
+    local.write_text("[audio]\ndevice = 8\n")
     cfg = Config.load(base)
-    # local overrides
-    assert cfg.audio.device == 8
-    assert cfg.vad.gates.min_word_count == 3
-    # base values preserved where local silent
-    assert cfg.audio.channels == 1
-    assert cfg.vad.threshold == 0.4
+    assert cfg.audio.device == 13  # local file ignored
 
 
 def test_local_missing_uses_base(tmp_path):
@@ -101,14 +77,6 @@ def test_local_missing_uses_base(tmp_path):
     cfg = Config.load(base)
     assert cfg.audio.device == 5
 
-
-def test_explicit_local_path(tmp_path):
-    base = tmp_path / "config.toml"
-    base.write_text("[audio]\ndevice = 1\n")
-    custom = tmp_path / "overrides.toml"
-    custom.write_text("[audio]\ndevice = 42\n")
-    cfg = Config.load(base, local_path=custom)
-    assert cfg.audio.device == 42
 
 
 def test_vad_overrides(tmp_path):
@@ -167,6 +135,8 @@ def test_llm_section_absent_returns_all_defaults(tmp_path):
     assert r.default_browser == "chrome"
     assert r.focus_fuzzy_threshold == 70
     assert r.open_fuzzy_threshold == 70
+    assert r.agentic_fallback is True
+    assert r.max_agentic_steps == 6
 
 
 def test_llm_all_fields_round_trip(tmp_path):
@@ -248,6 +218,30 @@ def test_llm_warmup_timeout_ms_default(tmp_path):
     """warmup_timeout_ms defaults to 5000 when absent from config."""
     cfg = Config.load(tmp_path / "nope.toml")
     assert cfg.llm.warmup_timeout_ms == 5000
+
+
+def test_agentic_fallback_defaults(tmp_path):
+    """No [llm] section → agentic_fallback is True and max_agentic_steps is 6."""
+    cfg = Config.load(tmp_path / "nope.toml")
+    assert cfg.llm.agentic_fallback is True
+    assert cfg.llm.max_agentic_steps == 6
+
+
+def test_agentic_fallback_round_trip(tmp_path):
+    """agentic_fallback = false and max_agentic_steps = 3 round-trip via TOML."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[llm]\nagentic_fallback = false\nmax_agentic_steps = 3\n")
+    cfg = Config.load(cfg_file)
+    assert cfg.llm.agentic_fallback is False
+    assert cfg.llm.max_agentic_steps == 3
+
+
+def test_agentic_steps_invalid_type_raises(tmp_path):
+    """max_agentic_steps = 'six' (string) → TypeError raised by _section type check."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[llm]\nmax_agentic_steps = "six"\n')
+    with pytest.raises((TypeError, ValueError)):
+        Config.load(cfg_file)
 
 
 def test_llm_warmup_timeout_ms_round_trip(tmp_path):

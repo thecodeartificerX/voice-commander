@@ -19,7 +19,8 @@ from voice_commander.daemon import StreamingDaemon
 from voice_commander.event_bus import EventBus
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.llm_router import LLMRouter
-from voice_commander.plan import Plan, ToolCall
+from voice_commander.agentic_router import AgenticRouter
+from voice_commander.plan import Plan, PlanOutcome, ToolCall
 from voice_commander.transcriber import TranscriptionResult
 
 # ---------------------------------------------------------------------------
@@ -504,3 +505,133 @@ def test_process_utterance_publishes_error_when_registry_none(tmp_path):
     assert payload["failed_step_index"] is None
     assert payload["duration_ms"] >= 0
     dispatcher.run_plan.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Agentic fallback path tests
+# ---------------------------------------------------------------------------
+
+
+def _make_daemon_with_agentic(
+    *, output_dir: str = "outputs", event_bus: EventBus | None = None
+) -> tuple[
+    StreamingDaemon,
+    CapturingFeedbackSink,
+    MagicMock,  # recorder
+    MagicMock,  # transcriber
+    MagicMock,  # llm_router
+    MagicMock,  # dispatcher
+    MagicMock,  # agentic_router
+]:
+    feedback = CapturingFeedbackSink()
+
+    recorder = MagicMock()
+    recorder.is_open = False
+
+    transcriber = MagicMock()
+    llm_router = MagicMock(spec=LLMRouter)
+    dispatcher = MagicMock()
+    agentic_router = MagicMock(spec=AgenticRouter)
+
+    daemon = StreamingDaemon(
+        feedback=feedback,
+        recorder=recorder,
+        transcriber=transcriber,
+        llm_router=llm_router,
+        dispatcher=dispatcher,
+        registry=MagicMock(),
+        output_dir=output_dir,
+        event_bus=event_bus,
+        agentic_router=agentic_router,
+    )
+    return daemon, feedback, recorder, transcriber, llm_router, dispatcher, agentic_router
+
+
+def test_process_utterance_calls_agentic_on_miss(tmp_path):
+    """When dispatcher returns status='miss', agentic_router.run is called once."""
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher, agentic_router = (
+        _make_daemon_with_agentic(output_dir=str(tmp_path))
+    )
+
+    result = _fake_transcription_result("open chrome", confidence=0.95)
+    transcriber.transcribe.return_value = result
+
+    plan = Plan(steps=(ToolCall(name="open", kwargs={"target": "chrome"}),), raw_response={})
+    llm_router.route.return_value = plan
+
+    miss_outcome = PlanOutcome(
+        transcript="open chrome",
+        steps=(),
+        status="miss",
+        failed_step_index=None,
+        error_msg="no match",
+        duration_ms=10,
+    )
+    dispatcher.run_plan.return_value = miss_outcome
+
+    ok_outcome = PlanOutcome(
+        transcript="open chrome",
+        steps=(),
+        status="ok",
+        failed_step_index=None,
+        error_msg=None,
+        duration_ms=20,
+    )
+    agentic_router.run.return_value = ok_outcome
+
+    daemon._process_utterance(_fake_utterance())
+
+    agentic_router.run.assert_called_once()
+
+
+def test_process_utterance_skips_agentic_on_ok(tmp_path):
+    """When dispatcher returns status='ok', agentic_router.run is NOT called."""
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher, agentic_router = (
+        _make_daemon_with_agentic(output_dir=str(tmp_path))
+    )
+
+    result = _fake_transcription_result("copy", confidence=0.95)
+    transcriber.transcribe.return_value = result
+
+    plan = Plan(steps=(ToolCall(name="press", kwargs={"combo": "ctrl+c"}),), raw_response={})
+    llm_router.route.return_value = plan
+
+    ok_outcome = PlanOutcome(
+        transcript="copy",
+        steps=(),
+        status="ok",
+        failed_step_index=None,
+        error_msg=None,
+        duration_ms=10,
+    )
+    dispatcher.run_plan.return_value = ok_outcome
+
+    daemon._process_utterance(_fake_utterance())
+
+    agentic_router.run.assert_not_called()
+
+
+def test_process_utterance_skips_agentic_when_disabled(tmp_path):
+    """When no agentic_router is provided, a dispatcher miss must not crash."""
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+        output_dir=str(tmp_path)
+    )
+
+    result = _fake_transcription_result("open chrome", confidence=0.95)
+    transcriber.transcribe.return_value = result
+
+    plan = Plan(steps=(ToolCall(name="open", kwargs={"target": "chrome"}),), raw_response={})
+    llm_router.route.return_value = plan
+
+    miss_outcome = PlanOutcome(
+        transcript="open chrome",
+        steps=(),
+        status="miss",
+        failed_step_index=None,
+        error_msg="no match",
+        duration_ms=10,
+    )
+    dispatcher.run_plan.return_value = miss_outcome
+
+    # Must not raise AttributeError or any other exception.
+    daemon._process_utterance(_fake_utterance())
