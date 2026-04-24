@@ -162,6 +162,10 @@ def _file_lock(path: Path) -> Iterator[None]:
 
 _NAME_ALLOWED = set("abcdefghijklmnopqrstuvwxyz0123456789_")
 
+# Route-level slugs that are permanently reserved and cannot be used as command/workflow names.
+# Using any of these as a name would shadow the corresponding admin UI route.
+_RESERVED_NAMES = frozenset({"new", "toggle", "delete"})
+
 
 def _validate_name(kind: str, name: str) -> None:
     if not name:
@@ -170,6 +174,8 @@ def _validate_name(kind: str, name: str) -> None:
         raise CommandStoreError(f"{kind} name {name!r}: only lowercase a-z, 0-9, and _ allowed")
     if name[0].isdigit():
         raise CommandStoreError(f"{kind} name {name!r}: cannot start with a digit")
+    if name in _RESERVED_NAMES:
+        raise CommandStoreError(f"{kind} name {name!r}: reserved — choose a different name")
 
 
 # ---------------------------------------------------------------------------

@@ -118,10 +118,16 @@ def attach_admin_routes(
         enabled: str = Form(default="true"),
     ) -> HTMLResponse:
         if name == "new":
-            form_data = await request.form()
+            try:
+                form_data = await request.form()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("command_save: failed to read form body: %s", exc)
+                return HTMLResponse(content="could not read form data", status_code=400)
             form_name = str(form_data.get("name", "")).strip()
-            if form_name:
-                name = form_name
+            if not form_name:
+                return HTMLResponse(content="'name' field is required", status_code=400)
+            logger.debug("command_save: resolved name %r from form field", form_name)
+            name = form_name
         parsed = _parse_command_form(
             name=name,
             description=description,
@@ -220,10 +226,16 @@ def attach_admin_routes(
         enabled: str = Form(default="true"),
     ) -> HTMLResponse:
         if name == "new":
-            form_data = await request.form()
+            try:
+                form_data = await request.form()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("workflow_save: failed to read form body: %s", exc)
+                return HTMLResponse(content="could not read form data", status_code=400)
             form_name = str(form_data.get("name", "")).strip()
-            if form_name:
-                name = form_name
+            if not form_name:
+                return HTMLResponse(content="'name' field is required", status_code=400)
+            logger.debug("workflow_save: resolved name %r from form field", form_name)
+            name = form_name
         parsed = _parse_workflow_form(
             name=name,
             description=description,

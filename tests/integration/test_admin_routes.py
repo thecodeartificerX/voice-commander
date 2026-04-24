@@ -201,6 +201,82 @@ def test_new_workflow_name_from_form(client: TestClient, tmp_path: Path) -> None
     assert "new" not in raw["workflows"], "literal 'new' must not be saved as a workflow"
 
 
+def test_new_command_empty_name_rejected(client: TestClient, tmp_path: Path) -> None:
+    """POST /command/new with a blank name must return 400 and not save a 'new' key."""
+    resp = client.post(
+        "/command/new",
+        data={
+            "name": "",
+            "description": "Oops blank name",
+            "synonyms": "",
+            "primitive": "press",
+            "kwargs_json": json.dumps({"combo": "ctrl+x"}),
+            "enabled": "true",
+        },
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 400
+    raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
+    assert "new" not in raw["commands"], "literal 'new' must not be saved on empty name submission"
+
+
+def test_new_workflow_empty_name_rejected(client: TestClient, tmp_path: Path) -> None:
+    """POST /workflow/new with a blank name must return 400 and not save a 'new' key."""
+    resp = client.post(
+        "/workflow/new",
+        data={
+            "name": "",
+            "description": "Oops blank name",
+            "synonyms": "",
+            "args_json": json.dumps([]),
+            "steps_json": json.dumps([]),
+            "enabled": "true",
+        },
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 400
+    raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
+    assert "new" not in raw["workflows"], "literal 'new' must not be saved on empty name submission"
+
+
+def test_new_command_reserved_name_rejected(client: TestClient, tmp_path: Path) -> None:
+    """POST /command/new with name='new' must return 400 (reserved slug)."""
+    resp = client.post(
+        "/command/new",
+        data={
+            "name": "new",
+            "description": "Intentionally reserved name",
+            "synonyms": "",
+            "primitive": "press",
+            "kwargs_json": json.dumps({"combo": "ctrl+x"}),
+            "enabled": "true",
+        },
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 400
+    raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
+    assert "new" not in raw["commands"], "reserved name 'new' must not be persisted"
+
+
+def test_new_workflow_reserved_name_rejected(client: TestClient, tmp_path: Path) -> None:
+    """POST /workflow/new with name='new' must return 400 (reserved slug)."""
+    resp = client.post(
+        "/workflow/new",
+        data={
+            "name": "new",
+            "description": "Intentionally reserved name",
+            "synonyms": "",
+            "args_json": json.dumps([]),
+            "steps_json": json.dumps([]),
+            "enabled": "true",
+        },
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 400
+    raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
+    assert "new" not in raw["workflows"], "reserved name 'new' must not be persisted"
+
+
 def test_command_delete_removes_file_entry(client: TestClient, tmp_path: Path) -> None:
     resp = client.post(
         "/command/copy/delete",
