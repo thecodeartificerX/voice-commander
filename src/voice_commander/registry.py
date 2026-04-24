@@ -42,7 +42,7 @@ class ToolEntry:
     # LLM only ever sees user-curated commands + workflows.
     internal: bool = False
     origin: Origin = "primitive"
-    args_meta: dict[str, "ArgMetadata"] = field(default_factory=dict)
+    args_meta: dict[str, ArgMetadata] = field(default_factory=dict)
 
 
 class ToolRegistry:

@@ -321,9 +321,7 @@ def test_kwargs_form_unknown_primitive_returns_raw_json_fallback(
     assert 'name="kwargs_json"' in resp.text
 
 
-def test_command_save_guided_mode_coerces_types(
-    client: TestClient, tmp_path: Path
-) -> None:
+def test_command_save_guided_mode_coerces_types(client: TestClient, tmp_path: Path) -> None:
     """Guided mode: kwarg_* fields are accepted and saved correctly."""
     resp = client.post(
         "/command/guided_cmd",
@@ -342,9 +340,7 @@ def test_command_save_guided_mode_coerces_types(
     assert raw["commands"]["guided_cmd"]["kwargs"] == {}
 
 
-def test_command_save_advanced_mode_parses_json(
-    client: TestClient, tmp_path: Path
-) -> None:
+def test_command_save_advanced_mode_parses_json(client: TestClient, tmp_path: Path) -> None:
     """Advanced mode still accepts kwargs_json — backwards compat."""
     resp = client.post(
         "/command/adv_cmd",

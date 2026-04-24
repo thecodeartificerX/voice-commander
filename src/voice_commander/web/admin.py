@@ -85,8 +85,15 @@ def attach_admin_routes(
         entry = registry.by_name(cmd.primitive)
         args_meta = entry.args_meta if entry is not None else {}
         return templates.TemplateResponse(
-            request, "_command_edit.html",
-            {"cmd": cmd, "is_new": False, "args_meta": args_meta, "kwargs": cmd.kwargs, "mode": "guided"},
+            request,
+            "_command_edit.html",
+            {
+                "cmd": cmd,
+                "is_new": False,
+                "args_meta": args_meta,
+                "kwargs": cmd.kwargs,
+                "mode": "guided",
+            },
         )
 
     @app.get("/command/new", response_class=HTMLResponse)
@@ -101,8 +108,15 @@ def attach_admin_routes(
         entry = registry.by_name("press")
         args_meta = entry.args_meta if entry is not None else {}
         return templates.TemplateResponse(
-            request, "_command_edit.html",
-            {"cmd": blank, "is_new": True, "args_meta": args_meta, "kwargs": blank.kwargs, "mode": "guided"},
+            request,
+            "_command_edit.html",
+            {
+                "cmd": blank,
+                "is_new": True,
+                "args_meta": args_meta,
+                "kwargs": blank.kwargs,
+                "mode": "guided",
+            },
         )
 
     @app.get("/command/{name}/cancel", response_class=HTMLResponse)
@@ -145,9 +159,7 @@ def attach_admin_routes(
             name = resolved
         form_data = await request.form()
         kwarg_fields = {
-            k[len("kwarg_"):]: str(v)
-            for k, v in form_data.items()
-            if k.startswith("kwarg_")
+            k[len("kwarg_") :]: str(v) for k, v in form_data.items() if k.startswith("kwarg_")
         }
         entry = registry.by_name(primitive)
         args_meta = entry.args_meta if entry is not None else {}
@@ -396,6 +408,7 @@ def _parse_command_form(
 
     synonyms_list = tuple(s.strip() for s in synonyms.splitlines() if s.strip())
 
+    kwargs: dict[str, Any]
     if kwargs_mode == "advanced" or not args_meta:
         try:
             kwargs = json_mod.loads(kwargs_json) if kwargs_json.strip() else {}
@@ -405,7 +418,7 @@ def _parse_command_form(
             return "kwargs must decode to a JSON object"
     else:
         kwarg_fields = kwarg_fields or {}
-        kwargs: dict[str, Any] = {}
+        kwargs = {}
         for arg_name, arg_meta in (args_meta or {}).items():
             raw = kwarg_fields.get(arg_name)
             if isinstance(arg_meta, _ArgMeta) and arg_meta.type_str == "boolean":
