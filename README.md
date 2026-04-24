@@ -77,7 +77,7 @@ cd voice-commander
 # 2. Let uv build the venv and pull every dependency
 uv sync
 
-# 3. Pick your microphone (writes to config.local.toml)
+# 3. Pick your microphone (writes to config.toml)
 uv run python scripts/set-audio-device.py
 
 # 4. Launch
@@ -152,7 +152,7 @@ Once `uv run voice-commander` prints `Model loaded on cuda` and you get a succes
 
 ## Configuration
 
-All runtime settings live in [`config.toml`](config.toml). Create `config.local.toml` next to it for per-machine overrides (audio device index, GPU compute type) — it is gitignored and deep-merged over the tracked file.
+All runtime settings live in [`config.toml`](config.toml) — single source of truth, tracked in git. Per-field `VC_LLM_*` environment variables override `[llm]` fields at daemon start; see `docs/agents/technical-decisions.md` for the precedence chain.
 
 | Section | Key | Default | Purpose |
 |---|---|---|---|
@@ -189,7 +189,7 @@ Full schema + rationale: [`docs/superpowers/specs/2026-04-19-voice-commander-des
 
 Every transcript goes through a local LLM unconditionally. `LLMRouter` POSTs to an LM Studio OpenAI-compatible endpoint (default model: Gemma 4 E4B) with a few-shot system prompt describing the nine-verb catalog (ADR 0043). The LLM returns a one-shot ordered plan of typed tool calls — including chained commands like *"open a new tab then paste"* — which the `Dispatcher` executes step-by-step with per-tool settle delays. For the `focus` and `open` verbs, the `target` string is grounded onto a concrete `hwnd` / launch token by the pure-function `resolver` module (rapidfuzz scoring over visible windows / Start-Menu + AppsFolder, ADR 0042). If LM Studio is offline, unreachable, or returns an unparseable response, the router degrades silently to a miss chime; the daemon keeps running.
 
-Configure in `config.toml` (or `config.local.toml`):
+Configure in `config.toml`:
 
 ```toml
 [llm]

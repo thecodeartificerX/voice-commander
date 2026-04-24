@@ -80,8 +80,8 @@ class LLMConfig:
     """Runtime config for the LLM-only routing path (ADR 0040 / spec 2026-04-21).
 
     Every field is resolved at daemon startup via the precedence chain
-    ``env var → config.local.toml → config.toml → hardcoded default``, and the
-    winning source is logged at INFO so silent fallbacks never happen.
+    ``env var → config.toml → hardcoded default``, and the winning source is
+    logged at INFO so silent fallbacks never happen.
     """
 
     endpoint_url: str = "http://localhost:1234/v1"
@@ -136,14 +136,8 @@ class Config:
     llm_sources: dict[str, str] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, path: Path, local_path: Path | None = None) -> Config:
+    def load(cls, path: Path) -> Config:
         raw = _read_toml(path)
-        if local_path is None:
-            local_path = path.with_name(f"{path.stem}.local{path.suffix}")
-        local_raw: dict[str, Any] = {}
-        if local_path != path and local_path.exists():
-            local_raw = _read_toml(local_path)
-            raw = _deep_merge(raw, local_raw)
         if "llm_router" in raw:
             raise ValueError(
                 "Config section '[llm_router]' was renamed to '[llm]' in ADR 0040. "
@@ -153,11 +147,8 @@ class Config:
         gates_raw = vad_raw.pop("gates", {})
 
         # Build LLMConfig via the per-field resolution helper so we can record
-        # each field's winning source (env / local / file / default).
-        llm_values, llm_sources = _resolve_llm_fields(
-            file_llm=raw.get("llm", {}),
-            local_llm=local_raw.get("llm", {}),
-        )
+        # each field's winning source (env / file / default).
+        llm_values, llm_sources = _resolve_llm_fields(file_llm=raw.get("llm", {}))
 
         return cls(
             hotkey=_section(HotkeyConfig, raw.get("hotkey", {})),
@@ -182,14 +173,13 @@ _ENV_PREFIX = "VC_LLM_"
 
 
 def _resolve_llm_fields(
-    *, file_llm: dict[str, Any], local_llm: dict[str, Any]
+    *, file_llm: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, str]]:
-    """Resolve every LLMConfig field from env / local.toml / config.toml / default.
+    """Resolve every LLMConfig field from env / config.toml / default.
 
     Returns ``(values, sources)`` where ``sources[field]`` is one of:
 
     * ``"env:VC_LLM_<FIELD>"``
-    * ``"config.local.toml"``
     * ``"config.toml"``
     * ``"default"``
     """
@@ -197,10 +187,9 @@ def _resolve_llm_fields(
     known_fields = {f.name: f for f in fields(LLMConfig)}
 
     # Surface unknown keys the same way _section does, so typos get caught.
-    for src_name, src in (("config.toml [llm]", file_llm), ("config.local.toml [llm]", local_llm)):
-        for key in src:
-            if key not in known_fields:
-                raise ValueError(f"Unknown config key '{key}' for LLMConfig in {src_name}")
+    for key in file_llm:
+        if key not in known_fields:
+            raise ValueError(f"Unknown config key '{key}' for LLMConfig in config.toml [llm]")
 
     values: dict[str, Any] = {}
     sources: dict[str, str] = {}
@@ -213,13 +202,6 @@ def _resolve_llm_fields(
         if env_raw is not None:
             values[field_name] = _coerce_scalar(env_raw, expected, env_key)
             sources[field_name] = f"env:{env_key}"
-            continue
-
-        if field_name in local_llm:
-            value = local_llm[field_name]
-            _check_type(value, expected, f"LLMConfig.{field_name}")
-            values[field_name] = value
-            sources[field_name] = "config.local.toml"
             continue
 
         if field_name in file_llm:
@@ -297,16 +279,6 @@ def _read_toml(path: Path) -> dict[str, Any]:
         return {}
     with path.open("rb") as fh:
         return tomllib.load(fh)
-
-
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    result = dict(base)
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result
 
 
 def _section(cls: type[T], data: dict[str, Any]) -> T:

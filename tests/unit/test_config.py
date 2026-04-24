@@ -61,56 +61,6 @@ def test_vad_defaults(tmp_path):
     assert cfg.vad.gates.max_no_speech_prob == 0.6
 
 
-def test_local_overrides_base(tmp_path):
-    base = tmp_path / "config.toml"
-    base.write_text(
-        textwrap.dedent("""
-        [audio]
-        channels = 1
-        device = 13
-
-        [vad]
-        threshold = 0.4
-
-        [vad.gates]
-        min_word_count = 1
-    """)
-    )
-    local = tmp_path / "config.local.toml"
-    local.write_text(
-        textwrap.dedent("""
-        [audio]
-        device = 8
-
-        [vad.gates]
-        min_word_count = 3
-    """)
-    )
-    cfg = Config.load(base)
-    # local overrides
-    assert cfg.audio.device == 8
-    assert cfg.vad.gates.min_word_count == 3
-    # base values preserved where local silent
-    assert cfg.audio.channels == 1
-    assert cfg.vad.threshold == 0.4
-
-
-def test_local_missing_uses_base(tmp_path):
-    base = tmp_path / "config.toml"
-    base.write_text("[audio]\ndevice = 5\n")
-    cfg = Config.load(base)
-    assert cfg.audio.device == 5
-
-
-def test_explicit_local_path(tmp_path):
-    base = tmp_path / "config.toml"
-    base.write_text("[audio]\ndevice = 1\n")
-    custom = tmp_path / "overrides.toml"
-    custom.write_text("[audio]\ndevice = 42\n")
-    cfg = Config.load(base, local_path=custom)
-    assert cfg.audio.device == 42
-
-
 def test_vad_overrides(tmp_path):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(

@@ -167,16 +167,9 @@ def _build_hud(hud_raw: dict[str, Any]) -> HudConfig:
     )
 
 
-def load_sprite_config(
-    config_path: Path,
-    local_path: Path | None = None,
-) -> SpriteAppConfig:
-    """Load sprite config from config.toml (+ optional config.local.toml)."""
+def load_sprite_config(config_path: Path) -> SpriteAppConfig:
+    """Load sprite config from config.toml."""
     raw = _read_toml(config_path)
-    if local_path is None:
-        local_path = config_path.with_name(f"{config_path.stem}.local{config_path.suffix}")
-    if local_path != config_path and local_path.exists():
-        raw = _deep_merge(raw, _read_toml(local_path))
 
     sprite_raw = raw.get("sprite", {})
     web_raw = raw.get("web", {})
@@ -212,13 +205,3 @@ def _read_toml(path: Path) -> dict[str, Any]:
         return {}
     with path.open("rb") as fh:
         return tomllib.load(fh)
-
-
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    result = dict(base)
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result

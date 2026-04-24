@@ -6,8 +6,7 @@ One-line description per directory and key file. Lazy-referenced from `CLAUDE.md
 voice-commander/
 ├── pyproject.toml                  # uv-managed dependencies + tool config
 ├── uv.lock                         # committed lockfile
-├── config.toml                     # tracked runtime defaults
-├── config.local.toml               # machine-local overrides (gitignored)
+├── config.toml                     # single source of truth — all runtime settings
 ├── start.ps1                       # Windows launcher + device picker
 ├── CLAUDE.md                       # canonical entry point for agents / humans
 ├── README.md                       # user-facing pitch, install, contributing
@@ -101,4 +100,4 @@ voice-commander/
 - **Every tool module has a sibling `.toml`** with the same basename. The discovery pairing test enforces this.
 - **Every module under `src/voice_commander/` has a test file** at `tests/unit/test_<module>.py` (subsystems excluded from coverage are listed in `pyproject.toml` → `[tool.coverage.run] omit`).
 - **Every new ADR bumps the next sequence number.** Do not renumber existing ADRs.
-- **`config.local.toml` never enters git.** It is for per-machine values only.
+- **`config.toml` is the single source of truth.** No `config.local.toml` overlay. Per-machine overrides go via `VC_LLM_*` env vars (for `[llm]` fields) or direct edits to the tracked file.

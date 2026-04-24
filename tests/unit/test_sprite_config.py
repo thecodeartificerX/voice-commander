@@ -34,15 +34,6 @@ def test_override(tmp_path):
     assert cfg.daemon_url == "http://127.0.0.1:9000"
 
 
-def test_local_overlay(tmp_path):
-    base = tmp_path / "config.toml"
-    base.write_text('[sprite]\ncorner = "bottom_right"\n')
-    local = tmp_path / "config.local.toml"
-    local.write_text('[sprite]\ncorner = "top_right"\n')
-    cfg = load_sprite_config(base)
-    assert cfg.corner == "top_right"
-
-
 def test_hud_defaults(tmp_path):
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text("[sprite]\nbase_size_px = 128\n", encoding="utf-8")

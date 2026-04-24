@@ -481,8 +481,8 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     validate_config_or_die(cfg)
     validate_or_die(registry, store)
 
-    # Log every [llm].* field and its winning source (env / config.local.toml /
-    # config.toml / default) before anything reads cfg.llm at runtime.
+    # Log every [llm].* field and its winning source (env / config.toml /
+    # default) before anything reads cfg.llm at runtime.
     log_llm_sources(cfg)
 
     # Wire the parameter resolver's threshold accessors to the live LLMConfig

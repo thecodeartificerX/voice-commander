@@ -1,8 +1,8 @@
 """Tests for log_llm_sources — per-field source logging (ADR 0040 / spec §5).
 
 At daemon startup, every [llm].* field must emit an INFO log line showing the
-resolved value and where it came from (env / config.local.toml / config.toml /
-default). Silent fallback is forbidden.
+resolved value and where it came from (env / config.toml / default). Silent
+fallback is forbidden.
 """
 
 from __future__ import annotations
@@ -48,26 +48,6 @@ def test_env_var_shows_as_source(
     text = _emit(cfg, caplog)
     assert "VC_LLM_ENDPOINT_URL" in text
     assert "http://foo:1/v1" in text
-
-
-def test_local_toml_shows_as_source(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    for name in list(os_env_with_prefix("VC_LLM_")):
-        monkeypatch.delenv(name, raising=False)
-    base = tmp_path / "config.toml"
-    base.write_text("")
-    local = tmp_path / "config.local.toml"
-    local.write_text(
-        textwrap.dedent("""
-        [llm]
-        default_browser = "comet"
-    """)
-    )
-    cfg = Config.load(base)
-    text = _emit(cfg, caplog)
-    assert "config.local.toml" in text
-    assert "comet" in text
 
 
 def test_config_toml_shows_as_source(

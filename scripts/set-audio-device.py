@@ -1,9 +1,9 @@
-"""set-audio-device.py — update [audio] device = N in config.local.toml.
+"""set-audio-device.py — update [audio] device = N in config.toml.
 
 Usage:
     uv run python scripts/set-audio-device.py <device_index>
 
-Writes the device index to config.local.toml (machine-local, gitignored).
+Writes the device index to config.toml (tracked, single source of truth).
 Creates the file with an [audio] section if it does not exist. Otherwise
 patches the existing `device = ...` line under [audio], or inserts one if
 the section is present but has no device line, or appends a new [audio]
@@ -23,7 +23,7 @@ import tempfile
 import tomllib
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).parent.parent / "config.local.toml"
+CONFIG_PATH = Path(__file__).parent.parent / "config.toml"
 
 
 def fail(msg: str) -> int:

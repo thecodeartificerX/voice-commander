@@ -178,9 +178,9 @@ function Show-VoiceBanner {
 function Get-VoiceConfigDevice {
     <#
     .SYNOPSIS
-        Returns the merged audio.device index (config.toml + config.local.toml), or $null.
+        Returns the audio.device index from config.toml, or $null.
     #>
-    Write-Verbose 'Reading audio.device via Config.load (base + local override)'
+    Write-Verbose 'Reading audio.device via Config.load'
     try {
         $raw = uv run python -c "from pathlib import Path; from voice_commander.config import Config; print(Config.load(Path('config.toml')).audio.device)" 2>$null
         $val = [int]$raw.Trim()

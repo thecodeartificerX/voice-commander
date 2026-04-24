@@ -48,9 +48,8 @@ Each mode below is self-contained. Skip straight to the matching section.
 | Dispatcher | `src/voice_commander/dispatcher.py` |
 | System prompt (LLM surface) | `src/voice_commander/llm_router.py` — `_SYSTEM_PROMPT_TEMPLATE` |
 | Config + source logging | `src/voice_commander/config.py` (`LLMConfig`, `log_llm_sources`) |
-| Default config | `config.toml` (committed) |
-| Per-machine override | `config.local.toml` (gitignored) |
-| Env-var prefix | `VC_LLM_<FIELD_UPPER>` |
+| Config | `config.toml` (single source of truth, committed) |
+| Env-var override prefix | `VC_LLM_<FIELD_UPPER>` |
 | Add a dependency | `uv add <pkg>` — NEVER hand-edit `pyproject.toml` |
 | Validate registry | `uv run python -m voice_commander --validate` |
 | Run verb tests | `uv run pytest tests/unit/test_tools_primitives.py -q` |
@@ -300,7 +299,7 @@ If a new verb needs a tunable (threshold, timeout, default target), add a field 
 
 1. Add the field to the `@dataclass(frozen=True) class LLMConfig:` with a default.
 2. The `_resolve_llm_fields()` helper picks it up automatically — env var
-   (`VC_LLM_<FIELD_UPPER>`), then `config.local.toml`, then `config.toml`, then default.
+   (`VC_LLM_<FIELD_UPPER>`), then `config.toml`, then default.
 3. Add a row to committed `config.toml` under `[llm]` so the default is documented.
 4. Read it from the resolver or verb via `resolver._config_ref.<field>` (with a
    `hasattr` guard for tests that don't wire config).

@@ -1,8 +1,0 @@
-[audio]
-device = 11
-
-[hotkey]
-mute_key = "ctrl_r"
-
-[llm]
-default_browser = "comet"
