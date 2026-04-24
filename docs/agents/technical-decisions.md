@@ -25,6 +25,7 @@ When you touch any row, also update the corresponding ADR (never the other way a
 | Threading model | Four long-lived threads (PortAudio callback → VAD worker → pipeline worker, plus hotkey listener) connected by `queue.Queue` | PortAudio callback has a real-time deadline; cross-thread work dispatched via queues only | [0010](../decisions/0010-threading-model.md) |
 | Phased delivery | Each phase ends in an automated test gate **and** a human validation gate | No feature is "done" until both pass | [0009](../decisions/0009-phased-delivery-with-hitl-gates.md) |
 | Web UI | Embedded FastAPI + HTMX on a uvicorn daemon thread | Zero build step; partial-page updates; hot-reloads registry metadata | [0020](../decisions/0020-web-ui-embedded-fastapi.md), [0022](../decisions/0022-htmx-over-spa.md), [0023](../decisions/0023-metadata-only-hot-reload.md) |
+| Schema-driven kwargs form | `ToolEntry.args_meta` + `GET /command/kwargs-form` HTMX fragment + `kwargs_mode=guided\|advanced` POST field | Registry holds schema; dedicated endpoint swaps only the kwargs section; two modes preserve backwards compat | [0057](../decisions/0057-schema-driven-kwargs-form.md) |
 
 ## LLM Router
 

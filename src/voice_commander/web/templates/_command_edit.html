@@ -32,22 +32,24 @@
 {% endfor %}</textarea>
     </label>
 
-    <div class="grid grid-cols-2 gap-3">
-        <label class="block">
-            <span class="text-xs uppercase text-neutral-400">Primitive</span>
-            <select name="primitive"
-                    class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2 text-neutral-100">
-                {% for p in ["press", "type", "focus", "open", "click", "scroll", "wait"] %}
-                <option value="{{ p }}" {{ "selected" if cmd.primitive == p else "" }}>{{ p }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <label class="block">
-            <span class="text-xs uppercase text-neutral-400">Kwargs (JSON)</span>
-            <input name="kwargs_json" value='{{ cmd.kwargs | tojson }}'
-                   class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2 text-neutral-100 font-mono text-sm"/>
-        </label>
+<div class="space-y-3">
+    <label class="block">
+        <span class="text-xs uppercase text-neutral-400">Primitive</span>
+        <select name="primitive"
+                hx-get="/command/kwargs-form"
+                hx-trigger="change"
+                hx-target="#kwargs-section"
+                hx-swap="innerHTML"
+                class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2 text-neutral-100">
+            {% for p in ["press", "type", "focus", "open", "click", "scroll", "wait"] %}
+            <option value="{{ p }}" {{ "selected" if cmd.primitive == p else "" }}>{{ p }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <div id="kwargs-section">
+        {% include '_kwargs_fields.html' %}
     </div>
+</div>
 
     <input type="hidden" name="enabled" value="{{ 'true' if cmd.enabled else 'false' }}"/>
 

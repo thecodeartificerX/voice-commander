@@ -88,6 +88,85 @@ def test_reload_metadata_updates_phrases(tmp_path):
     assert registry.by_name("alpha").description == "new desc"
 
 
+def test_bind_metadata_populates_args_meta(tmp_path):
+    """bind_metadata must populate entry.args_meta from TOML [args] section."""
+    (tmp_path / "with_args.toml").write_text(
+        """
+category = "test"
+
+[tools.alpha]
+phrases = ["alpha one"]
+description = "Tool with args."
+enabled = true
+
+[tools.alpha.args.combo]
+type = "string"
+description = "Key combo"
+required = true
+""",
+        encoding="utf-8",
+    )
+    registry = ToolRegistry()
+    registry.register(
+        ToolEntry(
+            name="alpha",
+            phrases=(),
+            func=lambda: None,
+            module="test",
+            docstring=None,
+        )
+    )
+    from voice_commander.tool_metadata import ArgMetadata, ToolMetadataStore
+
+    store = ToolMetadataStore(tmp_path)
+    registry.bind_metadata(store)
+
+    entry = registry.by_name("alpha")
+    assert "combo" in entry.args_meta
+    assert isinstance(entry.args_meta["combo"], ArgMetadata)
+    assert entry.args_meta["combo"].type_str == "string"
+    assert entry.args_meta["combo"].required is True
+
+
+def test_reload_metadata_preserves_args_meta(tmp_path):
+    """reload_metadata must update entry.args_meta — regression guard for guided form."""
+    toml_content = """
+category = "test"
+
+[tools.alpha]
+phrases = ["alpha one"]
+description = "Tool with args."
+enabled = true
+
+[tools.alpha.args.combo]
+type = "string"
+description = "Key combo"
+required = true
+"""
+    (tmp_path / "with_args.toml").write_text(toml_content, encoding="utf-8")
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolEntry(
+            name="alpha",
+            phrases=(),
+            func=lambda: None,
+            module="test",
+            docstring=None,
+        )
+    )
+    from voice_commander.tool_metadata import ArgMetadata, ToolMetadataStore
+
+    store = ToolMetadataStore(tmp_path)
+    registry.bind_metadata(store)
+    # Reload — args_meta must survive the second pass
+    registry.reload_metadata(store)
+
+    entry = registry.by_name("alpha")
+    assert "combo" in entry.args_meta
+    assert isinstance(entry.args_meta["combo"], ArgMetadata)
+
+
 def test_reload_preserves_func_identity(tmp_path):
     shutil.copy(FIXTURES / "sample.toml", tmp_path / "sample.toml")
 

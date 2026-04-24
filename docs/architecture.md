@@ -238,6 +238,9 @@ class ToolEntry:
     settle_ms: int            # ms to sleep after execution
     llm_only: bool            # True → tool has parameters; not phrase-matchable
     params_schema: dict | None  # OpenAI tool JSON schema (built by tool_schema)
+    internal: bool            # True → hidden from LLM tool list; still dispatchable
+    origin: Literal["primitive", "command", "workflow"]  # source of entry
+    args_meta: dict[str, ArgMetadata]  # per-param schema for web UI guided kwargs form (ADR 0057)
 
 class ToolRegistry:
     def register(self, entry: ToolEntry) -> None: ...
@@ -481,18 +484,19 @@ reload_lock                                    shares ToolRegistry   uses reload
 
 - **`ToolMetadataStore`** — reads/writes sidecar TOML files next to tool Python modules. Atomic writes via tmp+rename. Per-tool file locking via `portalocker`.
 - **`WebServer`** — wraps uvicorn on a daemon thread. Port-bump fallback (8765 → 8775). Graceful shutdown via `should_exit`.
-- **`FastAPI app`** — 10 routes: dashboard, healthz, edit form, cancel edit, save, toggle, prompt inspect, prompt edit, prompt save, prompt tools. HTMX fragments for partial page updates.
+- **`FastAPI app`** — 11 routes: dashboard, healthz, edit form, cancel edit, save, toggle, kwargs-form fragment, prompt inspect, prompt edit, prompt save, prompt tools. HTMX fragments for partial page updates.
 - **`reload_lock`** — `threading.Lock` guards registry mutations. Held μs for reads, ms for saves.
 
 ### Data Flow (Save Cycle)
 
 1. User clicks Edit → `GET /tool/{name}/edit` → HTMX swaps card to form.
-2. User edits → Save → `POST /tool/{name}` with form data.
-3. Server validates (non-empty phrases, no duplicates).
-4. Acquires per-tool file lock → atomic TOML write → release.
-5. Acquires `reload_lock` → `registry.reload_metadata()` → release.
-6. Returns updated card fragment → HTMX swaps form back to card.
-7. `LLMRouter`'s next `route()` call uses the updated registry metadata via `ToolRegistry.all_llm_visible()`.
+2. User selects a primitive → `GET /command/kwargs-form?primitive=<name>&mode=guided` → HTMX swaps `#kwargs-section` with schema-driven field inputs sourced from `ToolEntry.args_meta` (ADR 0057).
+3. User edits → Save → `POST /tool/{name}` with form data (either `kwarg_*` guided fields or `kwargs_json` in advanced mode).
+4. Server validates (non-empty phrases, no duplicates).
+5. Acquires per-tool file lock → atomic TOML write → release.
+6. Acquires `reload_lock` → `registry.reload_metadata()` → release.
+7. Returns updated card fragment → HTMX swaps form back to card.
+8. `LLMRouter`'s next `route()` call uses the updated registry metadata via `ToolRegistry.all_llm_visible()`.
 
 ---
 
