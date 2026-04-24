@@ -35,6 +35,7 @@ from ..registry import ToolRegistry
 if TYPE_CHECKING:
     from ..dispatcher import Dispatcher
     from ..event_bus import EventBus
+    from ..tool_metadata import ArgMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,8 @@ def attach_admin_routes(
         mode: str = "guided",
     ) -> HTMLResponse:
         entry = registry.by_name(primitive)
+        if entry is None:
+            logger.debug("kwargs-form: primitive %r not found in registry", primitive)
         args_meta = entry.args_meta if entry is not None else {}
         return templates.TemplateResponse(
             request,
@@ -198,7 +201,10 @@ def attach_admin_routes(
             kwargs=dict(cmd.kwargs),
             enabled=not cmd.enabled,
         )
-        command_store.save_one(flipped)
+        try:
+            command_store.save_one(flipped)
+        except CommandStoreError as exc:
+            return HTMLResponse(content=str(exc), status_code=400)
         _reload()
         _publish("command_saved", {"name": cmd.name})
         return templates.TemplateResponse(request, "_command_card.html", {"cmd": flipped})
@@ -300,7 +306,10 @@ def attach_admin_routes(
             steps=wf.steps,
             enabled=not wf.enabled,
         )
-        workflow_store.save_one(flipped)
+        try:
+            workflow_store.save_one(flipped)
+        except CommandStoreError as exc:
+            return HTMLResponse(content=str(exc), status_code=400)
         _reload()
         _publish("workflow_saved", {"name": wf.name})
         return templates.TemplateResponse(request, "_workflow_card.html", {"wf": flipped})
@@ -401,9 +410,16 @@ def _parse_command_form(
     kwargs_json: str,
     kwargs_mode: str = "guided",
     kwarg_fields: dict[str, str] | None = None,
-    args_meta: dict[str, Any] | None = None,
+    args_meta: dict[str, ArgMetadata] | None = None,
     enabled: str,
 ) -> CommandDef | str:
+    """Parse and validate an HTML command form submission into a CommandDef.
+
+    Branching rule: uses guided kwarg_* fields when ``kwargs_mode == "guided"``
+    AND ``args_meta`` is non-empty; otherwise falls back to JSON parse of
+    ``kwargs_json``.  Returns the validated ``CommandDef`` on success or an
+    error string on validation failure.
+    """
     from ..tool_metadata import ArgMetadata as _ArgMeta
 
     synonyms_list = tuple(s.strip() for s in synonyms.splitlines() if s.strip())

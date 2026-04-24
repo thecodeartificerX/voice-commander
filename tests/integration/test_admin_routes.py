@@ -31,12 +31,25 @@ from voice_commander.dispatcher import Dispatcher
 from voice_commander.event_bus import EventBus
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.registry import ToolEntry, ToolRegistry
-from voice_commander.tool_metadata import ToolMetadataStore
+from voice_commander.tool_metadata import ArgMetadata, ToolMetadataStore
 from voice_commander.web.app import create_app
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+def _press_args() -> dict[str, ArgMetadata]:
+    """Return ArgMetadata for the 'press' primitive — used by guided-mode tests."""
+    return {
+        "combo": ArgMetadata(
+            name="combo",
+            type_str="string",
+            description="Key combo to press",
+            required=True,
+            default=None,
+        )
+    }
 
 
 def _primitive_registry() -> ToolRegistry:
@@ -53,6 +66,7 @@ def _primitive_registry() -> ToolRegistry:
                 llm_only=True,
                 internal=True,
                 origin="primitive",
+                args_meta=_press_args() if name == "press" else {},
             )
         )
     return reg
@@ -143,6 +157,7 @@ def test_command_save_roundtrip(client: TestClient, tmp_path: Path) -> None:
             "synonyms": "new tab\nopen new tab",
             "primitive": "press",
             "kwargs_json": json.dumps({"combo": "ctrl+t"}),
+            "kwargs_mode": "advanced",
             "enabled": "true",
         },
         headers={"HX-Request": "true"},
@@ -322,7 +337,7 @@ def test_kwargs_form_unknown_primitive_returns_raw_json_fallback(
 
 
 def test_command_save_guided_mode_coerces_types(client: TestClient, tmp_path: Path) -> None:
-    """Guided mode: kwarg_* fields are accepted and saved correctly."""
+    """Guided mode: kwarg_* fields are type-coerced via ArgMetadata (real guided path)."""
     resp = client.post(
         "/command/guided_cmd",
         data={
@@ -330,6 +345,7 @@ def test_command_save_guided_mode_coerces_types(client: TestClient, tmp_path: Pa
             "synonyms": "",
             "primitive": "press",
             "kwargs_mode": "guided",
+            "kwarg_combo": "ctrl+a",
             "enabled": "true",
         },
         headers={"HX-Request": "true"},
@@ -337,7 +353,52 @@ def test_command_save_guided_mode_coerces_types(client: TestClient, tmp_path: Pa
     assert resp.status_code == 200, resp.text
     raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
     assert "guided_cmd" in raw["commands"]
-    assert raw["commands"]["guided_cmd"]["kwargs"] == {}
+    # Verifies the guided parse branch ran (not JSON fallback)
+    assert raw["commands"]["guided_cmd"]["kwargs"] == {"combo": "ctrl+a"}
+
+
+def test_command_save_guided_mode_required_field_missing_returns_400(
+    client: TestClient,
+) -> None:
+    """Guided mode: missing required kwarg returns HTTP 400."""
+    resp = client.post(
+        "/command/bad_cmd",
+        data={
+            "description": "Bad test",
+            "synonyms": "",
+            "primitive": "press",
+            "kwargs_mode": "guided",
+            # kwarg_combo intentionally omitted — should fail required check
+            "enabled": "true",
+        },
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 400
+    assert "combo" in resp.text
+
+
+def test_kwargs_form_advanced_mode_returns_raw_json_field(client: TestClient) -> None:
+    """GET /command/kwargs-form?mode=advanced returns a kwargs_json textarea."""
+    resp = client.get(
+        "/command/kwargs-form",
+        params={"primitive": "press", "mode": "advanced"},
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+    assert 'name="kwargs_json"' in resp.text
+
+
+def test_command_edit_form_renders(client: TestClient) -> None:
+    """GET /command/{name}/edit renders the edit form for a known command."""
+    resp = client.get("/command/copy/edit", headers={"HX-Request": "true"})
+    assert resp.status_code == 200
+    assert "copy" in resp.text
+
+
+def test_command_new_form_renders(client: TestClient) -> None:
+    """GET /command/new renders a blank command creation form."""
+    resp = client.get("/command/new", headers={"HX-Request": "true"})
+    assert resp.status_code == 200
 
 
 def test_command_save_advanced_mode_parses_json(client: TestClient, tmp_path: Path) -> None:

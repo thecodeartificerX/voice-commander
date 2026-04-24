@@ -62,7 +62,7 @@
 <input type="hidden" name="kwargs_mode" value="advanced"/>
 <label class="block">
     <span class="text-xs uppercase text-neutral-400">Kwargs (JSON)</span>
-    <input name="kwargs_json" value='{{ kwargs | tojson }}'
-           class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2 text-neutral-100 font-mono text-sm"/>
+    <textarea name="kwargs_json" rows="3"
+              class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2 text-neutral-100 font-mono text-sm">{{ kwargs | tojson }}</textarea>
 </label>
 {% endif %}
