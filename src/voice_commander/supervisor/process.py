@@ -75,8 +75,8 @@ def terminate(handle: ChildHandle, *, grace_s: float) -> None:
 
     On POSIX: ``SIGTERM``, wait, ``SIGKILL``.
     """
-    if handle.poll() is not None:
-        logger.debug("terminate(%s): already exited (code=%s)", handle.name, handle.poll())
+    if (existing := handle.poll()) is not None:
+        logger.debug("terminate(%s): already exited (code=%s)", handle.name, existing)
         return
 
     try:
@@ -90,8 +90,8 @@ def terminate(handle: ChildHandle, *, grace_s: float) -> None:
 
     deadline = time.monotonic() + grace_s
     while time.monotonic() < deadline:
-        if handle.poll() is not None:
-            logger.debug("terminate(%s): exited gracefully (code=%s)", handle.name, handle.poll())
+        if (graceful := handle.poll()) is not None:
+            logger.debug("terminate(%s): exited gracefully (code=%s)", handle.name, graceful)
             return
         time.sleep(0.05)
 
