@@ -1,56 +1,47 @@
-"""Helper for the POST /restart endpoint: spawn a fresh daemon, exit current.
+"""Daemon-side restart helper.
 
-Windows-specific. Uses ``subprocess.Popen`` with ``DETACHED_PROCESS`` so the
-new process outlives the dying daemon. The web response is returned before
-exit so the UI sees a clean 200 and can flip to a "restarting…" banner.
+Exiting the process with code ``EXIT_RESTART`` (75) signals the supervisor
+to respawn us. We schedule the exit in a background thread so the calling
+HTTP handler can return a clean response first.
+
+If the daemon is running without a supervisor (``VC_SUPERVISED`` env var
+unset), we refuse — exiting 75 with no parent to interpret it would just
+kill the daemon with no replacement.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import subprocess
-import sys
 import threading
+import time
+
+from ..supervisor.exit_codes import EXIT_RESTART
 
 logger = logging.getLogger(__name__)
 
 
-def schedule_restart(delay_s: float = 0.5) -> None:
-    """Spawn a new daemon process, then signal the current one to exit.
+class RestartUnavailable(RuntimeError):
+    """Raised when the daemon is asked to restart but has no supervisor."""
+
+
+def request_restart(delay_s: float = 0.5) -> None:
+    """Schedule a graceful exit with code 75 so the supervisor respawns us.
 
     The delay gives the calling HTTP handler time to return a response to
     the browser before the current process tears down.
+
+    Raises ``RestartUnavailable`` immediately if no supervisor is present.
     """
+    if os.environ.get("VC_SUPERVISED") != "1":
+        raise RestartUnavailable(
+            "Restart requires the supervisor. Launch with start.ps1 or "
+            "voice-commander-supervisor."
+        )
 
     def _do() -> None:
-        import time
-
         time.sleep(delay_s)
-        try:
-            _spawn_new()
-        except Exception:
-            logger.exception("Failed to spawn replacement daemon")
-            return
-        logger.info("Replacement daemon spawned; exiting current process")
-        os._exit(0)
+        logger.info("Exiting with code %d for supervisor restart", EXIT_RESTART)
+        os._exit(EXIT_RESTART)
 
     threading.Thread(target=_do, daemon=True, name="daemon-restart").start()
-
-
-def _spawn_new() -> None:
-    """Spawn a detached ``python -m voice_commander`` in the repo root."""
-    argv = [sys.executable, "-m", "voice_commander"]
-    creationflags = 0
-    if os.name == "nt":
-        # DETACHED_PROCESS (0x00000008) | CREATE_NEW_PROCESS_GROUP (0x00000200)
-        creationflags = 0x00000008 | 0x00000200
-    subprocess.Popen(  # noqa: S603 — argv built from sys.executable + literal module name
-        argv,
-        cwd=os.getcwd(),
-        creationflags=creationflags,
-        close_fds=True,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
