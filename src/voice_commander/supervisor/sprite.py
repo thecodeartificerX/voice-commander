@@ -24,12 +24,12 @@ class SpriteChild:
     handle: ChildHandle | None
 
     @classmethod
-    def spawn(cls) -> "SpriteChild":
+    def spawn(cls) -> SpriteChild:
         """Spawn ``voice-sprite``. Returns an instance with ``handle=None`` on failure."""
         argv = [sys.executable, "-m", "voice_sprite"]
         try:
             handle = spawn(argv, name="voice-sprite")
-        except (OSError, FileNotFoundError) as exc:
+        except OSError as exc:  # includes FileNotFoundError (missing executable)
             logger.warning("Sprite failed to spawn (%s); continuing without it", exc)
             return cls(handle=None)
         return cls(handle=handle)
