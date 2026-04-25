@@ -86,6 +86,8 @@ uv run voice-commander
 .\start.ps1
 ```
 
+> **Restart daemon button.** The **Restart daemon** button in the web UI requires `start.ps1` (or `voice-commander-supervisor` directly). Running `uv run voice-commander` standalone is supported but the Restart button will return 503 in that mode.
+
 **CPU-only install.** Edit `config.toml`:
 
 ```toml

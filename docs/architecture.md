@@ -68,6 +68,19 @@ Subsystems are connected by the `StreamingDaemon` orchestrator. Each is independ
 
 ---
 
+## Process tree
+
+```
+start.ps1                         (audio-device TUI)
+└── voice-commander-supervisor    (Python supervisor; long-lived parent)
+    ├── voice-sprite              (subprocess; persistent across daemon restarts)
+    └── voice-commander           (daemon; respawned on graceful exit 75)
+```
+
+The supervisor owns both children. The daemon's `/restart` web route triggers `os._exit(75)`; the supervisor's wait loop sees code 75 and respawns. Sprite is untouched, its SSE stream reconnects when the new daemon binds the web port.
+
+---
+
 ## 3. Threading Model
 
 Four long-lived threads plus the main thread:
