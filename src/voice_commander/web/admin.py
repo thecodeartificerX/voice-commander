@@ -376,10 +376,13 @@ def attach_admin_routes(
 
     @app.post("/restart")
     async def restart() -> JSONResponse:
-        from ..commands.restart import schedule_restart
+        from ..commands.restart import RestartUnavailable, request_restart
 
-        schedule_restart()
-        return JSONResponse({"status": "restarting"})
+        try:
+            request_restart()
+        except RestartUnavailable as exc:
+            return JSONResponse({"error": str(exc)}, status_code=503)
+        return JSONResponse({"status": "restarting"}, status_code=202)
 
 
 # ---------------------------------------------------------------------------
