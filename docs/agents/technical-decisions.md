@@ -26,6 +26,7 @@ When you touch any row, also update the corresponding ADR (never the other way a
 | Phased delivery | Each phase ends in an automated test gate **and** a human validation gate | No feature is "done" until both pass | [0009](../decisions/0009-phased-delivery-with-hitl-gates.md) |
 | Web UI | Embedded FastAPI + HTMX on a uvicorn daemon thread | Zero build step; partial-page updates; hot-reloads registry metadata | [0020](../decisions/0020-web-ui-embedded-fastapi.md), [0022](../decisions/0022-htmx-over-spa.md), [0023](../decisions/0023-metadata-only-hot-reload.md) |
 | Schema-driven kwargs form | `ToolEntry.args_meta` + `GET /command/kwargs-form` HTMX fragment + `kwargs_mode=guided\|advanced` POST field | Registry holds schema; dedicated endpoint swaps only the kwargs section; two modes preserve backwards compat | [0057](../decisions/0057-schema-driven-kwargs-form.md) |
+| Process supervision | Python supervisor owns daemon + sprite lifecycle; daemon restarts via graceful exit 75 (`request_restart`) | Survives daemon restarts; sprite stays on screen; deprecates detach-spawn `schedule_restart` | [0058](../decisions/0058-supervisor-process-owns-lifecycle.md) |
 
 ## LLM Router
 
