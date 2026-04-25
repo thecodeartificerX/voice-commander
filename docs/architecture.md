@@ -569,7 +569,7 @@ HotkeyCtrl ──▶ VADGate ──▶ Dispatcher         httpx SSE client
 
 ### Lifecycle
 
-`start.ps1` spawns daemon → waits 500 ms → spawns `uv run voice-sprite`. Daemon never checks sprite health. Sprite polls daemon heartbeat; 3s timeout → CRASHED state → SSE reconnect loop.
+`voice-commander-supervisor` spawns the sprite once before the first daemon spawn. Sprite outlives daemon restarts; daemon never checks sprite health. Sprite polls daemon heartbeat over SSE; 3 s timeout → CRASHED state → SSE reconnect loop. On daemon restart the sprite reconnects automatically once the new daemon binds the web port.
 
 ---
 

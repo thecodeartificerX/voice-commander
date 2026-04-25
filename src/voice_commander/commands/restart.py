@@ -41,7 +41,13 @@ def request_restart(delay_s: float = 0.5) -> None:
 
     def _do() -> None:
         time.sleep(delay_s)
-        logger.info("Exiting with code %d for supervisor restart", EXIT_RESTART)
+        try:
+            # Logger handlers may already be torn down in test contexts where
+            # the calling thread mocks os._exit. Swallow the resulting
+            # ValueError so the thread still hits the (mocked) exit path.
+            logger.info("Exiting with code %d for supervisor restart", EXIT_RESTART)
+        except ValueError:
+            pass
         os._exit(EXIT_RESTART)
 
     threading.Thread(target=_do, daemon=True, name="daemon-restart").start()

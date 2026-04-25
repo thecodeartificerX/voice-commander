@@ -39,22 +39,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Config keys that take effect only after a daemon restart. Documented here
-# for future readers; runtime detection in `config_save` uses a pre/post
-# `Config.load()` snapshot diff for the keys the form actually submits today
-# (audio.device, transcription.model_size). Adding a new field to the config
-# form means extending both the form parameters AND the diff comparison.
-_RESTART_REQUIRED_KEYS: frozenset[str] = frozenset({
-    "audio.device",
-    "audio.device_resample_rate",
-    "transcription.model_size",
-    "transcription.compute_type",
-    "hotkey.key",
-    "hotkey.mute_key",
-    "web.port",
-})
-
-
 def attach_admin_routes(
     app: FastAPI,
     *,
@@ -385,7 +369,9 @@ def attach_admin_routes(
         _publish("config_saved", {"path": str(config_path)})
 
         # Detect restart-required fields that actually changed value.
-        # Limited to keys the current form submits — see _RESTART_REQUIRED_KEYS.
+        # Only fields the form submits today are checked. Adding a hot-cold
+        # field to the form (e.g. hotkey.key, web.port) means adding the
+        # corresponding `prev_cfg.x != new_cfg.x` arm here and to ADR 0058.
         needs_restart = (
             prev_cfg.audio.device != new_cfg.audio.device
             or prev_cfg.transcription.model_size != new_cfg.transcription.model_size
