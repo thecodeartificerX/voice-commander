@@ -92,7 +92,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 
 # Phase banner shown in Show-VoiceBanner. Extracted so phase bumps touch one place.
-$script:PhaseString = '  Phase 6: LLM-only routing (9 primitives, unconditional LLM)'
+$script:PhaseString = '  Phase 7: supervisor process (daemon + sprite under one parent)'
 
 # ---------------------------------------------------------------------------
 # Color helper functions
@@ -431,35 +431,36 @@ function Save-VoiceDeviceChoice {
     }
 }
 
-function Start-VoiceDaemon {
+function Start-VoiceSupervisor {
     <#
     .SYNOPSIS
-        Launch `uv run voice-commander` and return its exit code.
+        Launch `uv run voice-commander-supervisor` and return its exit code.
 
     .DESCRIPTION
-        Stdin/stdout are NOT redirected so Ctrl+C reaches the process directly.
-        Returns the process exit code as [int].
+        The supervisor owns the daemon and sprite lifecycle. Stdin/stdout are
+        not redirected so Ctrl+C reaches the supervisor (which propagates to
+        its children). Returns the supervisor exit code as [int].
     #>
-    Write-Verbose "Launching daemon: uv run voice-commander"
-    uv run voice-commander
+    $supArgs = @()
+    if ($NoSprite) { $supArgs += '--no-sprite' }
+    Write-Verbose "Launching supervisor: uv run voice-commander-supervisor $($supArgs -join ' ')"
+    uv run voice-commander-supervisor @supArgs
     return $LASTEXITCODE
 }
 
 function Start-VoiceWithUI {
     <#
     .SYNOPSIS
-        Set web UI env vars, optionally open browser, then launch the daemon.
+        Set web UI env vars, optionally open browser, then launch the supervisor.
 
     .DESCRIPTION
         Applies VOICE_COMMANDER_WEB_DISABLED and VOICE_COMMANDER_WEB_PORT from
-        the -NoUI and -UIPort parameters before calling Start-VoiceDaemon.
+        the -NoUI and -UIPort parameters before calling Start-VoiceSupervisor.
         When the web UI is enabled and -NoOpenBrowser is not set, a background
-        job opens the browser 1.5 s after this function is called (giving the
-        daemon time to bind its port).
-        Returns the daemon's exit code as [int].
+        job opens the browser 1.5 s after this function is called.
+        Sprite spawn/teardown is now handled by the Python supervisor.
     #>
 
-    # Apply web UI environment overrides
     if ($NoUI) {
         $env:VOICE_COMMANDER_WEB_DISABLED = '1'
     }
@@ -467,7 +468,6 @@ function Start-VoiceWithUI {
         $env:VOICE_COMMANDER_WEB_PORT = $UIPort.ToString()
     }
 
-    # Auto-open browser unless the web UI is disabled or the user opted out
     if (-not $NoUI -and -not $NoOpenBrowser) {
         $webPort = if ($UIPort -gt 0) { $UIPort } else { 8765 }
         $webUrl  = "http://127.0.0.1:$webPort"
@@ -478,27 +478,7 @@ function Start-VoiceWithUI {
         } | Out-Null
     }
 
-    # Spawn sprite companion unless disabled
-    $spriteProc = $null
-    if (-not $NoSprite -and -not $NoUI) {
-        Write-Verbose "Spawning sprite companion"
-        $spriteProc = Start-Process -FilePath "uv" -ArgumentList "run","voice-sprite" -PassThru -WindowStyle Hidden
-    }
-
-    try {
-        return Start-VoiceDaemon
-    } finally {
-        if ($spriteProc -and -not $spriteProc.HasExited) {
-            # `uv run voice-sprite` spawns a python.exe child that owns the
-            # pyglet window. $spriteProc.Kill() only stops the uv wrapper and
-            # orphans the python child, leaving the overlay stuck on screen.
-            # taskkill /T walks the process tree and /F force-terminates it,
-            # so both uv and python die together.
-            Write-Verbose "Stopping sprite companion tree (PID=$($spriteProc.Id))"
-            & taskkill.exe /PID $spriteProc.Id /T /F 2>&1 | Out-Null
-            $spriteProc.WaitForExit(3000) | Out-Null
-        }
-    }
+    return Start-VoiceSupervisor
 }
 
 # ---------------------------------------------------------------------------
