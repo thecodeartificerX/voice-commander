@@ -89,8 +89,8 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 | `GraphTopo` | `tests/unit/test_graph_topo.py` | Topological sort correctness, `CycleError` on cyclic graphs, single-node and empty-graph edge cases | No external deps; in-memory `Graph` objects |
 | `GraphDrawflow` | `tests/unit/test_graph_drawflow.py` | `to_drawflow()` / `from_drawflow()` round-trip guarantee, Drawflow port naming convention (ADR 0062, 0063) | No external deps; canned Drawflow JSON dicts |
 | `GraphMigrate` | `tests/unit/test_graph_migrate.py` | Legacy `commands.json` / `workflows.json` → canonical graph schema conversion, idempotency | `tmp_path` fixture for temp JSON files; canned legacy format dicts |
-| `GraphStore` | *(no dedicated unit test — covered by integration tests)* | `load()` / `save()` / `list()` / `delete()` operations, file-backed JSON persistence | `tmp_path` fixture for temp store directory |
-| `Registrar` | *(no dedicated unit test — covered by integration tests)* | `register_graphs()` synthesises `ToolEntry` per graph, `reload_all()` picks up changes, `llm_visible` flag respected (ADR 0067) | Stub `GraphStore` + in-memory `ToolRegistry` |
+| `GraphStore` | `tests/unit/test_command_store.py` | `load()` / `save()` / `list()` / `delete()` operations, file-backed JSON persistence, `GraphStoreError` on kind mismatch | `tmp_path` fixture for temp store directory; no external deps |
+| `Registrar` | `tests/unit/test_command_registrar.py` | `register_graphs()` synthesises `ToolEntry` per graph, `reload_all()` picks up changes, `llm_visible` flag respected (ADR 0067) | Stub `GraphStore` + in-memory `ToolRegistry`; no external deps |
 
 ---
 
@@ -264,6 +264,7 @@ This gate validates the node-graph builder subsystem introduced in PR #51. Run a
 - [ ] `uv run pytest tests/unit/test_graph_drawflow.py -v` — Drawflow ↔ canonical round-trip tests pass.
 - [ ] `uv run pytest tests/unit/test_graph_migrate.py -v` — legacy migration tests pass.
 - [ ] `uv run pytest tests/unit/test_graph_runtime_linear.py tests/unit/test_graph_runtime_data.py tests/unit/test_graph_runtime_branch.py tests/unit/test_graph_runtime_foreach.py tests/unit/test_graph_runtime_nested.py tests/unit/test_graph_runtime_value_nodes.py tests/unit/test_graph_runtime_strict_timeout.py -v` — all runtime execution tests pass (linear, data-wire, branch, foreach, nested, value nodes, strict/timeout).
+- [ ] `uv run pytest tests/unit/test_command_store.py tests/unit/test_command_registrar.py -v` — graph store CRUD and registrar→ToolEntry synthesis tests pass.
 - [ ] `uv run pytest tests/integration/test_graph_end_to_end.py tests/integration/test_graph_hot_reload.py tests/integration/test_graph_migrate_e2e.py -v` — all graph integration tests pass.
 
 **Graph round-trip validation:**
