@@ -199,8 +199,10 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
         with ctx.reload_lock:
             store.save_one(g)
             ctx.reload_all_fn()
-        body = {"ok": True, "name": name, "version": CURRENT_SCHEMA_VERSION}
-        return JSONResponse(status_code=200, content=body)
+        return JSONResponse(
+            status_code=200,
+            content={"ok": True, "name": name, "version": CURRENT_SCHEMA_VERSION},
+        )
 
     @r.delete("/graph/{name}")
     def delete_graph(name: str) -> dict[str, Any]:
