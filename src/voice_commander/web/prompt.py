@@ -51,6 +51,20 @@ def _validate_template(text: str) -> str | None:
     return None
 
 
+def _prompt_context(llm_router: LLMRouter) -> dict[str, Any]:
+    data = llm_router.composed_prompt_data()
+    return {
+        "template_raw": data["template_raw"],
+        "template_resolved": data["template_resolved"],
+        "placeholders": data["placeholders"],
+        "tools": data["tools"],
+        "tools_count": data["tools_count"],
+        "tools_json": json.dumps(data["tools"], indent=2),
+        "model_id": data["model_id"],
+        "endpoint_url": data["endpoint_url"],
+    }
+
+
 def attach_prompt_routes(
     app: FastAPI,
     *,
@@ -68,39 +82,15 @@ def attach_prompt_routes(
     @app.get("/prompt", response_class=HTMLResponse)
     async def prompt_inspect(request: Request) -> HTMLResponse:
         """Prompt inspector section — shows template, resolved preview, tools."""
-        data = llm_router.composed_prompt_data()
         return templates.TemplateResponse(
-            request,
-            "_prompt_inspector.html",
-            {
-                "template_raw": data["template_raw"],
-                "template_resolved": data["template_resolved"],
-                "placeholders": data["placeholders"],
-                "tools": data["tools"],
-                "tools_count": data["tools_count"],
-                "tools_json": json.dumps(data["tools"], indent=2),
-                "model_id": data["model_id"],
-                "endpoint_url": data["endpoint_url"],
-            },
+            request, "_prompt_inspector.html", _prompt_context(llm_router)
         )
 
     @app.get("/prompt/edit", response_class=HTMLResponse)
     async def prompt_edit(request: Request) -> HTMLResponse:
         """Return the editable prompt form (same data, same template)."""
-        data = llm_router.composed_prompt_data()
         return templates.TemplateResponse(
-            request,
-            "_prompt_inspector.html",
-            {
-                "template_raw": data["template_raw"],
-                "template_resolved": data["template_resolved"],
-                "placeholders": data["placeholders"],
-                "tools": data["tools"],
-                "tools_count": data["tools_count"],
-                "tools_json": json.dumps(data["tools"], indent=2),
-                "model_id": data["model_id"],
-                "endpoint_url": data["endpoint_url"],
-            },
+            request, "_prompt_inspector.html", _prompt_context(llm_router)
         )
 
     @app.post("/prompt/template", response_class=HTMLResponse)
@@ -151,18 +141,6 @@ def attach_prompt_routes(
     @app.get("/prompt/tools", response_class=HTMLResponse)
     async def prompt_tools(request: Request) -> HTMLResponse:
         """Return tools catalog HTML fragment."""
-        data = llm_router.composed_prompt_data()
         return templates.TemplateResponse(
-            request,
-            "_prompt_inspector.html",
-            {
-                "template_raw": data["template_raw"],
-                "template_resolved": data["template_resolved"],
-                "placeholders": data["placeholders"],
-                "tools": data["tools"],
-                "tools_count": data["tools_count"],
-                "tools_json": json.dumps(data["tools"], indent=2),
-                "model_id": data["model_id"],
-                "endpoint_url": data["endpoint_url"],
-            },
+            request, "_prompt_inspector.html", _prompt_context(llm_router)
         )
