@@ -39,7 +39,12 @@ def app_env(tmp_path):
 
 def test_index_returns_200(app_env):
     client, _, _ = app_env
-    resp = client.get("/")
+    # GET / redirects to /page/commands; primitives live at /page/primitives.
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/page/commands"
+
+    resp = client.get("/page/primitives")
     assert resp.status_code == 200
     assert "alpha" in resp.text
     assert "beta" in resp.text

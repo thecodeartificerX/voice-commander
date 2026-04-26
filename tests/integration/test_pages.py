@@ -1,0 +1,208 @@
+"""Integration tests for the multi-page web UI.
+
+Verifies that:
+
+1. ``GET /`` issues a 302 redirect to ``/page/commands``.
+2. Each ``/page/{section}`` route renders a full HTML page with the section
+   heading and the persistent ``Restart daemon`` button in the layout header.
+3. ``GET /guide`` adopts the shared layout (proven by the restart button).
+4. The restart button on every page targets ``/restart``.
+"""
+
+from __future__ import annotations
+
+import threading
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from voice_commander.commands.store import (
+    CommandDef,
+    CommandStore,
+    WorkflowArg,
+    WorkflowDef,
+    WorkflowStep,
+    WorkflowStore,
+)
+from voice_commander.dispatcher import Dispatcher
+from voice_commander.event_bus import EventBus
+from voice_commander.feedback import CapturingFeedbackSink
+from voice_commander.registry import ToolEntry, ToolRegistry
+from voice_commander.tool_metadata import ArgMetadata, ToolMetadataStore
+from voice_commander.web.app import create_app
+
+
+def _press_args() -> dict[str, ArgMetadata]:
+    return {
+        "combo": ArgMetadata(
+            name="combo",
+            type_str="string",
+            description="Key combo",
+            required=True,
+            default=None,
+        )
+    }
+
+
+def _primitive_registry() -> ToolRegistry:
+    reg = ToolRegistry()
+    for name in ("press", "focus", "type", "open"):
+        reg.register(
+            ToolEntry(
+                name=name,
+                phrases=(),
+                func=lambda **_: None,
+                module="test",
+                docstring=None,
+                enabled=True,
+                llm_only=True,
+                internal=True,
+                origin="primitive",
+                args_meta=_press_args() if name == "press" else {},
+            )
+        )
+    return reg
+
+
+def _seed_stores(root: Path) -> tuple[CommandStore, WorkflowStore, Path]:
+    config_path = root / "config.toml"
+    config_path.write_text(
+        '[llm]\nmodel_id = "test-model"\nendpoint_url = "http://x/"\n',
+        encoding="utf-8",
+    )
+    cs = CommandStore(root / "commands.json")
+    cs.save_one(
+        CommandDef(
+            name="copy",
+            description="Copy",
+            synonyms=("copy",),
+            primitive="press",
+            kwargs={"combo": "ctrl+c"},
+        )
+    )
+    ws = WorkflowStore(root / "workflows.json")
+    ws.save_one(
+        WorkflowDef(
+            name="say_hi",
+            description="",
+            synonyms=("hello",),
+            args=(WorkflowArg(name="name", required=True),),
+            steps=(WorkflowStep(ref="primitive:type", kwargs={"text": "Hi {name}"}),),
+        )
+    )
+    return cs, ws, config_path
+
+
+@pytest.fixture()
+def client(tmp_path: Path) -> TestClient:
+    reg = _primitive_registry()
+    cs, ws, config_path = _seed_stores(tmp_path)
+    disp = Dispatcher(CapturingFeedbackSink())
+    store = ToolMetadataStore(tmp_path / "tools_meta_empty")
+    (tmp_path / "tools_meta_empty").mkdir()
+    app = create_app(
+        reg,
+        store,
+        threading.Lock(),
+        event_bus=EventBus(),
+        command_store=cs,
+        workflow_store=ws,
+        dispatcher=disp,
+        llm_context={"default_browser": "chrome"},
+        config_path=config_path,
+    )
+    return TestClient(app)
+
+
+# ---------------------------------------------------------------------------
+# Root redirect
+# ---------------------------------------------------------------------------
+
+
+def test_root_redirects_to_commands_page(client: TestClient) -> None:
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code in (302, 307)
+    assert resp.headers["location"] == "/page/commands"
+
+
+# ---------------------------------------------------------------------------
+# Per-section pages
+# ---------------------------------------------------------------------------
+
+
+def test_page_commands_renders(client: TestClient) -> None:
+    resp = client.get("/page/commands")
+    assert resp.status_code == 200
+    assert "Commands" in resp.text
+    # New command button is part of the page content
+    assert "+ New command" in resp.text
+    # Restart button comes from the shared layout
+    assert "Restart daemon" in resp.text
+
+
+def test_page_workflows_renders(client: TestClient) -> None:
+    resp = client.get("/page/workflows")
+    assert resp.status_code == 200
+    assert "Workflows" in resp.text
+    assert "+ New workflow" in resp.text
+    assert "Restart daemon" in resp.text
+
+
+def test_page_prompt_renders(client: TestClient) -> None:
+    resp = client.get("/page/prompt")
+    assert resp.status_code == 200
+    assert "Prompt" in resp.text
+    assert "Restart daemon" in resp.text
+
+
+def test_page_config_renders(client: TestClient) -> None:
+    resp = client.get("/page/config")
+    assert resp.status_code == 200
+    assert "Config" in resp.text
+    assert "Restart daemon" in resp.text
+
+
+def test_page_primitives_renders(client: TestClient) -> None:
+    resp = client.get("/page/primitives")
+    assert resp.status_code == 200
+    assert "Primitives" in resp.text
+    assert "Restart daemon" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Guide adopts the shared layout
+# ---------------------------------------------------------------------------
+
+
+def test_guide_uses_shared_layout(client: TestClient) -> None:
+    resp = client.get("/guide")
+    assert resp.status_code == 200
+    assert "Guide" in resp.text
+    # Persistent header proves layout adoption
+    assert "Restart daemon" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Restart button wires up to /restart on every page
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/page/commands",
+        "/page/workflows",
+        "/page/prompt",
+        "/page/config",
+        "/page/primitives",
+        "/guide",
+    ],
+)
+def test_restart_button_targets_restart_endpoint(client: TestClient, url: str) -> None:
+    resp = client.get(url)
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Restart daemon" in body
+    # The restart click handler posts to /restart — it must be wired up.
+    assert "/restart" in body
