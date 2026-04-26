@@ -74,11 +74,12 @@ def _migrate_file(path: Path, legacy_key: str, kind: str) -> int:
     if not bak_path.exists():
         original_bytes = path.read_bytes()
         bak_path.write_bytes(original_bytes)
-        if bak_path.stat().st_size != len(original_bytes):
+        actual_size = bak_path.stat().st_size
+        if actual_size != len(original_bytes):
             bak_path.unlink(missing_ok=True)
             raise OSError(
                 f"Backup {bak_path} size mismatch "
-                f"(expected {len(original_bytes)}, got {bak_path.stat().st_size}); "
+                f"(expected {len(original_bytes)}, got {actual_size}); "
                 f"aborting migration of {path}"
             )
 

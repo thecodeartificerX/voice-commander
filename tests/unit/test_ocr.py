@@ -21,6 +21,7 @@ def test_ocr_region_tesseract_path(tmp_path, monkeypatch):
 
     def _fake_run(cmd, **kw):
         r = MagicMock()
+        r.returncode = 0
         r.stdout = "hello world"
         return r
 
@@ -86,11 +87,13 @@ def test_ocr_tesseract_nonzero_exit_logs_warning(tmp_path, monkeypatch, caplog):
 
 def test_select_engine_resolves_config_from_package_root(tmp_path, monkeypatch):
     """_select_engine resolves config.toml relative to package root, not CWD."""
+    from pathlib import Path
+    from unittest.mock import patch
+
     # Change CWD to a temp directory that has no config.toml
     monkeypatch.chdir(tmp_path)
 
     # _select_engine should NOT raise FileNotFoundError just because CWD changed.
-    # It should fall back to "auto" if config not found at package root.
     # We mock winrt import to fail so we can test the tesseract fallback path.
     import builtins
 
@@ -106,8 +109,24 @@ def test_select_engine_resolves_config_from_package_root(tmp_path, monkeypatch):
         "shutil.which", lambda cmd: "/usr/bin/tesseract" if cmd == "tesseract" else None
     )
 
-    from voice_commander.tools.ocr import _select_engine
+    from voice_commander.tools.ocr import _REPO_ROOT, _select_engine
 
-    # Should succeed with "tesseract" (not crash due to CWD-relative config path)
-    result = _select_engine()
+    captured_paths: list[Path] = []
+
+    def _spy_config_load(path: Path, *args, **kwargs):
+        captured_paths.append(path)
+        raise FileNotFoundError("spy: no config")
+
+    with patch("voice_commander.config.Config.load", side_effect=_spy_config_load):
+        result = _select_engine()
+
     assert result == "tesseract"
+
+    # Key assertion: Config.load must be called with _REPO_ROOT-relative path,
+    # NOT a CWD-relative path — this is the M12 fix being validated.
+    assert len(captured_paths) == 1, "Config.load should be called exactly once"
+    expected = _REPO_ROOT / "config.toml"
+    assert captured_paths[0] == expected, (
+        f"Config.load called with {captured_paths[0]!r}, expected {expected!r} "
+        f"(CWD was {tmp_path!r})"
+    )
