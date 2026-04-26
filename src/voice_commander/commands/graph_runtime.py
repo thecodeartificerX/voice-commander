@@ -148,11 +148,9 @@ class GraphRuntime:
                 foreach_first_error: str | None = None
                 foreach_timed_out = False
                 for iter_idx, item_val in enumerate(items):
-                    # M3: timeout check at top of each iteration
                     if (time.monotonic() - start) * 1000 > graph.timeout_ms:
                         foreach_timed_out = True
                         break
-                    # M4: clear body node output ports between iterations
                     for key in body_port_keys:
                         port_values.pop(key, None)
                     port_values[f"{node.id}.item"] = item_val
@@ -162,7 +160,6 @@ class GraphRuntime:
                     body_fired_branch_true: set[str] = set()
                     body_fired_branch_false: set[str] = set()
                     for bn in body_nodes:
-                        # M3: timeout check before each body node
                         if (time.monotonic() - start) * 1000 > graph.timeout_ms:
                             foreach_timed_out = True
                             break
@@ -179,7 +176,6 @@ class GraphRuntime:
                         action, body_err_msg = self._dispatch_pipeline_node(
                             bn, bkwargs, graph, steps, port_values, body_fired_ok, body_fired_err
                         )
-                        # M5: propagate body errors
                         if body_err_msg is not None and not foreach_has_error:
                             foreach_has_error = True
                             foreach_first_error = f"foreach iter {iter_idx}: {body_err_msg}"
@@ -188,13 +184,11 @@ class GraphRuntime:
                     if foreach_timed_out:
                         break
                     steps.append(ToolCall(name=f"{node.ref}/iter", kwargs={"item": item_val}))
-                # M3: surface timeout
                 if foreach_timed_out:
                     error_msg = error_msg or "graph timeout"
                     if failed_idx is None:
                         failed_idx = len(steps)
                     break
-                # M5: surface body errors in PlanOutcome
                 if foreach_has_error:
                     if failed_idx is None:
                         failed_idx = len(steps)
@@ -294,16 +288,16 @@ class GraphRuntime:
             logger.warning("foreach body: unknown pipeline ref %r (node %s)", node.ref, node.id)
             fired_err.add(node.id)
             steps.append(ToolCall(name=node.ref, kwargs=kwargs))
-            if graph.strict:
-                return "break", f"unknown pipeline ref: {node.ref}"
-            return "continue", f"unknown pipeline ref: {node.ref}"
+            action = "break" if graph.strict else "continue"
+            return action, f"unknown pipeline ref: {node.ref}"
         try:
             ret = entry.func(**kwargs)
         except Exception as exc:  # noqa: BLE001
             logger.warning("foreach body node %s raised: %s", node.ref, exc)
             fired_err.add(node.id)
             steps.append(ToolCall(name=node.ref, kwargs=kwargs))
-            msg = str(exc)[:256] + ("..." if len(str(exc)) > 256 else "")
+            exc_str = str(exc)
+            msg = (exc_str[:256] + "...") if len(exc_str) > 256 else exc_str
             if graph.strict and not self._has_error_edge(node.id, graph.edges):
                 return "break", msg
             return "continue", msg
