@@ -517,9 +517,7 @@ def test_focus_returns_hwnd(monkeypatch):
         SetForegroundWindow=lambda h: None,
         BringWindowToTop=lambda h: None,
     )
-    fake_win32process = types.SimpleNamespace(
-        GetWindowThreadProcessId=lambda h: (0, 0)
-    )
+    fake_win32process = types.SimpleNamespace(GetWindowThreadProcessId=lambda h: (0, 0))
     fake_win32con = types.SimpleNamespace(SW_RESTORE=9)
     monkeypatch.setitem(sys.modules, "win32gui", fake_win32gui)
     monkeypatch.setitem(sys.modules, "win32process", fake_win32process)

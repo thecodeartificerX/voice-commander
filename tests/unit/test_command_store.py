@@ -26,9 +26,7 @@ def _make_graph(name: str = "search_web", kind: str = "command") -> Graph:
         strict=True,
         enabled=True,
         timeout_ms=5000,
-        nodes=(
-            Node(id="n1", ref="pipeline.focus", kwargs={"target": "comet"}, pos=(0, 0)),
-        ),
+        nodes=(Node(id="n1", ref="pipeline.focus", kwargs={"target": "comet"}, pos=(0, 0)),),
         edges=(),
     )
 

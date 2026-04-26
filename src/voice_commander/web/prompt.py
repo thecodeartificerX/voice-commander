@@ -47,10 +47,7 @@ def _validate_template(text: str) -> str | None:
     test_text = test_text.replace("{default_browser}", "")
     stray = re.search(r"\{(\w+)\}", test_text)
     if stray:
-        return (
-            f"Unknown placeholder {{{stray.group(1)}}} — "
-            f"only {{default_browser}} is supported."
-        )
+        return f"Unknown placeholder {{{stray.group(1)}}} — only {{default_browser}} is supported."
     return None
 
 

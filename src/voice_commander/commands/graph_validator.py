@@ -15,10 +15,15 @@ from voice_commander.commands.graph_topo import CycleError, topo_sort
 
 FOREACH_GLOBAL_CEILING = 1000
 
-BUILTIN_REFS = frozenset({
-    "control.branch", "control.foreach",
-    "value.constant", "value.input", "value.output",
-})
+BUILTIN_REFS = frozenset(
+    {
+        "control.branch",
+        "control.foreach",
+        "value.constant",
+        "value.input",
+        "value.output",
+    }
+)
 
 
 class ValidationSeverity(Enum):
@@ -56,10 +61,12 @@ def _rule_intra_cycle(graph: Graph) -> list[ValidationError]:
     try:
         topo_sort(graph.nodes, graph.edges)
     except CycleError as exc:
-        return [ValidationError(
-            severity=ValidationSeverity.ERROR,
-            message=f"cycle through nodes: {exc.cycle_node_ids}",
-        )]
+        return [
+            ValidationError(
+                severity=ValidationSeverity.ERROR,
+                message=f"cycle through nodes: {exc.cycle_node_ids}",
+            )
+        ]
     return []
 
 
@@ -76,25 +83,31 @@ def _rule_unknown_ref(
         if ref.startswith("pipeline."):
             tool_name = ref.removeprefix("pipeline.")
             if registry is not None and registry.by_name(tool_name) is None:
-                out.append(ValidationError(
-                    severity=ValidationSeverity.ERROR,
-                    message=f"unknown pipeline ref: {ref!r}",
-                    node_id=node.id,
-                ))
+                out.append(
+                    ValidationError(
+                        severity=ValidationSeverity.ERROR,
+                        message=f"unknown pipeline ref: {ref!r}",
+                        node_id=node.id,
+                    )
+                )
         elif ref.startswith("command.") or ref.startswith("workflow."):
             child_name = ref.split(".", 1)[1]
             if child_name not in peers:
-                out.append(ValidationError(
-                    severity=ValidationSeverity.ERROR,
-                    message=f"unknown cross-graph ref: {ref!r} (not found in peers)",
-                    node_id=node.id,
-                ))
+                out.append(
+                    ValidationError(
+                        severity=ValidationSeverity.ERROR,
+                        message=f"unknown cross-graph ref: {ref!r} (not found in peers)",
+                        node_id=node.id,
+                    )
+                )
         else:
-            out.append(ValidationError(
-                severity=ValidationSeverity.ERROR,
-                message=f"unrecognised node ref: {ref!r}",
-                node_id=node.id,
-            ))
+            out.append(
+                ValidationError(
+                    severity=ValidationSeverity.ERROR,
+                    message=f"unrecognised node ref: {ref!r}",
+                    node_id=node.id,
+                )
+            )
     return out
 
 
@@ -123,11 +136,14 @@ def _rule_orphan_required(graph: Graph, registry: Any) -> list[ValidationError]:
                 continue
             if (node.id, arg_name) in edges_by_dst:
                 continue
-            out.append(ValidationError(
-                severity=ValidationSeverity.ERROR,
-                message=f"required input {arg_name!r} is unbound (no kwarg, no edge)",
-                node_id=node.id, port=arg_name,
-            ))
+            out.append(
+                ValidationError(
+                    severity=ValidationSeverity.ERROR,
+                    message=f"required input {arg_name!r} is unbound (no kwarg, no edge)",
+                    node_id=node.id,
+                    port=arg_name,
+                )
+            )
     return out
 
 
@@ -138,21 +154,27 @@ def _rule_foreach_cap(graph: Graph) -> list[ValidationError]:
             continue
         cap = node.kwargs.get("cap")
         if isinstance(cap, int) and cap > FOREACH_GLOBAL_CEILING:
-            out.append(ValidationError(
-                severity=ValidationSeverity.ERROR,
-                message=f"foreach cap={cap} exceeds global ceiling {FOREACH_GLOBAL_CEILING}",
-                node_id=node.id, port=None,
-            ))
+            out.append(
+                ValidationError(
+                    severity=ValidationSeverity.ERROR,
+                    message=f"foreach cap={cap} exceeds global ceiling {FOREACH_GLOBAL_CEILING}",
+                    node_id=node.id,
+                    port=None,
+                )
+            )
     # Also check the graph-level foreach_iteration_cap
     if graph.foreach_iteration_cap > FOREACH_GLOBAL_CEILING:
-        out.append(ValidationError(
-            severity=ValidationSeverity.ERROR,
-            message=(
-                f"foreach cap={graph.foreach_iteration_cap}"
-                f" exceeds global ceiling {FOREACH_GLOBAL_CEILING}"
-            ),
-            node_id="f1", port=None,
-        ))
+        out.append(
+            ValidationError(
+                severity=ValidationSeverity.ERROR,
+                message=(
+                    f"foreach cap={graph.foreach_iteration_cap}"
+                    f" exceeds global ceiling {FOREACH_GLOBAL_CEILING}"
+                ),
+                node_id="f1",
+                port=None,
+            )
+        )
     return out
 
 
@@ -165,20 +187,26 @@ def _rule_branch_unreachable(graph: Graph) -> list[ValidationError]:
         true_wired = any(e.src.node_id == node.id and e.src.port == "true" for e in graph.edges)
         false_wired = any(e.src.node_id == node.id and e.src.port == "false" for e in graph.edges)
         if not cond_wired:
-            out.append(ValidationError(
-                severity=ValidationSeverity.WARNING,
-                message="branch has no condition wired — node is unreachable",
-                node_id=node.id, port=None,
-            ))
+            out.append(
+                ValidationError(
+                    severity=ValidationSeverity.WARNING,
+                    message="branch has no condition wired — node is unreachable",
+                    node_id=node.id,
+                    port=None,
+                )
+            )
         elif not true_wired and not false_wired:
-            out.append(ValidationError(
-                severity=ValidationSeverity.WARNING,
-                message=(
-                    "branch has cond wired but neither true nor false outputs are connected"
-                    " (unreachable)"
-                ),
-                node_id=node.id, port=None,
-            ))
+            out.append(
+                ValidationError(
+                    severity=ValidationSeverity.WARNING,
+                    message=(
+                        "branch has cond wired but neither true nor false outputs are connected"
+                        " (unreachable)"
+                    ),
+                    node_id=node.id,
+                    port=None,
+                )
+            )
     return out
 
 
@@ -197,7 +225,7 @@ def _rule_cross_graph_cycle(graph: Graph, peers: dict[str, Graph]) -> list[Valid
 
     def _dfs(name: str, path: list[str]) -> bool:
         if name in path:
-            cycle_path.extend(path[path.index(name):] + [name])
+            cycle_path.extend(path[path.index(name) :] + [name])
             return True
         if name in visited or name not in all_graphs:
             return False
@@ -208,17 +236,21 @@ def _rule_cross_graph_cycle(graph: Graph, peers: dict[str, Graph]) -> list[Valid
         return False
 
     if _dfs(graph.name, []):
-        return [ValidationError(
-            severity=ValidationSeverity.ERROR,
-            message=f"cycle through cross-graph references: {' -> '.join(cycle_path)}",
-        )]
+        return [
+            ValidationError(
+                severity=ValidationSeverity.ERROR,
+                message=f"cycle through cross-graph references: {' -> '.join(cycle_path)}",
+            )
+        ]
     return []
 
 
 def _rule_name_collision(graph: Graph, peers: dict[str, Graph]) -> list[ValidationError]:
     if graph.name in peers:
-        return [ValidationError(
-            severity=ValidationSeverity.ERROR,
-            message=f"name collision: graph {graph.name!r} already exists in peers",
-        )]
+        return [
+            ValidationError(
+                severity=ValidationSeverity.ERROR,
+                message=f"name collision: graph {graph.name!r} already exists in peers",
+            )
+        ]
     return []

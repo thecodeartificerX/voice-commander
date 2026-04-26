@@ -355,11 +355,7 @@ def create_app(
     # Admin surface (commands, workflows, config, restart)
     # ------------------------------------------------------------------
 
-    if (
-        command_store is not None
-        and workflow_store is not None
-        and config_path is not None
-    ):
+    if command_store is not None and workflow_store is not None and config_path is not None:
         attach_admin_routes(
             app,
             templates=templates,
@@ -382,10 +378,7 @@ def create_app(
             event_bus=event_bus,
         )
 
-    if (
-        command_store is not None
-        and workflow_store is not None
-    ):
+    if command_store is not None and workflow_store is not None:
         from ..commands.registrar import reload_all as _registrar_reload_all
         from .builder import BuilderContext
         from .builder import make_router as builder_router

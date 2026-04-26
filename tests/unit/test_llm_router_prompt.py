@@ -83,24 +83,16 @@ def test_fallback_when_template_file_missing(
     assert text == _FALLBACK_TEMPLATE
 
 
-def test_reload_prompt_picks_up_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_reload_prompt_picks_up_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """reload_prompt() re-reads the file and updates _system_prompt."""
     template_file = tmp_path / "prompt_template.txt"
-    template_file.write_text(
-        "Custom prompt for {default_browser}.", encoding="utf-8"
-    )
-    monkeypatch.setattr(
-        "voice_commander.llm_router._TEMPLATE_PATH", template_file
-    )
+    template_file.write_text("Custom prompt for {default_browser}.", encoding="utf-8")
+    monkeypatch.setattr("voice_commander.llm_router._TEMPLATE_PATH", template_file)
     router = _make_router(default_browser="firefox")
     assert "Custom prompt for firefox." in router._system_prompt
 
     # Modify file and reload
-    template_file.write_text(
-        "Updated prompt for {default_browser}.", encoding="utf-8"
-    )
+    template_file.write_text("Updated prompt for {default_browser}.", encoding="utf-8")
     router.reload_prompt()
     assert "Updated prompt for firefox." in router._system_prompt
 
@@ -184,12 +176,8 @@ def test_build_system_prompt_fallback_on_stray_placeholder(
 ) -> None:
     """Stray {foo} in template causes fallback, not crash."""
     template_file = tmp_path / "prompt_template.txt"
-    template_file.write_text(
-        "Prompt with {default_browser} and stray {foo}.", encoding="utf-8"
-    )
-    monkeypatch.setattr(
-        "voice_commander.llm_router._TEMPLATE_PATH", template_file
-    )
+    template_file.write_text("Prompt with {default_browser} and stray {foo}.", encoding="utf-8")
+    monkeypatch.setattr("voice_commander.llm_router._TEMPLATE_PATH", template_file)
     router = _make_router(default_browser="firefox")
     # Should have fallen back to _FALLBACK_TEMPLATE, not crashed
     assert "'firefox'" in router._system_prompt

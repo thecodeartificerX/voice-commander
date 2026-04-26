@@ -54,9 +54,7 @@ def _load_template() -> str:
     try:
         return _TEMPLATE_PATH.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        logger.warning(
-            "prompt template not readable at %s — using fallback", _TEMPLATE_PATH
-        )
+        logger.warning("prompt template not readable at %s — using fallback", _TEMPLATE_PATH)
         return _FALLBACK_TEMPLATE
 
 

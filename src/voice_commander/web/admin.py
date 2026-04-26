@@ -70,6 +70,7 @@ def attach_admin_routes(
         if cmd is None:
             return HTMLResponse(content=f"{name!r} not found", status_code=404)
         import dataclasses
+
         flipped = dataclasses.replace(cmd, enabled=not cmd.enabled)
         try:
             command_store.save_one(flipped)
@@ -105,6 +106,7 @@ def attach_admin_routes(
         if wf is None:
             return HTMLResponse(content=f"{name!r} not found", status_code=404)
         import dataclasses
+
         flipped = dataclasses.replace(wf, enabled=not wf.enabled)
         try:
             workflow_store.save_one(flipped)
@@ -184,11 +186,7 @@ def attach_admin_routes(
                 "</div>"
             )
         else:
-            banner = (
-                '<div class="text-green-400 text-sm">'
-                "Saved. Changes applied immediately."
-                "</div>"
-            )
+            banner = '<div class="text-green-400 text-sm">Saved. Changes applied immediately.</div>'
         return HTMLResponse(content=banner)
 
     @app.post("/restart")

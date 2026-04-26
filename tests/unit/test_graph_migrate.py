@@ -1,4 +1,5 @@
 """Unit tests for legacy-to-canonical graph migration."""
+
 from __future__ import annotations
 
 import json

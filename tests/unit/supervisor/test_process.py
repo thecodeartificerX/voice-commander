@@ -54,16 +54,10 @@ def test_terminate_force_kills_after_grace() -> None:
     if sys.platform == "win32":
         # Child catches CTRL_BREAK and ignores it.
         code = (
-            "import signal, time; "
-            "signal.signal(signal.SIGBREAK, lambda *_: None); "
-            "time.sleep(60)"
+            "import signal, time; signal.signal(signal.SIGBREAK, lambda *_: None); time.sleep(60)"
         )
     else:
-        code = (
-            "import signal, time; "
-            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-            "time.sleep(60)"
-        )
+        code = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"
     handle = spawn(_python_oneliner(code))
     started = time.monotonic()
     terminate(handle, grace_s=0.5)

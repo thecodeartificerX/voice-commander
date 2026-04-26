@@ -10,9 +10,11 @@ from voice_commander.registry import ToolEntry, ToolRegistry
 def _make_registry(calls: list[tuple[str, dict[str, Any]]]) -> ToolRegistry:
     reg = ToolRegistry()
     for name in ("focus", "press", "type"):
+
         def _fn(_name=name, **kwargs):
             calls.append((_name, kwargs))
             return None
+
         reg.register(
             ToolEntry(
                 name=name,
@@ -31,12 +33,19 @@ def test_linear_graph_runs_in_order():
     reg = _make_registry(calls)
 
     g = Graph(
-        name="test", kind="command", description="", synonyms=(), inputs=(),
-        llm_visible=False, strict=True, enabled=True, timeout_ms=5000,
+        name="test",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=False,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
         nodes=(
             Node(id="n1", ref="pipeline.focus", kwargs={"target": "x"}),
             Node(id="n2", ref="pipeline.press", kwargs={"combo": "ctrl+t"}),
-            Node(id="n3", ref="pipeline.type",  kwargs={"text": "hi"}),
+            Node(id="n3", ref="pipeline.type", kwargs={"text": "hi"}),
         ),
         edges=(
             Edge(PortRef("n1", "ok"), PortRef("n2", "in")),

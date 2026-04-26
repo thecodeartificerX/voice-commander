@@ -128,6 +128,4 @@ def test_parse_returns_table(tmp_path):
     store = ToolMetadataStore(fixture)
     meta = store.load_all()
     assert "focus" in meta
-    assert meta["focus"].returns == {
-        "hwnd": {"type": "int", "description": "Win32 window handle"}
-    }
+    assert meta["focus"].returns == {"hwnd": {"type": "int", "description": "Win32 window handle"}}

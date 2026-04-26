@@ -67,35 +67,39 @@ def _seed_stores(root: Path) -> tuple[GraphStore, GraphStore, Path]:
         encoding="utf-8",
     )
     cs = GraphStore(root / "commands.json", kind="command")
-    cs.save_one(Graph(
-        name="copy",
-        kind="command",
-        description="Copy",
-        synonyms=("copy",),
-        inputs=(),
-        llm_visible=True,
-        strict=True,
-        enabled=True,
-        timeout_ms=5000,
-        foreach_iteration_cap=50,
-        nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+c"}),),
-        edges=(),
-    ))
+    cs.save_one(
+        Graph(
+            name="copy",
+            kind="command",
+            description="Copy",
+            synonyms=("copy",),
+            inputs=(),
+            llm_visible=True,
+            strict=True,
+            enabled=True,
+            timeout_ms=5000,
+            foreach_iteration_cap=50,
+            nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+c"}),),
+            edges=(),
+        )
+    )
     ws = GraphStore(root / "workflows.json", kind="workflow")
-    ws.save_one(Graph(
-        name="say_hi",
-        kind="workflow",
-        description="",
-        synonyms=("hello",),
-        inputs=(GraphInput(name="name", type="str", required=True),),
-        llm_visible=True,
-        strict=True,
-        enabled=True,
-        timeout_ms=5000,
-        foreach_iteration_cap=50,
-        nodes=(Node("n1", "pipeline.type", {"text": "Hi {name}"}),),
-        edges=(),
-    ))
+    ws.save_one(
+        Graph(
+            name="say_hi",
+            kind="workflow",
+            description="",
+            synonyms=("hello",),
+            inputs=(GraphInput(name="name", type="str", required=True),),
+            llm_visible=True,
+            strict=True,
+            enabled=True,
+            timeout_ms=5000,
+            foreach_iteration_cap=50,
+            nodes=(Node("n1", "pipeline.type", {"text": "Hi {name}"}),),
+            edges=(),
+        )
+    )
     return cs, ws, config_path
 
 
@@ -147,10 +151,19 @@ def test_graph_get_returns_404_for_missing(client: TestClient) -> None:
 
 def test_graph_post_validates_then_saves(client: TestClient) -> None:
     payload = {
-        "schema_version": 1, "name": "smoke", "kind": "command", "description": "",
-        "synonyms": [], "inputs": [], "llm_visible": True, "strict": True,
-        "enabled": True, "timeout_ms": 5000,
-        "nodes": [{"id": "n1", "ref": "pipeline.press", "kwargs": {"combo": "ctrl+a"}, "pos": [0, 0]}],  # noqa: E501
+        "schema_version": 1,
+        "name": "smoke",
+        "kind": "command",
+        "description": "",
+        "synonyms": [],
+        "inputs": [],
+        "llm_visible": True,
+        "strict": True,
+        "enabled": True,
+        "timeout_ms": 5000,
+        "nodes": [
+            {"id": "n1", "ref": "pipeline.press", "kwargs": {"combo": "ctrl+a"}, "pos": [0, 0]}
+        ],  # noqa: E501
         "edges": [],
     }
     r = client.post("/graph/smoke", json=payload)
@@ -161,9 +174,16 @@ def test_graph_post_validates_then_saves(client: TestClient) -> None:
 
 def test_graph_post_returns_422_on_validation_error(client: TestClient) -> None:
     payload = {
-        "schema_version": 1, "name": "smoke", "kind": "command", "description": "",
-        "synonyms": [], "inputs": [], "llm_visible": True, "strict": True,
-        "enabled": True, "timeout_ms": 5000,
+        "schema_version": 1,
+        "name": "smoke",
+        "kind": "command",
+        "description": "",
+        "synonyms": [],
+        "inputs": [],
+        "llm_visible": True,
+        "strict": True,
+        "enabled": True,
+        "timeout_ms": 5000,
         "nodes": [{"id": "a", "ref": "pipeline.bogus", "kwargs": {}, "pos": [0, 0]}],
         "edges": [],
     }
