@@ -10,6 +10,10 @@ voice-commander/
 ├── start.ps1                       # Windows launcher + device picker
 ├── CLAUDE.md                       # canonical entry point for agents / humans
 ├── README.md                       # user-facing pitch, install, contributing
+├── commands.json                   # canonical graph JSON store for voice commands (graph DAGs)
+├── commands.default.json           # factory-default snapshot for commands (shipped in repo)
+├── workflows.json                  # canonical graph JSON store for multi-step workflows (graph DAGs)
+├── workflows.default.json          # factory-default snapshot for workflows (shipped in repo)
 │
 ├── docs/
 │   ├── index.md                    # guided reading order
