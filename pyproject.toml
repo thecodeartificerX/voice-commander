@@ -36,6 +36,7 @@ tray = ["pystray>=0.19.5", "Pillow>=10.2.0"]
 [project.scripts]
 voice-commander = "voice_commander.__main__:main"
 voice-sprite = "voice_sprite.__main__:main"
+voice-commander-supervisor = "voice_commander.supervisor:main"
 
 [dependency-groups]
 dev = [

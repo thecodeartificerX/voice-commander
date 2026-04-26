@@ -29,7 +29,7 @@ from ..commands.store import (
     WorkflowStep,
     WorkflowStore,
 )
-from ..config import ConfigWriteError, update_user_config
+from ..config import Config, ConfigWriteError, update_user_config
 from ..registry import ToolRegistry
 
 if TYPE_CHECKING:
@@ -38,7 +38,6 @@ if TYPE_CHECKING:
     from ..tool_metadata import ArgMetadata
 
 logger = logging.getLogger(__name__)
-
 
 def attach_admin_routes(
     app: FastAPI,
@@ -360,26 +359,50 @@ def attach_admin_routes(
                 "min_confidence": float(transcription_min_confidence),
             },
         }
+        # Snapshot config before write to detect which restart-required keys changed.
+        prev_cfg = Config.load(config_path)
         try:
             update_user_config(config_path, updates)
         except ConfigWriteError as exc:
             return HTMLResponse(content=str(exc), status_code=400)
+        new_cfg = Config.load(config_path)
         _publish("config_saved", {"path": str(config_path)})
-        return HTMLResponse(
-            content=(
-                '<div class="text-green-400 text-sm">Saved. '
-                '<button hx-post="/restart" hx-swap="none" '
-                'class="underline hover:text-green-300">Restart daemon</button> '
-                "to apply.</div>"
-            )
+
+        # Detect restart-required fields that actually changed value.
+        # Only fields the form submits today are checked. Adding a hot-cold
+        # field to the form (e.g. hotkey.key, web.port) means adding the
+        # corresponding `prev_cfg.x != new_cfg.x` arm here and to ADR 0058.
+        needs_restart = (
+            prev_cfg.audio.device != new_cfg.audio.device
+            or prev_cfg.transcription.model_size != new_cfg.transcription.model_size
         )
+
+        if needs_restart:
+            banner = (
+                '<div class="text-amber-300 text-sm">'
+                "Saved. Some changes require a restart. "
+                '<button hx-post="/restart" hx-swap="none" '
+                'class="underline hover:text-amber-200">Restart daemon</button>'
+                " to apply."
+                "</div>"
+            )
+        else:
+            banner = (
+                '<div class="text-green-400 text-sm">'
+                "Saved. Changes applied immediately."
+                "</div>"
+            )
+        return HTMLResponse(content=banner)
 
     @app.post("/restart")
     async def restart() -> JSONResponse:
-        from ..commands.restart import schedule_restart
+        from ..commands.restart import RestartUnavailable, request_restart
 
-        schedule_restart()
-        return JSONResponse({"status": "restarting"})
+        try:
+            request_restart()
+        except RestartUnavailable as exc:
+            return JSONResponse({"error": str(exc)}, status_code=503)
+        return JSONResponse({"status": "restarting"}, status_code=202)
 
 
 # ---------------------------------------------------------------------------

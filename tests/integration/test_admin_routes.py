@@ -483,3 +483,75 @@ def test_config_save_rewrites_toml(client: TestClient, tmp_path: Path) -> None:
     assert 'model_id = "new-model"' in text
     assert "device = 11" in text
     assert 'model_size = "base.en"' in text
+
+
+# ---------------------------------------------------------------------------
+# /restart route
+# ---------------------------------------------------------------------------
+
+
+def test_restart_returns_503_when_unsupervised(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("VC_SUPERVISED", raising=False)
+    resp = client.post("/restart", headers={"HX-Request": "true"})
+    assert resp.status_code == 503
+    assert "supervisor" in resp.json()["error"].lower()
+
+
+def test_restart_returns_202_when_supervised(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VC_SUPERVISED", "1")
+    # Patch request_restart so the test process doesn't actually exit.
+    from voice_commander.commands import restart as restart_mod
+
+    monkeypatch.setattr(restart_mod, "request_restart", lambda delay_s=0.5: None)
+    resp = client.post("/restart", headers={"HX-Request": "true"})
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "restarting"
+
+
+# ---------------------------------------------------------------------------
+# Config save banner: restart-required vs hot-reload
+# ---------------------------------------------------------------------------
+
+
+def test_config_save_restart_required_banner(client: TestClient) -> None:
+    # audio_device=3 differs from the seed default (-1) → restart required.
+    resp = client.post(
+        "/config",
+        headers={"HX-Request": "true"},
+        data={
+            "llm_endpoint_url": "http://x",
+            "llm_model_id": "m",
+            "llm_default_browser": "chrome",
+            "llm_timeout_ms": 1200,
+            "audio_device": 3,
+            "transcription_model_size": "small.en",
+            "transcription_min_confidence": 0.3,
+        },
+    )
+    assert resp.status_code == 200
+    assert "require a restart" in resp.text
+
+
+def test_config_save_hot_reload_banner(client: TestClient) -> None:
+    # All restart-required fields match the seed config defaults → hot reload.
+    # Seed config has no [audio] or [transcription] sections, so device=-1
+    # and model_size="small.en" are the effective defaults.
+    resp = client.post(
+        "/config",
+        headers={"HX-Request": "true"},
+        data={
+            "llm_endpoint_url": "http://x",
+            "llm_model_id": "m",
+            "llm_default_browser": "chrome",
+            "llm_timeout_ms": 1200,
+            "audio_device": -1,
+            "transcription_model_size": "small.en",
+            "transcription_min_confidence": 0.4,
+        },
+    )
+    assert resp.status_code == 200
+    assert "applied immediately" in resp.text
