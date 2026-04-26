@@ -19,6 +19,8 @@ from voice_commander.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+_MAX_CALL_DEPTH = 16
+
 _GraphLookup = Callable[[str], "Graph | None"]
 
 
@@ -30,8 +32,24 @@ class GraphRuntime:
         self._registry = registry
         self._graph_lookup = graph_lookup
 
-    def run(self, graph: Graph, inputs: Mapping[str, Any]) -> tuple[PlanOutcome, Any]:
+    def run(
+        self, graph: Graph, inputs: Mapping[str, Any], *, _call_depth: int = 0
+    ) -> tuple[PlanOutcome, Any]:
         """Execute the graph. Returns (outcome, graph_return)."""
+        if _call_depth > _MAX_CALL_DEPTH:
+            return (
+                PlanOutcome(
+                    transcript=f"graph:{graph.name}",
+                    steps=(),
+                    status="error",
+                    failed_step_index=None,
+                    error_msg=(
+                        f"cross-graph call depth {_call_depth} exceeds limit {_MAX_CALL_DEPTH}"
+                    ),
+                    duration_ms=0,
+                ),
+                None,
+            )
         start = time.monotonic()
         port_values: dict[str, Any] = {}
         fired_ok: set[str] = set()
@@ -93,6 +111,7 @@ class GraphRuntime:
                 tool_name = node.ref.removeprefix("pipeline.")
                 entry = self._registry.by_name(tool_name)
                 if entry is None:
+                    logger.warning("unknown pipeline ref %r (node %s)", node.ref, node.id)
                     error_msg = error_msg or f"unknown pipeline ref: {node.ref}"
                     if failed_idx is None:
                         failed_idx = len(steps)
@@ -235,7 +254,7 @@ class GraphRuntime:
                     if graph.strict and not self._has_error_edge(node.id, graph.edges):
                         break
                     continue
-                child_outcome, child_return = self.run(child, kwargs)
+                child_outcome, child_return = self.run(child, kwargs, _call_depth=_call_depth + 1)
                 steps.extend(child_outcome.steps)
                 if child_outcome.status == "error":
                     if failed_idx is None:
@@ -390,6 +409,14 @@ class GraphRuntime:
             if isinstance(ret, (tuple, list)) and len(ret) == len(keys):
                 for k, v in zip(keys, ret, strict=True):
                     port_values[f"{node.id}.{k}"] = v
+            else:
+                logger.warning(
+                    "node %s: expected %d-item tuple/list return, got %s; "
+                    "multi-port values not recorded",
+                    node.id,
+                    len(keys),
+                    type(ret).__name__,
+                )
 
     def _has_error_edge(self, node_id: str, edges: tuple[Edge, ...]) -> bool:
         """Return True if any outgoing edge from *node_id* has source port ``"error"``."""

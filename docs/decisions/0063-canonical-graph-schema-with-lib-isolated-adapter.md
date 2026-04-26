@@ -31,7 +31,7 @@ A thin adapter module, `commands/graph_drawflow.py`, is the only place in the co
 - `to_drawflow(canonical: dict) -> dict` — converts canonical graph to Drawflow's `editor.import()` shape.
 - `from_drawflow(drawflow: dict) -> dict` — converts Drawflow's `editor.export()` shape to canonical.
 
-The web UI calls `to_drawflow` when loading a graph into the editor and `from_drawflow` when saving. The runtime, the CLI, the commander skill, and the test suite all work exclusively with the canonical schema.
+The server-side web routes call `to_drawflow` when serving a graph to the editor and `from_drawflow` when receiving a save from the client. `builder.js` (client-side) works exclusively with Drawflow's native format; the canonical ↔ Drawflow translation happens in Python, never in the browser. The runtime, the CLI, the commander skill, and the test suite all work exclusively with the canonical schema.
 
 The alternative — saving Drawflow JSON verbatim — was rejected because it locks the data to the library, embeds HTML fragments in what should be a pure-data file, and makes every future library swap a data migration rather than a UI change.
 

@@ -1,3 +1,9 @@
+# NOTE: Nested foreach (a control.foreach node inside another foreach body) is not
+# supported by the current runtime. The body dispatch loop in GraphRuntime calls
+# _dispatch_pipeline_node, which only handles pipeline.* refs — a control.foreach
+# body node would be treated as an unknown pipeline ref and return an error.
+# This limitation is documented in issue #63 (L10). No nested-foreach test is added.
+
 from voice_commander.commands.graph import Edge, Graph, Node, PortRef
 from voice_commander.commands.graph_runtime import GraphRuntime
 from voice_commander.registry import ToolEntry, ToolRegistry

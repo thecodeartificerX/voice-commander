@@ -55,6 +55,7 @@ def topo_sort(nodes: Iterable[Node], edges: Iterable[Edge]) -> list[Node]:
                 queue.append(succ)
 
     if len(out) != len(nodes_list):
-        remaining = [n.id for n in nodes_list if n not in out]
+        out_ids = {n.id for n in out}
+        remaining = [n.id for n in nodes_list if n.id not in out_ids]
         raise CycleError(remaining)
     return out

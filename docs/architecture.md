@@ -870,6 +870,42 @@ deliberate file replacement (ADR 0062).
 
 ---
 
+## 17. Perception Subsystem
+
+Observation-only primitives that let graph branch nodes read desktop state
+without side effects.  Introduced by ADR 0066.
+
+### Components
+
+| Module | Function | Signature | Returns |
+|--------|----------|-----------|---------|
+| `tools/perception.py` | `read_clipboard()` | `() -> str` | Current clipboard text (UTF-8) |
+| `tools/perception.py` | `get_active_window_title()` | `() -> str` | Focused window title |
+| `tools/perception.py` | `get_cursor_pos()` | `() -> tuple[int, int]` | `(x, y)` screen coordinates |
+| `tools/ocr.py` | `ocr_region(x, y, w, h)` | `(int, int, int, int) -> str` | Recognized text from screen region |
+
+### Engine Selection (`ocr_region`)
+
+`_select_engine()` resolves the OCR backend:
+
+1. Read `[perception] ocr_engine` from `config.toml` (`"winrt"` | `"tesseract"` | `"auto"`).
+2. `auto` (default): try `winrt` import first; fall back to `tesseract` on PATH.
+3. Raise `OcrEngineUnavailable` if neither is available.
+
+`_ocr_winrt` uses `Windows.Media.Ocr` via the `winrt-*` packages. When called
+inside a running asyncio loop (e.g., from a FastAPI route), it dispatches to a
+`ThreadPoolExecutor` to avoid blocking the event loop.
+
+### Invariants
+
+- All four primitives are decorated with `@tool` and registered via sidecar TOML.
+- All are `llm_visible = True` by default; can be hidden per ADR 0067.
+- Pure reads — no state mutations, no `settle_ms`.
+- `pywin32` is a hard dependency for `read_clipboard`, `get_active_window_title`, `get_cursor_pos`.
+- `winrt-*` and `tesseract` are optional; `OcrEngineUnavailable` raised if absent.
+
+---
+
 ## 9. See Also
 
 - [`../CLAUDE.md`](../CLAUDE.md) — project-wide durable context for agents and contributors

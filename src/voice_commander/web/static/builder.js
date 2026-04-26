@@ -663,6 +663,13 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(canonical),
       });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        showErrors(body.errors || [{message: `Server error ${r.status}`}]);
+        setStatus('Validate failed.', 'red');
+        saveBtn.disabled = true;
+        return;
+      }
       const body = await r.json();
       const hasErrors = showErrors(body.errors || []);
       if (!hasErrors) setStatus('Valid.', '#4ade80');
