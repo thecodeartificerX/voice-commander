@@ -3,23 +3,48 @@
 {% block title %}Builder — Voice Commander{% endblock %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 py-8">
-    <section id="builder">
-        <div class="flex items-center justify-between mb-3">
-            <h2 class="text-xl font-semibold text-teal-400">Node Graph Builder</h2>
-        </div>
-        <div id="builder-canvas" class="w-full h-[600px] rounded border border-neutral-700 bg-neutral-900 relative overflow-hidden">
-            <!-- Drawflow node-graph canvas mounts here -->
-        </div>
-    </section>
+<link rel="stylesheet" href="/static/drawflow.min.css">
+<style>
+.vc-node .df-node-title { font-size: 11px; font-weight: 600; color: #5eead4; margin-bottom: 2px; }
+.vc-node .df-node-id { font-size: 9px; color: #6b7280; }
+.vc-node .df-node-kwargs { margin-top: 4px; }
+.vc-node .df-node-kwargs .df-input { width: 100%; font-size: 10px; background: #1f2937; border: 1px solid #374151; color: #e5e7eb; border-radius: 2px; padding: 1px 3px; }
+.vc-node { background: #1f2937; border: 1px solid #374151; border-radius: 6px; }
+.drawflow .drawflow-node.selected { border-color: #5eead4; }
+.vc-node-control { border-color: #7c3aed; }
+.vc-node-value { border-color: #0369a1; }
+</style>
+<div id="builder-root"
+     data-existing='{{ existing | tojson if existing else "null" }}'
+     data-kind="{{ kind }}">
+  <div id="builder-header" class="flex flex-wrap gap-2 p-2 border-b border-neutral-700 bg-neutral-900 items-center">
+    <input id="builder-name" class="bg-neutral-800 text-neutral-200 border border-neutral-600 rounded px-2 py-1 text-sm w-40" placeholder="graph name">
+    <select id="builder-kind" class="bg-neutral-800 text-neutral-200 border border-neutral-600 rounded px-2 py-1 text-sm">
+      <option value="command">command</option>
+      <option value="workflow">workflow</option>
+    </select>
+    <label class="flex items-center gap-1 text-sm text-neutral-300">
+      <input type="checkbox" id="builder-llm-visible" checked> llm_visible
+    </label>
+    <label class="flex items-center gap-1 text-sm text-neutral-300">
+      <input type="checkbox" id="builder-strict" checked> strict
+    </label>
+    <input id="builder-description" class="bg-neutral-800 text-neutral-200 border border-neutral-600 rounded px-2 py-1 text-sm flex-1 min-w-32" placeholder="description">
+    <button id="builder-validate" class="text-sm px-3 py-1 rounded bg-neutral-700 hover:bg-neutral-600 text-white">Validate</button>
+    <button id="builder-save" class="text-sm px-3 py-1 rounded bg-teal-700 hover:bg-teal-600 text-white">Save</button>
+    <a id="builder-cancel" href="/page/commands" class="text-sm px-3 py-1 rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-200">Cancel</a>
+    <span id="builder-status" class="text-sm"></span>
+  </div>
+  <div id="builder-errors" class="hidden px-3 py-2 bg-red-900/40 border-b border-red-700 text-red-300 text-sm"></div>
+  <div class="flex" style="height:calc(100vh - 80px)">
+    <div id="builder-palette" class="w-48 overflow-auto p-2 border-r border-neutral-700 bg-neutral-900 flex-shrink-0 text-sm"></div>
+    <div id="builder-canvas" class="flex-1 relative overflow-hidden"></div>
+    <div id="builder-config" class="w-72 overflow-auto p-3 border-l border-neutral-700 bg-neutral-900 flex-shrink-0 text-sm"></div>
+  </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<!-- drawflow.min.js loaded here for node-graph editing -->
-<script>
-// drawflow.min.js placeholder — full integration in Task 9.3
-window.__vcBuilderKind = {{ kind | tojson }};
-window.__vcBuilderExisting = {{ existing | tojson }};
-</script>
+<script src="/static/drawflow.min.js"></script>
+<script src="/static/builder.js"></script>
 {% endblock %}
