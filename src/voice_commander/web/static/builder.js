@@ -1,6 +1,67 @@
+// @ts-check
 // builder.js — wires Drawflow to canonical-graph JSON via fetch.
 (async function () {
   'use strict';
+
+  /**
+   * @typedef {Object} GraphInput
+   * @property {string} name
+   * @property {string} type       - e.g. "str", "int", "bool", "float"
+   * @property {boolean} required
+   * @property {string} description
+   */
+
+  /**
+   * @typedef {Object} CanonicalNode
+   * @property {string} id          - Unique within graph, e.g. "n1713000000000"
+   * @property {string} ref         - Node reference, e.g. "pipeline.fetch", "control.branch"
+   * @property {Object<string, *>} kwargs - Argument values keyed by arg name
+   * @property {[number, number]} pos    - Canvas position [x, y]
+   */
+
+  /**
+   * @typedef {Object} PortRef
+   * @property {string} node_id  - Canonical node ID, e.g. "n1713000000000"
+   * @property {string} port     - Port name, e.g. "ok", "error", "in"
+   */
+
+  /**
+   * @typedef {Object} CanonicalEdge
+   * @property {PortRef} from  - Source port reference
+   * @property {PortRef} to    - Destination port reference
+   */
+  // NOTE: Server wire format serialises from/to as flat strings "node_id.port"
+  // (see graph_schema.py:101); builder.js uses objects internally.
+
+  /**
+   * @typedef {Object} CanonicalGraph
+   * @property {number} schema_version        - Always 1
+   * @property {string} name
+   * @property {"command"|"workflow"} kind
+   * @property {string} description
+   * @property {string[]} synonyms
+   * @property {GraphInput[]} inputs
+   * @property {boolean} llm_visible
+   * @property {boolean} strict
+   * @property {boolean} enabled
+   * @property {number} timeout_ms
+   * @property {number} foreach_iteration_cap
+   * @property {CanonicalNode[]} nodes
+   * @property {CanonicalEdge[]} edges
+   */
+
+  /**
+   * @typedef {Object} PortResolution
+   * @property {string[]} inPorts   - Input port names
+   * @property {string[]} outPorts  - Output port names
+   */
+
+  /**
+   * @typedef {Object} ValidationError
+   * @property {"error"|"warning"} [severity]  - Defaults to "error"
+   * @property {string} message
+   * @property {string} [node_id]              - Affected node ID
+   */
 
   // ---------- Bootstrap ----------
   const root = document.getElementById('builder-root');
@@ -61,6 +122,19 @@
   // ---------- Palette rendering ----------
   const paletteEl = document.getElementById('builder-palette');
 
+  /**
+   * Render a section of the node palette (left sidebar).
+   *
+   * Creates a heading and one draggable button per item. Each button's
+   * click handler calls {@link addNodeToCanvas} with a randomised position.
+   *
+   * @param {string} title        - Section heading, e.g. "Pipeline"
+   * @param {Array<{name: string, description?: string}>} items
+   *   Palette descriptors; empty array is a no-op (early return).
+   * @param {string} refPrefix    - Prefix prepended to item name to form
+   *   the node ref, e.g. "pipeline." → "pipeline.fetch"
+   * @returns {void}
+   */
   function renderPaletteSection(title, items, refPrefix) {
     if (!items || items.length === 0) return;
     const h = document.createElement('div');
@@ -86,8 +160,22 @@
   renderPaletteSection('Value', Object.keys(palette.value || {}).map(k => ({ name: k })), 'value.');
 
   // ---------- Port resolution ----------
+  /**
+   * Determine input and output port names for a node reference.
+   *
+   * Hard-coded port layouts exist for value.* and control.* nodes.
+   * Pipeline / command / workflow nodes derive ports from the palette
+   * descriptor's `args` (→ input param ports) and `returns` (→ output ports).
+   * Unknown refs fall back to `{inPorts: ['in'], outPorts: ['ok', 'error']}`.
+   *
+   * @param {string} ref           - Node reference, e.g. "value.input",
+   *   "control.branch", "pipeline.fetch"
+   * @param {GraphInput[]} [graphInputs]
+   *   Graph-level input definitions; only used when ref is "value.input"
+   *   to derive output port names from input parameter names.
+   * @returns {PortResolution} Object with `inPorts` and `outPorts` arrays.
+   */
   function resolvePortsForRef(ref, graphInputs) {
-    // graphInputs: array of {name, type} from existing graph or page data
     if (ref === 'value.input') {
       const ins = graphInputs || [];
       return { inPorts: [], outPorts: ins.map(i => i.name) };
@@ -136,7 +224,24 @@
   }
 
   // ---------- Add node to canvas ----------
-  // Returns the Drawflow numeric node ID
+  /**
+   * Create a node on the Drawflow canvas and bind canonical metadata.
+   *
+   * Resolves ports via {@link resolvePortsForRef}, looks up the palette
+   * descriptor for the ref, builds kwargs HTML inputs, and registers
+   * the node with Drawflow. Canonical metadata (`_canonical_id`, `_ref`,
+   * `_in_ports`, `_out_ports`, `_kwargs`) is stored in the node's data
+   * object for later retrieval by {@link exportCanonical}.
+   *
+   * @param {string} ref           - Node reference, e.g. "pipeline.fetch"
+   * @param {number} x             - Canvas X coordinate (pixels)
+   * @param {number} y             - Canvas Y coordinate (pixels)
+   * @param {string} [canonicalId] - Canonical node ID; auto-generated
+   *   as `"n" + Date.now()` when omitted.
+   * @param {Object<string, *>} [kwargsData]
+   *   Argument values keyed by arg name; defaults to `{}`.
+   * @returns {number} Drawflow numeric node ID.
+   */
   function addNodeToCanvas(ref, x, y, canonicalId, kwargsData) {
     const id = canonicalId || ('n' + Date.now());
     const kwargVals = kwargsData || {};
@@ -197,6 +302,19 @@
   }
 
   // ---------- Canonical → Drawflow (hydration) ----------
+  /**
+   * Populate the Drawflow editor from a canonical graph.
+   *
+   * Clears the canvas, re-creates every node via {@link addNodeToCanvas},
+   * builds a mapping from canonical node IDs to Drawflow numeric IDs,
+   * then wires all edges by resolving port indices from each node's
+   * `_in_ports` / `_out_ports` arrays.
+   *
+   * @param {CanonicalGraph} graph - Canonical graph object with `nodes`
+   *   and `edges` arrays. May be the initial graph loaded from the server
+   *   or a freshly parsed JSON payload.
+   * @returns {void}
+   */
   function hydrateFromCanonical(graph) {
     editor.clear();
 
@@ -237,6 +355,25 @@
   }
 
   // ---------- Drawflow → canonical (export) ----------
+  /**
+   * Serialise the current Drawflow canvas state to canonical Graph JSON.
+   *
+   * Reads form inputs (name, kind, description, llm_visible, strict),
+   * iterates every Drawflow node to build canonical {@link CanonicalNode}
+   * entries, and maps Drawflow numeric port IDs back to named ports via
+   * each node's stored `_out_ports` / `_in_ports` arrays.
+   *
+   * The returned object matches the Python `Graph` dataclass
+   * (`src/voice_commander/commands/graph.py`) and the wire format
+   * consumed by `/graph/validate` and `/graph/save`.
+   *
+   * @returns {CanonicalGraph} Canonical graph JSON ready for POST to
+   *   the server. Shape: `{schema_version, name, kind, description,
+   *   synonyms, inputs, llm_visible, strict, enabled, timeout_ms,
+   *   foreach_iteration_cap, nodes, edges}`.
+   *
+   * @see CanonicalGraph
+   */
   function exportCanonical() {
     const name = document.getElementById('builder-name').value.trim() || 'untitled';
     const kind = document.getElementById('builder-kind').value || initialKind;
@@ -335,6 +472,17 @@
   const configEl = document.getElementById('builder-config');
   let selectedDfId = null;
 
+  /**
+   * Update the right-sidebar config panel for the selected node.
+   *
+   * When a node is selected, renders its ref, canonical ID, kwargs
+   * input fields (with live two-way binding to Drawflow node data),
+   * port list, and a delete button. Passing `null` clears the panel.
+   *
+   * @param {number|null} dfId - Drawflow numeric node ID, or `null`
+   *   to clear the config rail.
+   * @returns {void}
+   */
   function renderConfigRail(dfId) {
     selectedDfId = dfId;
     configEl.innerHTML = '';
@@ -449,6 +597,17 @@
   };
 
   // ---------- Validation error display ----------
+  /**
+   * Display validation errors and warnings in the error banner.
+   *
+   * Separates hard errors from warnings, builds a DOM-only display
+   * (no innerHTML with user data — XSS safe), and toggles the
+   * `#builder-errors` element's visibility.
+   *
+   * @param {ValidationError[]|null} errors - Array of validation
+   *   error objects, or `null` / empty array to hide the banner.
+   * @returns {boolean} `true` if any hard errors exist, `false` otherwise.
+   */
   function showErrors(errors) {
     const errEl = document.getElementById('builder-errors');
     if (!errors || errors.length === 0) {
