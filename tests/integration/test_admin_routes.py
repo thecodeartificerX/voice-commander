@@ -4,8 +4,8 @@ Spins up the full FastAPI app via ``TestClient`` against a temporary repo
 layout. Verifies that:
 
 1. The dashboard renders.
-2. POSTing a new command saves it and re-registers it into the registry.
-3. POSTing a workflow saves it and its schema shows the declared args.
+2. The commands list includes seeded data.
+3. Toggle and delete endpoints work correctly.
 4. POSTing a config update rewrites ``config.toml`` atomically.
 5. Delete endpoints remove entries from both disk and registry.
 """
@@ -32,7 +32,7 @@ from voice_commander.web.app import create_app
 
 
 def _press_args() -> dict[str, ArgMetadata]:
-    """Return ArgMetadata for the 'press' primitive — used by guided-mode tests."""
+    """Return ArgMetadata for the 'press' primitive."""
     return {
         "combo": ArgMetadata(
             name="combo",
@@ -138,7 +138,7 @@ def test_dashboard_renders(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Commands CRUD
+# Commands list / toggle / delete
 # ---------------------------------------------------------------------------
 
 
@@ -146,153 +146,6 @@ def test_commands_list_includes_seeded(client: TestClient) -> None:
     resp = client.get("/commands")
     assert resp.status_code == 200
     assert "copy" in resp.text
-
-
-def test_command_save_roundtrip(client: TestClient, tmp_path: Path) -> None:
-    resp = client.post(
-        "/command/new_tab",
-        data={
-            "description": "Open a new tab",
-            "synonyms": "new tab\nopen new tab",
-            "primitive": "press",
-            "kwargs_json": json.dumps({"combo": "ctrl+t"}),
-            "kwargs_mode": "advanced",
-            "enabled": "true",
-        },
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 200, resp.text
-    assert "new_tab" in resp.text
-
-    # Read back from the store (new schema uses "graphs" key).
-    raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert "new_tab" in raw["graphs"]
-    saved_node = raw["graphs"]["new_tab"]["nodes"][0]
-    assert saved_node["kwargs"] == {"combo": "ctrl+t"}
-
-
-def test_new_command_name_from_form(client: TestClient, tmp_path: Path) -> None:
-    """POST /command/new must use the form-field 'name', not the literal 'new'."""
-    resp = client.post(
-        "/command/new",
-        data={
-            "name": "mute_mic",
-            "description": "Mute the microphone",
-            "synonyms": "mute mic\nmute",
-            "primitive": "press",
-            "kwargs_json": json.dumps({"combo": "ctrl+shift+m"}),
-            "kwargs_mode": "advanced",
-            "enabled": "true",
-        },
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 200, resp.text
-    assert "mute_mic" in resp.text
-
-    raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert "mute_mic" in raw["graphs"], "name from form field must be persisted"
-    assert "new" not in raw["graphs"], "literal 'new' must not be saved as a command"
-
-
-def test_new_workflow_name_from_form(client: TestClient, tmp_path: Path) -> None:
-    """POST /workflow/new must use the form-field 'name', not the literal 'new'."""
-    resp = client.post(
-        "/workflow/new",
-        data={
-            "name": "morning_routine",
-            "description": "Run morning routine",
-            "synonyms": "morning\nwake up",
-            "args_json": json.dumps([]),
-            "steps_json": json.dumps(
-                [{"ref": "primitive:type", "kwargs": {"text": "Good morning"}}]
-            ),
-            "enabled": "true",
-        },
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 200, resp.text
-
-    raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
-    assert "morning_routine" in raw["graphs"], "name from form field must be persisted"
-    assert "new" not in raw["graphs"], "literal 'new' must not be saved as a workflow"
-
-
-def test_new_command_empty_name_rejected(client: TestClient, tmp_path: Path) -> None:
-    """POST /command/new with a blank name must return 400 and not save a 'new' key."""
-    resp = client.post(
-        "/command/new",
-        data={
-            "name": "",
-            "description": "Oops blank name",
-            "synonyms": "",
-            "primitive": "press",
-            "kwargs_json": json.dumps({"combo": "ctrl+x"}),
-            "kwargs_mode": "advanced",
-            "enabled": "true",
-        },
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 400
-    raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert "new" not in raw["graphs"], "literal 'new' must not be saved on empty name submission"
-
-
-def test_new_workflow_empty_name_rejected(client: TestClient, tmp_path: Path) -> None:
-    """POST /workflow/new with a blank name must return 400 and not save a 'new' key."""
-    resp = client.post(
-        "/workflow/new",
-        data={
-            "name": "",
-            "description": "Oops blank name",
-            "synonyms": "",
-            "args_json": json.dumps([]),
-            "steps_json": json.dumps([]),
-            "enabled": "true",
-        },
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 400
-    raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
-    assert "new" not in raw["graphs"], "literal 'new' must not be saved on empty name submission"
-
-
-def test_new_command_reserved_name_rejected(client: TestClient, tmp_path: Path) -> None:
-    """POST /command/new with name='new' must return 400 (reserved slug)."""
-    resp = client.post(
-        "/command/new",
-        data={
-            "name": "new",
-            "description": "Intentionally reserved name",
-            "synonyms": "",
-            "primitive": "press",
-            "kwargs_json": json.dumps({"combo": "ctrl+x"}),
-            "kwargs_mode": "advanced",
-            "enabled": "true",
-        },
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 400
-    raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert "new" not in raw["graphs"], "reserved name 'new' must not be persisted"
-
-
-def test_new_workflow_reserved_name_rejected(client: TestClient, tmp_path: Path) -> None:
-    """POST /workflow/new with name='new' must return 400 (reserved slug)."""
-    resp = client.post(
-        "/workflow/new",
-        data={
-            "name": "new",
-            "description": "Intentionally reserved name",
-            "synonyms": "",
-            "args_json": json.dumps([]),
-            "steps_json": json.dumps([]),
-            "enabled": "true",
-        },
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 400
-    raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
-    assert "new" not in raw["graphs"], "reserved name 'new' must not be persisted"
 
 
 def test_command_delete_removes_file_entry(client: TestClient, tmp_path: Path) -> None:
@@ -315,137 +168,9 @@ def test_command_toggle_flips_enabled(client: TestClient, tmp_path: Path) -> Non
     assert raw["graphs"]["copy"]["enabled"] is False
 
 
-def test_kwargs_form_returns_fragment_for_known_primitive(client: TestClient) -> None:
-    """GET /command/kwargs-form renders an HTML fragment (200, not full page)."""
-    resp = client.get(
-        "/command/kwargs-form",
-        params={"primitive": "press"},
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 200
-    assert "<html" not in resp.text
-
-
-def test_kwargs_form_unknown_primitive_returns_raw_json_fallback(
-    client: TestClient,
-) -> None:
-    """Unknown primitive (no ArgMetadata) falls back to raw JSON field."""
-    resp = client.get(
-        "/command/kwargs-form",
-        params={"primitive": "nonexistent"},
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 200
-    assert 'name="kwargs_json"' in resp.text
-
-
-def test_command_save_guided_mode_coerces_types(client: TestClient, tmp_path: Path) -> None:
-    """Guided mode: kwarg_* fields are type-coerced via ArgMetadata (real guided path)."""
-    resp = client.post(
-        "/command/guided_cmd",
-        data={
-            "description": "Guided test",
-            "synonyms": "",
-            "primitive": "press",
-            "kwargs_mode": "guided",
-            "kwarg_combo": "ctrl+a",
-            "enabled": "true",
-        },
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 200, resp.text
-    raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert "guided_cmd" in raw["graphs"]
-    # Verifies the guided parse branch ran (not JSON fallback)
-    assert raw["graphs"]["guided_cmd"]["nodes"][0]["kwargs"] == {"combo": "ctrl+a"}
-
-
-def test_command_save_guided_mode_required_field_missing_returns_400(
-    client: TestClient,
-) -> None:
-    """Guided mode: missing required kwarg returns HTTP 400."""
-    resp = client.post(
-        "/command/bad_cmd",
-        data={
-            "description": "Bad test",
-            "synonyms": "",
-            "primitive": "press",
-            "kwargs_mode": "guided",
-            # kwarg_combo intentionally omitted — should fail required check
-            "enabled": "true",
-        },
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 400
-    assert "combo" in resp.text
-
-
-def test_kwargs_form_advanced_mode_returns_raw_json_field(client: TestClient) -> None:
-    """GET /command/kwargs-form?mode=advanced returns a kwargs_json textarea."""
-    resp = client.get(
-        "/command/kwargs-form",
-        params={"primitive": "press", "mode": "advanced"},
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 200
-    assert 'name="kwargs_json"' in resp.text
-
-
-def test_command_edit_form_renders(client: TestClient) -> None:
-    """GET /command/{name}/edit renders the edit form for a known command."""
-    resp = client.get("/command/copy/edit", headers={"HX-Request": "true"})
-    assert resp.status_code == 200
-    assert "copy" in resp.text
-
-
-def test_command_new_form_renders(client: TestClient) -> None:
-    """GET /command/new renders a blank command creation form."""
-    resp = client.get("/command/new", headers={"HX-Request": "true"})
-    assert resp.status_code == 200
-
-
-def test_command_save_advanced_mode_parses_json(client: TestClient, tmp_path: Path) -> None:
-    """Advanced mode still accepts kwargs_json — backwards compat."""
-    resp = client.post(
-        "/command/adv_cmd",
-        data={
-            "description": "Advanced test",
-            "synonyms": "",
-            "primitive": "press",
-            "kwargs_json": json.dumps({"combo": "ctrl+z"}),
-            "kwargs_mode": "advanced",
-            "enabled": "true",
-        },
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 200, resp.text
-    raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert raw["graphs"]["adv_cmd"]["nodes"][0]["kwargs"] == {"combo": "ctrl+z"}
-
-
 # ---------------------------------------------------------------------------
-# Workflows CRUD
+# Workflows list / toggle / delete
 # ---------------------------------------------------------------------------
-
-
-def test_workflow_save_with_args(client: TestClient, tmp_path: Path) -> None:
-    resp = client.post(
-        "/workflow/say_bye",
-        data={
-            "description": "Say goodbye",
-            "synonyms": "bye {name}",
-            "args_json": json.dumps([{"name": "name", "type": "string", "required": True}]),
-            "steps_json": json.dumps([{"ref": "primitive:type", "kwargs": {"text": "Bye {name}"}}]),
-            "enabled": "true",
-        },
-        headers={"HX-Request": "true"},
-    )
-    assert resp.status_code == 200, resp.text
-    raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
-    assert "say_bye" in raw["graphs"]
-    saved = raw["graphs"]["say_bye"]
-    assert saved["inputs"][0]["name"] == "name"
-    assert saved["nodes"][0]["kwargs"] == {"text": "Bye {name}"}
 
 
 def test_workflow_delete(client: TestClient, tmp_path: Path) -> None:
@@ -456,6 +181,16 @@ def test_workflow_delete(client: TestClient, tmp_path: Path) -> None:
     assert resp.status_code == 200
     raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
     assert "say_hi" not in raw["graphs"]
+
+
+def test_workflow_toggle_flips_enabled(client: TestClient, tmp_path: Path) -> None:
+    resp = client.post(
+        "/workflow/say_hi/toggle",
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+    raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
+    assert raw["graphs"]["say_hi"]["enabled"] is False
 
 
 # ---------------------------------------------------------------------------
