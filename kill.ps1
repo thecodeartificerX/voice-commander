@@ -1,23 +1,29 @@
 <#
 .SYNOPSIS
-    Terminate running voice-commander daemon + voice-sprite processes.
+    Terminate running voice-commander supervisor + daemon + voice-sprite processes.
 
 .DESCRIPTION
-    Two-stage kill:
+    Three-stage kill:
+      0. Read PID from outputs/.supervisor.lock. Verify its cmdline contains
+         "voice-commander-supervisor". If match, taskkill /T /F first — tree
+         kill takes daemon + sprite children with it.
       1. Read PID from outputs/.daemon.lock. Verify its cmdline contains
          "voice_commander" (guards against stale lock pointing at a recycled
-         PID). If match, taskkill /T /F (tree kill catches sprite child).
+         PID). If match, taskkill /T /F (catches direct daemon launches with
+         no supervisor).
       2. Fallback sweep: match Win32_Process CommandLine against the project
          venv path so no random python.exe outside this repo is at risk.
+         Catches supervisor + daemon + sprite when locks are missing/stale.
 
-    Prints each PID + cmdline before killing. Removes stale lock at the end.
-    Safe to run when nothing is alive — exit 0 either way.
+    Prints each PID + cmdline before killing. Removes both lock files at the
+    end. Safe to run when nothing is alive — exit 0 either way.
 #>
 
 $ErrorActionPreference = 'Stop'
-$ProjectRoot = $PSScriptRoot
-$LockFile    = Join-Path $ProjectRoot 'outputs\.daemon.lock'
-$VenvMarker  = 'voice-commander\.venv\Scripts\voice-'  # matches voice-commander.exe + voice-sprite.exe
+$ProjectRoot     = $PSScriptRoot
+$DaemonLock      = Join-Path $ProjectRoot 'outputs\.daemon.lock'
+$SupervisorLock  = Join-Path $ProjectRoot 'outputs\.supervisor.lock'
+$VenvMarker      = 'voice-commander\.venv\Scripts\voice-'  # matches voice-commander*.exe + voice-sprite.exe
 
 $killed = @()
 
@@ -42,23 +48,35 @@ function Invoke-SafeKill {
     $script:killed += $ProcessId
 }
 
-# --- Stage 1: PID from lock file ------------------------------------------
-if (Test-Path $LockFile) {
-    $raw = Get-Content $LockFile -Raw -ErrorAction SilentlyContinue
+function Invoke-LockKill {
+    param(
+        [string]$LockPath,
+        [string]$Label,
+        [string]$CmdlinePattern
+    )
+    if (-not (Test-Path $LockPath)) { return }
+    $raw = Get-Content $LockPath -Raw -ErrorAction SilentlyContinue
     if ($raw) { $raw = $raw.Trim() }
-    if ($raw -and $raw -match '^(\d+):') {
-        $lockPid = [int]$Matches[1]
-        $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$lockPid" -ErrorAction SilentlyContinue
-        if ($proc -and $proc.CommandLine -match 'voice_commander|voice-commander') {
-            Write-Host "Daemon lock -> PID $lockPid" -ForegroundColor Cyan
-            Invoke-SafeKill -ProcessId $lockPid -Reason 'daemon.lock' -Tree
-        } elseif ($proc) {
-            Write-Host "Stale lock: PID $lockPid is '$($proc.Name)', cmdline does not match voice-commander. Skipping." -ForegroundColor DarkYellow
-        } else {
-            Write-Host "Stale lock: PID $lockPid not running." -ForegroundColor DarkGray
-        }
+    if (-not ($raw -and $raw -match '^(\d+):')) { return }
+    $lockPid = [int]$Matches[1]
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$lockPid" -ErrorAction SilentlyContinue
+    if ($proc -and $proc.CommandLine -match $CmdlinePattern) {
+        Write-Host "$Label lock -> PID $lockPid" -ForegroundColor Cyan
+        Invoke-SafeKill -ProcessId $lockPid -Reason "$Label.lock" -Tree
+    } elseif ($proc) {
+        Write-Host "Stale $Label lock: PID $lockPid is '$($proc.Name)', cmdline does not match. Skipping." -ForegroundColor DarkYellow
+    } else {
+        Write-Host "Stale $Label lock: PID $lockPid not running." -ForegroundColor DarkGray
     }
 }
+
+# --- Stage 0: supervisor lock (tree-kill cascades to daemon + sprite) -----
+Invoke-LockKill -LockPath $SupervisorLock -Label 'supervisor' `
+    -CmdlinePattern 'voice-commander-supervisor|voice_commander\.supervisor'
+
+# --- Stage 1: daemon lock (covers direct launch with no supervisor) -------
+Invoke-LockKill -LockPath $DaemonLock -Label 'daemon' `
+    -CmdlinePattern 'voice_commander|voice-commander'
 
 # --- Stage 2: Cmdline sweep (catches daemon if no lock + orphaned sprite) -
 $hits = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
@@ -78,9 +96,11 @@ if ($hits) {
 }
 
 # --- Cleanup ---------------------------------------------------------------
-if (Test-Path $LockFile) {
-    Remove-Item $LockFile -Force -ErrorAction SilentlyContinue
-    Write-Host "Removed stale $LockFile" -ForegroundColor DarkGray
+foreach ($lock in @($SupervisorLock, $DaemonLock)) {
+    if (Test-Path $lock) {
+        Remove-Item $lock -Force -ErrorAction SilentlyContinue
+        Write-Host "Removed stale $lock" -ForegroundColor DarkGray
+    }
 }
 
 if ($killed.Count -eq 0) {
