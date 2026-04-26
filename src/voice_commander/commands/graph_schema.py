@@ -49,6 +49,7 @@ def parse_graph(raw: Mapping[str, Any]) -> Graph:
     strict = bool(raw.get("strict", True))
     enabled = bool(raw.get("enabled", True))
     timeout_ms = int(raw.get("timeout_ms", 5000))
+    foreach_iteration_cap = int(raw.get("foreach_iteration_cap", 50))
     nodes = tuple(_parse_node(n) for n in raw.get("nodes", []) or ())
     edges = tuple(_parse_edge(e) for e in raw.get("edges", []) or ())
 
@@ -62,6 +63,7 @@ def parse_graph(raw: Mapping[str, Any]) -> Graph:
         strict=strict,
         enabled=enabled,
         timeout_ms=timeout_ms,
+        foreach_iteration_cap=foreach_iteration_cap,
         nodes=nodes,
         edges=edges,
     )
@@ -87,6 +89,7 @@ def serialise_graph(g: Graph) -> dict[str, Any]:
         "strict": g.strict,
         "enabled": g.enabled,
         "timeout_ms": g.timeout_ms,
+        "foreach_iteration_cap": g.foreach_iteration_cap,
         "nodes": [
             {"id": n.id, "ref": n.ref, "kwargs": dict(n.kwargs), "pos": list(n.pos)}
             for n in g.nodes

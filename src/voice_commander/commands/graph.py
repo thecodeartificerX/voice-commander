@@ -86,3 +86,4 @@ class Graph:
     timeout_ms: int
     nodes: tuple[Node, ...]
     edges: tuple[Edge, ...]
+    foreach_iteration_cap: int = 50
