@@ -111,12 +111,17 @@ _CLOSE_VERIFY_POLL_INTERVAL_MS = 20
 
 
 @tool
-def focus(target: str) -> None:
+def focus(target: str) -> int:
     """Focus a window matching *target* (process name or window title, fuzzy-matched).
 
     Delegates hwnd resolution to :func:`resolver.resolve_window`, then uses the
     Windows 11 AttachThreadInput workaround to claim foreground and verifies the
     focus change via ``_verify_foreground``.
+
+    Returns
+    -------
+    int
+        The Win32 window handle (hwnd) of the foregrounded window.
 
     Raises
     ------
@@ -160,6 +165,8 @@ def focus(target: str) -> None:
             f"hwnd={target_hwnd} (GetForegroundWindow did not match after 500 ms)"
         )
 
+    return target_hwnd
+
 
 # ---------------------------------------------------------------------------
 # type  (Python symbol: type_text — avoid shadowing the builtin)
@@ -190,7 +197,7 @@ def type_text(text: str) -> None:
 
 
 @tool(name="open")
-def open_target(target: str) -> None:
+def open_target(target: str) -> int:
     """Open *target* — a URI, file path, or fuzzy-matched app name.
 
     Delegates resolution to :func:`resolver.resolve_app`, which returns a
@@ -202,6 +209,12 @@ def open_target(target: str) -> None:
     After launch, polls ``EnumWindows`` for up to 500 ms looking for a new
     window whose title fuzzy-matches *target*. On timeout: WARNING log, no
     raise (some apps take seconds to appear). On success: INFO log.
+
+    Returns
+    -------
+    int
+        The Win32 window handle of the verified-launched window, or 0 if
+        verification timed out or the launch was blocked.
     """
     # Pre-resolution raw-input check: reject if user-provided target looks
     # like a direct filename match for a blocked interpreter / utility.
@@ -211,7 +224,7 @@ def open_target(target: str) -> None:
             "open blocked destructive raw target: target=%r",
             target,
         )
-        return
+        return 0
 
     token = resolver.resolve_app(target)
 
@@ -224,7 +237,7 @@ def open_target(target: str) -> None:
             target,
             token,
         )
-        return
+        return 0
 
     # Post-resolution: reject any launch whose path lives under a Windows
     # system directory. Catches System32 / SysWOW64 / WinSxS targets that
@@ -235,21 +248,24 @@ def open_target(target: str) -> None:
             target,
             token,
         )
-        return
+        return 0
 
     os.startfile(token)
 
-    _verify_open(target)
+    return _verify_open(target)
 
 
-def _verify_open(target: str) -> None:
-    """Best-effort post-launch verification: poll EnumWindows for a matching title."""
+def _verify_open(target: str) -> int:
+    """Best-effort post-launch verification: poll EnumWindows for a matching title.
+
+    Returns the matched hwnd on success, or 0 on timeout / unavailable deps.
+    """
     try:
         import win32gui
         from rapidfuzz.fuzz import WRatio
     except ImportError:
         logger.debug("open verify skipped: pywin32/rapidfuzz not available")
-        return
+        return 0
 
     deadline = time.monotonic() + _OPEN_VERIFY_TIMEOUT_MS / 1000.0
     poll_s = _OPEN_VERIFY_POLL_INTERVAL_MS / 1000.0
@@ -282,7 +298,7 @@ def _verify_open(target: str) -> None:
                 best_title,
                 best_score,
             )
-            return
+            return best_hwnd
         time.sleep(poll_s)
 
     logger.warning(
@@ -290,6 +306,7 @@ def _verify_open(target: str) -> None:
         target,
         _OPEN_VERIFY_TIMEOUT_MS,
     )
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +413,7 @@ def _close_with_verify(combo: tuple[str, ...], *, verb: str) -> None:
 
 
 @tool
-def last(tab: bool = False) -> None:
+def last(tab: bool = False) -> int:
     """Switch back to the previous window (Alt+Tab), or to another tab (Ctrl+Tab).
 
     Default (``tab=False``) issues Alt+Tab and verifies the foreground hwnd
@@ -406,11 +423,22 @@ def last(tab: bool = False) -> None:
     currently focused app (browsers, editors, terminals). No self-verify —
     tab switches stay inside the same process and do not change foreground
     hwnd.
+
+    Returns
+    -------
+    int
+        The Win32 window handle of the new foreground window after Alt+Tab,
+        or 0 for the Ctrl+Tab path (tab switch stays in same process).
     """
     if tab:
         pyautogui.hotkey("ctrl", "tab")
-        return
+        return 0
     _close_with_verify(("alt", "tab"), verb="last")
+    try:
+        import win32gui
+        return win32gui.GetForegroundWindow()
+    except ImportError:
+        return 0
 
 
 # ---------------------------------------------------------------------------

@@ -307,7 +307,8 @@ def test_close_self_verify_logs_when_fg_unchanged(
 def test_last_default_sends_alt_tab() -> None:
     """Bare last() → Alt+Tab; _close_with_verify snapshots fg and polls for change."""
     mock_win32gui = MagicMock()
-    mock_win32gui.GetForegroundWindow.side_effect = [11, 22]
+    # 3 calls: before_hwnd in _close_with_verify, current_hwnd poll, return value fetch
+    mock_win32gui.GetForegroundWindow.side_effect = [11, 22, 22]
     mock_win32gui.IsWindow.return_value = True
 
     with (
@@ -496,3 +497,33 @@ def test_imports_expose_expected_symbols() -> None:
         "wait",
     ):
         assert hasattr(_p, name), f"primitives missing symbol {name!r}"
+
+
+def test_focus_returns_hwnd(monkeypatch):
+    """focus() should return the target hwnd as int."""
+    import sys
+    import types
+
+    from voice_commander.tools import primitives as P
+
+    fake_hwnd = 0x1234
+
+    monkeypatch.setattr(P.resolver, "resolve_window", lambda target: fake_hwnd)
+
+    fake_win32gui = types.SimpleNamespace(
+        IsIconic=lambda h: False,
+        ShowWindow=lambda h, c: None,
+        GetForegroundWindow=lambda: fake_hwnd,
+        SetForegroundWindow=lambda h: None,
+        BringWindowToTop=lambda h: None,
+    )
+    fake_win32process = types.SimpleNamespace(
+        GetWindowThreadProcessId=lambda h: (0, 0)
+    )
+    fake_win32con = types.SimpleNamespace(SW_RESTORE=9)
+    monkeypatch.setitem(sys.modules, "win32gui", fake_win32gui)
+    monkeypatch.setitem(sys.modules, "win32process", fake_win32process)
+    monkeypatch.setitem(sys.modules, "win32con", fake_win32con)
+
+    result = P.focus("comet")
+    assert result == fake_hwnd
