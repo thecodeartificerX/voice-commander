@@ -253,3 +253,62 @@ def list_processes() -> list[dict[str, str | int]]:
         len(visible_pids),
     )
     return capped
+
+
+# ---------------------------------------------------------------------------
+# read_clipboard
+# ---------------------------------------------------------------------------
+
+
+@tool  # type: ignore[type-var]
+def read_clipboard() -> str:
+    """Return the current Windows clipboard text. Empty string if no text is available."""
+    try:
+        import win32clipboard
+        import win32con
+    except ImportError:
+        logger.warning("read_clipboard: win32clipboard not available")
+        return ""
+    win32clipboard.OpenClipboard()
+    try:
+        if not win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+            return ""
+        data = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+        return str(data) if data else ""
+    finally:
+        win32clipboard.CloseClipboard()
+
+
+# ---------------------------------------------------------------------------
+# get_active_window_title
+# ---------------------------------------------------------------------------
+
+
+@tool  # type: ignore[type-var]
+def get_active_window_title() -> str:
+    """Return the title of the currently focused window, or empty string when no foreground window."""
+    try:
+        import win32gui
+    except ImportError:
+        logger.warning("get_active_window_title: pywin32 not available")
+        return ""
+    hwnd = win32gui.GetForegroundWindow()
+    if not hwnd:
+        return ""
+    return str(win32gui.GetWindowText(hwnd) or "")
+
+
+# ---------------------------------------------------------------------------
+# get_cursor_pos
+# ---------------------------------------------------------------------------
+
+
+@tool  # type: ignore[type-var]
+def get_cursor_pos() -> tuple[int, int]:
+    """Return the current cursor position as (x, y) screen coordinates."""
+    try:
+        import win32api
+    except ImportError:
+        logger.warning("get_cursor_pos: pywin32 not available")
+        return (0, 0)
+    return tuple(win32api.GetCursorPos())  # type: ignore[return-value]

@@ -83,3 +83,6 @@ llm_summary_timeout_ms  = 800
 llm_fallback_enabled    = true
 llm_endpoint_url        = "http://localhost:1234/v1"
 llm_model_id            = "google/gemma-4-26b-a4b"  # share with [llm].model_id; avoids LM Studio JIT swaps
+
+[perception]
+ocr_engine = "auto"   # "auto" (winrt first, tesseract fallback), "winrt", or "tesseract"
