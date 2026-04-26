@@ -284,7 +284,8 @@ class StreamingDaemon:
 
         1. **word-count** — below ``_min_word_count`` → silent drop (no ``plan_outcome``).
         2. **no_speech_prob** — above ``_max_no_speech_prob`` → silent drop.
-        3. **confidence** — below ``_min_confidence`` → miss chime + ``plan_outcome`` (status=``miss``).
+        3. **confidence** — below ``_min_confidence`` → miss chime +
+           ``plan_outcome`` (status=``miss``).
         4. **mute guard** — utterance arrived during an in-flight mute → silent drop.
         5. **LLM route** — ``LLMRouter.route()`` returns ``None`` → miss chime + ``plan_outcome``.
         6. **dispatch** — ``Dispatcher.run_plan()`` executes the plan.
