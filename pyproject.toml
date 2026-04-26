@@ -99,6 +99,8 @@ module = [
     "rapidfuzz.*",
     "pyglet.*",
     "httpx_sse.*",
+    "winrt.*",
+    "win32clipboard.*",
 ]
 ignore_missing_imports = true
 

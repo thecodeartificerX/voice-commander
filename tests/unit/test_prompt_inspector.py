@@ -17,7 +17,9 @@ from voice_commander.web.app import create_app
 
 
 @pytest.fixture()
-def _prompt_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, EventBus, Path]:
+def _prompt_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[TestClient, EventBus, Path]:
     """Create a minimal app with prompt routes wired up."""
     # Use tmp_path for template file so tests don't touch the real one
     template_file = tmp_path / "prompt_template.txt"

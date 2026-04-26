@@ -1,38 +1,35 @@
 """External memory-leak soak harness for Voice Commander.
 
-Samples the RSS of a running `voice-commander` daemon at a fixed interval
-for a bounded duration, then asserts that the growth stays under a
-configurable ceiling.
+Supports two modes:
 
-Does NOT touch the daemon's source. Run the daemon separately (via
-`uv run voice-commander` or `start.ps1`), pass its PID in, and drive
-it manually by speaking commands through Scroll Lock while the soak
-ticks. Idle-only runs are also valuable — they catch background-thread
-leaks even when no commands fire.
+  1. PID monitor (original mode):
+     Samples the RSS of a running daemon at fixed intervals.
+     Usage: uv run python tests/soak/run_soak.py --pid <PID> --hours 1
 
-Usage:
-    # Find the daemon PID (Windows):
-    #   tasklist | findstr voice-commander
-    # Then:
-    uv run python tests/soak/run_soak.py --pid <PID> --hours 1
+  2. Scenario (self-contained):
+     Runs a synthetic workload (e.g. foreach_dag) in-process without a daemon.
+     Usage: uv run python tests/soak/run_soak.py --scenario foreach_dag --duration 60
 
 Flags:
-    --pid       PID of the running daemon (required).
-    --hours     Total run duration. Default 1.0.
-    --interval  Seconds between samples. Default 30.
+    --pid       PID of the running daemon (required in PID monitor mode).
+    --scenario  Scenario name: "foreach_dag". If set, --pid is ignored.
+    --hours     Total run duration in PID monitor mode. Default 1.0.
+    --duration  Total run duration in scenario mode (seconds). Default 60.
+    --interval  Seconds between samples (PID monitor only). Default 30.
     --limit-mb  Max allowed RSS growth before FAIL. Default 100.
     --csv       Optional path to write a raw CSV trace of samples.
 
 Exit codes:
-    0 — SOAK OK (delta within limit)
-    1 — FAIL (leak detected)
-    2 — could not attach to process
+    0 — SOAK OK (delta within limit / assertions passed)
+    1 — FAIL (leak detected / assertions failed)
+    2 — could not attach to process (PID monitor only)
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import statistics
 import sys
 import time
 from datetime import datetime
@@ -57,16 +54,150 @@ def _sample_bytes(proc: psutil.Process) -> int:
         return proc.memory_info().rss
 
 
+def scenario_foreach_dag(duration_s: int = 60) -> int:
+    """Fire an 8-node DAG with one Foreach (5 iterations) repeatedly.
+
+    Asserts p95 latency < 1500ms and RSS delta < 50MB.
+
+    Returns 0 on success, 1 on failure.
+    """
+    import os
+
+    from voice_commander.commands.graph import Edge, Graph, GraphInput, Node, PortRef
+    from voice_commander.commands.graph_runtime import GraphRuntime
+    from voice_commander.registry import ToolEntry, ToolRegistry
+
+    # Build a foreach DAG:
+    # input -> foreach -> press(ctrl+a) -> press(ctrl+c) -> wait(1ms)
+    #       -> press(ctrl+v) -> press(escape) -> press(f5)
+    g = Graph(
+        name="soak_foreach",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(GraphInput("items", "str", True, ""),),
+        llm_visible=False,
+        strict=False,
+        enabled=True,
+        timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=(
+            Node("in", "value.input", {}),
+            Node("f1", "control.foreach", {}),
+            Node("p1", "pipeline.press", {"combo": "ctrl+a"}),
+            Node("p2", "pipeline.press", {"combo": "ctrl+c"}),
+            Node("w1", "pipeline.wait", {"ms": 1}),
+            Node("p3", "pipeline.press", {"combo": "ctrl+v"}),
+            Node("p4", "pipeline.press", {"combo": "escape"}),
+            Node("p5", "pipeline.press", {"combo": "f5"}),
+        ),
+        edges=(
+            Edge(PortRef("in", "items"), PortRef("f1", "list")),
+            Edge(PortRef("f1", "item"), PortRef("p1", "in")),
+            Edge(PortRef("p1", "ok"), PortRef("p2", "in")),
+            Edge(PortRef("p2", "ok"), PortRef("w1", "in")),
+            Edge(PortRef("w1", "ok"), PortRef("p3", "in")),
+            Edge(PortRef("p3", "ok"), PortRef("p4", "in")),
+            Edge(PortRef("p4", "ok"), PortRef("p5", "in")),
+        ),
+    )
+
+    # Build a mock registry with press and wait tools that do nothing
+    registry = ToolRegistry()
+    for tool_name in ("press", "wait"):
+        registry.register(
+            ToolEntry(
+                name=tool_name,
+                phrases=(),
+                func=lambda **_: None,
+                module="soak",
+                docstring=None,
+                enabled=True,
+                llm_only=True,
+                internal=True,
+                origin="primitive",
+                args_meta={},
+            )
+        )
+
+    runtime = GraphRuntime(registry, graph_lookup=lambda _: None)
+
+    latencies_ms = []
+    proc = psutil.Process(os.getpid())
+    start_rss = _sample_bytes(proc)
+
+    start_time = time.time()
+    deadline = start_time + duration_s
+    iteration = 0
+
+    print(
+        f"foreach_dag soak: duration={duration_s}s graph=8 nodes, foreach cap=50"
+    )
+
+    while time.time() < deadline:
+        t0 = time.perf_counter()
+        outcome, _ = runtime.run(g, {"items": ["a", "b", "c", "d", "e"]})
+        t1 = time.perf_counter()
+        latencies_ms.append((t1 - t0) * 1000)
+        iteration += 1
+
+    end_rss = _sample_bytes(proc)
+    delta_mb = (end_rss - start_rss) / 1e6
+
+    if latencies_ms:
+        p50 = statistics.median(latencies_ms)
+        p95 = sorted(latencies_ms)[int(len(latencies_ms) * 0.95)]
+        print(
+            f"iterations={iteration} p50={p50:.1f}ms p95={p95:.1f}ms "
+            f"delta_rss={delta_mb:+.2f}MB"
+        )
+
+        if p95 > 1500:
+            print(f"FAIL: p95 latency {p95:.1f}ms > 1500ms")
+            return 1
+        if delta_mb > 50:
+            print(f"FAIL: RSS grew {delta_mb:.1f}MB > 50MB")
+            return 1
+
+    print("SOAK OK")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Voice Commander RSS soak test.")
     parser.add_argument(
-        "--pid", type=int, required=True, help="PID of running voice-commander daemon"
+        "--pid", type=int, required=False,
+        help="PID of running voice-commander daemon (required in PID monitor mode)"
     )
-    parser.add_argument("--hours", type=float, default=1.0)
-    parser.add_argument("--interval", type=float, default=30.0)
+    parser.add_argument(
+        "--scenario", choices=["foreach_dag"], default=None,
+        help="Scenario name (self-contained test)"
+    )
+    parser.add_argument(
+        "--hours", type=float, default=1.0, help="Duration in hours (PID monitor mode)"
+    )
+    parser.add_argument(
+        "--duration", type=int, default=60, help="Duration in seconds (scenario mode)"
+    )
+    parser.add_argument(
+        "--interval", type=float, default=30.0,
+        help="Sample interval in seconds (PID monitor mode)"
+    )
     parser.add_argument("--limit-mb", type=float, default=100.0)
     parser.add_argument("--csv", type=Path, default=None)
     args = parser.parse_args()
+
+    # Scenario mode: run self-contained test
+    if args.scenario is not None:
+        if args.scenario == "foreach_dag":
+            return scenario_foreach_dag(duration_s=args.duration)
+        else:
+            print(f"ERROR: unknown scenario '{args.scenario}'", file=sys.stderr)
+            return 1
+
+    # PID monitor mode: requires --pid
+    if args.pid is None:
+        parser.error("--pid is required when --scenario is not specified")
 
     try:
         proc = psutil.Process(args.pid)

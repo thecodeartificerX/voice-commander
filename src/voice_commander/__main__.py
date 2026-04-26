@@ -100,6 +100,15 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
+    # One-shot migration: convert legacy commands/workflows to canonical Graph schema
+    # before anything else loads them.
+    _state_dir = Path(os.environ.get("VC_STATE_DIR", str(Path(__file__).resolve().parents[2])))
+    from voice_commander.commands.graph_migrate import migrate_legacy_to_graphs
+    migrate_legacy_to_graphs(
+        _state_dir / "commands.json",
+        _state_dir / "workflows.json",
+    )
+
     cfg = Config.load(Path("config.toml"))
     _configure_logging(cfg)
 

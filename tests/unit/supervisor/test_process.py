@@ -28,7 +28,9 @@ def test_spawn_returns_handle_with_pid() -> None:
 
 def test_spawn_inherits_env_plus_extras() -> None:
     handle = spawn(
-        _python_oneliner("import os, sys; sys.exit(0 if os.environ.get('VC_TEST_VAR') == 'hi' else 1)"),
+        _python_oneliner(
+            "import os, sys; sys.exit(0 if os.environ.get('VC_TEST_VAR') == 'hi' else 1)"
+        ),
         env_extra={"VC_TEST_VAR": "hi"},
     )
     code = handle.wait()

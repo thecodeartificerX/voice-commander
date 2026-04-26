@@ -120,6 +120,11 @@ class SpriteConfig:
 
 
 @dataclass(frozen=True)
+class PerceptionConfig:
+    ocr_engine: str = "auto"  # "auto" | "winrt" | "tesseract"
+
+
+@dataclass(frozen=True)
 class Config:
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
@@ -130,6 +135,7 @@ class Config:
     web: WebConfig = field(default_factory=WebConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     sprite: SpriteConfig = field(default_factory=SpriteConfig)
+    perception: PerceptionConfig = field(default_factory=PerceptionConfig)
     # Per-field source strings for [llm], keyed by field name. Populated by
     # :meth:`load`; empty when the config is constructed directly. Consumed by
     # :func:`log_llm_sources` at daemon startup so every field's origin is
@@ -161,6 +167,7 @@ class Config:
             web=_section(WebConfig, raw.get("web", {})),
             llm=LLMConfig(**llm_values),
             sprite=_section(SpriteConfig, raw.get("sprite", {})),
+            perception=_section(PerceptionConfig, raw.get("perception", {})),
             llm_sources=llm_sources,
         )
 

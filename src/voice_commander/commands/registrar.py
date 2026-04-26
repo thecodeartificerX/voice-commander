@@ -1,15 +1,12 @@
-"""Synthesise ``ToolEntry`` objects from ``CommandDef`` / ``WorkflowDef``.
+"""Synthesise ToolEntry objects for every graph in a GraphStore.
 
-Commands and workflows are user-defined data, not Python code. The registrar
-builds a ``ToolEntry`` for each definition with a closure ``func`` that runs
-the corresponding pre-baked ``Plan`` through the dispatcher. Primitives
-referenced by commands/workflows stay dispatchable because the registry
-retains them with ``internal=True``.
+Each graph becomes a ToolEntry whose ``func`` is a closure: invoking the
+closure (with kwargs supplied by the LLM) hands off to GraphRuntime.run.
+The OpenAI tool schema is derived from the graph's typed ``inputs[]``.
 
 Public entry points:
 
-- :func:`register_commands` — idempotent; safe to call on each hot-reload.
-- :func:`register_workflows` — same semantics; re-runs to pick up edits.
+- :func:`register_graphs` — idempotent; safe to call on each hot-reload.
 - :func:`reload_all` — convenience wrapper used by the daemon startup path
   and by the web UI after a save.
 
@@ -20,309 +17,162 @@ code itself is not thread-safe against concurrent discover() runs.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable
 from typing import Any
 
-from voice_commander.commands.store import (
-    CommandDef,
-    CommandStore,
-    WorkflowDef,
-    WorkflowStep,
-    WorkflowStore,
-)
-from voice_commander.commands.template import TemplateError, substitute
-from voice_commander.dispatcher import Dispatcher
-from voice_commander.plan import Plan, ToolCall
+from voice_commander.commands.graph import Graph
+from voice_commander.commands.graph_runtime import GraphRuntime
+from voice_commander.commands.store import GraphStore
 from voice_commander.registry import ToolEntry, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# JSON Schema helpers
-# ---------------------------------------------------------------------------
-
-
 _TYPE_MAP: dict[str, str] = {
-    "string": "string",
-    "str": "string",
-    "int": "integer",
-    "integer": "integer",
-    "bool": "boolean",
-    "boolean": "boolean",
-    "float": "number",
-    "number": "number",
+    "str": "string", "string": "string",
+    "int": "integer", "integer": "integer",
+    "bool": "boolean", "boolean": "boolean",
+    "float": "number", "number": "number",
 }
 
 
-def _build_command_schema(cmd: CommandDef) -> dict[str, Any]:
-    """Build the OpenAI-style tool schema for a command. Commands are atomic —
-    no user-visible args. The ``description`` ships the synonyms so the LLM
-    can match phrasing variants."""
-    description = cmd.description
-    if cmd.synonyms:
-        description = f"{description}\nPhrases: {', '.join(cmd.synonyms)}"
-    return {
-        "type": "function",
-        "function": {
-            "name": cmd.name,
-            "description": description.strip(),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    }
-
-
-def _build_workflow_schema(wf: WorkflowDef) -> dict[str, Any]:
-    """Build the OpenAI-style tool schema for a workflow, exposing each
-    declared arg as a JSON Schema property."""
-    props: dict[str, Any] = {}
-    required: list[str] = []
-    for a in wf.args:
-        json_type = _TYPE_MAP.get(a.type_str.lower(), "string")
-        props[a.name] = {"type": json_type, "description": a.description or a.name}
-        if a.required:
-            required.append(a.name)
-
-    description = wf.description
-    if wf.synonyms:
-        description = f"{description}\nPhrases: {', '.join(wf.synonyms)}"
-
-    return {
-        "type": "function",
-        "function": {
-            "name": wf.name,
-            "description": description.strip(),
-            "parameters": {
-                "type": "object",
-                "properties": props,
-                "required": required,
-            },
-        },
-    }
-
-
-# ---------------------------------------------------------------------------
-# Command registration
-# ---------------------------------------------------------------------------
-
-
-def _make_command_func(
-    cmd: CommandDef,
+def register_graphs(
     registry: ToolRegistry,
-    dispatcher: Dispatcher,
-    context: Mapping[str, Any],
-) -> Any:
-    """Return a closure that dispatches a command's single-step pre-baked plan."""
-
-    def _run(**call_kwargs: Any) -> None:  # LLM may or may not pass kwargs
-        resolved_kwargs = substitute(cmd.kwargs, context)
-        plan = Plan(
-            steps=(ToolCall(name=cmd.primitive, kwargs=resolved_kwargs),),
-            raw_response={"synthetic": True, "command": cmd.name},
-            strict=True,
-        )
-        dispatcher.run_plan(f"command:{cmd.name}", plan, registry)
-
-    _run.__name__ = f"command__{cmd.name}"
-    _run.__doc__ = cmd.description or None
-    return _run
-
-
-def register_commands(
-    registry: ToolRegistry,
-    store: CommandStore,
-    dispatcher: Dispatcher,
-    context: Mapping[str, Any],
+    store: GraphStore,
+    *,
+    runtime_factory: Callable[
+        [ToolRegistry, Callable[[str], Graph | None]], GraphRuntime
+    ] | None = None,
 ) -> list[str]:
-    """Load all commands from *store* and (re)register them on *registry*.
+    """Register every enabled graph in the store as a ToolEntry.
 
-    Previous command entries are removed first so renames / deletes take
-    effect. Returns the list of command names that were registered.
+    Drops existing entries with origin matching the store's kind first.
+    Returns the list of graph names that were registered.
     """
-    _drop_origin(registry, "command")
+    origin = store.kind
+    _drop_origin(registry, origin)
 
-    commands = store.load_all()
+    graphs = store.load_all()
+
+    def _lookup(name: str) -> Graph | None:
+        return graphs.get(name)
+
+    factory = runtime_factory or (lambda r, lookup: GraphRuntime(r, lookup))
+    runtime = factory(registry, _lookup)
+
     names: list[str] = []
-    for cmd in commands.values():
-        if not cmd.enabled:
+    for g in graphs.values():
+        if not g.enabled:
             continue
-        existing = registry.by_name(cmd.name)
-        if existing is not None:
-            # Disabled legacy primitives can be transparently replaced by a
-            # user command of the same name (e.g. close_window, minimize).
-            # Only block when the existing entry is live (enabled primitive).
-            if existing.enabled:
-                logger.warning(
-                    "Command %r clashes with enabled registry entry — skipping",
-                    cmd.name,
-                )
-                continue
-            registry.remove(cmd.name)
-        entry = ToolEntry(
-            name=cmd.name,
-            phrases=cmd.synonyms,
-            func=_make_command_func(cmd, registry, dispatcher, context),
-            module="voice_commander.commands",
-            docstring=cmd.description or None,
-            description=cmd.description,
-            category="command",
-            enabled=True,
-            params_schema=_build_command_schema(cmd),
-            settle_ms=0,
-            llm_only=True,
-            internal=False,
-            origin="command",
-        )
+        internal = not g.llm_visible
+        params_schema = _build_schema(g)
+        entry = _build_entry(g, runtime, origin, internal, params_schema)
         registry.register(entry)
-        names.append(cmd.name)
-    logger.info("Registered %d commands: %s", len(names), names)
+        names.append(g.name)
+    logger.info("Registered %d %s graphs: %s", len(names), origin, names)
     return names
-
-
-# ---------------------------------------------------------------------------
-# Workflow registration
-# ---------------------------------------------------------------------------
-
-
-def _build_workflow_plan(
-    wf: WorkflowDef,
-    user_kwargs: Mapping[str, Any],
-    registry: ToolRegistry,
-    context: Mapping[str, Any],
-) -> Plan:
-    """Turn a workflow definition + runtime kwargs into a dispatchable Plan.
-
-    Each ``WorkflowStep.ref`` is resolved to a concrete ``(primitive_name,
-    kwargs)`` tuple. ``primitive:X`` refs map straight through; ``command:Y``
-    refs delegate to the referenced command's pre-baked step. Placeholders in
-    step kwargs are substituted using the combined user-supplied kwargs +
-    *context*.
-    """
-    merged_ctx: dict[str, Any] = {**context, **user_kwargs}
-    steps: list[ToolCall] = []
-    for i, step in enumerate(wf.steps):
-        try:
-            resolved = substitute(step.kwargs, merged_ctx)
-        except TemplateError as exc:
-            raise TemplateError(f"workflow {wf.name!r} step {i} ({step.ref}): {exc}") from exc
-        target_name = _resolve_step_ref(step, registry)
-        steps.append(ToolCall(name=target_name, kwargs=resolved))
-    return Plan(
-        steps=tuple(steps),
-        raw_response={"synthetic": True, "workflow": wf.name},
-        strict=True,
-    )
-
-
-def _resolve_step_ref(step: WorkflowStep, registry: ToolRegistry) -> str:
-    """Return the primitive name to call for *step*.
-
-    ``primitive:<name>`` → returned as-is.
-    ``command:<name>`` → resolved by looking up the command's pre-baked step
-    in the registry metadata. This gives workflows a cheap way to compose
-    existing commands without duplicating their kwargs.
-    """
-    kind = step.ref_kind
-    name = step.ref_name
-    if kind == "primitive":
-        return name
-    if kind == "command":
-        entry = registry.by_name(name)
-        if entry is None or entry.origin != "command":
-            raise ValueError(f"Workflow references unknown command: {name!r}")
-        # Commands are atomic — their synthetic func runs a one-step plan.
-        # We can't unwrap that plan here without re-parsing, so we invoke
-        # the command's func directly via a same-name dispatch.
-        return name
-    raise ValueError(f"Unknown workflow step ref kind {kind!r} (expected 'primitive' or 'command')")
-
-
-def _make_workflow_func(
-    wf: WorkflowDef,
-    registry: ToolRegistry,
-    dispatcher: Dispatcher,
-    context: Mapping[str, Any],
-) -> Any:
-    def _run(**call_kwargs: Any) -> None:
-        plan = _build_workflow_plan(wf, call_kwargs, registry, context)
-        dispatcher.run_plan(f"workflow:{wf.name}", plan, registry)
-
-    _run.__name__ = f"workflow__{wf.name}"
-    _run.__doc__ = wf.description or None
-    return _run
-
-
-def register_workflows(
-    registry: ToolRegistry,
-    store: WorkflowStore,
-    dispatcher: Dispatcher,
-    context: Mapping[str, Any],
-) -> list[str]:
-    """Load all workflows and (re)register them on *registry*.
-
-    Must run AFTER :func:`register_commands` so that ``command:<name>``
-    step refs can be resolved at dispatch time.
-    """
-    _drop_origin(registry, "workflow")
-
-    workflows = store.load_all()
-    names: list[str] = []
-    for wf in workflows.values():
-        if not wf.enabled:
-            continue
-        existing = registry.by_name(wf.name)
-        if existing is not None:
-            if existing.enabled:
-                logger.warning(
-                    "Workflow %r clashes with enabled registry entry — skipping",
-                    wf.name,
-                )
-                continue
-            registry.remove(wf.name)
-        entry = ToolEntry(
-            name=wf.name,
-            phrases=wf.synonyms,
-            func=_make_workflow_func(wf, registry, dispatcher, context),
-            module="voice_commander.commands",
-            docstring=wf.description or None,
-            description=wf.description,
-            category="workflow",
-            enabled=True,
-            params_schema=_build_workflow_schema(wf),
-            settle_ms=0,
-            llm_only=True,
-            internal=False,
-            origin="workflow",
-        )
-        registry.register(entry)
-        names.append(wf.name)
-    logger.info("Registered %d workflows: %s", len(names), names)
-    return names
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _drop_origin(registry: ToolRegistry, origin: str) -> None:
-    """Remove every registry entry whose ``origin`` matches *origin*."""
-    for entry in list(registry.by_origin(origin)):  # type: ignore[arg-type]
-        registry.remove(entry.name)
 
 
 def reload_all(
     registry: ToolRegistry,
-    command_store: CommandStore,
-    workflow_store: WorkflowStore,
-    dispatcher: Dispatcher,
-    context: Mapping[str, Any],
+    command_store: GraphStore,
+    workflow_store: GraphStore,
+    *,
+    runtime_factory: Callable[
+        [ToolRegistry, Callable[[str], Graph | None]], GraphRuntime
+    ] | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Reload both commands and workflows. Returns (command_names, workflow_names)."""
-    cmd_names = register_commands(registry, command_store, dispatcher, context)
-    wf_names = register_workflows(registry, workflow_store, dispatcher, context)
+    """Reload both stores. The shared runtime knows about both.
+
+    Returns (command_names, workflow_names).
+    """
+    cmd_graphs = command_store.load_all()
+    wf_graphs = workflow_store.load_all()
+
+    def _lookup(name: str) -> Graph | None:
+        return cmd_graphs.get(name) or wf_graphs.get(name)
+
+    factory = runtime_factory or (lambda r, lookup: GraphRuntime(r, lookup))
+    runtime = factory(registry, _lookup)
+
+    # Drop both origins before re-registering
+    _drop_origin(registry, "command")
+    _drop_origin(registry, "workflow")
+
+    cmd_names: list[str] = []
+    for g in cmd_graphs.values():
+        if not g.enabled:
+            continue
+        entry = _build_entry(g, runtime, "command", not g.llm_visible, _build_schema(g))
+        registry.register(entry)
+        cmd_names.append(g.name)
+
+    wf_names: list[str] = []
+    for g in wf_graphs.values():
+        if not g.enabled:
+            continue
+        entry = _build_entry(g, runtime, "workflow", not g.llm_visible, _build_schema(g))
+        registry.register(entry)
+        wf_names.append(g.name)
+
     return cmd_names, wf_names
+
+
+def _build_entry(
+    g: Graph,
+    runtime: GraphRuntime,
+    origin: str,
+    internal: bool,
+    params_schema: dict[str, Any],
+) -> ToolEntry:
+    return ToolEntry(
+        name=g.name,
+        phrases=tuple(g.synonyms),
+        func=_make_func(g, runtime),
+        module="voice_commander.commands",
+        docstring=g.description or None,
+        description=g.description,
+        category=origin,
+        enabled=True,
+        params_schema=params_schema,
+        settle_ms=0,
+        llm_only=True,
+        internal=internal,
+        origin=origin,  # type: ignore[arg-type]
+    )
+
+
+def _make_func(g: Graph, runtime: GraphRuntime) -> Any:
+    def _run(**call_kwargs: Any) -> None:
+        outcome, _ret = runtime.run(g, call_kwargs)
+        if outcome.status == "error":
+            raise RuntimeError(outcome.error_msg or "graph execution failed")
+    _run.__name__ = f"graph__{g.name}"
+    _run.__doc__ = g.description or None
+    return _run
+
+
+def _build_schema(g: Graph) -> dict[str, Any]:
+    props: dict[str, Any] = {}
+    required: list[str] = []
+    for inp in g.inputs:
+        json_type = _TYPE_MAP.get(inp.type.lower(), "string")
+        props[inp.name] = {"type": json_type, "description": inp.description or inp.name}
+        if inp.required:
+            required.append(inp.name)
+    description = g.description
+    if g.synonyms:
+        description = f"{description}\nPhrases: {', '.join(g.synonyms)}"
+    return {
+        "type": "function",
+        "function": {
+            "name": g.name,
+            "description": description.strip(),
+            "parameters": {"type": "object", "properties": props, "required": required},
+        },
+    }
+
+
+def _drop_origin(registry: ToolRegistry, origin: str) -> None:
+    """Remove all ToolEntry instances with the given origin from the registry."""
+    for entry in list(registry.by_origin(origin)):  # type: ignore[arg-type]
+        registry.remove(entry.name)

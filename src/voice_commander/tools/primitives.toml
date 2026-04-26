@@ -31,6 +31,10 @@ description = "Window to focus (e.g. 'notepad', 'chrome', 'spotify'). Fuzzy-matc
 required = true
 type = "string"
 
+[tools.focus.returns.hwnd]
+type = "integer"
+description = "Win32 window handle of the foregrounded window."
+
 [tools.type]
 phrases = []
 description = "Type arbitrary text via keystroke synthesis into the currently focused window."
@@ -56,6 +60,10 @@ internal = true
 description = "Application name ('spotify'), URI ('https://example.com'), or file path."
 required = true
 type = "string"
+
+[tools.open.returns.hwnd]
+type = "integer"
+description = "Win32 window handle of the verified-launched window, or 0 if verification timed out."
 
 [tools.press]
 phrases = []
@@ -173,6 +181,10 @@ description = "When true, switch tab via Ctrl+Tab. Default false → Alt+Tab."
 required = false
 type = "boolean"
 default = false
+
+[tools.last.returns.hwnd]
+type = "integer"
+description = "Win32 window handle of the new foreground window (0 for Ctrl+Tab path)."
 
 [tools.summon_commander]
 phrases = []

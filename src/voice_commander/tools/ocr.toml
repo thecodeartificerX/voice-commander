@@ -1,0 +1,31 @@
+[tools.ocr_region]
+phrases = []
+description = "Run OCR on a rectangular screen region. Returns recognised text. Requires winrt-* deps OR tesseract on PATH."
+enabled = true
+settle_ms = 0
+llm_only = true
+internal = true
+
+[tools.ocr_region.args.x]
+type = "integer"
+required = true
+description = "Screen region left edge (pixels)."
+
+[tools.ocr_region.args.y]
+type = "integer"
+required = true
+description = "Screen region top edge (pixels)."
+
+[tools.ocr_region.args.w]
+type = "integer"
+required = true
+description = "Screen region width (pixels)."
+
+[tools.ocr_region.args.h]
+type = "integer"
+required = true
+description = "Screen region height (pixels)."
+
+[tools.ocr_region.returns.text]
+type = "string"
+description = "Recognised text. Empty string when OCR finds nothing."

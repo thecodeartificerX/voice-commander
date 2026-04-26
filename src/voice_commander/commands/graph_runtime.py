@@ -1,0 +1,361 @@
+"""DAG execution engine for command/workflow graphs.
+
+This module owns the sequential walk over a Graph's nodes, the port-value
+cache (typed data + control flags), and the conversion of execution events
+into a PlanOutcome wire object that the daemon publishes via EventBus.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from collections.abc import Callable, Mapping
+from typing import Any
+
+from voice_commander.commands.graph import Edge, Graph, Node
+from voice_commander.commands.graph_topo import CycleError, topo_sort
+from voice_commander.plan import PlanOutcome, PlanStatus, ToolCall
+from voice_commander.registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
+
+_GraphLookup = Callable[[str], "Graph | None"]
+
+
+class GraphRuntime:
+    """Executes a Graph against a ToolRegistry; produces a PlanOutcome."""
+
+    def __init__(self, registry: ToolRegistry, graph_lookup: _GraphLookup) -> None:
+        self._registry = registry
+        self._graph_lookup = graph_lookup
+
+    def run(self, graph: Graph, inputs: Mapping[str, Any]) -> tuple[PlanOutcome, Any]:
+        """Execute the graph. Returns (outcome, graph_return)."""
+        start = time.monotonic()
+        port_values: dict[str, Any] = {}
+        fired_ok: set[str] = set()
+        fired_err: set[str] = set()
+        fired_branch_true: set[str] = set()
+        fired_branch_false: set[str] = set()
+        steps: list[ToolCall] = []
+        failed_idx: int | None = None
+        error_msg: str | None = None
+        graph_return: Any = None
+
+        # Park graph inputs
+        for inp in graph.inputs:
+            port_values[f"input.{inp.name}"] = inputs.get(inp.name)
+
+        try:
+            order = topo_sort(graph.nodes, graph.edges)
+        except CycleError as exc:
+            return (
+                PlanOutcome(
+                    transcript=f"graph:{graph.name}",
+                    steps=(),
+                    status="error",
+                    failed_step_index=None,
+                    error_msg=f"cycle in graph: {exc}",
+                    duration_ms=int((time.monotonic() - start) * 1000),
+                ),
+                None,
+            )
+
+        # Pre-compute which nodes live exclusively inside a foreach body so we
+        # can skip them in the outer walk (they are driven by the foreach loop).
+        foreach_body_ids: set[str] = set()
+        for node in order:
+            if node.ref == "control.foreach":
+                foreach_body_ids |= self._foreach_body_ids(node.id, graph)
+
+        for node in order:
+            # Skip nodes that are exclusively managed inside a foreach body
+            if node.id in foreach_body_ids:
+                continue
+
+            # Timeout check
+            if (time.monotonic() - start) * 1000 > graph.timeout_ms:
+                error_msg = "graph timeout"
+                if failed_idx is None:
+                    failed_idx = len(steps)
+                break
+
+            if not self._control_satisfied(
+                node, graph.edges, fired_ok, fired_err,
+                fired_branch_true, fired_branch_false
+            ):
+                continue
+
+            kwargs = self._resolve_kwargs(node, graph.edges, port_values)
+
+            # --- pipeline node ---
+            if node.ref.startswith("pipeline."):
+                tool_name = node.ref.removeprefix("pipeline.")
+                entry = self._registry.by_name(tool_name)
+                if entry is None:
+                    error_msg = error_msg or f"unknown pipeline ref: {node.ref}"
+                    if failed_idx is None:
+                        failed_idx = len(steps)
+                    fired_err.add(node.id)
+                    if graph.strict and not self._has_error_edge(node.id, graph.edges):
+                        break
+                    continue
+                try:
+                    ret = entry.func(**kwargs)
+                except Exception as exc:  # noqa: BLE001
+                    if failed_idx is None:
+                        failed_idx = len(steps)
+                        error_msg = str(exc)[:256]
+                    fired_err.add(node.id)
+                    steps.append(ToolCall(name=node.ref, kwargs=kwargs))
+                    if graph.strict and not self._has_error_edge(node.id, graph.edges):
+                        break
+                    continue
+                fired_ok.add(node.id)
+                self._record_returns(node, entry, ret, port_values)
+                steps.append(ToolCall(name=node.ref, kwargs=kwargs))
+                continue
+
+            # --- control.branch ---
+            if node.ref == "control.branch":
+                cond_val = bool(kwargs.get("cond"))
+                if cond_val:
+                    fired_branch_true.add(node.id)
+                else:
+                    fired_branch_false.add(node.id)
+                fired_ok.add(node.id)
+                steps.append(ToolCall(name=node.ref, kwargs={"cond": cond_val}))
+                continue
+
+            # --- control.foreach ---
+            if node.ref == "control.foreach":
+                items = list(kwargs.get("list", []) or [])
+                cap = graph.foreach_iteration_cap
+                if len(items) > cap:
+                    items = items[:cap]
+                body_ids = self._foreach_body_ids(node.id, graph)
+                body_nodes = [n for n in order if n.id in body_ids]
+                for item_val in items:
+                    port_values[f"{node.id}.item"] = item_val
+                    body_fired_ok: set[str] = set()
+                    body_fired_ok.add(node.id)  # foreach node itself is "ok" for body
+                    body_fired_err: set[str] = set()
+                    body_fired_branch_true: set[str] = set()
+                    body_fired_branch_false: set[str] = set()
+                    for bn in body_nodes:
+                        if not self._control_satisfied(
+                            bn, graph.edges, body_fired_ok, body_fired_err,
+                            body_fired_branch_true, body_fired_branch_false
+                        ):
+                            continue
+                        bkwargs = self._resolve_kwargs(bn, graph.edges, port_values)
+                        result = self._dispatch_pipeline_node(
+                            bn, bkwargs, graph, steps, port_values,
+                            body_fired_ok, body_fired_err
+                        )
+                        if result == "break":
+                            break
+                    steps.append(ToolCall(name=f"{node.ref}/iter", kwargs={"item": item_val}))
+                fired_ok.add(node.id)
+                continue
+
+            # --- value.constant ---
+            if node.ref == "value.constant":
+                val = kwargs.get("value")
+                port_values[f"{node.id}.value"] = val
+                fired_ok.add(node.id)
+                continue
+
+            # --- value.input ---
+            if node.ref == "value.input":
+                # Re-park graph inputs under this node's id too
+                for inp in graph.inputs:
+                    port_values[f"{node.id}.{inp.name}"] = inputs.get(inp.name)
+                fired_ok.add(node.id)
+                continue
+
+            # --- value.output ---
+            if node.ref == "value.output":
+                graph_return = kwargs.get("value")
+                fired_ok.add(node.id)
+                continue
+
+            # --- cross-graph (command.X / workflow.X) ---
+            if node.ref.startswith("command.") or node.ref.startswith("workflow."):
+                child_name = node.ref.split(".", 1)[1]
+                child = self._graph_lookup(child_name)
+                if child is None:
+                    if failed_idx is None:
+                        failed_idx = len(steps)
+                        error_msg = f"unknown cross-graph ref: {node.ref}"
+                    fired_err.add(node.id)
+                    steps.append(ToolCall(name=node.ref, kwargs=kwargs))
+                    if graph.strict and not self._has_error_edge(node.id, graph.edges):
+                        break
+                    continue
+                child_outcome, child_return = self.run(child, kwargs)
+                steps.extend(child_outcome.steps)
+                if child_outcome.status == "error":
+                    if failed_idx is None:
+                        failed_idx = len(steps)
+                        error_msg = child_outcome.error_msg
+                    fired_err.add(node.id)
+                    steps.append(ToolCall(name=node.ref, kwargs=kwargs))
+                    if graph.strict and not self._has_error_edge(node.id, graph.edges):
+                        break
+                    continue
+                if child_return is not None:
+                    port_values[f"{node.id}.value"] = child_return
+                fired_ok.add(node.id)
+                steps.append(ToolCall(name=node.ref, kwargs=kwargs))
+                continue
+
+            logger.debug("graph_runtime: skipping unsupported ref %r", node.ref)
+
+        status: PlanStatus = "error" if failed_idx is not None else "ok"
+        duration_ms = int((time.monotonic() - start) * 1000)
+        outcome = PlanOutcome(
+            transcript=f"graph:{graph.name}",
+            steps=tuple(steps),
+            status=status,
+            failed_step_index=failed_idx,
+            error_msg=error_msg,
+            duration_ms=duration_ms,
+        )
+        return outcome, graph_return
+
+    # ------------------------------------------------------------------ helpers
+
+    def _dispatch_pipeline_node(
+        self,
+        node: Node,
+        kwargs: dict[str, Any],
+        graph: Graph,
+        steps: list[ToolCall],
+        port_values: dict[str, Any],
+        fired_ok: set[str],
+        fired_err: set[str],
+    ) -> str:
+        """Dispatch a pipeline node. Returns 'break' if strict mode should halt."""
+        tool_name = node.ref.removeprefix("pipeline.")
+        entry = self._registry.by_name(tool_name)
+        if entry is None:
+            logger.warning("foreach body: unknown pipeline ref %r (node %s)", node.ref, node.id)
+            fired_err.add(node.id)
+            if graph.strict:
+                return "break"
+            return "continue"
+        try:
+            ret = entry.func(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("foreach body node %s raised: %s", node.ref, exc)
+            fired_err.add(node.id)
+            steps.append(ToolCall(name=node.ref, kwargs=kwargs))
+            if graph.strict and not self._has_error_edge(node.id, graph.edges):
+                return "break"
+            return "continue"
+        fired_ok.add(node.id)
+        self._record_returns(node, entry, ret, port_values)
+        steps.append(ToolCall(name=node.ref, kwargs=kwargs))
+        return "continue"
+
+    def _control_satisfied(
+        self,
+        node: Node,
+        edges: tuple[Edge, ...],
+        fired_ok: set[str],
+        fired_err: set[str],
+        fired_branch_true: set[str],
+        fired_branch_false: set[str],
+    ) -> bool:
+        incoming = [e for e in edges if e.dst.node_id == node.id and e.dst.port == "in"]
+        if not incoming:
+            return True
+        for e in incoming:
+            src_id = e.src.node_id
+            if e.src.port == "ok" and src_id in fired_ok:
+                return True
+            if e.src.port == "error" and src_id in fired_err:
+                return True
+            if e.src.port == "true" and src_id in fired_branch_true:
+                return True
+            if e.src.port == "false" and src_id in fired_branch_false:
+                return True
+            if e.src.port == "item" and src_id in fired_ok:
+                return True
+            if e.src.port == "after" and src_id in fired_ok:
+                return True
+        return False
+
+    def _resolve_kwargs(
+        self,
+        node: Node,
+        edges: tuple[Edge, ...],
+        port_values: dict[str, Any],
+    ) -> dict[str, Any]:
+        out = dict(node.kwargs)
+        for e in edges:
+            if e.dst.node_id != node.id or e.dst.port == "in":
+                continue
+            src_key = (
+                f"input.{e.src.port}"
+                if e.src.is_input_shorthand
+                else f"{e.src.node_id}.{e.src.port}"
+            )
+            if src_key in port_values:
+                out[e.dst.port] = port_values[src_key]
+        return out
+
+    def _record_returns(
+        self,
+        node: Node,
+        entry: Any,
+        ret: Any,
+        port_values: dict[str, Any],
+    ) -> None:
+        meta = getattr(entry, "returns_meta", None) or {}
+        if not meta:
+            return
+        if len(meta) == 1:
+            (port_name,) = meta.keys()
+            port_values[f"{node.id}.{port_name}"] = ret
+        else:
+            keys = list(meta.keys())
+            if isinstance(ret, (tuple, list)) and len(ret) == len(keys):
+                for k, v in zip(keys, ret, strict=True):
+                    port_values[f"{node.id}.{k}"] = v
+
+    def _has_error_edge(self, node_id: str, edges: tuple[Edge, ...]) -> bool:
+        return any(e.src.node_id == node_id and e.src.port == "error" for e in edges)
+
+    # Control ports that carry the body membership signal from a foreach node.
+    # Only these ports form body-inclusion edges; data ports (e.g. typed returns)
+    # must not pull downstream consumers into the body set.
+    _FOREACH_BODY_CONTROL_PORTS: frozenset[str] = frozenset(
+        {"item", "ok", "error", "true", "false"}
+    )
+
+    def _foreach_body_ids(self, foreach_node_id: str, graph: Graph) -> set[str]:
+        """Find all node ids in the foreach body by walking control edges forward.
+
+        Only edges whose source port is one of the recognised control ports
+        (item, ok, error, true, false) are traversed.  Data-port edges (typed
+        return values forwarded to downstream nodes) do NOT pull those downstream
+        nodes into the foreach body, preventing the outer walk from skipping them.
+        """
+        body: set[str] = set()
+        frontier = {foreach_node_id}
+        while frontier:
+            next_frontier: set[str] = set()
+            for e in graph.edges:
+                if (
+                    e.src.node_id in frontier
+                    and e.dst.node_id not in body
+                    and e.src.port in self._FOREACH_BODY_CONTROL_PORTS
+                ):
+                    next_node = e.dst.node_id
+                    if next_node != foreach_node_id and next_node not in body:
+                        body.add(next_node)
+                        next_frontier.add(next_node)
+            frontier = next_frontier
+        return body

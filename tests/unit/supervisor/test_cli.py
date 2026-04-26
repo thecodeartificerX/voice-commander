@@ -5,8 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from voice_commander.single_instance import AlreadyRunning
 from voice_commander.supervisor.cli import _build_parser, main
 

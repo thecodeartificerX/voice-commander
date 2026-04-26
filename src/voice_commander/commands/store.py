@@ -1,48 +1,22 @@
-"""Command + workflow dataclasses and JSON-backed stores.
+"""Unified JSON-backed store for graph definitions (commands and workflows).
 
-Schema
-------
-``commands.json``::
+File layout (canonical schema):
 
     {
-      "commands": {
-        "new_tab": {
-          "description": "Open a new tab",
-          "synonyms": ["new tab", "open new tab"],
-          "enabled": true,
-          "primitive": "press",
-          "kwargs": {"combo": "ctrl+t"}
-        }
+      "schema_version": 1,
+      "graphs": {
+        "<graph_name>": { ... GraphDef body, see graph_schema.py ... },
+        ...
       }
     }
 
-``workflows.json``::
+The wrapper-level ``schema_version`` mirrors the per-graph ``schema_version``
+inside each entry; the redundancy lets the loader fail fast on legacy files
+without parsing every entry.
 
-    {
-      "workflows": {
-        "search_web": {
-          "description": "Search the web",
-          "synonyms": ["search {query}", "google {query}"],
-          "enabled": true,
-          "args": [
-            {"name": "query", "type": "string", "required": true}
-          ],
-          "steps": [
-            {"ref": "primitive:focus", "kwargs": {"target": "{default_browser}"}},
-            {"ref": "primitive:press", "kwargs": {"combo": "ctrl+t"}},
-            {"ref": "primitive:press", "kwargs": {"combo": "ctrl+l"}},
-            {"ref": "primitive:type",  "kwargs": {"text": "{query}"}},
-            {"ref": "primitive:press", "kwargs": {"combo": "enter"}}
-          ]
-        }
-      }
-    }
-
-``ref`` prefix selects the dispatch target:
-
-- ``primitive:<name>`` → look up raw primitive in the registry.
-- ``command:<name>``   → look up another user-defined command (one-level
-  indirection; commands cannot reference workflows to avoid cycles).
+Legacy files (no top-level ``schema_version`` and an old ``commands`` /
+``workflows`` key with primitive/steps shape) are explicitly rejected — see
+the migration script in ``commands/graph_migrate.py`` for the upgrade path.
 """
 
 from __future__ import annotations
@@ -52,81 +26,28 @@ import logging
 import os
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import portalocker
+
+from voice_commander.commands.graph import Graph, GraphKind
+from voice_commander.commands.graph_schema import (
+    CURRENT_SCHEMA_VERSION,
+    GraphSchemaError,
+    parse_graph,
+    serialise_graph,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Exceptions
-# ---------------------------------------------------------------------------
-
-
-class CommandStoreError(ValueError):
-    """Raised on malformed or duplicate command/workflow definitions."""
+class GraphStoreError(ValueError):
+    """Raised on malformed, legacy, or duplicate-name graph stores."""
 
 
 # ---------------------------------------------------------------------------
-# Dataclasses
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class CommandDef:
-    """An atomic voice command that invokes exactly one primitive tool."""
-
-    name: str
-    description: str
-    synonyms: tuple[str, ...]
-    primitive: str
-    kwargs: Mapping[str, Any] = field(default_factory=dict)
-    enabled: bool = True
-
-
-@dataclass(frozen=True)
-class WorkflowArg:
-    """Declared template placeholder for a workflow."""
-
-    name: str
-    type_str: str = "string"
-    required: bool = True
-    description: str = ""
-
-
-@dataclass(frozen=True)
-class WorkflowStep:
-    """A single step in a workflow."""
-
-    ref: str  # "primitive:press" or "command:new_tab"
-    kwargs: Mapping[str, Any] = field(default_factory=dict)
-
-    @property
-    def ref_kind(self) -> str:
-        return self.ref.split(":", 1)[0] if ":" in self.ref else "primitive"
-
-    @property
-    def ref_name(self) -> str:
-        return self.ref.split(":", 1)[1] if ":" in self.ref else self.ref
-
-
-@dataclass(frozen=True)
-class WorkflowDef:
-    """A named ordered sequence of primitive/command references."""
-
-    name: str
-    description: str
-    synonyms: tuple[str, ...]
-    args: tuple[WorkflowArg, ...]
-    steps: tuple[WorkflowStep, ...]
-    enabled: bool = True
-
-
-# ---------------------------------------------------------------------------
-# Generic JSON file helpers
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -137,9 +58,9 @@ def _read_json(path: Path) -> dict[str, Any]:
         with path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
-        raise CommandStoreError(f"Cannot parse {path}: {exc}") from exc
+        raise GraphStoreError(f"Cannot parse {path}: {exc}") from exc
     if not isinstance(data, dict):
-        raise CommandStoreError(f"{path}: top-level JSON must be an object")
+        raise GraphStoreError(f"{path}: top-level JSON must be an object")
     return data
 
 
@@ -153,7 +74,6 @@ def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
 
 @contextmanager
 def _file_lock(path: Path) -> Iterator[None]:
-    """Exclusive lock on a sibling .lock file next to *path*."""
     lock_path = path.with_suffix(path.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with portalocker.Lock(str(lock_path), mode="a", timeout=10):
@@ -161,242 +81,126 @@ def _file_lock(path: Path) -> Iterator[None]:
 
 
 _NAME_ALLOWED = set("abcdefghijklmnopqrstuvwxyz0123456789_")
-
-# Route-level slugs that are permanently reserved and cannot be used as command/workflow names.
-# Using any of these as a name would shadow the corresponding admin UI route.
-_RESERVED_NAMES = frozenset({"new", "toggle", "delete"})
+_RESERVED_NAMES = frozenset({"new", "toggle", "delete", "builder", "validate", "palette"})
 
 
 def _validate_name(kind: str, name: str) -> None:
     if not name:
-        raise CommandStoreError(f"{kind} name cannot be empty")
+        raise GraphStoreError(f"{kind} name cannot be empty")
     if not set(name).issubset(_NAME_ALLOWED):
-        raise CommandStoreError(f"{kind} name {name!r}: only lowercase a-z, 0-9, and _ allowed")
+        raise GraphStoreError(f"{kind} name {name!r}: only lowercase a-z, 0-9, and _ allowed")
     if name[0].isdigit():
-        raise CommandStoreError(f"{kind} name {name!r}: cannot start with a digit")
+        raise GraphStoreError(f"{kind} name {name!r}: cannot start with a digit")
     if name in _RESERVED_NAMES:
-        raise CommandStoreError(f"{kind} name {name!r}: reserved — choose a different name")
+        raise GraphStoreError(f"{kind} name {name!r}: reserved — choose a different name")
 
 
 # ---------------------------------------------------------------------------
-# CommandStore
+# GraphStore
 # ---------------------------------------------------------------------------
 
 
-class CommandStore:
-    """JSON-backed persistent store of user-defined commands."""
+class GraphStore:
+    """JSON-backed store of graph definitions, keyed by name.
 
-    def __init__(self, path: Path) -> None:
+    Each store instance is locked to a single ``kind`` (``"command"`` or
+    ``"workflow"``); attempting to save a graph of the wrong kind raises
+    :class:`GraphStoreError`. The split lets the LLM tool list curate which
+    surface is "command-like" vs "workflow-like" while sharing all runtime
+    semantics.
+    """
+
+    def __init__(self, path: Path, *, kind: Literal["command", "workflow"]) -> None:
         self._path = path
+        self._kind: GraphKind = kind
 
     @property
     def path(self) -> Path:
         return self._path
 
-    def load_all(self) -> dict[str, CommandDef]:
-        raw = _read_json(self._path)
-        commands_raw = raw.get("commands", {})
-        if not isinstance(commands_raw, dict):
-            raise CommandStoreError(f"{self._path}: 'commands' key must map to an object")
-
-        out: dict[str, CommandDef] = {}
-        for name, cdata in commands_raw.items():
-            if not isinstance(cdata, dict):
-                logger.warning("Skipping malformed command %r in %s", name, self._path)
-                continue
-            out[name] = _parse_command(name, cdata)
-        return out
-
-    def save_one(self, cmd: CommandDef) -> None:
-        """Upsert a single command and rewrite the file atomically."""
-        _validate_name("command", cmd.name)
-        with _file_lock(self._path):
-            raw = _read_json(self._path)
-            commands_raw = raw.setdefault("commands", {})
-            if not isinstance(commands_raw, dict):
-                raise CommandStoreError(f"{self._path}: 'commands' must be an object")
-            commands_raw[cmd.name] = {
-                "description": cmd.description,
-                "synonyms": list(cmd.synonyms),
-                "enabled": cmd.enabled,
-                "primitive": cmd.primitive,
-                "kwargs": dict(cmd.kwargs),
-            }
-            _write_json_atomic(self._path, raw)
-
-    def delete(self, name: str) -> bool:
-        with _file_lock(self._path):
-            raw = _read_json(self._path)
-            commands_raw = raw.get("commands", {})
-            if not isinstance(commands_raw, dict) or name not in commands_raw:
-                return False
-            del commands_raw[name]
-            _write_json_atomic(self._path, raw)
-            return True
-
-
-def _parse_command(name: str, raw: Mapping[str, Any]) -> CommandDef:
-    _validate_name("command", name)
-    try:
-        description = str(raw.get("description", ""))
-        synonyms_raw = raw.get("synonyms", [])
-        if not isinstance(synonyms_raw, list):
-            raise CommandStoreError(f"command {name!r}: synonyms must be a list")
-        synonyms = tuple(str(s) for s in synonyms_raw)
-        enabled = bool(raw.get("enabled", True))
-        primitive = str(raw.get("primitive", ""))
-        if not primitive:
-            raise CommandStoreError(f"command {name!r}: primitive is required")
-        kwargs_raw = raw.get("kwargs", {})
-        if not isinstance(kwargs_raw, dict):
-            raise CommandStoreError(f"command {name!r}: kwargs must be an object")
-    except TypeError as exc:
-        raise CommandStoreError(f"command {name!r}: {exc}") from exc
-
-    return CommandDef(
-        name=name,
-        description=description,
-        synonyms=synonyms,
-        primitive=primitive,
-        kwargs=dict(kwargs_raw),
-        enabled=enabled,
-    )
-
-
-# ---------------------------------------------------------------------------
-# WorkflowStore
-# ---------------------------------------------------------------------------
-
-
-class WorkflowStore:
-    """JSON-backed persistent store of user-defined workflows."""
-
-    def __init__(self, path: Path) -> None:
-        self._path = path
-
     @property
-    def path(self) -> Path:
-        return self._path
+    def kind(self) -> GraphKind:
+        return self._kind
 
-    def load_all(self) -> dict[str, WorkflowDef]:
+    def load_all(self) -> dict[str, Graph]:
         raw = _read_json(self._path)
-        workflows_raw = raw.get("workflows", {})
-        if not isinstance(workflows_raw, dict):
-            raise CommandStoreError(f"{self._path}: 'workflows' key must map to an object")
-
-        out: dict[str, WorkflowDef] = {}
-        for name, wdata in workflows_raw.items():
-            if not isinstance(wdata, dict):
-                logger.warning("Skipping malformed workflow %r in %s", name, self._path)
+        if not raw:
+            return {}
+        self._reject_legacy(raw)
+        graphs_raw = raw.get("graphs", {})
+        if not isinstance(graphs_raw, dict):
+            raise GraphStoreError(f"{self._path}: 'graphs' must be an object")
+        out: dict[str, Graph] = {}
+        for name, body in graphs_raw.items():
+            if not isinstance(body, Mapping):
+                logger.warning("Skipping malformed graph %r in %s", name, self._path)
                 continue
-            out[name] = _parse_workflow(name, wdata)
-        return out
-
-    def save_one(self, wf: WorkflowDef) -> None:
-        _validate_name("workflow", wf.name)
-        with _file_lock(self._path):
-            raw = _read_json(self._path)
-            workflows_raw = raw.setdefault("workflows", {})
-            if not isinstance(workflows_raw, dict):
-                raise CommandStoreError(f"{self._path}: 'workflows' must be an object")
-            workflows_raw[wf.name] = {
-                "description": wf.description,
-                "synonyms": list(wf.synonyms),
-                "enabled": wf.enabled,
-                "args": [
-                    {
-                        "name": a.name,
-                        "type": a.type_str,
-                        "required": a.required,
-                        "description": a.description,
-                    }
-                    for a in wf.args
-                ],
-                "steps": [{"ref": s.ref, "kwargs": dict(s.kwargs)} for s in wf.steps],
-            }
-            _write_json_atomic(self._path, raw)
-
-    def delete(self, name: str) -> bool:
-        with _file_lock(self._path):
-            raw = _read_json(self._path)
-            workflows_raw = raw.get("workflows", {})
-            if not isinstance(workflows_raw, dict) or name not in workflows_raw:
-                return False
-            del workflows_raw[name]
-            _write_json_atomic(self._path, raw)
-            return True
-
-
-def _parse_workflow(name: str, raw: Mapping[str, Any]) -> WorkflowDef:
-    _validate_name("workflow", name)
-    try:
-        description = str(raw.get("description", ""))
-        synonyms_raw = raw.get("synonyms", [])
-        if not isinstance(synonyms_raw, list):
-            raise CommandStoreError(f"workflow {name!r}: synonyms must be a list")
-        synonyms = tuple(str(s) for s in synonyms_raw)
-        enabled = bool(raw.get("enabled", True))
-
-        args_raw = raw.get("args", [])
-        if not isinstance(args_raw, list):
-            raise CommandStoreError(f"workflow {name!r}: args must be a list")
-        args: list[WorkflowArg] = []
-        for a in args_raw:
-            if not isinstance(a, dict):
-                raise CommandStoreError(f"workflow {name!r}: each arg must be an object")
-            arg_name = str(a.get("name", ""))
-            if not arg_name:
-                raise CommandStoreError(f"workflow {name!r}: arg missing name")
-            args.append(
-                WorkflowArg(
-                    name=arg_name,
-                    type_str=str(a.get("type", "string")),
-                    required=bool(a.get("required", True)),
-                    description=str(a.get("description", "")),
+            try:
+                graph = parse_graph(body)
+            except GraphSchemaError as exc:
+                raise GraphStoreError(f"{self._path}: graph {name!r}: {exc}") from exc
+            if graph.name != name:
+                raise GraphStoreError(
+                    f"{self._path}: graph key {name!r} != graph.name {graph.name!r}"
                 )
+            if graph.kind != self._kind:
+                raise GraphStoreError(
+                    f"{self._path}: graph {name!r} has kind={graph.kind!r}, expected {self._kind!r}"
+                )
+            out[name] = graph
+        return out
+
+    def save_one(self, g: Graph) -> None:
+        _validate_name(self._kind, g.name)
+        if g.kind != self._kind:
+            raise GraphStoreError(
+                f"GraphStore[{self._kind}] cannot save graph of kind {g.kind!r}"
             )
+        with _file_lock(self._path):
+            raw = _read_json(self._path)
+            if raw:
+                self._reject_legacy(raw)
+            raw["schema_version"] = CURRENT_SCHEMA_VERSION
+            graphs_raw = raw.setdefault("graphs", {})
+            if not isinstance(graphs_raw, dict):
+                raise GraphStoreError(f"{self._path}: 'graphs' must be an object")
+            graphs_raw[g.name] = serialise_graph(g)
+            _write_json_atomic(self._path, raw)
 
-        steps_raw = raw.get("steps", [])
-        if not isinstance(steps_raw, list):
-            raise CommandStoreError(f"workflow {name!r}: steps must be a list")
-        steps: list[WorkflowStep] = []
-        for i, s in enumerate(steps_raw):
-            if not isinstance(s, dict):
-                raise CommandStoreError(f"workflow {name!r} step {i}: must be an object")
-            ref = str(s.get("ref", ""))
-            if not ref:
-                raise CommandStoreError(f"workflow {name!r} step {i}: ref is required")
-            kwargs_raw = s.get("kwargs", {})
-            if not isinstance(kwargs_raw, dict):
-                raise CommandStoreError(f"workflow {name!r} step {i}: kwargs must be an object")
-            steps.append(WorkflowStep(ref=ref, kwargs=dict(kwargs_raw)))
-    except TypeError as exc:
-        raise CommandStoreError(f"workflow {name!r}: {exc}") from exc
+    def delete(self, name: str) -> bool:
+        with _file_lock(self._path):
+            raw = _read_json(self._path)
+            self._reject_legacy(raw)
+            graphs_raw = raw.get("graphs", {})
+            if not isinstance(graphs_raw, dict) or name not in graphs_raw:
+                return False
+            del graphs_raw[name]
+            _write_json_atomic(self._path, raw)
+            return True
 
-    return WorkflowDef(
-        name=name,
-        description=description,
-        synonyms=synonyms,
-        args=tuple(args),
-        steps=tuple(steps),
-        enabled=enabled,
-    )
+    def _reject_legacy(self, raw: dict[str, Any]) -> None:
+        """Detect and reject legacy schema (pre-DAG)."""
+        if "schema_version" in raw and "graphs" in raw:
+            return
+        legacy_keys = {"commands", "workflows"}
+        if any(k in raw for k in legacy_keys):
+            raise GraphStoreError(
+                f"{self._path}: legacy schema detected — run "
+                f"'uv run python scripts/migrate-graphs.py' to upgrade"
+            )
+        # File might be partially new (has schema_version but no graphs key) — that's ok.
 
 
 # ---------------------------------------------------------------------------
-# First-run seeding helpers
+# First-run seeding
 # ---------------------------------------------------------------------------
 
 
 def seed_if_missing(target: Path, default_source: Path) -> bool:
-    """Copy *default_source* to *target* if *target* does not exist.
-
-    Returns True when the seed occurred, False when *target* already existed.
-    """
     if target.exists():
         return False
     if not default_source.exists():
-        raise CommandStoreError(
+        raise GraphStoreError(
             f"Starter pack file missing: {default_source} (required for first-run seeding)"
         )
     target.parent.mkdir(parents=True, exist_ok=True)

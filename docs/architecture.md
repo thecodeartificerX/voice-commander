@@ -624,6 +624,249 @@ its first post-logging step. See ADR 0053 for the full gotcha list.
 
 ---
 
+## 12. Command / Workflow Store (`GraphStore`)
+
+The unified on-disk store for all graph definitions — both commands and workflows.
+Replaces the previous `CommandStore` + `WorkflowStore` pair.
+
+```python
+class GraphStore:
+    def __init__(self, path: Path, *, kind: Literal["command", "workflow"]) -> None: ...
+    def load_all(self) -> dict[str, Graph]: ...
+    def save_one(self, g: Graph) -> None: ...
+    def delete(self, name: str) -> bool: ...
+```
+
+Each store instance is locked to a single `kind` (`"command"` or `"workflow"`). The
+backing file uses the canonical schema:
+
+```json
+{
+  "schema_version": 1,
+  "graphs": {
+    "<graph_name>": { "...": "GraphDef body" }
+  }
+}
+```
+
+Legacy files (old `commands`/`workflows` key with primitive/steps shape) are rejected
+with a `GraphStoreError` that points at `scripts/migrate-graphs.py`.
+
+`seed_if_missing(target, default_source)` is a first-run helper that copies the bundled
+starter-pack JSON if the user-data path is absent.
+
+**Module:** `src/voice_commander/commands/store.py`
+
+---
+
+## 13. Graph Registrar (`register_graphs` / `reload_all`)
+
+```python
+def register_graphs(
+    registry: ToolRegistry,
+    store: GraphStore,
+    *,
+    runtime_factory: Callable[[ToolRegistry, Callable[[str], Graph | None]], GraphRuntime] | None = None,
+) -> list[str]: ...
+
+def reload_all(
+    registry: ToolRegistry,
+    command_store: GraphStore,
+    workflow_store: GraphStore,
+    *,
+    runtime_factory: Callable[[ToolRegistry, Callable[[str], Graph | None]], GraphRuntime] | None = None,
+) -> tuple[list[str], list[str]]: ...
+```
+
+**What it does:** Converts `Graph` value objects from `GraphStore.load_all()` into
+`ToolEntry` closures registered in `ToolRegistry`. Each graph's `inputs[]` are mapped to
+an OpenAI-compatible JSON schema so the LLM can supply typed kwargs. `register_graphs`
+drops all existing entries with the matching `origin` before re-registering — making it
+idempotent and hot-reload safe. `reload_all` is the daemon startup and web-UI post-save
+path: it builds a shared `GraphRuntime` that knows about both command and workflow graphs
+(so cross-graph calls work).
+
+`Graph.llm_visible = False` sets `ToolEntry.internal = True`, excluding the tool from
+`LLMRouter.all_llm_visible()` without removing it from dispatch.
+
+**Module:** `src/voice_commander/commands/registrar.py`
+
+---
+
+## 14. Supervisor
+
+See §Process tree above and ADR 0058. The `voice-commander-supervisor` process owns
+both the daemon child and the sprite child. The daemon's `/restart` web route triggers
+`os._exit(75)`. The supervisor's wait loop recognizes code 75 and respawns the daemon.
+Sprite is never restarted by the supervisor in normal operation.
+
+---
+
+## 15. Graph Runtime
+
+The node-graph execution subsystem. Introduced by the Node-Graph Builder feature
+(ADR 0062–0068).
+
+### Value objects — `commands/graph.py`
+
+```python
+@dataclass(frozen=True)
+class PortRef:
+    node_id: str
+    port: str
+
+@dataclass(frozen=True)
+class Edge:
+    src: PortRef        # upstream output port
+    dst: PortRef        # downstream input port
+
+@dataclass(frozen=True)
+class Node:
+    id: str
+    tool: str           # fully-qualified tool name, e.g. "pipeline.press"
+    kwargs: dict[str, Any]
+
+@dataclass(frozen=True)
+class GraphInput:
+    name: str
+    type: str           # "str", "int", "bool", "float"
+    required: bool
+    description: str | None
+
+@dataclass(frozen=True)
+class Graph:
+    name: str
+    kind: Literal["command", "workflow"]
+    description: str
+    synonyms: tuple[str, ...]
+    nodes: tuple[Node, ...]
+    edges: tuple[Edge, ...]
+    inputs: tuple[GraphInput, ...]
+    outputs: tuple[PortRef, ...]
+    llm_visible: bool = True
+    enabled: bool = True
+```
+
+### JSON schema — `commands/graph_schema.py`
+
+```python
+def parse_graph(raw: dict[str, Any]) -> Graph: ...
+def serialise_graph(g: Graph) -> dict[str, Any]: ...
+```
+
+Canonical JSON uses `schema_version: 1`. `GraphSchemaError` is raised on any
+structural violation.
+
+### Topological sort — `commands/graph_topo.py`
+
+```python
+def topo_sort(nodes: Iterable[Node], edges: Iterable[Edge]) -> list[Node]: ...
+```
+
+Kahn's algorithm over node ids. Raises `CycleError` on cycles.
+
+### DAG executor — `commands/graph_runtime.py`
+
+```python
+class GraphRuntime:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        lookup: Callable[[str], Graph | None],
+    ) -> None: ...
+
+    def run(
+        self,
+        graph: Graph,
+        call_kwargs: dict[str, Any],
+    ) -> tuple[PlanOutcome, dict[str, Any]]: ...
+```
+
+`run()` resolves nodes in topological order. For each node:
+1. Builds the kwargs dict from: (a) baked-in `node.kwargs`, then (b) any data-edge
+   values from upstream ports, which take precedence.
+2. Calls `ToolRegistry.by_name(node.tool).func(**merged_kwargs)`.
+3. Stores the return value on an output port keyed by `node.id + ".result"`.
+4. Foreach nodes iterate their body once per item (see gotchas §28).
+
+Returns a `PlanOutcome` (same wire format as linear plans — see §10) and a
+`dict[output_port → value]` of the graph's declared output ports.
+
+**The `LLMRouter.route()` and `Dispatcher.run_plan()` interfaces are unchanged.**
+Graphs are registered as `ToolEntry` closures; the LLM sees them as flat tool calls.
+
+### Validation — `commands/graph_validator.py`
+
+```python
+def validate(graph: Graph, registry: ToolRegistry) -> list[str]: ...
+
+class ValidationError(ValueError): ...
+```
+
+Seven rules:
+1. All node tool names are registered.
+2. No duplicate node ids.
+3. No duplicate edge src/dst pairs.
+4. Edge src port names match the upstream tool's known output ports.
+5. Edge dst port names match the downstream tool's known input parameters.
+6. No cycles (calls `topo_sort` and catches `CycleError`).
+7. Foreach body is non-empty (at least one reachable node from `<foreach_node>.item`).
+
+### Drawflow adapter — `commands/graph_drawflow.py`
+
+```python
+def from_drawflow(export: dict[str, Any]) -> Graph: ...
+def to_drawflow(graph: Graph) -> dict[str, Any]: ...
+```
+
+Translates between Drawflow's native export shape and canonical `Graph` value objects.
+Used by the builder route to receive canvas saves and serve canvas loads.
+
+### Migration — `commands/graph_migrate.py`
+
+```python
+def migrate(src_path: Path, dst_path: Path) -> int: ...
+```
+
+Reads legacy `commands.json` / `workflows.json` (old primitive/steps shape) and writes
+the canonical DAG schema. Returns the count of migrated graphs. Invoked by
+`scripts/migrate-graphs.py`; never called in the hot path.
+
+---
+
+## 16. Builder UI
+
+The Drawflow node-graph canvas served at `/page/builder`.
+
+### Routes — `web/builder.py`
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/page/builder` | Full builder page (three-column layout) |
+| `GET` | `/builder/palette` | Tool palette HTMX fragment |
+| `GET` | `/builder/graph/{name}` | Load a graph into Drawflow JSON format |
+| `POST` | `/builder/graph/{name}/save` | Save canvas export → canonical JSON → `GraphStore` |
+| `POST` | `/builder/graph/{name}/validate` | Run `graph_validator.validate` and return errors |
+| `GET` | `/builder/graph/new` | Blank canvas stub |
+
+### Frontend — `static/builder.js`
+
+Initialises the Drawflow canvas, populates the drag-and-drop tool palette from the
+tool registry, serialises the canvas on save, and calls the `/validate` endpoint on
+demand. Self-contained; no npm build step.
+
+### Layout — `templates/page_builder.html`
+
+Three-column layout: left sidebar (palette), centre (canvas), right sidebar (graph
+metadata form). HTMX drives all save/validate interactions without a full-page reload.
+
+### Vendored library — `static/drawflow.min.{js,css}`
+
+Drawflow 0.0.60. Single-file vendored bundle; no CDN dependency; upgraded by
+deliberate file replacement (ADR 0062).
+
+---
+
 ## 9. See Also
 
 - [`../CLAUDE.md`](../CLAUDE.md) — project-wide durable context for agents and contributors

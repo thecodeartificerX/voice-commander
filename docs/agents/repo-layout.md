@@ -47,6 +47,17 @@ voice-commander/
 │   ├── config.py                   # config loader + deep-merge + validation
 │   ├── single_instance.py          # one-daemon guard
 │   ├── validator.py                # startup sig/TOML drift checker (7 rules)
+│   ├── commands/                   # graph definitions, runtime, and store
+│   │   ├── graph.py                # core DAG value objects (Node, Edge, Graph, PortRef, GraphInput)
+│   │   ├── graph_schema.py         # JSON serialiser/deserialiser (parse_graph, serialise_graph)
+│   │   ├── graph_topo.py           # Kahn topo-sort (topo_sort, CycleError)
+│   │   ├── graph_runtime.py        # DAG executor (GraphRuntime.run)
+│   │   ├── graph_validator.py      # 7 validation rules (validate, ValidationError)
+│   │   ├── graph_drawflow.py       # Drawflow ↔ canonical adapter (from_drawflow, to_drawflow)
+│   │   ├── graph_migrate.py        # legacy commands.json/workflows.json → canonical DAG migration
+│   │   ├── registrar.py            # register_graphs / reload_all — synthesise ToolEntry closures
+│   │   ├── store.py                # GraphStore — unified JSON-backed store for commands + workflows
+│   │   └── restart.py              # daemon restart command
 │   ├── tools/                      # @tool groups (auto-discovered at import)
 │   │   ├── _win32.py               # Windows-specific helpers (focus_window_by_exe, etc.)
 │   │   ├── clipboard.py + .toml
@@ -54,13 +65,20 @@ voice-commander/
 │   │   ├── browser.py   + .toml
 │   │   ├── system.py    + .toml
 │   │   ├── mouse.py     + .toml
-│   │   └── primitives.py + .toml
+│   │   ├── primitives.py + .toml
+│   │   ├── ocr.py       + .toml    # OCR region capture (ocr_region) — winrt primary, Tesseract fallback
+│   │   └── perception.py + .toml   # read_clipboard, get_active_window_title, get_cursor_pos
 │   └── web/                        # embedded FastAPI management UI
 │       ├── app.py                  # routes
+│       ├── builder.py              # builder routes + BuilderContext (Drawflow canvas page)
 │       ├── prompt.py               # Prompt Inspector routes (inspect/edit/save)
 │       ├── server.py               # uvicorn daemon thread
 │       ├── static/                 # htmx + tailwind bundles, app.css
+│       │   ├── drawflow.min.js     # vendored Drawflow 0.0.60
+│       │   ├── drawflow.min.css    # vendored Drawflow 0.0.60 styles
+│       │   └── builder.js          # canvas init, palette, save/validate
 │       ├── templates/              # Jinja2 templates (HTMX fragments)
+│       │   ├── page_builder.html   # three-column builder page (palette | canvas | metadata)
 │       │   └── _prompt_inspector.html  # Prompt Inspector panel template
 │   └── event_bus.py                # in-process pub/sub for SSE consumers
 │

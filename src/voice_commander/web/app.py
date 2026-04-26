@@ -19,7 +19,7 @@ from ..tool_metadata import ToolMetadata, ToolMetadataError, ToolMetadataStore
 from .admin import attach_admin_routes
 
 if TYPE_CHECKING:
-    from ..commands.store import CommandStore, WorkflowStore
+    from ..commands.store import GraphStore
     from ..dispatcher import Dispatcher
     from ..event_bus import EventBus
     from ..llm_router import LLMRouter
@@ -36,8 +36,8 @@ def create_app(
     reload_lock: threading.Lock,
     event_bus: EventBus | None = None,
     *,
-    command_store: CommandStore | None = None,
-    workflow_store: WorkflowStore | None = None,
+    command_store: GraphStore | None = None,
+    workflow_store: GraphStore | None = None,
     dispatcher: Dispatcher | None = None,
     llm_context: dict[str, object] | None = None,
     config_path: Path | None = None,
@@ -57,8 +57,12 @@ def create_app(
     async def csrf_protect(  # noqa: ARG001
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        """Reject POST requests without the HX-Request header (HTMX sends it)."""
-        if request.method == "POST" and request.headers.get("HX-Request") != "true":
+        """Reject mutating requests without the HX-Request header (HTMX sends it)."""
+        if (
+            request.method in ("POST", "PUT", "PATCH", "DELETE")
+            and request.headers.get("HX-Request") != "true"
+            and not request.headers.get("content-type", "").startswith("application/json")
+        ):
             return HTMLResponse(
                 content="Forbidden: missing HX-Request header",
                 status_code=403,
@@ -354,7 +358,6 @@ def create_app(
     if (
         command_store is not None
         and workflow_store is not None
-        and dispatcher is not None
         and config_path is not None
     ):
         attach_admin_routes(
@@ -364,8 +367,6 @@ def create_app(
             reload_lock=reload_lock,
             command_store=command_store,
             workflow_store=workflow_store,
-            dispatcher=dispatcher,
-            llm_context=dict(llm_context or {}),
             config_path=config_path,
             event_bus=event_bus,
         )
@@ -380,6 +381,23 @@ def create_app(
             reload_lock=reload_lock,
             event_bus=event_bus,
         )
+
+    if (
+        command_store is not None
+        and workflow_store is not None
+    ):
+        from ..commands.registrar import reload_all as _registrar_reload_all
+        from .builder import BuilderContext
+        from .builder import make_router as builder_router
+
+        builder_ctx = BuilderContext(
+            command_store=command_store,
+            workflow_store=workflow_store,
+            registry=registry,
+            reload_lock=reload_lock,
+            reload_all_fn=lambda: _registrar_reload_all(registry, command_store, workflow_store),
+        )
+        app.include_router(builder_router(templates=templates, ctx=builder_ctx))
 
     return app
 

@@ -7,11 +7,14 @@ import logging
 import sys
 import types
 import typing
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .config import Config
 from .registry import ToolRegistry
 from .tool_metadata import ToolMetadataStore
+
+if TYPE_CHECKING:
+    from .commands.store import GraphStore
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +146,39 @@ def validate_config_or_die(cfg: Config) -> None:
         for err in errors:
             print(f"  {err}", file=sys.stderr)
         sys.exit(1)
+
+
+def validate_graphs_or_die(
+    command_store: GraphStore,
+    workflow_store: GraphStore,
+    registry: ToolRegistry,
+) -> None:
+    """Validate all graphs in both stores. On any ERROR, log and sys.exit(1)."""
+    import sys as _sys
+
+    from voice_commander.commands.graph_validator import ValidationSeverity
+    from voice_commander.commands.graph_validator import validate as _validate_graph
+
+    all_graphs: dict[str, Any] = {}
+    all_graphs.update(command_store.load_all())
+    all_graphs.update(workflow_store.load_all())
+
+    peers = dict(all_graphs)
+    errors_found = False
+
+    for name, g in all_graphs.items():
+        graph_peers = {k: v for k, v in peers.items() if k != name}
+        errors = _validate_graph(g, registry=registry, peers=graph_peers)
+        for err in errors:
+            if err.severity == ValidationSeverity.ERROR:
+                logger.error("Graph %r validation error: %s", name, err.message)
+                errors_found = True
+            else:
+                logger.warning("Graph %r validation warning: %s", name, err.message)
+
+    if errors_found:
+        logger.error("Graph validation failed — fix the errors above and restart.")
+        _sys.exit(1)
 
 
 def _is_supported_type(annotation: Any) -> bool:

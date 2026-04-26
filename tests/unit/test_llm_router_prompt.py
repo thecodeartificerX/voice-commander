@@ -15,9 +15,8 @@ import pytest
 
 from voice_commander.config import LLMConfig
 from voice_commander.llm_router import (
-    LLMRouter,
     _FALLBACK_TEMPLATE,
-    _TEMPLATE_PATH,
+    LLMRouter,
     _load_template,
 )
 from voice_commander.registry import ToolRegistry

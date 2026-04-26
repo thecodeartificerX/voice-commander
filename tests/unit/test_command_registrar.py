@@ -1,318 +1,78 @@
-"""Unit tests for the command/workflow registrar."""
-
+"""Tests for the rewritten graph registrar."""
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
-import pytest
-
-from voice_commander.commands.registrar import (
-    register_commands,
-    register_workflows,
-    reload_all,
-)
-from voice_commander.commands.store import (
-    CommandDef,
-    CommandStore,
-    WorkflowArg,
-    WorkflowDef,
-    WorkflowStep,
-    WorkflowStore,
-)
-from voice_commander.commands.template import TemplateError
-from voice_commander.dispatcher import Dispatcher
-from voice_commander.feedback import CapturingFeedbackSink
+from voice_commander.commands.graph import Graph, Node
+from voice_commander.commands.registrar import register_graphs, reload_all
+from voice_commander.commands.store import GraphStore
 from voice_commander.registry import ToolEntry, ToolRegistry
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
+def test_register_graphs_synthesises_tool_entries(tmp_path: Path) -> None:
+    """A graph registered via the registrar produces a ToolEntry whose func
+    delegates to GraphRuntime.run when invoked."""
+    store = GraphStore(tmp_path / "commands.json", kind="command")
+    g = Graph(
+        name="example", kind="command", description="ex", synonyms=("e",),
+        inputs=(), llm_visible=True, strict=True, enabled=True, timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+a"}),),
+        edges=(),
+    )
+    store.save_one(g)
 
-def _registry_with_primitives() -> ToolRegistry:
-    """Return a registry seeded with internal primitives (press, focus, type, open)."""
     reg = ToolRegistry()
-    for name in ("press", "focus", "type", "open"):
-        reg.register(
-            ToolEntry(
-                name=name,
-                phrases=(),
-                func=MagicMock(),
-                module="test",
-                docstring=None,
-                enabled=True,
-                llm_only=True,
-                internal=True,
-                origin="primitive",
-            )
-        )
-    return reg
+    pressed: list[str] = []
+    reg.register(ToolEntry(
+        name="press", phrases=(), func=lambda combo: pressed.append(combo),
+        module="x", docstring=None, internal=True,
+    ))
 
-
-def _command_store(tmp_path: Path, cmds: list[CommandDef]) -> CommandStore:
-    store = CommandStore(tmp_path / "commands.json")
-    for c in cmds:
-        store.save_one(c)
-    return store
-
-
-def _workflow_store(tmp_path: Path, wfs: list[WorkflowDef]) -> WorkflowStore:
-    store = WorkflowStore(tmp_path / "workflows.json")
-    for w in wfs:
-        store.save_one(w)
-    return store
-
-
-def _dispatcher() -> Dispatcher:
-    return Dispatcher(feedback=CapturingFeedbackSink())
-
-
-# ---------------------------------------------------------------------------
-# Commands
-# ---------------------------------------------------------------------------
-
-
-def test_register_commands_creates_entries(tmp_path: Path) -> None:
-    reg = _registry_with_primitives()
-    store = _command_store(
-        tmp_path,
-        [
-            CommandDef(
-                name="new_tab",
-                description="New tab",
-                synonyms=("new tab", "open new tab"),
-                primitive="press",
-                kwargs={"combo": "ctrl+t"},
-            )
-        ],
-    )
-
-    names = register_commands(reg, store, _dispatcher(), {})
-
-    assert names == ["new_tab"]
-    entry = reg.by_name("new_tab")
+    names = register_graphs(reg, store)
+    assert names == ["example"]
+    entry = reg.by_name("example")
     assert entry is not None
-    assert entry.origin == "command"
-    assert entry.internal is False
-    assert entry.llm_only is True
-    assert "new tab" in entry.params_schema["function"]["description"]
+
+    entry.func()  # invoking the synthesised closure
+    assert pressed == ["ctrl+a"]
 
 
-def test_register_commands_dispatches_primitive(tmp_path: Path) -> None:
-    """Invoking the command entry's func runs the pre-baked plan and hits press()."""
-    reg = _registry_with_primitives()
-    press_mock = reg.by_name("press").func  # type: ignore[union-attr]
-
-    store = _command_store(
-        tmp_path,
-        [
-            CommandDef(
-                name="copy",
-                description="Copy",
-                synonyms=("copy",),
-                primitive="press",
-                kwargs={"combo": "ctrl+c"},
-            )
-        ],
+def test_register_graphs_excludes_disabled(tmp_path: Path) -> None:
+    store = GraphStore(tmp_path / "commands.json", kind="command")
+    g = Graph(
+        name="disabled_cmd", kind="command", description="", synonyms=(),
+        inputs=(), llm_visible=True, strict=True, enabled=False, timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+a"}),),
+        edges=(),
     )
-    register_commands(reg, store, _dispatcher(), {})
+    store.save_one(g)
 
-    reg.by_name("copy").func()  # type: ignore[union-attr]
-    press_mock.assert_called_once_with(combo="ctrl+c")
-
-
-def test_register_commands_replaces_previous_entries(tmp_path: Path) -> None:
-    """Re-running register_commands drops previously registered commands first."""
-    reg = _registry_with_primitives()
-    store = _command_store(
-        tmp_path,
-        [
-            CommandDef(
-                name="old_cmd",
-                description="Old",
-                synonyms=(),
-                primitive="press",
-                kwargs={"combo": "ctrl+a"},
-            )
-        ],
-    )
-    register_commands(reg, store, _dispatcher(), {})
-    assert reg.by_name("old_cmd") is not None
-
-    # Rewrite store with a different command.
-    store.delete("old_cmd")
-    store.save_one(
-        CommandDef(
-            name="new_cmd",
-            description="New",
-            synonyms=(),
-            primitive="press",
-            kwargs={"combo": "ctrl+b"},
-        )
-    )
-    register_commands(reg, store, _dispatcher(), {})
-    assert reg.by_name("old_cmd") is None
-    assert reg.by_name("new_cmd") is not None
+    reg = ToolRegistry()
+    names = register_graphs(reg, store)
+    assert "disabled_cmd" not in names
+    assert reg.by_name("disabled_cmd") is None
 
 
-def test_register_commands_skips_disabled(tmp_path: Path) -> None:
-    reg = _registry_with_primitives()
-    store = _command_store(
-        tmp_path,
-        [
-            CommandDef(
-                name="off",
-                description="",
-                synonyms=(),
-                primitive="press",
-                kwargs={"combo": "ctrl+a"},
-                enabled=False,
-            )
-        ],
-    )
-    register_commands(reg, store, _dispatcher(), {})
-    assert reg.by_name("off") is None
+def test_reload_all_updates_both_stores(tmp_path: Path) -> None:
+    cmd_store = GraphStore(tmp_path / "commands.json", kind="command")
+    wf_store = GraphStore(tmp_path / "workflows.json", kind="workflow")
 
+    cmd_store.save_one(Graph(
+        name="cmd1", kind="command", description="", synonyms=(),
+        inputs=(), llm_visible=True, strict=True, enabled=True, timeout_ms=5000,
+        foreach_iteration_cap=50, nodes=(), edges=(),
+    ))
+    wf_store.save_one(Graph(
+        name="wf1", kind="workflow", description="", synonyms=(),
+        inputs=(), llm_visible=True, strict=True, enabled=True, timeout_ms=5000,
+        foreach_iteration_cap=50, nodes=(), edges=(),
+    ))
 
-# ---------------------------------------------------------------------------
-# Workflows
-# ---------------------------------------------------------------------------
-
-
-def test_register_workflows_builds_schema_with_args(tmp_path: Path) -> None:
-    reg = _registry_with_primitives()
-    store = _workflow_store(
-        tmp_path,
-        [
-            WorkflowDef(
-                name="search_web",
-                description="Search the web",
-                synonyms=("search {query}",),
-                args=(WorkflowArg(name="query", required=True),),
-                steps=(
-                    WorkflowStep(ref="primitive:press", kwargs={"combo": "ctrl+t"}),
-                    WorkflowStep(ref="primitive:type", kwargs={"text": "{query}"}),
-                    WorkflowStep(ref="primitive:press", kwargs={"combo": "enter"}),
-                ),
-            )
-        ],
-    )
-
-    register_workflows(reg, store, _dispatcher(), {"default_browser": "comet"})
-
-    entry = reg.by_name("search_web")
-    assert entry is not None
-    schema = entry.params_schema["function"]["parameters"]
-    assert "query" in schema["properties"]
-    assert schema["required"] == ["query"]
-
-
-def test_workflow_execution_substitutes_user_kwargs(tmp_path: Path) -> None:
-    reg = _registry_with_primitives()
-    press_mock = reg.by_name("press").func  # type: ignore[union-attr]
-    type_mock = reg.by_name("type").func  # type: ignore[union-attr]
-
-    store = _workflow_store(
-        tmp_path,
-        [
-            WorkflowDef(
-                name="type_query",
-                description="",
-                synonyms=(),
-                args=(WorkflowArg(name="query", required=True),),
-                steps=(
-                    WorkflowStep(ref="primitive:type", kwargs={"text": "{query}"}),
-                    WorkflowStep(ref="primitive:press", kwargs={"combo": "enter"}),
-                ),
-            )
-        ],
-    )
-    register_workflows(reg, store, _dispatcher(), {})
-
-    reg.by_name("type_query").func(query="hello world")  # type: ignore[union-attr]
-
-    type_mock.assert_called_once_with(text="hello world")
-    press_mock.assert_called_once_with(combo="enter")
-
-
-def test_workflow_unknown_placeholder_raises(tmp_path: Path) -> None:
-    reg = _registry_with_primitives()
-    store = _workflow_store(
-        tmp_path,
-        [
-            WorkflowDef(
-                name="broken",
-                description="",
-                synonyms=(),
-                args=(),
-                steps=(WorkflowStep(ref="primitive:type", kwargs={"text": "{missing}"}),),
-            )
-        ],
-    )
-    register_workflows(reg, store, _dispatcher(), {})
-
-    with pytest.raises(TemplateError, match="Unknown placeholder"):
-        reg.by_name("broken").func()  # type: ignore[union-attr]
-
-
-def test_workflow_uses_context_for_default_browser(tmp_path: Path) -> None:
-    reg = _registry_with_primitives()
-    focus_mock = reg.by_name("focus").func  # type: ignore[union-attr]
-
-    store = _workflow_store(
-        tmp_path,
-        [
-            WorkflowDef(
-                name="focus_browser",
-                description="",
-                synonyms=(),
-                args=(),
-                steps=(
-                    WorkflowStep(ref="primitive:focus", kwargs={"target": "{default_browser}"}),
-                ),
-            )
-        ],
-    )
-    register_workflows(reg, store, _dispatcher(), {"default_browser": "comet"})
-
-    reg.by_name("focus_browser").func()  # type: ignore[union-attr]
-    focus_mock.assert_called_once_with(target="comet")
-
-
-# ---------------------------------------------------------------------------
-# reload_all
-# ---------------------------------------------------------------------------
-
-
-def test_reload_all_returns_both_sets(tmp_path: Path) -> None:
-    reg = _registry_with_primitives()
-    cs = _command_store(
-        tmp_path,
-        [
-            CommandDef(
-                name="cmd1",
-                description="",
-                synonyms=(),
-                primitive="press",
-                kwargs={"combo": "ctrl+a"},
-            )
-        ],
-    )
-    ws = _workflow_store(
-        tmp_path,
-        [
-            WorkflowDef(
-                name="wf1",
-                description="",
-                synonyms=(),
-                args=(),
-                steps=(WorkflowStep(ref="primitive:press", kwargs={"combo": "ctrl+b"}),),
-            )
-        ],
-    )
-    cmds, wfs = reload_all(reg, cs, ws, _dispatcher(), {})
-    assert cmds == ["cmd1"]
-    assert wfs == ["wf1"]
+    reg = ToolRegistry()
+    cmd_names, wf_names = reload_all(reg, cmd_store, wf_store)
+    assert "cmd1" in cmd_names
+    assert "wf1" in wf_names
     assert reg.by_name("cmd1") is not None
     assert reg.by_name("wf1") is not None

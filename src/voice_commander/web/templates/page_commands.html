@@ -7,8 +7,7 @@
     <section id="commands">
         <div class="flex items-center justify-between mb-3">
             <h2 class="text-xl font-semibold text-emerald-400">Commands</h2>
-            <button hx-get="/command/new" hx-target="#commands-list" hx-swap="afterbegin"
-                    class="text-sm px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white">+ New command</button>
+            <a href="/page/builder?kind=command" class="text-sm px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white">+ New command</a>
         </div>
         <div hx-get="/commands" hx-trigger="load" hx-swap="outerHTML">
             <p class="text-sm text-neutral-500">Loading…</p>

@@ -101,3 +101,33 @@ def test_save_atomic_uses_tmp_file(tmp_path):
 
     # tmp file should be cleaned up
     assert not (tmp_path / "sample.toml.tmp").exists()
+
+
+def test_parse_returns_table(tmp_path):
+    """A tool's [tools.<name>.returns.<port>] table is parsed into ToolMeta.returns."""
+    from voice_commander.tool_metadata import ToolMetadataStore
+
+    fixture = tmp_path / "sample.toml"
+    fixture.write_text(
+        'category = "test"\n'
+        "\n"
+        "[tools.focus]\n"
+        "phrases = []\n"
+        'description = "Focus."\n'
+        "enabled = true\n"
+        "\n"
+        "[tools.focus.args.target]\n"
+        'type = "string"\n'
+        "required = true\n"
+        'description = "x"\n'
+        "\n"
+        "[tools.focus.returns.hwnd]\n"
+        'type = "int"\n'
+        'description = "Win32 window handle"\n'
+    )
+    store = ToolMetadataStore(fixture)
+    meta = store.load_all()
+    assert "focus" in meta
+    assert meta["focus"].returns == {
+        "hwnd": {"type": "int", "description": "Win32 window handle"}
+    }

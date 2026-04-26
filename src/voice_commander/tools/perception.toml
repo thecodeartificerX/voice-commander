@@ -37,3 +37,43 @@ enabled = false
 llm_only = true
 internal = true
 settle_ms = 0
+
+[tools.read_clipboard]
+phrases = []
+description = "Read the current Windows clipboard text. Returns empty string when the clipboard does not contain text."
+enabled = true
+settle_ms = 0
+llm_only = true
+internal = true
+
+[tools.read_clipboard.returns.text]
+type = "string"
+description = "Clipboard contents (UTF-8). Empty string when no text is available."
+
+[tools.get_active_window_title]
+phrases = []
+description = "Return the title of the currently focused window. Empty string when no foreground window."
+enabled = true
+settle_ms = 0
+llm_only = true
+internal = true
+
+[tools.get_active_window_title.returns.title]
+type = "string"
+description = "Foreground window title (UTF-8). Empty when no foreground window."
+
+[tools.get_cursor_pos]
+phrases = []
+description = "Return the current cursor screen position as (x, y)."
+enabled = true
+settle_ms = 0
+llm_only = true
+internal = true
+
+[tools.get_cursor_pos.returns.x]
+type = "integer"
+description = "Cursor X coordinate (screen pixels)."
+
+[tools.get_cursor_pos.returns.y]
+type = "integer"
+description = "Cursor Y coordinate (screen pixels)."

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from .registry import ToolEntry
     from .tool_metadata import ArgMetadata
 
 
@@ -26,6 +27,35 @@ class ToolSchemaError(Exception):
 
     def __str__(self) -> str:
         return f"Tool '{self.tool_name}' param '{self.param_name}': {self.reason}"
+
+
+def describe_tool_for_builder(entry: ToolEntry) -> dict[str, Any]:
+    """Return a node-graph-friendly descriptor for *entry*.
+
+    Used by the Node-Graph Builder to render tool nodes with typed input and
+    output ports.  The returned dict is intentionally flat so the UI layer can
+    consume it without traversing OpenAI-style nested schema.
+
+    Returns a dict shaped like::
+
+        {
+            "name": "focus",
+            "description": "...",
+            "args": {<param_name>: ArgMetadata, ...},
+            "returns": {<port_name>: {"type": "...", "description": "..."}, ...},
+            "settle_ms": 200,
+        }
+    """
+    return {
+        "name": entry.name,
+        "description": entry.docstring or "",
+        "args": {
+            k: {"type": v.type_str, "description": v.description, "required": v.required}
+            for k, v in (entry.args_meta or {}).items()
+        },
+        "returns": entry.returns_meta or {},
+        "settle_ms": getattr(entry, "settle_ms", 0),
+    }
 
 
 def sig_to_json_schema(
