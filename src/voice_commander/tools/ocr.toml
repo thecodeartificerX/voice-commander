@@ -4,7 +4,7 @@ description = "Run OCR on a rectangular screen region. Returns recognised text. 
 enabled = true
 settle_ms = 0
 llm_only = true
-internal = true
+internal = false
 
 [tools.ocr_region.args.x]
 type = "integer"
