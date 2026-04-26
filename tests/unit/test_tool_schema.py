@@ -127,3 +127,20 @@ def test_description_from_metadata():
     assert props["path"]["description"] == "The file path to open."
     # Type mapping should still be present alongside description.
     assert props["path"]["type"] == "string"
+
+
+def test_tool_schema_exposes_returns_meta():
+    from voice_commander.tool_schema import describe_tool_for_builder
+    from voice_commander.registry import ToolEntry
+
+    entry = ToolEntry(
+        name="focus",
+        phrases=(),
+        func=lambda **kw: None,
+        module="x",
+        docstring=None,
+        params_schema={"type": "function", "function": {"name": "focus", "parameters": {"type": "object", "properties": {}, "required": []}}},
+        returns_meta={"hwnd": {"type": "integer", "description": "x"}},
+    )
+    out = describe_tool_for_builder(entry)
+    assert out["returns"] == {"hwnd": {"type": "integer", "description": "x"}}
