@@ -188,9 +188,7 @@ def test_value_input_node_round_trip():
             Node(id="vi1", ref="value.input", kwargs={}, pos=(0, 120)),
             Node(id="p1", ref="pipeline.search", kwargs={}, pos=(200, 120)),
         ),
-        edges=(
-            Edge(PortRef("vi1", "query"), PortRef("p1", "query")),
-        ),
+        edges=(Edge(PortRef("vi1", "query"), PortRef("p1", "query")),),
     )
     recovered = _roundtrip(g)
     assert len(recovered.nodes) == 2
@@ -216,9 +214,7 @@ def test_value_constant_node_round_trip():
             Node(id="vc1", ref="value.constant", kwargs={"value": "hello"}, pos=(0, 120)),
             Node(id="p1", ref="pipeline.type", kwargs={}, pos=(200, 120)),
         ),
-        edges=(
-            Edge(PortRef("vc1", "value"), PortRef("p1", "text")),
-        ),
+        edges=(Edge(PortRef("vc1", "value"), PortRef("p1", "text")),),
     )
     recovered = _roundtrip(g)
     assert len(recovered.nodes) == 2

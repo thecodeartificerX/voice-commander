@@ -5,20 +5,16 @@ from __future__ import annotations
 
 import logging
 
-import pytest
-
-from voice_commander.commands.graph import Edge, Graph, Node, PortRef
-from voice_commander.commands.graph_runtime import GraphRuntime, _MAX_CALL_DEPTH
+from voice_commander.commands.graph import Graph, Node
+from voice_commander.commands.graph_runtime import _MAX_CALL_DEPTH, GraphRuntime
 from voice_commander.registry import ToolEntry, ToolRegistry
 
 
 def _empty_graph(name: str, cross_ref: str | None = None) -> Graph:
     """Build a minimal graph that optionally calls another graph by cross-graph ref."""
-    nodes: tuple[Node, ...]
-    if cross_ref:
-        nodes = (Node(id="n1", ref=cross_ref, kwargs={}, pos=(0, 0)),)
-    else:
-        nodes = ()
+    nodes: tuple[Node, ...] = (
+        (Node(id="n1", ref=cross_ref, kwargs={}, pos=(0, 0)),) if cross_ref else ()
+    )
     return Graph(
         name=name,
         kind="command",

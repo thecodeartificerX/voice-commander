@@ -413,7 +413,9 @@ class GraphRuntime:
                 logger.warning(
                     "node %s: expected %d-item tuple/list return, got %s; "
                     "multi-port values not recorded",
-                    node.id, len(keys), type(ret).__name__,
+                    node.id,
+                    len(keys),
+                    type(ret).__name__,
                 )
 
     def _has_error_edge(self, node_id: str, edges: tuple[Edge, ...]) -> bool:
