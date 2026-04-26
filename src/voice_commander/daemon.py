@@ -69,6 +69,48 @@ class StreamingDaemon:
         web_server: WebServer | None = None,
         event_bus: EventBus | None = None,
     ) -> None:
+        """Composition root — wire all subsystems together. No I/O, no threads started.
+
+        Called once from :func:`build_streaming_daemon` on the main thread before
+        :meth:`run` is invoked.
+
+        Args:
+            feedback: :class:`FeedbackSink` for audio chimes and plan event
+                logging.
+            recorder: :class:`StreamingRecorder` that owns the audio stream and
+                VAD worker.  May be ``None`` at construction time — wired after
+                init (see :func:`build_streaming_daemon`).
+            transcriber: :class:`Transcriber` for speech-to-text (faster-whisper).
+                Model is loaded later by :meth:`run`.
+            llm_router: :class:`LLMRouter` for transcript → tool-call plan via
+                LM Studio.
+            dispatcher: :class:`Dispatcher` that executes multi-step plans.
+            registry: :class:`ToolRegistry` for tool lookup during plan execution.
+                ``None`` disables dispatch (error is logged).
+            min_confidence: Minimum transcription confidence ``[0, 1]``.  Transcripts
+                below this threshold trigger a miss chime.
+            min_word_count: Minimum word count in transcript.  Transcripts below
+                this count are silently dropped (infrastructure noise gate).
+            max_no_speech_prob: Maximum no-speech probability returned by faster-whisper.
+                Transcripts above this threshold are silently dropped.
+            output_dir: Directory for debug artefacts (``last_utterance.wav``,
+                ``last_plan.json``).  Created on init if absent.
+            web_server: Optional embedded :class:`WebServer` (uvicorn). Started by
+                :meth:`run` before the hotkey listener.
+            event_bus: Optional :class:`EventBus` for SSE telemetry consumed by
+                the sprite process.
+
+        Internal state created:
+            ``_utt_q`` — bounded :class:`queue.Queue` (maxsize 8) bridging the VAD
+            worker thread and the pipeline worker thread.
+            ``_shutdown`` — :class:`threading.Event` that signals all threads to exit.
+            ``_shutdown_lock`` — :class:`threading.Lock` guarding atomic check-and-set
+            of ``_shutdown``.
+            ``_wav_executor`` — single-worker :class:`~concurrent.futures.ThreadPoolExecutor`
+            for fire-and-forget async WAV / JSON writes.
+            ``_session_active`` / ``_muted`` — boolean state flags (not thread-safe;
+            only mutated on the pynput hotkey-listener thread).
+        """
         self._feedback = feedback
         self._recorder = recorder
         self._transcriber = transcriber
@@ -105,7 +147,25 @@ class StreamingDaemon:
     # ------------------------------------------------------------------
 
     def on_scroll_lock(self) -> None:
-        """Toggle session on/off. Clears muted flag on both open and close."""
+        """Toggle the voice session on/off and clear the muted flag on both transitions.
+
+        Thread context: called exclusively on the **pynput hotkey-listener thread**.
+        Must not block — delegates all heavy work to other threads via queues.
+        pynput serialises key callbacks so concurrent invocations cannot happen.
+
+        State transitions:
+
+        * **Open → close**: calls ``recorder.close_session()`` (unless already muted,
+          in which case the stream is already closed), drains ``_utt_q``, sets
+          ``_session_active = False``, resets ``_muted = False``, publishes
+          ``session_stopped``.
+        * **Closed → open**: calls ``recorder.open_session()`` (spawns VAD worker),
+          sets ``_session_active = True``, resets ``_muted = False``, publishes
+          ``session_started``.
+
+        Guard: no-op (with a warning log) if ``_recorder`` is ``None`` — i.e. the
+        daemon was constructed but the recorder has not yet been wired in.
+        """
         if self._recorder is None:
             logger.warning("on_scroll_lock called but recorder is not yet initialised; ignoring")
             return
@@ -134,7 +194,23 @@ class StreamingDaemon:
                 self._feedback.on_error("recorder.open_session", e)
 
     def on_mute_toggle(self) -> None:
-        """Toggle mute within an active session. No-op when session is inactive."""
+        """Toggle mute within an active session. No-op when session is inactive.
+
+        Thread context: called exclusively on the **pynput hotkey-listener thread**.
+        Same serialisation guarantee as :meth:`on_scroll_lock` — concurrent
+        invocations cannot happen.
+
+        State transitions:
+
+        * **Unmuted → muted**: calls ``recorder.close_session()``, drains ``_utt_q``,
+          sets ``_muted = True``, publishes ``muted``.
+        * **Muted → unmuted**: calls ``recorder.open_session()``, sets
+          ``_muted = False``, publishes ``unmuted``.
+
+        No-op when ``_session_active`` is ``False`` — mute toggle outside a session
+        has no effect (silent return).
+        Guard: no-op if ``_recorder`` is ``None``.
+        """
         if not self._session_active:
             # Silent no-op — mute toggle outside session has no effect.
             return
@@ -187,6 +263,39 @@ class StreamingDaemon:
                 self._feedback.on_error("pipeline", e)
 
     def _process_utterance(self, utterance: npt.NDArray[np.float32]) -> None:
+        """Single-utterance hot path: transcribe → gate → route → dispatch.
+
+        Thread context: called exclusively on the **``vc-pipeline`` worker thread**
+        (from :meth:`_pipeline_loop`).  Never called from any other thread.
+
+        Queues touched: none directly — the caller (:meth:`_pipeline_loop`) has
+        already dequeued the utterance from ``_utt_q``.
+
+        Side effects:
+
+        * Submits async WAV write to ``_wav_executor`` (debug artefact).
+        * Fires :class:`EventBus` events: ``transcribing``, ``llm_thinking``,
+          ``plan_outcome``.
+        * Calls :class:`FeedbackSink` callbacks (``on_transcript``, ``on_miss``,
+          ``on_error``).
+        * Submits async JSON write to ``_wav_executor`` on a successful dispatch.
+
+        Gate chain (in order):
+
+        1. **word-count** — below ``_min_word_count`` → silent drop (no ``plan_outcome``).
+        2. **no_speech_prob** — above ``_max_no_speech_prob`` → silent drop.
+        3. **confidence** — below ``_min_confidence`` → miss chime + ``plan_outcome`` (status=``miss``).
+        4. **mute guard** — utterance arrived during an in-flight mute → silent drop.
+        5. **LLM route** — ``LLMRouter.route()`` returns ``None`` → miss chime + ``plan_outcome``.
+        6. **dispatch** — ``Dispatcher.run_plan()`` executes the plan.
+
+        Args:
+            utterance: 1-D float32 ndarray at 16 kHz representing the complete
+                utterance segment produced by the VAD gate.
+
+        Does not raise: all exceptions are caught by :meth:`_pipeline_loop` and
+        routed to ``feedback.on_error``.
+        """
         # Async write for post-mortem debugging
         self._write_utterance_async(utterance)
 
@@ -296,6 +405,20 @@ class StreamingDaemon:
     # ------------------------------------------------------------------
 
     def _on_utterance(self, utterance: npt.NDArray[np.float32]) -> None:
+        """Utterance sink callback — enqueue a completed utterance for the pipeline worker.
+
+        Thread context: called on the **VAD worker thread** inside
+        :class:`StreamingRecorder`.  Must not block — uses
+        :meth:`queue.Queue.put_nowait`.
+
+        Queue touched: ``_utt_q`` (:class:`queue.Queue`, maxsize 8).  On
+        :exc:`queue.Full`, logs a warning and fires ``feedback.on_miss`` — the
+        utterance is dropped rather than blocking the VAD thread.
+
+        Args:
+            utterance: 1-D float32 ndarray at 16 kHz representing the complete
+                utterance segment produced by the VAD gate.
+        """
         try:
             self._utt_q.put_nowait(utterance)
         except queue.Full:
@@ -311,6 +434,38 @@ class StreamingDaemon:
     # ------------------------------------------------------------------
 
     def run(self, hotkey_key: str, mute_key: str = "") -> None:
+        """Blocking entry point — warm up models, start all threads, block until shutdown.
+
+        Thread context: **must be called from the main thread** so that the
+        SIGINT handler can be installed.  Logs a warning and skips SIGINT
+        registration if called from any other thread.  Blocks via
+        :meth:`threading.Event.wait` with a 0.5 s poll interval (see
+        ``docs/gotchas.md`` §9 — Windows Ctrl+C requires polling, not a plain
+        blocking wait).
+
+        Threads started:
+
+        * ``vc-pipeline`` — runs :meth:`_pipeline_loop` (transcribe/gate/route/dispatch).
+        * ``vc-heartbeat`` — runs :meth:`_heartbeat_loop` at 1 Hz.
+
+        Side effects:
+
+        * Calls :meth:`Transcriber.load` to warm up the whisper model before
+          accepting hotkey presses.
+        * Starts :attr:`_web_server` (if configured) before the hotkey listener
+          so the UI is ready when the daemon accepts input.
+        * Starts :class:`HotkeyController` with the provided key bindings.
+
+        Args:
+            hotkey_key: Key name for session toggle (e.g. ``"scroll_lock"``).
+            mute_key: Key name for mute toggle.  Empty string (default) disables
+                the mute hotkey.
+
+        Raises:
+            Exception: Re-raises if :meth:`Transcriber.load` or
+                :meth:`HotkeyController.start` fails (after logging the error
+                and calling ``feedback.on_error``).
+        """
         # Load models before accepting hotkey presses.
         self._publish("warmup_start")
         try:
@@ -373,6 +528,30 @@ class StreamingDaemon:
             self.shutdown()
 
     def shutdown(self) -> None:
+        """Idempotent teardown — safe to call multiple times from any thread.
+
+        Thread context: normally called from the main thread (end of :meth:`run`
+        or the SIGINT handler), but may also be called from the pynput
+        hotkey-listener thread via the mute primitive's scroll-lock callback.
+        Multiple concurrent callers are safe — the first caller acquires
+        ``_shutdown_lock``, sets the ``_shutdown`` event, and performs teardown;
+        subsequent callers return immediately on the ``_shutdown.is_set()`` check.
+
+        Locks touched: acquires ``_shutdown_lock`` to atomically check and set
+        the ``_shutdown`` event.
+
+        Teardown order:
+
+        1. Stop the web server (no late UI requests land on a half-dead registry).
+        2. Close any open recording session (calls ``recorder.close_session()``).
+        3. Stop the hotkey listener.
+        4. Poison ``_utt_q`` with a ``None`` sentinel → join ``vc-pipeline`` thread
+           (5 s timeout, logs warning on timeout).
+        5. Join ``vc-heartbeat`` thread (2 s timeout, logs warning on timeout).
+        6. Shut down the WAV writer executor (non-blocking — in-flight writes may
+           not complete).
+        7. Unload the transcriber model.
+        """
         with self._shutdown_lock:
             if self._shutdown.is_set():
                 return
