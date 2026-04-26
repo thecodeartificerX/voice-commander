@@ -121,6 +121,65 @@ def test_reload_all_updates_both_stores(tmp_path: Path) -> None:
     assert reg.by_name("wf1") is not None
 
 
+def test_register_graphs_store_wins_over_peers(tmp_path: Path) -> None:
+    """When a graph name exists in both the store and peer_graphs,
+    the store's own graph takes precedence over the peer."""
+    store = GraphStore(tmp_path / "commands.json", kind="command")
+
+    # Store graph: press ctrl+a
+    store_graph = Graph(
+        name="shared_name",
+        kind="command",
+        description="store version",
+        synonyms=(),
+        inputs=(),
+        llm_visible=True,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+a"}),),
+        edges=(),
+    )
+    store.save_one(store_graph)
+
+    # Peer graph with the same name but different combo
+    peer_graph = Graph(
+        name="shared_name",
+        kind="workflow",
+        description="peer version",
+        synonyms=(),
+        inputs=(),
+        llm_visible=True,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+b"}),),
+        edges=(),
+    )
+
+    reg = ToolRegistry()
+    pressed: list[str] = []
+    reg.register(
+        ToolEntry(
+            name="press",
+            phrases=(),
+            func=lambda combo: pressed.append(combo),
+            module="x",
+            docstring=None,
+            internal=True,
+        )
+    )
+
+    register_graphs(reg, store, peer_graphs={"shared_name": peer_graph})
+
+    entry = reg.by_name("shared_name")
+    assert entry is not None
+    entry.func()
+    assert pressed == ["ctrl+a"], "Store graph should win over peer graph"
+
+
 def test_register_graphs_peer_graphs_cross_resolution(tmp_path: Path) -> None:
     """When peer_graphs is supplied, the runtime lookup resolves
     references from the peer set — not just the store's own graphs."""

@@ -667,6 +667,7 @@ def register_graphs(
     store: GraphStore,
     *,
     runtime_factory: Callable[[ToolRegistry, Callable[[str], Graph | None]], GraphRuntime] | None = None,
+    peer_graphs: dict[str, Graph] | None = None,
 ) -> list[str]: ...
 
 def reload_all(
@@ -682,7 +683,9 @@ def reload_all(
 `ToolEntry` closures registered in `ToolRegistry`. Each graph's `inputs[]` are mapped to
 an OpenAI-compatible JSON schema so the LLM can supply typed kwargs. `register_graphs`
 drops all existing entries with the matching `origin` before re-registering — making it
-idempotent and hot-reload safe. `reload_all` is the daemon startup and web-UI post-save
+idempotent and hot-reload safe. When called for a single store, pass `peer_graphs` to let
+the runtime resolve cross-store references (e.g. a workflow calling a command graph).
+`reload_all` is the daemon startup and web-UI post-save
 path: it builds a shared `GraphRuntime` that knows about both command and workflow graphs
 (so cross-graph calls work).
 
