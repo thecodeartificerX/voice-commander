@@ -96,12 +96,18 @@ def _run_supervisor_with_fakes(fixture: Path, sprite_pid_file: Path) -> int:
         encoding="utf-8",
     )
 
+    state_dir = fixture.parent / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["VC_STATE_DIR"] = str(state_dir)
+
     proc = subprocess.run(
         [sys.executable, str(script)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         timeout=30,
+        env=env,
     )
     return proc.returncode
 

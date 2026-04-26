@@ -103,7 +103,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     _configure_logging()
 
-    lock = SingleInstanceLock(Path("outputs/.supervisor.lock"))
+    state_dir = Path(os.environ.get("VC_STATE_DIR", "outputs"))
+    state_dir.mkdir(parents=True, exist_ok=True)
+    lock = SingleInstanceLock(state_dir / ".supervisor.lock")
     try:
         lock.acquire()
     except AlreadyRunning as exc:
