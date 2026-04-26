@@ -42,10 +42,25 @@ def register_graphs(
     runtime_factory: Callable[
         [ToolRegistry, Callable[[str], Graph | None]], GraphRuntime
     ] | None = None,
+    peer_graphs: dict[str, Graph] | None = None,
 ) -> list[str]:
-    """Register every enabled graph in the store as a ToolEntry.
+    """Register every enabled graph in *store* as a ToolEntry.
 
-    Drops existing entries with origin matching the store's kind first.
+    Drops existing entries whose origin matches ``store.kind``, then
+    registers all enabled graphs from the store.
+
+    .. note::
+
+       The ``GraphRuntime`` built here resolves graph-name references
+       **only** within the store's own graphs (plus *peer_graphs* when
+       supplied).  In contrast, :func:`reload_all` always builds a
+       single runtime spanning both command and workflow stores.
+
+       If a graph references peers from the other store (e.g. a workflow
+       that calls a command), pass those peers via *peer_graphs* so the
+       runtime can resolve them.  Without *peer_graphs*, cross-store
+       references return ``None`` at lookup time.
+
     Returns the list of graph names that were registered.
     """
     origin = store.kind
@@ -54,7 +69,7 @@ def register_graphs(
     graphs = store.load_all()
 
     def _lookup(name: str) -> Graph | None:
-        return graphs.get(name)
+        return graphs.get(name) or (peer_graphs or {}).get(name)
 
     factory = runtime_factory or (lambda r, lookup: GraphRuntime(r, lookup))
     runtime = factory(registry, _lookup)
@@ -81,9 +96,14 @@ def reload_all(
         [ToolRegistry, Callable[[str], Graph | None]], GraphRuntime
     ] | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Reload both stores. The shared runtime knows about both.
+    """Reload both command and workflow stores into a shared runtime.
 
-    Returns (command_names, workflow_names).
+    Unlike :func:`register_graphs` (which scopes its runtime lookup to a
+    single store), this function builds **one** ``GraphRuntime`` whose
+    lookup spans both stores — so cross-store graph references resolve
+    correctly.
+
+    Returns ``(command_names, workflow_names)``.
     """
     cmd_graphs = command_store.load_all()
     wf_graphs = workflow_store.load_all()

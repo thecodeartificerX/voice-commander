@@ -76,3 +76,52 @@ def test_reload_all_updates_both_stores(tmp_path: Path) -> None:
     assert "wf1" in wf_names
     assert reg.by_name("cmd1") is not None
     assert reg.by_name("wf1") is not None
+
+
+def test_register_graphs_peer_graphs_cross_resolution(tmp_path: Path) -> None:
+    """When peer_graphs is supplied, the runtime lookup resolves
+    references from the peer set — not just the store's own graphs."""
+    cmd_store = GraphStore(tmp_path / "commands.json", kind="command")
+    wf_store = GraphStore(tmp_path / "workflows.json", kind="workflow")
+
+    # Command graph with a simple press node
+    cmd = Graph(
+        name="do_press", kind="command", description="press",
+        synonyms=(), inputs=(), llm_visible=True, strict=True,
+        enabled=True, timeout_ms=5000, foreach_iteration_cap=50,
+        nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+a"}),),
+        edges=(),
+    )
+    cmd_store.save_one(cmd)
+
+    # Workflow graph that references the command via command.do_press
+    wf = Graph(
+        name="wf_calls_cmd", kind="workflow", description="wf",
+        synonyms=(), inputs=(), llm_visible=True, strict=True,
+        enabled=True, timeout_ms=5000, foreach_iteration_cap=50,
+        nodes=(Node("n1", "command.do_press", {}),),
+        edges=(),
+    )
+    wf_store.save_one(wf)
+
+    reg = ToolRegistry()
+    pressed: list[str] = []
+    reg.register(ToolEntry(
+        name="press", phrases=(), func=lambda combo: pressed.append(combo),
+        module="x", docstring=None, internal=True,
+    ))
+
+    # Register commands first (no peers needed — commands are standalone)
+    register_graphs(reg, cmd_store)
+
+    # Register workflows WITH peer_graphs pointing at commands
+    names = register_graphs(
+        reg, wf_store, peer_graphs=cmd_store.load_all(),
+    )
+    assert "wf_calls_cmd" in names
+
+    # Invoke the workflow entry — it should delegate through to do_press → press
+    entry = reg.by_name("wf_calls_cmd")
+    assert entry is not None
+    entry.func()
+    assert pressed == ["ctrl+a"]
