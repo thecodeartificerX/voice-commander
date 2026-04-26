@@ -135,9 +135,7 @@ async def test_ocr_winrt_from_async_context(tmp_path, monkeypatch):
     fake_img.write_bytes(b"PNG")
 
     monkeypatch.setattr("voice_commander.tools.ocr._select_engine", lambda: "winrt")
-    monkeypatch.setattr(
-        "voice_commander.tools.ocr._capture_region", lambda x, y, w, h: fake_img
-    )
+    monkeypatch.setattr("voice_commander.tools.ocr._capture_region", lambda x, y, w, h: fake_img)
 
     import voice_commander.tools.ocr as ocr_mod
 
@@ -156,9 +154,7 @@ def test_ocr_winrt_sync_context_still_works(tmp_path, monkeypatch):
     fake_img.write_bytes(b"PNG")
 
     monkeypatch.setattr("voice_commander.tools.ocr._select_engine", lambda: "winrt")
-    monkeypatch.setattr(
-        "voice_commander.tools.ocr._capture_region", lambda x, y, w, h: fake_img
-    )
+    monkeypatch.setattr("voice_commander.tools.ocr._capture_region", lambda x, y, w, h: fake_img)
 
     import voice_commander.tools.ocr as ocr_mod
 

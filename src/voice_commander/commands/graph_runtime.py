@@ -142,7 +142,7 @@ class GraphRuntime:
                     entry = self._registry.by_name(bn.ref.removeprefix("pipeline."))
                     if entry is None:
                         continue
-                    for port in (getattr(entry, "returns_meta", None) or {}):
+                    for port in getattr(entry, "returns_meta", None) or {}:
                         body_port_keys.append(f"{bn.id}.{port}")
                 foreach_has_error = False
                 foreach_first_error: str | None = None
