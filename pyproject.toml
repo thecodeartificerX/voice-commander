@@ -41,6 +41,7 @@ voice-commander-supervisor = "voice_commander.supervisor:main"
 [dependency-groups]
 dev = [
     "pytest>=8.1.0",
+    "pytest-asyncio>=0.23.0",
     "pytest-cov>=5.0.0",
     "ruff>=0.4.0",
     "mypy>=1.10.0",
@@ -60,6 +61,7 @@ packages = ["src/voice_commander", "src/voice_sprite"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
 markers = [
     "hardware: requires microphone/GPU/real OS integration",
     "integration: end-to-end tests with canned fixtures",

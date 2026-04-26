@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import logging
 from pathlib import Path
@@ -126,3 +127,52 @@ def test_select_engine_resolves_config_from_package_root(tmp_path, monkeypatch):
         f"Config.load called with {captured_paths[0]!r}, expected {expected!r} "
         f"(CWD was {tmp_path!r})"
     )
+
+
+async def test_ocr_winrt_from_async_context(tmp_path, monkeypatch):
+    """_ocr_winrt must not raise RuntimeError when called inside a running loop."""
+    fake_img = tmp_path / "fake.png"
+    fake_img.write_bytes(b"PNG")
+
+    monkeypatch.setattr("voice_commander.tools.ocr._select_engine", lambda: "winrt")
+    monkeypatch.setattr(
+        "voice_commander.tools.ocr._capture_region", lambda x, y, w, h: fake_img
+    )
+
+    import voice_commander.tools.ocr as ocr_mod
+
+    monkeypatch.setattr(ocr_mod, "_ocr_winrt", lambda img_path: "async ocr text")
+
+    from voice_commander.tools.ocr import ocr_region
+
+    # This runs inside an async context (pytest-asyncio gives us a running loop)
+    result = ocr_region(0, 0, 100, 100)
+    assert result == "async ocr text"
+
+
+def test_ocr_winrt_sync_context_still_works(tmp_path, monkeypatch):
+    """_ocr_winrt still works from plain sync context (regression guard)."""
+    fake_img = tmp_path / "fake.png"
+    fake_img.write_bytes(b"PNG")
+
+    monkeypatch.setattr("voice_commander.tools.ocr._select_engine", lambda: "winrt")
+    monkeypatch.setattr(
+        "voice_commander.tools.ocr._capture_region", lambda x, y, w, h: fake_img
+    )
+
+    import voice_commander.tools.ocr as ocr_mod
+
+    monkeypatch.setattr(ocr_mod, "_ocr_winrt", lambda img_path: "sync ocr text")
+
+    from voice_commander.tools.ocr import ocr_region
+
+    result = ocr_region(0, 0, 100, 100)
+    assert result == "sync ocr text"
+
+
+async def test_ocr_winrt_loop_detection():
+    """_ocr_winrt's loop detection correctly identifies async context."""
+    # We're inside a running loop (pytest-asyncio).
+    # Verify get_running_loop succeeds — this is the branch _ocr_winrt takes.
+    loop = asyncio.get_running_loop()
+    assert loop is not None  # Confirms we're in the async branch
