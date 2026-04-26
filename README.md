@@ -222,6 +222,10 @@ Full design: [`docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design
 HotkeyCtrl ─toggle─▶ StreamingRecorder ─ndarray─▶ Transcriber ─text─▶ LLMRouter ─plan─▶ Dispatcher ──▶ tool fn
   pynput            sounddevice + soxr +          faster-whisper      httpx→LM Studio  run_plan()     + resolver.*
                     silero-vad (48k→16k)          (CUDA, small.en)    (few-shot prompt) + FeedbackSink    (focus/open)
+                                                                                                        │ graph tool?
+                                                                                                        ▼
+                                                                                                  GraphRuntime
+                                                                                                  (DAG executor)
                                                                           │miss
                                                                           ▼
                                                                      feedback.on_miss()
@@ -240,7 +244,11 @@ Read [`docs/architecture.md`](docs/architecture.md) for the full component contr
 
 ## Adding a new command
 
-The fastest path is the `commander` Claude skill shipped in this repo — it walks you through a seven-question interview and writes the Python, TOML, and tests for you. To do it by hand:
+The fastest path is the `commander` Claude skill shipped in this repo — it walks you through a short interview and either writes a Python primitive (with TOML + tests) or authors a graph command / workflow directly in canonical JSON.
+
+For graph commands and workflows, use the **Builder UI**: navigate to `/page/commands` in the web UI → click **+ New command** → the Drawflow node-graph canvas opens. Drag tools from the left palette onto the canvas, connect ports with data edges, fill in the graph metadata (name, description, synonyms) in the right sidebar, and click **Save**. The builder converts the canvas to canonical `Graph` JSON and writes it to `commands.json` / `workflows.json` via `GraphStore`. A `--validate` self-check runs automatically.
+
+To write a raw Python primitive by hand:
 
 **1. Write the tool function** — `src/voice_commander/tools/<group>.py`
 
