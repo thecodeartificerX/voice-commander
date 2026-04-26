@@ -1,5 +1,7 @@
 """strict=True + error-edge: runtime follows error edge instead of aborting."""
+
 from __future__ import annotations
+
 from typing import Any
 
 from voice_commander.commands.graph import Edge, Graph, Node, PortRef
@@ -17,14 +19,26 @@ def _make_reg() -> tuple[ToolRegistry, list[str]]:
     def _recover(**kw: Any) -> None:
         log.append("recovered")
 
-    reg.register(ToolEntry(
-        name="fail_tool", phrases=(), func=_fail,
-        module="x", docstring=None, internal=True,
-    ))
-    reg.register(ToolEntry(
-        name="recover_tool", phrases=(), func=_recover,
-        module="x", docstring=None, internal=True,
-    ))
+    reg.register(
+        ToolEntry(
+            name="fail_tool",
+            phrases=(),
+            func=_fail,
+            module="x",
+            docstring=None,
+            internal=True,
+        )
+    )
+    reg.register(
+        ToolEntry(
+            name="recover_tool",
+            phrases=(),
+            func=_recover,
+            module="x",
+            docstring=None,
+            internal=True,
+        )
+    )
     return reg, log
 
 
@@ -32,8 +46,15 @@ def test_strict_error_edge_fires_downstream():
     """Node fails → error edge → downstream node executes (no abort)."""
     reg, log = _make_reg()
     g = Graph(
-        name="test", kind="command", description="", synonyms=(), inputs=(),
-        llm_visible=False, strict=True, enabled=True, timeout_ms=5000,
+        name="test",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=False,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
         nodes=(
             Node(id="n1", ref="pipeline.fail_tool", kwargs={}),
             Node(id="n2", ref="pipeline.recover_tool", kwargs={}),
@@ -42,7 +63,8 @@ def test_strict_error_edge_fires_downstream():
         foreach_iteration_cap=50,
     )
     outcome, _ = GraphRuntime(
-        registry=reg, graph_lookup=lambda n: None,
+        registry=reg,
+        graph_lookup=lambda n: None,
     ).run(g, {})
 
     # error edge fired → recover_tool ran
