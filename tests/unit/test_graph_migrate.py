@@ -128,7 +128,7 @@ def test_migrate_bak_size_mismatch_raises_oserror(tmp_path: Path, monkeypatch) -
         result = original_write_bytes(self, data)
         # After writing, truncate the .bak to simulate a short/partial write
         if self == bak_path:
-            with open(str(self), "r+b") as f:
+            with self.open("r+b") as f:
                 f.truncate(len(data) // 2)
         return result
 

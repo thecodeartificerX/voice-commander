@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import builtins
+import logging
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -53,8 +56,6 @@ def test_ocr_region_no_engine_raises(monkeypatch):
 
 def test_ocr_tesseract_nonzero_exit_logs_warning(tmp_path, monkeypatch, caplog):
     """When tesseract exits non-zero, warning is logged but text still returned."""
-    import logging
-
     fake_img = tmp_path / "fake.png"
     fake_img.write_bytes(b"PNG")
 
@@ -87,16 +88,11 @@ def test_ocr_tesseract_nonzero_exit_logs_warning(tmp_path, monkeypatch, caplog):
 
 def test_select_engine_resolves_config_from_package_root(tmp_path, monkeypatch):
     """_select_engine resolves config.toml relative to package root, not CWD."""
-    from pathlib import Path
-    from unittest.mock import patch
-
     # Change CWD to a temp directory that has no config.toml
     monkeypatch.chdir(tmp_path)
 
     # _select_engine should NOT raise FileNotFoundError just because CWD changed.
     # We mock winrt import to fail so we can test the tesseract fallback path.
-    import builtins
-
     real_import = builtins.__import__
 
     def _block_winrt(name, *args, **kwargs):
