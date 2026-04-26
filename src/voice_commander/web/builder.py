@@ -23,7 +23,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from voice_commander.commands.graph import Graph
-from voice_commander.commands.graph_schema import GraphSchemaError, parse_graph, serialise_graph
+from voice_commander.commands.graph_schema import (
+    CURRENT_SCHEMA_VERSION,
+    GraphSchemaError,
+    parse_graph,
+    serialise_graph,
+)
 from voice_commander.commands.graph_validator import ValidationSeverity
 from voice_commander.commands.graph_validator import validate as validate_graph
 from voice_commander.commands.store import GraphStore, GraphStoreError
@@ -194,7 +199,10 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
         with ctx.reload_lock:
             store.save_one(g)
             ctx.reload_all_fn()
-        return JSONResponse(status_code=200, content={"ok": True, "name": name, "version": 1})
+        return JSONResponse(
+            status_code=200,
+            content={"ok": True, "name": name, "version": CURRENT_SCHEMA_VERSION},
+        )
 
     @r.delete("/graph/{name}")
     def delete_graph(name: str) -> dict[str, Any]:

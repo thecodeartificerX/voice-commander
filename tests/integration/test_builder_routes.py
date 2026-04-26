@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from voice_commander.commands.graph import Graph, GraphInput, Node
+from voice_commander.commands.graph_schema import CURRENT_SCHEMA_VERSION
 from voice_commander.commands.store import GraphStore
 from voice_commander.event_bus import EventBus
 from voice_commander.registry import ToolEntry, ToolRegistry
@@ -169,7 +170,7 @@ def test_graph_post_validates_then_saves(client: TestClient) -> None:
     r = client.post("/graph/smoke", json=payload)
     assert r.status_code == 200
     body = r.json()
-    assert body == {"ok": True, "name": "smoke", "version": 1}
+    assert body == {"ok": True, "name": "smoke", "version": CURRENT_SCHEMA_VERSION}
 
 
 def test_graph_post_returns_422_on_validation_error(client: TestClient) -> None:

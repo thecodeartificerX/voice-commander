@@ -22,7 +22,6 @@ from .admin import attach_admin_routes
 
 if TYPE_CHECKING:
     from ..commands.store import GraphStore
-    from ..dispatcher import Dispatcher
     from ..event_bus import EventBus
     from ..llm_router import LLMRouter
 
@@ -40,7 +39,6 @@ def create_app(
     *,
     command_store: GraphStore | None = None,
     workflow_store: GraphStore | None = None,
-    dispatcher: Dispatcher | None = None,
     llm_context: dict[str, object] | None = None,
     config_path: Path | None = None,
     llm_router: LLMRouter | None = None,
@@ -48,8 +46,8 @@ def create_app(
     """Create and return the FastAPI application for the command management dashboard.
 
     The admin surface (command/workflow CRUD + config editor + restart) is
-    registered only when ``command_store``, ``workflow_store``, ``dispatcher``
-    and ``config_path`` are all provided. Tests that spin up the app with just
+    registered only when ``command_store``, ``workflow_store`` and ``config_path``
+    are all provided. Tests that spin up the app with just
     the core args get a minimal tool-management dashboard.
     """
 
