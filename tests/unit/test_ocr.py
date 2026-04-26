@@ -262,3 +262,48 @@ def test_ocr_winrt_sync_branch_exercises_asyncio_run(tmp_path, monkeypatch):
 
     result = ocr_mod._ocr_winrt(fake_img)
     assert result == expected_text
+
+
+def test_select_engine_winrt_available(monkeypatch):
+    """When winrt.windows.media.ocr is importable, _select_engine returns 'winrt'."""
+    real_import = builtins.__import__
+
+    def _allow_winrt(name, *args, **kwargs):
+        if name == "winrt.windows.media.ocr":
+            return MagicMock()
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _allow_winrt)
+
+    with patch("voice_commander.config.Config.load", side_effect=FileNotFoundError):
+        from voice_commander.tools.ocr import _select_engine
+
+        result = _select_engine()
+
+    assert result == "winrt"
+
+
+def test_select_engine_config_forces_winrt(monkeypatch):
+    """Config with ocr_engine='winrt' makes _select_engine return 'winrt' without import check."""
+    mock_cfg = MagicMock()
+    mock_cfg.perception.ocr_engine = "winrt"
+
+    with patch("voice_commander.config.Config.load", return_value=mock_cfg):
+        from voice_commander.tools.ocr import _select_engine
+
+        result = _select_engine()
+
+    assert result == "winrt"
+
+
+def test_select_engine_config_forces_tesseract(monkeypatch):
+    """Config with ocr_engine='tesseract' makes _select_engine return 'tesseract' without import check."""
+    mock_cfg = MagicMock()
+    mock_cfg.perception.ocr_engine = "tesseract"
+
+    with patch("voice_commander.config.Config.load", return_value=mock_cfg):
+        from voice_commander.tools.ocr import _select_engine
+
+        result = _select_engine()
+
+    assert result == "tesseract"

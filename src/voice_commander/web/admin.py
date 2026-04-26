@@ -90,7 +90,6 @@ def attach_admin_routes(
         and registry; return empty 200.
         """
         command_store.delete(name)
-        registry.remove(name)
         _reload()
         _publish("command_deleted", {"name": name})
         return HTMLResponse(content="", status_code=200)
@@ -131,7 +130,6 @@ def attach_admin_routes(
         and registry; return empty 200.
         """
         workflow_store.delete(name)
-        registry.remove(name)
         _reload()
         _publish("workflow_deleted", {"name": name})
         return HTMLResponse(content="", status_code=200)

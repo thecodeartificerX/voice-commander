@@ -17,6 +17,7 @@ import os
 import re
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 
 import pyautogui
@@ -523,7 +524,7 @@ def scroll(direction: str, amount: int = 3) -> None:
 # ---------------------------------------------------------------------------
 
 
-_COMMANDER_CWD = r"F:\Tools\Projects\voice-commander"
+_COMMANDER_CWD = Path(__file__).resolve().parents[3]
 _COMMANDER_CMD = "ccd"
 
 

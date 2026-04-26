@@ -22,6 +22,7 @@ class CycleError(ValueError):
 
 
 def topo_sort(nodes: Iterable[Node], edges: Iterable[Edge]) -> list[Node]:
+    """Return nodes in topological order; raise CycleError if a cycle exists."""
     nodes_list = list(nodes)
     by_id = {n.id: n for n in nodes_list}
     in_degree: dict[str, int] = defaultdict(int)

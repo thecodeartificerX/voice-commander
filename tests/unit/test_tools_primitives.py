@@ -421,12 +421,14 @@ def test_scroll_unknown_direction_logs_warning(caplog: pytest.LogCaptureFixture)
 def test_summon_commander_spawns_powershell_in_repo() -> None:
     import subprocess as _subprocess
 
+    from voice_commander.tools.primitives import _COMMANDER_CWD
+
     with patch("subprocess.Popen") as mock_popen:
         summon_commander()
 
     mock_popen.assert_called_once_with(
         ["pwsh.exe", "-NoExit", "-Command", "ccd"],
-        cwd=r"F:\Tools\Projects\voice-commander",
+        cwd=_COMMANDER_CWD,
         creationflags=_subprocess.CREATE_NEW_CONSOLE,
     )
 
