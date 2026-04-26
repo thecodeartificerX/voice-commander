@@ -57,9 +57,9 @@ def create_app(
     async def csrf_protect(  # noqa: ARG001
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        """Reject POST requests without the HX-Request header (HTMX sends it)."""
+        """Reject mutating requests without the HX-Request header (HTMX sends it)."""
         if (
-            request.method == "POST"
+            request.method in ("POST", "PUT", "PATCH", "DELETE")
             and request.headers.get("HX-Request") != "true"
             and not request.headers.get("content-type", "").startswith("application/json")
         ):

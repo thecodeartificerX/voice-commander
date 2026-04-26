@@ -69,12 +69,38 @@ def _input_ports_for(ref: str, kwargs: dict[str, Any]) -> list[str]:
 
 
 def to_drawflow(graph: Graph) -> dict[str, Any]:
-    """Convert canonical Graph to Drawflow export JSON."""
+    """Convert canonical Graph to Drawflow export JSON.
+
+    Two-pass algorithm:
+    - Pass 1: discover all actual output/input ports per node by walking edges,
+      including dynamic data ports that extend the static defaults.
+    - Pass 2: build df_nodes with the complete port lists so that ``_out_ports``
+      and ``_in_ports`` stored in the JSON capture every semantic port name,
+      enabling lossless roundtrip through ``from_drawflow``.
+    """
     # Assign integer IDs (1-based, stable by node order)
     node_to_int: dict[str, int] = {n.id: i + 1 for i, n in enumerate(graph.nodes)}
 
-    # Build connection lists: we need to pre-compute which ports connect where
-    # For each src node+port → list of (dst_node_int, dst_port_index)
+    # Pass 1 — discover all ports actually used per node (preserving order).
+    node_out_ports: dict[str, list[str]] = {}
+    node_in_ports: dict[str, list[str]] = {}
+    for node in graph.nodes:
+        node_out_ports[node.id] = list(_output_ports_for(node.ref, dict(node.kwargs)))
+        node_in_ports[node.id] = list(_input_ports_for(node.ref, dict(node.kwargs)))
+
+    for edge in graph.edges:
+        src_id = edge.src.node_id
+        dst_id = edge.dst.node_id
+        if src_id not in node_to_int or dst_id not in node_to_int:
+            continue  # skip input/output sentinel refs
+        src_port = edge.src.port
+        dst_port = edge.dst.port
+        if src_port not in node_out_ports[src_id]:
+            node_out_ports[src_id].append(src_port)
+        if dst_port not in node_in_ports[dst_id]:
+            node_in_ports[dst_id].append(dst_port)
+
+    # Build connection dicts using the complete port lists from Pass 1.
     src_connections: dict[tuple[str, str], list[dict[str, str]]] = {}
     dst_connections: dict[tuple[str, str], list[dict[str, str]]] = {}
 
@@ -87,20 +113,8 @@ def to_drawflow(graph: Graph) -> dict[str, Any]:
         if src_id not in node_to_int or dst_id not in node_to_int:
             continue  # skip input/output sentinel refs
 
-        src_node = next(n for n in graph.nodes if n.id == src_id)
-        dst_node = next(n for n in graph.nodes if n.id == dst_id)
-
-        src_out_ports = _output_ports_for(src_node.ref, dict(src_node.kwargs))
-        dst_in_ports = _input_ports_for(dst_node.ref, dict(dst_node.kwargs))
-
-        # Add any data ports not in default list
-        if src_port not in src_out_ports:
-            src_out_ports.append(src_port)
-        if dst_port not in dst_in_ports:
-            dst_in_ports.append(dst_port)
-
-        src_port_idx = src_out_ports.index(src_port) + 1
-        dst_port_idx = dst_in_ports.index(dst_port) + 1
+        src_port_idx = node_out_ports[src_id].index(src_port) + 1
+        dst_port_idx = node_in_ports[dst_id].index(dst_port) + 1
 
         src_key = (src_id, f"output_{src_port_idx}")
         dst_key = (dst_id, f"input_{dst_port_idx}")
@@ -114,24 +128,12 @@ def to_drawflow(graph: Graph) -> dict[str, Any]:
             "input": f"output_{src_port_idx}",
         })
 
+    # Pass 2 — assemble df_nodes with complete, semantically-named port lists.
     df_nodes: dict[str, Any] = {}
     for node in graph.nodes:
         node_int = node_to_int[node.id]
-        out_ports = list(_output_ports_for(node.ref, dict(node.kwargs)))
-        in_ports = list(_input_ports_for(node.ref, dict(node.kwargs)))
-
-        # Ensure all ports that have connections are present
-        for (nid, port_key) in list(src_connections.keys()):
-            if nid == node.id and port_key.startswith("output_"):
-                idx = int(port_key.split("_")[1]) - 1
-                while len(out_ports) <= idx:
-                    out_ports.append(f"data_{len(out_ports)}")
-
-        for (nid, port_key) in list(dst_connections.keys()):
-            if nid == node.id and port_key.startswith("input_"):
-                idx = int(port_key.split("_")[1]) - 1
-                while len(in_ports) <= idx:
-                    in_ports.append(f"data_{len(in_ports)}")
+        out_ports = node_out_ports[node.id]
+        in_ports = node_in_ports[node.id]
 
         inputs_df: dict[str, Any] = {}
         for i, _ in enumerate(in_ports):
@@ -156,7 +158,7 @@ def to_drawflow(graph: Graph) -> dict[str, Any]:
             "pos_y": node.pos[1],
             # Store canonical id for round-trip
             "_canonical_id": node.id,
-            # Store port index maps for round-trip
+            # Store complete port index maps (including dynamic data ports) for round-trip
             "_out_ports": out_ports,
             "_in_ports": in_ports,
         }
@@ -186,7 +188,7 @@ def from_drawflow(
     # Map from Drawflow int-id string → canonical id
     int_to_canonical: dict[str, str] = {}
 
-    for node_int_str, df_node in data.items():
+    for node_int_str, df_node in sorted(data.items(), key=lambda kv: int(kv[0])):
         canonical_id = df_node.get("_canonical_id") or f"n{node_int_str}"
         int_to_canonical[node_int_str] = canonical_id
 

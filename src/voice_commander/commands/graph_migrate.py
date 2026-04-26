@@ -49,7 +49,10 @@ def _migrate_file(path: Path, legacy_key: str, kind: str) -> int:
     if not path.exists():
         return 0
 
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError(f"Cannot read {path} for migration: {exc}") from exc
 
     # Already migrated?
     if "schema_version" in raw and "graphs" in raw:

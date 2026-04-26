@@ -170,6 +170,7 @@ class GraphStore:
     def delete(self, name: str) -> bool:
         with _file_lock(self._path):
             raw = _read_json(self._path)
+            self._reject_legacy(raw)
             graphs_raw = raw.get("graphs", {})
             if not isinstance(graphs_raw, dict) or name not in graphs_raw:
                 return False

@@ -30,6 +30,7 @@ def topo_sort(nodes: Iterable[Node], edges: Iterable[Edge]) -> list[Node]:
     for n in nodes_list:
         in_degree.setdefault(n.id, 0)
 
+    seen_pairs: set[tuple[str, str]] = set()
     for e in edges:
         src_id = e.src.node_id
         dst_id = e.dst.node_id
@@ -37,8 +38,11 @@ def topo_sort(nodes: Iterable[Node], edges: Iterable[Edge]) -> list[Node]:
             continue
         if src_id == dst_id:
             raise CycleError([src_id])
-        successors[src_id].append(dst_id)
-        in_degree[dst_id] += 1
+        pair = (src_id, dst_id)
+        if pair not in seen_pairs:
+            seen_pairs.add(pair)
+            successors[src_id].append(dst_id)
+            in_degree[dst_id] += 1
 
     queue: deque[str] = deque(n.id for n in nodes_list if in_degree[n.id] == 0)
     out: list[Node] = []

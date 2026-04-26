@@ -49,7 +49,10 @@ def describe_tool_for_builder(entry: ToolEntry) -> dict[str, Any]:
     return {
         "name": entry.name,
         "description": entry.docstring or "",
-        "args": entry.args_meta or {},
+        "args": {
+            k: {"type": v.type_str, "description": v.description, "required": v.required}
+            for k, v in (entry.args_meta or {}).items()
+        },
         "returns": entry.returns_meta or {},
         "settle_ms": getattr(entry, "settle_ms", 0),
     }

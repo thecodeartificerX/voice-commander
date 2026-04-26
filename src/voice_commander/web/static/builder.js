@@ -29,9 +29,15 @@
   let palette = { pipeline: [], commands: [], workflows: [], control: {}, value: {} };
   try {
     const resp = await fetch('/graph/palette');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
     palette = await resp.json();
   } catch (e) {
     console.error('Failed to load palette', e);
+    const errEl = document.getElementById('builder-errors');
+    if (errEl) {
+      errEl.textContent = 'Failed to load node palette: ' + e.message + '. Try refreshing.';
+      errEl.classList.remove('hidden');
+    }
   }
 
   // Build a lookup: ref -> descriptor
@@ -436,23 +442,30 @@
     }
     const hardErrors = errors.filter(e => !e.severity || e.severity === 'error');
     const warnings = errors.filter(e => e.severity === 'warning');
-    let html = '';
-    if (hardErrors.length) {
-      html += '<span class="font-semibold">Errors:</span> ' + hardErrors.map(e => {
+
+    // Build error display using DOM methods only — never innerHTML with user data (XSS prevention).
+    errEl.textContent = '';
+
+    function appendErrorItems(items, labelText, labelClass) {
+      if (!items.length) return;
+      if (errEl.childNodes.length > 0) {
+        errEl.appendChild(document.createTextNode(' | '));
+      }
+      const label = document.createElement('span');
+      label.className = labelClass || 'font-semibold';
+      label.textContent = labelText + ': ';
+      errEl.appendChild(label);
+      items.forEach((e, i) => {
+        if (i > 0) errEl.appendChild(document.createTextNode('; '));
         let msg = e.message || String(e);
         if (e.node_id) msg = '[' + e.node_id + '] ' + msg;
-        return msg;
-      }).join('; ');
+        errEl.appendChild(document.createTextNode(msg));
+      });
     }
-    if (warnings.length) {
-      if (html) html += ' | ';
-      html += '<span class="font-semibold text-amber-400">Warnings:</span> ' + warnings.map(e => {
-        let msg = e.message || String(e);
-        if (e.node_id) msg = '[' + e.node_id + '] ' + msg;
-        return msg;
-      }).join('; ');
-    }
-    errEl.innerHTML = html;
+
+    appendErrorItems(hardErrors, 'Errors', 'font-semibold');
+    appendErrorItems(warnings, 'Warnings', 'font-semibold text-amber-400');
+
     errEl.classList.remove('hidden');
     return hardErrors.length > 0;
   }

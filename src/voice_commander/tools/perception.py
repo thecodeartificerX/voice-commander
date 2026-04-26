@@ -269,14 +269,19 @@ def read_clipboard() -> str:
     except ImportError:
         logger.warning("read_clipboard: win32clipboard not available")
         return ""
-    win32clipboard.OpenClipboard()
+    try:
+        win32clipboard.OpenClipboard()
+    except Exception:
+        logger.debug("read_clipboard: OpenClipboard failed", exc_info=True)
+        return ""
     try:
         if not win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
             return ""
         data = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
         return str(data) if data else ""
     finally:
-        win32clipboard.CloseClipboard()
+        with contextlib.suppress(Exception):
+            win32clipboard.CloseClipboard()
 
 
 # ---------------------------------------------------------------------------

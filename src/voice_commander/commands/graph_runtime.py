@@ -240,13 +240,15 @@ class GraphRuntime:
         tool_name = node.ref.removeprefix("pipeline.")
         entry = self._registry.by_name(tool_name)
         if entry is None:
+            logger.warning("foreach body: unknown pipeline ref %r (node %s)", node.ref, node.id)
             fired_err.add(node.id)
             if graph.strict:
                 return "break"
             return "continue"
         try:
             ret = entry.func(**kwargs)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("foreach body node %s raised: %s", node.ref, exc)
             fired_err.add(node.id)
             steps.append(ToolCall(name=node.ref, kwargs=kwargs))
             if graph.strict and not self._has_error_edge(node.id, graph.edges):
@@ -326,20 +328,31 @@ class GraphRuntime:
     def _has_error_edge(self, node_id: str, edges: tuple[Edge, ...]) -> bool:
         return any(e.src.node_id == node_id and e.src.port == "error" for e in edges)
 
+    # Control ports that carry the body membership signal from a foreach node.
+    # Only these ports form body-inclusion edges; data ports (e.g. typed returns)
+    # must not pull downstream consumers into the body set.
+    _FOREACH_BODY_CONTROL_PORTS: frozenset[str] = frozenset(
+        {"item", "ok", "error", "true", "false"}
+    )
+
     def _foreach_body_ids(self, foreach_node_id: str, graph: Graph) -> set[str]:
-        """Find all node ids in the foreach body by walking forward from the item port."""
+        """Find all node ids in the foreach body by walking control edges forward.
+
+        Only edges whose source port is one of the recognised control ports
+        (item, ok, error, true, false) are traversed.  Data-port edges (typed
+        return values forwarded to downstream nodes) do NOT pull those downstream
+        nodes into the foreach body, preventing the outer walk from skipping them.
+        """
         body: set[str] = set()
         frontier = {foreach_node_id}
-        # Walk control edges forward from foreach node
         while frontier:
             next_frontier: set[str] = set()
             for e in graph.edges:
                 if (
                     e.src.node_id in frontier
                     and e.dst.node_id not in body
-                    and e.src.port != "after"
+                    and e.src.port in self._FOREACH_BODY_CONTROL_PORTS
                 ):
-                    # Don't include nodes connected via the "after" port (those are post-body)
                     next_node = e.dst.node_id
                     if next_node != foreach_node_id and next_node not in body:
                         body.add(next_node)

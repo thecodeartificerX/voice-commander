@@ -64,7 +64,13 @@ def _select_engine() -> _Engine:
         from voice_commander.config import Config
         cfg = Config.load(_Path("config.toml"))
         pref = getattr(cfg.perception, "ocr_engine", "auto")
+    except (FileNotFoundError, AttributeError):
+        pref = "auto"
     except Exception:
+        logger.warning(
+            "Failed to read OCR engine preference from config; defaulting to auto",
+            exc_info=True,
+        )
         pref = "auto"
 
     if pref == "winrt":

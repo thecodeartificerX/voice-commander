@@ -164,7 +164,13 @@ def _rule_branch_unreachable(graph: Graph) -> list[ValidationError]:
         cond_wired = any(e.dst.node_id == node.id and e.dst.port == "cond" for e in graph.edges)
         true_wired = any(e.src.node_id == node.id and e.src.port == "true" for e in graph.edges)
         false_wired = any(e.src.node_id == node.id and e.src.port == "false" for e in graph.edges)
-        if cond_wired and not true_wired and not false_wired:
+        if not cond_wired:
+            out.append(ValidationError(
+                severity=ValidationSeverity.WARNING,
+                message="branch has no condition wired — node is unreachable",
+                node_id=node.id, port=None,
+            ))
+        elif not true_wired and not false_wired:
             out.append(ValidationError(
                 severity=ValidationSeverity.WARNING,
                 message=(
