@@ -60,6 +60,7 @@ def _select_engine() -> _Engine:
     # Check config for explicit engine preference
     try:
         from pathlib import Path as _Path
+
         from voice_commander.config import Config
         cfg = Config.load(_Path("config.toml"))
         pref = getattr(cfg.perception, "ocr_engine", "auto")
@@ -86,8 +87,8 @@ def _ocr_winrt(img_path: Path) -> str:
     """OCR via Windows.Media.Ocr (winrt)."""
     import asyncio
     try:
+        from winrt.windows.graphics.imaging import BitmapDecoder
         from winrt.windows.media.ocr import OcrEngine
-        from winrt.windows.graphics.imaging import BitmapDecoder, SoftwareBitmap
         from winrt.windows.storage import StorageFile
         from winrt.windows.storage.streams import FileAccessMode
     except ImportError as exc:
@@ -96,13 +97,16 @@ def _ocr_winrt(img_path: Path) -> str:
     async def _run() -> str:
         engine = OcrEngine.try_create_from_user_profile_languages()
         if engine is None:
-            raise OcrEngineUnavailable("OcrEngine.try_create_from_user_profile_languages() returned None — install a language pack")
+            raise OcrEngineUnavailable(
+                "OcrEngine.try_create_from_user_profile_languages() returned None"
+                " — install a language pack"
+            )
         file = await StorageFile.get_file_from_path_async(str(img_path))
         stream = await file.open_async(FileAccessMode.READ)
         decoder = await BitmapDecoder.create_async(stream)
         bitmap = await decoder.get_software_bitmap_async()
         result = await engine.recognize_async(bitmap)
-        return result.text
+        return result.text  # type: ignore[no-any-return]
 
     return asyncio.run(_run())
 

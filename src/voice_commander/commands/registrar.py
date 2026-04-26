@@ -39,7 +39,9 @@ def register_graphs(
     registry: ToolRegistry,
     store: GraphStore,
     *,
-    runtime_factory: Callable[[ToolRegistry, Callable[[str], Graph | None]], GraphRuntime] | None = None,
+    runtime_factory: Callable[
+        [ToolRegistry, Callable[[str], Graph | None]], GraphRuntime
+    ] | None = None,
 ) -> list[str]:
     """Register every enabled graph in the store as a ToolEntry.
 
@@ -54,7 +56,7 @@ def register_graphs(
     def _lookup(name: str) -> Graph | None:
         return graphs.get(name)
 
-    factory = runtime_factory or (lambda r, l: GraphRuntime(r, l))
+    factory = runtime_factory or (lambda r, lookup: GraphRuntime(r, lookup))
     runtime = factory(registry, _lookup)
 
     names: list[str] = []
@@ -75,7 +77,9 @@ def reload_all(
     command_store: GraphStore,
     workflow_store: GraphStore,
     *,
-    runtime_factory: Callable[[ToolRegistry, Callable[[str], Graph | None]], GraphRuntime] | None = None,
+    runtime_factory: Callable[
+        [ToolRegistry, Callable[[str], Graph | None]], GraphRuntime
+    ] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Reload both stores. The shared runtime knows about both.
 
@@ -87,7 +91,7 @@ def reload_all(
     def _lookup(name: str) -> Graph | None:
         return cmd_graphs.get(name) or wf_graphs.get(name)
 
-    factory = runtime_factory or (lambda r, l: GraphRuntime(r, l))
+    factory = runtime_factory or (lambda r, lookup: GraphRuntime(r, lookup))
     runtime = factory(registry, _lookup)
 
     # Drop both origins before re-registering
@@ -122,7 +126,7 @@ def _build_entry(
 ) -> ToolEntry:
     return ToolEntry(
         name=g.name,
-        phrases=list(g.synonyms),
+        phrases=tuple(g.synonyms),
         func=_make_func(g, runtime),
         module="voice_commander.commands",
         docstring=g.description or None,

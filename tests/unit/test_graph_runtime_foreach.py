@@ -1,4 +1,4 @@
-from voice_commander.commands.graph import Edge, Graph, GraphInput, Node, PortRef
+from voice_commander.commands.graph import Edge, Graph, Node, PortRef
 from voice_commander.commands.graph_runtime import GraphRuntime
 from voice_commander.registry import ToolEntry, ToolRegistry
 
@@ -10,7 +10,9 @@ def test_foreach_iterates_body():
         recorded.append(item)
 
     reg = ToolRegistry()
-    reg.register(ToolEntry(name="record", phrases=(), func=_record, module="x", docstring=None, internal=True))
+    reg.register(ToolEntry(
+        name="record", phrases=(), func=_record, module="x", docstring=None, internal=True,
+    ))
 
     g = Graph(
         name="test", kind="command", description="", synonyms=(), inputs=(),
@@ -39,7 +41,9 @@ def test_foreach_respects_cap():
         recorded.append(item)
 
     reg = ToolRegistry()
-    reg.register(ToolEntry(name="record", phrases=(), func=_record, module="x", docstring=None, internal=True))
+    reg.register(ToolEntry(
+        name="record", phrases=(), func=_record, module="x", docstring=None, internal=True,
+    ))
 
     g = Graph(
         name="test", kind="command", description="", synonyms=(), inputs=(),

@@ -16,19 +16,17 @@ monkeypatched so the test runs on any machine.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from voice_commander.commands.graph import Edge, Graph, Node, PortRef
-from voice_commander.commands.graph_runtime import GraphRuntime
 from voice_commander.commands.registrar import register_graphs
 from voice_commander.commands.store import GraphStore
 from voice_commander.dispatcher import Dispatcher
 from voice_commander.feedback import NullFeedbackSink
 from voice_commander.plan import Plan, ToolCall
 from voice_commander.registry import ToolEntry, ToolRegistry
-
 
 # ---------------------------------------------------------------------------
 # Helpers

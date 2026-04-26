@@ -130,8 +130,8 @@ def test_description_from_metadata():
 
 
 def test_tool_schema_exposes_returns_meta():
-    from voice_commander.tool_schema import describe_tool_for_builder
     from voice_commander.registry import ToolEntry
+    from voice_commander.tool_schema import describe_tool_for_builder
 
     entry = ToolEntry(
         name="focus",
@@ -139,7 +139,13 @@ def test_tool_schema_exposes_returns_meta():
         func=lambda **kw: None,
         module="x",
         docstring=None,
-        params_schema={"type": "function", "function": {"name": "focus", "parameters": {"type": "object", "properties": {}, "required": []}}},
+        params_schema={
+            "type": "function",
+            "function": {
+                "name": "focus",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
         returns_meta={"hwnd": {"type": "integer", "description": "x"}},
     )
     out = describe_tool_for_builder(entry)

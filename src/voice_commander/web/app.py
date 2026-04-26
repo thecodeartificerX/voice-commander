@@ -387,7 +387,8 @@ def create_app(
         and workflow_store is not None
     ):
         from ..commands.registrar import reload_all as _registrar_reload_all
-        from .builder import BuilderContext, make_router as builder_router
+        from .builder import BuilderContext
+        from .builder import make_router as builder_router
 
         builder_ctx = BuilderContext(
             command_store=command_store,

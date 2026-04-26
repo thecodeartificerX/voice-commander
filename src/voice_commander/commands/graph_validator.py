@@ -38,7 +38,7 @@ def validate(
     graph: Graph,
     *,
     registry: Any,
-    peers: dict[str, "Graph"],
+    peers: dict[str, Graph],
 ) -> list[ValidationError]:
     """Run all rules. Returns list of ValidationError (may be empty)."""
     out: list[ValidationError] = []
@@ -114,10 +114,7 @@ def _rule_orphan_required(graph: Graph, registry: Any) -> list[ValidationError]:
             continue
         args_meta = getattr(entry, "args_meta", None) or {}
         for arg_name, meta in args_meta.items():
-            if hasattr(meta, "required"):
-                required = meta.required
-            else:
-                required = meta.get("required", False)
+            required = meta.required if hasattr(meta, "required") else meta.get("required", False)
             if isinstance(required, str):
                 required = required.lower() == "true"
             if not required:
@@ -150,7 +147,10 @@ def _rule_foreach_cap(graph: Graph) -> list[ValidationError]:
     if graph.foreach_iteration_cap > FOREACH_GLOBAL_CEILING:
         out.append(ValidationError(
             severity=ValidationSeverity.ERROR,
-            message=f"foreach cap={graph.foreach_iteration_cap} exceeds global ceiling {FOREACH_GLOBAL_CEILING}",
+            message=(
+                f"foreach cap={graph.foreach_iteration_cap}"
+                f" exceeds global ceiling {FOREACH_GLOBAL_CEILING}"
+            ),
             node_id="f1", port=None,
         ))
     return out
@@ -167,7 +167,10 @@ def _rule_branch_unreachable(graph: Graph) -> list[ValidationError]:
         if cond_wired and not true_wired and not false_wired:
             out.append(ValidationError(
                 severity=ValidationSeverity.WARNING,
-                message="branch has cond wired but neither true nor false outputs are connected (unreachable)",
+                message=(
+                    "branch has cond wired but neither true nor false outputs are connected"
+                    " (unreachable)"
+                ),
                 node_id=node.id, port=None,
             ))
     return out

@@ -26,9 +26,13 @@ def test_branch_routes_to_true_when_cond_true():
     for name in ("yes", "no"):
         def _f(_n=name, **kw):
             log.append(_n)
-        reg.register(ToolEntry(name=name, phrases=(), func=_f, module="x", docstring=None, internal=True))
+        reg.register(ToolEntry(
+            name=name, phrases=(), func=_f, module="x", docstring=None, internal=True,
+        ))
 
-    outcome, _ = GraphRuntime(registry=reg, graph_lookup=lambda n: None).run(_make_branch_graph(True), {})
+    outcome, _ = GraphRuntime(registry=reg, graph_lookup=lambda n: None).run(
+        _make_branch_graph(True), {}
+    )
     assert outcome.status == "ok"
     assert log == ["yes"]
 
@@ -39,8 +43,12 @@ def test_branch_routes_to_false_when_cond_false():
     for name in ("yes", "no"):
         def _f(_n=name, **kw):
             log.append(_n)
-        reg.register(ToolEntry(name=name, phrases=(), func=_f, module="x", docstring=None, internal=True))
+        reg.register(ToolEntry(
+            name=name, phrases=(), func=_f, module="x", docstring=None, internal=True,
+        ))
 
-    outcome, _ = GraphRuntime(registry=reg, graph_lookup=lambda n: None).run(_make_branch_graph(False), {})
+    outcome, _ = GraphRuntime(registry=reg, graph_lookup=lambda n: None).run(
+        _make_branch_graph(False), {}
+    )
     assert outcome.status == "ok"
     assert log == ["no"]

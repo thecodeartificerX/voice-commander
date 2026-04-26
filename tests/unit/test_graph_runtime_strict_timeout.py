@@ -1,5 +1,5 @@
 import time
-import pytest
+
 from voice_commander.commands.graph import Edge, Graph, Node, PortRef
 from voice_commander.commands.graph_runtime import GraphRuntime
 from voice_commander.registry import ToolEntry, ToolRegistry
@@ -15,8 +15,12 @@ def _make_reg_with_fail() -> tuple[ToolRegistry, list]:
     def _fail(**kw):
         raise RuntimeError("tool failed")
 
-    reg.register(ToolEntry(name="ok_tool", phrases=(), func=_ok, module="x", docstring=None, internal=True))
-    reg.register(ToolEntry(name="fail_tool", phrases=(), func=_fail, module="x", docstring=None, internal=True))
+    reg.register(ToolEntry(
+        name="ok_tool", phrases=(), func=_ok, module="x", docstring=None, internal=True,
+    ))
+    reg.register(ToolEntry(
+        name="fail_tool", phrases=(), func=_fail, module="x", docstring=None, internal=True,
+    ))
     return reg, log
 
 
@@ -60,7 +64,9 @@ def test_timeout_aborts_graph():
     def _slow(**kw):
         time.sleep(0.1)
 
-    reg.register(ToolEntry(name="slow", phrases=(), func=_slow, module="x", docstring=None, internal=True))
+    reg.register(ToolEntry(
+        name="slow", phrases=(), func=_slow, module="x", docstring=None, internal=True,
+    ))
 
     g = Graph(
         name="test", kind="command", description="", synonyms=(), inputs=(),

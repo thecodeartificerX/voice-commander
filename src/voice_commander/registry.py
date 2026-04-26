@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
 if TYPE_CHECKING:
     from .tool_metadata import ArgMetadata, ToolMetadataStore
 
-F = TypeVar("F", bound=Callable[..., None])
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 # ``ToolEntry.origin`` discriminates where an entry came from:
@@ -28,7 +28,7 @@ class DuplicateToolError(Exception):
 class ToolEntry:
     name: str
     phrases: tuple[str, ...]
-    func: Callable[..., None]
+    func: Callable[..., Any]
     module: str
     docstring: str | None
     description: str = ""
@@ -43,7 +43,7 @@ class ToolEntry:
     internal: bool = False
     origin: Origin = "primitive"
     args_meta: dict[str, ArgMetadata] = field(default_factory=dict)  # web UI kwargs form schema
-    returns_meta: dict[str, dict[str, str]] = field(default_factory=dict)  # output port schema for node graph
+    returns_meta: dict[str, dict[str, str]] = field(default_factory=dict)  # output port schema
 
 
 class ToolRegistry:

@@ -1,15 +1,13 @@
 """Unit tests for OCR primitive (mocked engines)."""
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 
 def test_ocr_region_tesseract_path(tmp_path, monkeypatch):
     """When winrt is unavailable and tesseract is on PATH, tesseract branch runs."""
-    import subprocess
 
     fake_img = tmp_path / "fake.png"
     fake_img.write_bytes(b"PNG")

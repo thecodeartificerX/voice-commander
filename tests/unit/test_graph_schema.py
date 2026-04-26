@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from voice_commander.commands.graph import Edge, Graph, GraphInput, Node, PortRef
+from voice_commander.commands.graph import PortRef
 from voice_commander.commands.graph_schema import (
     GraphSchemaError,
     parse_graph,

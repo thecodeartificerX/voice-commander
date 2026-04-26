@@ -208,10 +208,7 @@ def from_drawflow(
         for out_key, out_val in df_node.get("outputs", {}).items():
             # out_key = "output_1", "output_2", ...
             out_idx = int(out_key.split("_")[1]) - 1
-            if out_idx < len(out_ports):
-                src_port = out_ports[out_idx]
-            else:
-                src_port = out_key
+            src_port = out_ports[out_idx] if out_idx < len(out_ports) else out_key
 
             for conn in out_val.get("connections", []):
                 dst_node_int = conn["node"]
@@ -224,7 +221,7 @@ def from_drawflow(
                 dst_df_node = data[dst_node_int]
                 dst_in_ports: list[str] = dst_df_node.get("_in_ports", ["in"])
                 dst_idx = int(dst_in_port_key.split("_")[1]) - 1
-                if dst_idx < len(dst_in_ports):
+                if dst_idx < len(dst_in_ports):  # noqa: SIM108
                     dst_port = dst_in_ports[dst_idx]
                 else:
                     dst_port = dst_in_port_key

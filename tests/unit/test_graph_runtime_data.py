@@ -58,7 +58,10 @@ def test_multi_port_returns_unpacked():
     reg.register(ToolEntry(
         name="cursor_pos", phrases=(), func=_cursor_pos, module="x", docstring=None,
         internal=True,
-        returns_meta={"x": {"type": "integer", "description": ""}, "y": {"type": "integer", "description": ""}},
+        returns_meta={
+            "x": {"type": "integer", "description": ""},
+            "y": {"type": "integer", "description": ""},
+        },
     ))
     reg.register(ToolEntry(
         name="consume", phrases=(), func=_consume, module="x", docstring=None,

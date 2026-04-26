@@ -1,10 +1,12 @@
 """Migrate legacy commands.json / workflows.json to canonical Graph schema.
 
 Legacy command format:
-    {"commands": {"name": {"primitive": "press", "kwargs": {...}, "description": "...", "synonyms": [...], "enabled": true}}}
+    {"commands": {"name": {"primitive": "press", "kwargs": {...},
+     "description": "...", "synonyms": [...], "enabled": true}}}
 
 Legacy workflow format:
-    {"workflows": {"name": {"steps": [{"ref": "primitive:X", "kwargs": {...}}, ...], "args": [...], ...}}}
+    {"workflows": {"name": {"steps": [{"ref": "primitive:X", "kwargs": {...}}, ...],
+     "args": [...], ...}}}
 
 Migration rules:
 - Each command becomes a 1-node graph (kind="command") with the single pipeline node.
@@ -61,10 +63,9 @@ def _migrate_file(path: Path, legacy_key: str, kind: str) -> int:
     graphs: dict[str, Any] = {}
 
     for name, entry in legacy_entries.items():
-        if kind == "command":
-            g = _migrate_command(name, entry)
-        else:
-            g = _migrate_workflow(name, entry)
+        g = (
+            _migrate_command(name, entry) if kind == "command" else _migrate_workflow(name, entry)
+        )
         graphs[name] = g
 
     # Write .bak (skip if already exists)
@@ -77,7 +78,9 @@ def _migrate_file(path: Path, legacy_key: str, kind: str) -> int:
         "graphs": graphs,
     }
     tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(canonical, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp_path.write_text(
+        json.dumps(canonical, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     os.replace(tmp_path, path)
 
     logger.info("Migrated %d %s(s) from %s", len(graphs), kind, path)

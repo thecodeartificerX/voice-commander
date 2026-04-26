@@ -491,7 +491,8 @@ def test_read_clipboard_returns_unicode_text():
     fake_win32con = types.SimpleNamespace(CF_UNICODETEXT=13)
 
     from voice_commander.tools.perception import read_clipboard
-    with patch.dict(sys.modules, {"win32clipboard": fake_win32clipboard, "win32con": fake_win32con}):
+    mods = {"win32clipboard": fake_win32clipboard, "win32con": fake_win32con}
+    with patch.dict(sys.modules, mods):
         assert read_clipboard() == "hello"
 
 
@@ -508,7 +509,8 @@ def test_read_clipboard_returns_empty_when_no_text():
     fake_win32con = types.SimpleNamespace(CF_UNICODETEXT=13)
 
     from voice_commander.tools.perception import read_clipboard
-    with patch.dict(sys.modules, {"win32clipboard": fake_win32clipboard, "win32con": fake_win32con}):
+    mods = {"win32clipboard": fake_win32clipboard, "win32con": fake_win32con}
+    with patch.dict(sys.modules, mods):
         assert read_clipboard() == ""
 
 

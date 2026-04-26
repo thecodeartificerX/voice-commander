@@ -10,7 +10,9 @@ def test_cross_graph_nested_invocation():
         fired.append(combo)
 
     reg = ToolRegistry()
-    reg.register(ToolEntry(name="press", phrases=(), func=_press, module="x", docstring=None, internal=True))
+    reg.register(ToolEntry(
+        name="press", phrases=(), func=_press, module="x", docstring=None, internal=True,
+    ))
 
     child = Graph(
         name="helper", kind="command", description="", synonyms=(), inputs=(),
@@ -33,7 +35,8 @@ def test_cross_graph_nested_invocation():
         foreach_iteration_cap=50,
     )
 
-    lookup = lambda name: child if name == "helper" else None
+    def lookup(name: str):
+        return child if name == "helper" else None
     runtime = GraphRuntime(registry=reg, graph_lookup=lookup)
     outcome, _ = runtime.run(parent, {})
     assert outcome.status == "ok"

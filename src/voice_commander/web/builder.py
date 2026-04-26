@@ -14,15 +14,17 @@ from __future__ import annotations
 
 import dataclasses
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from voice_commander.commands.graph_schema import GraphSchemaError, parse_graph, serialise_graph
-from voice_commander.commands.graph_validator import ValidationSeverity, validate as validate_graph
+from voice_commander.commands.graph_validator import ValidationSeverity
+from voice_commander.commands.graph_validator import validate as validate_graph
 from voice_commander.commands.store import GraphStore
 from voice_commander.registry import ToolRegistry
 
@@ -33,14 +35,16 @@ class BuilderContext:
     workflow_store: GraphStore
     registry: ToolRegistry
     reload_lock: threading.Lock
-    reload_all_fn: Callable[[], None]
+    reload_all_fn: Callable[[], Any]
 
 
 def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter:
     r = APIRouter()
 
     @r.get("/page/builder", response_class=HTMLResponse)
-    def page_builder(request: Request, graph: str | None = None, kind: str = "command") -> HTMLResponse:
+    def page_builder(
+        request: Request, graph: str | None = None, kind: str = "command"
+    ) -> HTMLResponse:
         existing = None
         if graph is not None:
             store = ctx.command_store if kind == "command" else ctx.workflow_store
@@ -82,11 +86,23 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
             "commands": commands,
             "workflows": workflows,
             "control": {
-                "branch": {"inputs": [{"name": "cond", "type": "boolean"}], "outputs": ["true", "false"]},
-                "foreach": {"inputs": [{"name": "list", "type": "array"}], "outputs": ["item", "after"]},
+                "branch": {
+                    "inputs": [{"name": "cond", "type": "boolean"}],
+                    "outputs": ["true", "false"],
+                },
+                "foreach": {
+                    "inputs": [{"name": "list", "type": "array"}],
+                    "outputs": ["item", "after"],
+                },
             },
             "value": {
-                "constant": {"args": [{"name": "value", "type": "any"}, {"name": "value_type", "type": "string"}], "outputs": ["value"]},
+                "constant": {
+                    "args": [
+                        {"name": "value", "type": "any"},
+                        {"name": "value_type", "type": "string"},
+                    ],
+                    "outputs": ["value"],
+                },
                 "input": {"description": "Singleton; ports derived from graph.inputs[]"},
                 "output": {"description": "Singleton sink; sets graph return value"},
             },
@@ -112,7 +128,12 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
         errors = validate_graph(g, registry=ctx.registry, peers=peers)
         return JSONResponse(content={
             "errors": [
-                {"severity": e.severity.value, "node_id": e.node_id, "port": e.port, "message": e.message}
+                {
+                    "severity": e.severity.value,
+                    "node_id": e.node_id,
+                    "port": e.port,
+                    "message": e.message,
+                }
                 for e in errors
             ]
         })
@@ -125,7 +146,10 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
         except GraphSchemaError as exc:
             return JSONResponse(status_code=422, content={"errors": [{"message": str(exc)}]})
         if g.name != name:
-            return JSONResponse(status_code=422, content={"errors": [{"message": f"name mismatch: {g.name!r} vs {name!r}"}]})
+            return JSONResponse(
+                status_code=422,
+                content={"errors": [{"message": f"name mismatch: {g.name!r} vs {name!r}"}]},
+            )
 
         store = ctx.command_store if g.kind == "command" else ctx.workflow_store
         peers_cmd = ctx.command_store.load_all()

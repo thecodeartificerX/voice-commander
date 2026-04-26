@@ -18,13 +18,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from voice_commander.commands.graph import Graph, GraphInput, Node
 from voice_commander.commands.store import GraphStore
 from voice_commander.event_bus import EventBus
 from voice_commander.registry import ToolEntry, ToolRegistry
 from voice_commander.tool_metadata import ArgMetadata, ToolMetadataStore
 from voice_commander.web.app import create_app
-
 
 # ---------------------------------------------------------------------------
 # Fixture helpers (mirrors test_builder_routes.py)

@@ -12,9 +12,9 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from voice_commander.commands.graph import Edge, Graph, Node, PortRef
+from voice_commander.commands.graph import Edge, Graph, Node
 from voice_commander.commands.graph_topo import CycleError, topo_sort
-from voice_commander.plan import PlanOutcome, ToolCall
+from voice_commander.plan import PlanOutcome, PlanStatus, ToolCall
 from voice_commander.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -212,7 +212,7 @@ class GraphRuntime:
 
             logger.debug("graph_runtime: skipping unsupported ref %r", node.ref)
 
-        status = "error" if failed_idx is not None else "ok"
+        status: PlanStatus = "error" if failed_idx is not None else "ok"
         duration_ms = int((time.monotonic() - start) * 1000)
         outcome = PlanOutcome(
             transcript=f"graph:{graph.name}",
@@ -246,7 +246,7 @@ class GraphRuntime:
             return "continue"
         try:
             ret = entry.func(**kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             fired_err.add(node.id)
             steps.append(ToolCall(name=node.ref, kwargs=kwargs))
             if graph.strict and not self._has_error_edge(node.id, graph.edges):
@@ -320,7 +320,7 @@ class GraphRuntime:
         else:
             keys = list(meta.keys())
             if isinstance(ret, (tuple, list)) and len(ret) == len(keys):
-                for k, v in zip(keys, ret):
+                for k, v in zip(keys, ret, strict=True):
                     port_values[f"{node.id}.{k}"] = v
 
     def _has_error_edge(self, node_id: str, edges: tuple[Edge, ...]) -> bool:
@@ -334,12 +334,15 @@ class GraphRuntime:
         while frontier:
             next_frontier: set[str] = set()
             for e in graph.edges:
-                if e.src.node_id in frontier and e.dst.node_id not in body:
+                if (
+                    e.src.node_id in frontier
+                    and e.dst.node_id not in body
+                    and e.src.port != "after"
+                ):
                     # Don't include nodes connected via the "after" port (those are post-body)
-                    if e.src.port != "after":
-                        next_node = e.dst.node_id
-                        if next_node != foreach_node_id and next_node not in body:
-                            body.add(next_node)
-                            next_frontier.add(next_node)
+                    next_node = e.dst.node_id
+                    if next_node != foreach_node_id and next_node not in body:
+                        body.add(next_node)
+                        next_frontier.add(next_node)
             frontier = next_frontier
         return body

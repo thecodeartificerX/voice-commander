@@ -149,14 +149,15 @@ def validate_config_or_die(cfg: Config) -> None:
 
 
 def validate_graphs_or_die(
-    command_store: "GraphStore",
-    workflow_store: "GraphStore",
-    registry: "ToolRegistry",
+    command_store: GraphStore,
+    workflow_store: GraphStore,
+    registry: ToolRegistry,
 ) -> None:
     """Validate all graphs in both stores. On any ERROR, log and sys.exit(1)."""
     import sys as _sys
-    from voice_commander.commands.graph_validator import validate as _validate_graph
+
     from voice_commander.commands.graph_validator import ValidationSeverity
+    from voice_commander.commands.graph_validator import validate as _validate_graph
 
     all_graphs: dict[str, Any] = {}
     all_graphs.update(command_store.load_all())

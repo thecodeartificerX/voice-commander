@@ -43,7 +43,7 @@ def _get_process_name(pid: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-@tool  # type: ignore[type-var]  # perception tools return data, not None
+@tool
 def get_focused_window() -> dict[str, str | int]:
     """Return the currently focused window title and process name.
 
@@ -80,7 +80,7 @@ def get_focused_window() -> dict[str, str | int]:
 # ---------------------------------------------------------------------------
 
 
-@tool  # type: ignore[type-var]  # perception tools return data, not None
+@tool
 def list_windows() -> list[dict[str, str | int]]:
     """List all visible, non-minimized windows (title + process, max 20).
 
@@ -129,7 +129,7 @@ def list_windows() -> list[dict[str, str | int]]:
 # ---------------------------------------------------------------------------
 
 
-@tool  # type: ignore[type-var]  # perception tools return data, not None
+@tool
 def get_clipboard() -> dict[str, str | None]:
     """Return current clipboard text content (max 500 chars).
 
@@ -140,7 +140,7 @@ def get_clipboard() -> dict[str, str | None]:
     is empty, not text, or any error occurs.
     """
     try:
-        import win32clipboard  # type: ignore[import-untyped]
+        import win32clipboard
         import win32con
     except ImportError:
         logger.warning("pywin32 not available; get_clipboard returns None")
@@ -177,7 +177,7 @@ def get_clipboard() -> dict[str, str | None]:
 # ---------------------------------------------------------------------------
 
 
-@tool  # type: ignore[type-var]  # perception tools return data, not None
+@tool
 def list_processes() -> list[dict[str, str | int]]:
     """List running processes that have visible windows (max 20).
 
@@ -260,7 +260,7 @@ def list_processes() -> list[dict[str, str | int]]:
 # ---------------------------------------------------------------------------
 
 
-@tool  # type: ignore[type-var]
+@tool
 def read_clipboard() -> str:
     """Return the current Windows clipboard text. Empty string if no text is available."""
     try:
@@ -284,9 +284,9 @@ def read_clipboard() -> str:
 # ---------------------------------------------------------------------------
 
 
-@tool  # type: ignore[type-var]
+@tool
 def get_active_window_title() -> str:
-    """Return the title of the currently focused window, or empty string when no foreground window."""
+    """Return the title of the currently focused window, or empty string if none."""
     try:
         import win32gui
     except ImportError:
@@ -303,7 +303,7 @@ def get_active_window_title() -> str:
 # ---------------------------------------------------------------------------
 
 
-@tool  # type: ignore[type-var]
+@tool
 def get_cursor_pos() -> tuple[int, int]:
     """Return the current cursor position as (x, y) screen coordinates."""
     try:
@@ -311,4 +311,4 @@ def get_cursor_pos() -> tuple[int, int]:
     except ImportError:
         logger.warning("get_cursor_pos: pywin32 not available")
         return (0, 0)
-    return tuple(win32api.GetCursorPos())  # type: ignore[return-value]
+    return tuple(win32api.GetCursorPos())

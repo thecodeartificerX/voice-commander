@@ -8,7 +8,8 @@ in ``cli.py``.
 from __future__ import annotations
 
 import logging
-from typing import Callable, Protocol
+from collections.abc import Callable
+from typing import Protocol
 
 from .exit_codes import EXIT_CLEAN, EXIT_RESTART
 

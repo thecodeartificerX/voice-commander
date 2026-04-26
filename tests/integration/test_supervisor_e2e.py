@@ -11,8 +11,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
 import textwrap
+import time
 from pathlib import Path
 
 import pytest

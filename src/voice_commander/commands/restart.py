@@ -11,6 +11,7 @@ kill the daemon with no replacement.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
@@ -41,13 +42,11 @@ def request_restart(delay_s: float = 0.5) -> None:
 
     def _do() -> None:
         time.sleep(delay_s)
-        try:
-            # Logger handlers may already be torn down in test contexts where
-            # the calling thread mocks os._exit. Swallow the resulting
-            # ValueError so the thread still hits the (mocked) exit path.
+        # Logger handlers may already be torn down in test contexts where
+        # the calling thread mocks os._exit. Swallow the resulting
+        # ValueError so the thread still hits the (mocked) exit path.
+        with contextlib.suppress(ValueError):
             logger.info("Exiting with code %d for supervisor restart", EXIT_RESTART)
-        except ValueError:
-            pass
         os._exit(EXIT_RESTART)
 
     threading.Thread(target=_do, daemon=True, name="daemon-restart").start()

@@ -8,11 +8,9 @@ from pathlib import Path
 import pytest
 
 from voice_commander.commands.graph import (
-    Edge,
     Graph,
     GraphInput,
     Node,
-    PortRef,
 )
 from voice_commander.commands.store import GraphStore, GraphStoreError
 
@@ -49,7 +47,8 @@ def test_save_and_load_roundtrip(tmp_path: Path) -> None:
 
 def test_load_rejects_legacy_schema(tmp_path: Path) -> None:
     p = tmp_path / "commands.json"
-    p.write_text(json.dumps({"commands": {"new_tab": {"primitive": "press", "kwargs": {"combo": "ctrl+t"}}}}))
+    payload = {"commands": {"new_tab": {"primitive": "press", "kwargs": {"combo": "ctrl+t"}}}}
+    p.write_text(json.dumps(payload))
     store = GraphStore(p, kind="command")
     with pytest.raises(GraphStoreError) as exc:
         store.load_all()

@@ -94,7 +94,9 @@ class ToolMetadataStore:
         result: dict[str, ToolMetadata] = {}
         new_index: dict[str, Path] = {}
 
-        toml_files = [self._single_file] if self._single_file else sorted(self._tools_dir.glob("*.toml"))
+        toml_files = (
+            [self._single_file] if self._single_file else sorted(self._tools_dir.glob("*.toml"))
+        )
         for toml_path in toml_files:
             try:
                 file_data = _read_toml(toml_path)

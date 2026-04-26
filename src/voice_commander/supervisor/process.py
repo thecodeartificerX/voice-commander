@@ -7,6 +7,7 @@ lines interleave naturally in the launching console). stdin is `DEVNULL`.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import logging
 import os
@@ -14,7 +15,7 @@ import signal
 import subprocess
 import sys
 import time
-from typing import Sequence
+from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ def terminate(handle: ChildHandle, *, grace_s: float) -> None:
 
     try:
         if sys.platform == "win32":
-            os.kill(handle.pid, signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+            os.kill(handle.pid, signal.CTRL_BREAK_EVENT)
         else:
             handle.popen.terminate()  # SIGTERM
     except (OSError, ProcessLookupError):
@@ -103,10 +104,8 @@ def terminate(handle: ChildHandle, *, grace_s: float) -> None:
             capture_output=True,
         )
     else:
-        try:
+        with contextlib.suppress(OSError, ProcessLookupError):
             handle.popen.kill()
-        except (OSError, ProcessLookupError):
-            pass
 
     try:
         handle.popen.wait(timeout=2.0)

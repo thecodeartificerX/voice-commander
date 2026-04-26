@@ -23,9 +23,8 @@ def test_spawn_swallows_failure(caplog: pytest.LogCaptureFixture) -> None:
     with patch(
         "voice_commander.supervisor.sprite.spawn",
         side_effect=FileNotFoundError("uv not on PATH"),
-    ):
-        with caplog.at_level(logging.WARNING):
-            sprite = SpriteChild.spawn()
+    ), caplog.at_level(logging.WARNING):
+        sprite = SpriteChild.spawn()
     assert sprite.handle is None
     assert any("sprite" in r.message.lower() for r in caplog.records)
 

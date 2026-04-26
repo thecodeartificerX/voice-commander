@@ -23,7 +23,6 @@ from voice_commander.registry import ToolEntry, ToolRegistry
 from voice_commander.tool_metadata import ArgMetadata, ToolMetadataStore
 from voice_commander.web.app import create_app
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -130,7 +129,9 @@ def test_builder_page_renders_empty(client: TestClient) -> None:
     assert b"<canvas" not in r.content  # Drawflow uses <div>, not canvas
 
 
-def test_palette_endpoint_returns_pipeline_commands_workflows_control_value(client: TestClient) -> None:
+def test_palette_endpoint_returns_pipeline_commands_workflows_control_value(
+    client: TestClient,
+) -> None:
     r = client.get("/graph/palette")
     assert r.status_code == 200
     body = r.json()
@@ -149,7 +150,7 @@ def test_graph_post_validates_then_saves(client: TestClient) -> None:
         "schema_version": 1, "name": "smoke", "kind": "command", "description": "",
         "synonyms": [], "inputs": [], "llm_visible": True, "strict": True,
         "enabled": True, "timeout_ms": 5000,
-        "nodes": [{"id": "n1", "ref": "pipeline.press", "kwargs": {"combo": "ctrl+a"}, "pos": [0, 0]}],
+        "nodes": [{"id": "n1", "ref": "pipeline.press", "kwargs": {"combo": "ctrl+a"}, "pos": [0, 0]}],  # noqa: E501
         "edges": [],
     }
     r = client.post("/graph/smoke", json=payload)

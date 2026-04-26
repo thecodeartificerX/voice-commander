@@ -67,7 +67,9 @@ def scenario_foreach_dag(duration_s: int = 60) -> int:
     from voice_commander.commands.graph_runtime import GraphRuntime
     from voice_commander.registry import ToolEntry, ToolRegistry
 
-    # Build a foreach DAG: input -> foreach -> press(ctrl+a) -> press(ctrl+c) -> wait(1ms) -> press(ctrl+v) -> press(escape) -> press(f5)
+    # Build a foreach DAG:
+    # input -> foreach -> press(ctrl+a) -> press(ctrl+c) -> wait(1ms)
+    #       -> press(ctrl+v) -> press(escape) -> press(f5)
     g = Graph(
         name="soak_foreach",
         kind="command",
@@ -164,14 +166,23 @@ def scenario_foreach_dag(duration_s: int = 60) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Voice Commander RSS soak test.")
     parser.add_argument(
-        "--pid", type=int, required=False, help="PID of running voice-commander daemon (required in PID monitor mode)"
+        "--pid", type=int, required=False,
+        help="PID of running voice-commander daemon (required in PID monitor mode)"
     )
     parser.add_argument(
-        "--scenario", choices=["foreach_dag"], default=None, help="Scenario name (self-contained test)"
+        "--scenario", choices=["foreach_dag"], default=None,
+        help="Scenario name (self-contained test)"
     )
-    parser.add_argument("--hours", type=float, default=1.0, help="Duration in hours (PID monitor mode)")
-    parser.add_argument("--duration", type=int, default=60, help="Duration in seconds (scenario mode)")
-    parser.add_argument("--interval", type=float, default=30.0, help="Sample interval in seconds (PID monitor mode)")
+    parser.add_argument(
+        "--hours", type=float, default=1.0, help="Duration in hours (PID monitor mode)"
+    )
+    parser.add_argument(
+        "--duration", type=int, default=60, help="Duration in seconds (scenario mode)"
+    )
+    parser.add_argument(
+        "--interval", type=float, default=30.0,
+        help="Sample interval in seconds (PID monitor mode)"
+    )
     parser.add_argument("--limit-mb", type=float, default=100.0)
     parser.add_argument("--csv", type=Path, default=None)
     args = parser.parse_args()

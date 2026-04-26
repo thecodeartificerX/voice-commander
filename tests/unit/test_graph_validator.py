@@ -1,12 +1,9 @@
 """Tests for graph_validator — all 7 rules."""
 from __future__ import annotations
 
-import pytest
-
-from voice_commander.commands.graph import Edge, Graph, GraphInput, Node, PortRef
+from voice_commander.commands.graph import Edge, Graph, Node, PortRef
 from voice_commander.commands.graph_validator import (
     FOREACH_GLOBAL_CEILING,
-    ValidationError,
     ValidationSeverity,
     validate,
 )
@@ -82,7 +79,9 @@ def test_builtin_control_ref_is_ok():
         nodes=(Node("n1", "control.branch", {}),), edges=(),
     )
     errors = validate(g, registry=_reg_with(), peers={})
-    assert not any(e.severity == ValidationSeverity.ERROR and "unknown" in e.message for e in errors)
+    assert not any(
+        e.severity == ValidationSeverity.ERROR and "unknown" in e.message for e in errors
+    )
 
 
 # --- Rule 3: orphan required port ---
@@ -104,7 +103,10 @@ def test_required_input_unbound_is_error():
     )
     errs = validate(g, registry=reg, peers={})
     hard = [e for e in errs if e.severity == ValidationSeverity.ERROR]
-    assert any("required" in e.message.lower() and e.node_id == "n1" and e.port == "text" for e in hard)
+    assert any(
+        "required" in e.message.lower() and e.node_id == "n1" and e.port == "text"
+        for e in hard
+    )
 
 
 def test_required_input_satisfied_by_baked_kwarg_is_ok():
@@ -122,7 +124,10 @@ def test_required_input_satisfied_by_baked_kwarg_is_ok():
         edges=(),
     )
     errs = validate(g, registry=reg, peers={})
-    hard = [e for e in errs if e.severity == ValidationSeverity.ERROR and e.node_id == "n1" and e.port == "text"]
+    hard = [
+        e for e in errs
+        if e.severity == ValidationSeverity.ERROR and e.node_id == "n1" and e.port == "text"
+    ]
     assert not hard
 
 

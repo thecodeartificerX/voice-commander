@@ -37,7 +37,7 @@ def attach_admin_routes(
     command_store: GraphStore,
     workflow_store: GraphStore,
     config_path: Path,
-    event_bus: "EventBus | None" = None,
+    event_bus: EventBus | None = None,
 ) -> None:
     """Register /command, /workflow, /config, /restart routes on *app*."""
 

@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from .tool_metadata import ArgMetadata
     from .registry import ToolEntry
+    from .tool_metadata import ArgMetadata
 
 
 @dataclass

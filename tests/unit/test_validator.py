@@ -4,10 +4,10 @@
 # validate() calls typing.get_type_hints(entry.func) which needs real runtime
 # annotations, not stringified ones.
 
-import pytest
-
 from dataclasses import replace
 from unittest.mock import MagicMock
+
+import pytest
 
 from voice_commander.config import Config, LLMConfig
 from voice_commander.registry import ToolEntry, ToolRegistry
@@ -279,9 +279,9 @@ def test_rule_c1_timeout_ms_above_minimum_is_valid():
 def test_validate_graphs_or_die_raises_on_cycle(tmp_path):
     """validate_graphs_or_die raises SystemExit when a graph has a cycle."""
     import json
-    from pathlib import Path
-    from voice_commander.commands.store import GraphStore
+
     from voice_commander.commands.graph import Edge, Graph, Node, PortRef
+    from voice_commander.commands.store import GraphStore
     from voice_commander.registry import ToolRegistry
     from voice_commander.validator import validate_graphs_or_die
 

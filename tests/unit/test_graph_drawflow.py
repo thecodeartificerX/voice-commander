@@ -1,8 +1,6 @@
 """Tests for Drawflow adapter round-trips."""
 from __future__ import annotations
 
-import pytest
-
 from voice_commander.commands.graph import Edge, Graph, GraphInput, Node, PortRef
 from voice_commander.commands.graph_drawflow import from_drawflow, to_drawflow
 

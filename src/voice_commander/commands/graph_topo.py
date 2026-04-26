@@ -7,8 +7,8 @@ cycles raise CycleError with the offending node ids surfaced.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from collections import defaultdict, deque
+from collections.abc import Iterable
 
 from voice_commander.commands.graph import Edge, Node
 

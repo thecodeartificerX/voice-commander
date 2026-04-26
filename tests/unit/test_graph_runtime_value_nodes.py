@@ -10,7 +10,9 @@ def test_value_constant_flows_to_downstream():
         received.append(value)
 
     reg = ToolRegistry()
-    reg.register(ToolEntry(name="consume", phrases=(), func=_consume, module="x", docstring=None, internal=True))
+    reg.register(ToolEntry(
+        name="consume", phrases=(), func=_consume, module="x", docstring=None, internal=True,
+    ))
 
     g = Graph(
         name="test", kind="command", description="", synonyms=(), inputs=(),
@@ -38,7 +40,9 @@ def test_value_input_flows_graph_input_to_downstream():
         received.append(query)
 
     reg = ToolRegistry()
-    reg.register(ToolEntry(name="consume", phrases=(), func=_consume, module="x", docstring=None, internal=True))
+    reg.register(ToolEntry(
+        name="consume", phrases=(), func=_consume, module="x", docstring=None, internal=True,
+    ))
 
     g = Graph(
         name="test", kind="command", description="", synonyms=(),
