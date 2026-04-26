@@ -1,0 +1,18 @@
+{% extends "_layout.html" %}
+{% set active = 'workflows' %}
+{% block title %}Workflows — Voice Commander{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-8">
+    <section id="workflows">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-xl font-semibold text-indigo-300">Workflows</h2>
+            <button hx-get="/workflow/new" hx-target="#workflows-list" hx-swap="afterbegin"
+                    class="text-sm px-3 py-1 rounded bg-indigo-700 hover:bg-indigo-600 text-white">+ New workflow</button>
+        </div>
+        <div hx-get="/workflows" hx-trigger="load" hx-swap="outerHTML">
+            <p class="text-sm text-neutral-500">Loading…</p>
+        </div>
+    </section>
+</div>
+{% endblock %}

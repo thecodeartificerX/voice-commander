@@ -1,0 +1,14 @@
+{% extends "_layout.html" %}
+{% set active = 'prompt' %}
+{% block title %}Prompt — Voice Commander{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-8">
+    <section id="prompt">
+        <h2 class="text-xl font-semibold text-purple-400 mb-3">Prompt Inspector</h2>
+        <div id="prompt-inspector-root" hx-get="/prompt" hx-trigger="load" hx-swap="innerHTML">
+            <p class="text-sm text-neutral-500">Loading...</p>
+        </div>
+    </section>
+</div>
+{% endblock %}

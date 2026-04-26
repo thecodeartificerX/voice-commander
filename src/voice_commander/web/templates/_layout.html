@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-neutral-950">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Voice Commander{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/app.css">
+    <script src="/static/htmx.min.js"></script>
+</head>
+<body class="bg-neutral-950 text-neutral-200 min-h-screen">
+    <header class="sticky top-0 z-40 bg-neutral-950/95 backdrop-blur border-b border-neutral-800">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+            <div class="flex items-center gap-4 min-w-0">
+                <a href="/page/commands" class="block">
+                    <h1 class="text-xl font-bold text-emerald-400 leading-tight">Voice Commander</h1>
+                    <p class="text-xs text-neutral-500 leading-tight">Commands, workflows, and runtime config</p>
+                </a>
+            </div>
+            <nav class="text-sm flex items-center gap-1 sm:gap-2 flex-wrap justify-end">
+                {% set active = active|default('') %}
+                <a href="/page/commands"
+                   class="px-2 py-1 rounded hover:text-emerald-400 {% if active == 'commands' %}text-emerald-400 border-b-2 border-emerald-400{% else %}text-neutral-400{% endif %}">Commands</a>
+                <a href="/page/workflows"
+                   class="px-2 py-1 rounded hover:text-indigo-300 {% if active == 'workflows' %}text-indigo-300 border-b-2 border-indigo-300{% else %}text-neutral-400{% endif %}">Workflows</a>
+                <a href="/page/prompt"
+                   class="px-2 py-1 rounded hover:text-purple-400 {% if active == 'prompt' %}text-purple-400 border-b-2 border-purple-400{% else %}text-neutral-400{% endif %}">Prompt</a>
+                <a href="/page/config"
+                   class="px-2 py-1 rounded hover:text-amber-300 {% if active == 'config' %}text-amber-300 border-b-2 border-amber-300{% else %}text-neutral-400{% endif %}">Config</a>
+                <a href="/page/primitives"
+                   class="px-2 py-1 rounded hover:text-neutral-200 {% if active == 'primitives' %}text-neutral-100 border-b-2 border-neutral-300{% else %}text-neutral-400{% endif %}">Primitives</a>
+                <a href="/guide"
+                   class="px-2 py-1 rounded hover:text-sky-300 border-l border-neutral-700 ml-1 sm:ml-2 pl-3 {% if active == 'guide' %}text-sky-300 border-b-2 border-sky-300{% else %}text-neutral-400{% endif %}">Guide</a>
+                <button id="restart-daemon-btn"
+                        type="button"
+                        onclick="window.__vcRestartDaemon()"
+                        class="ml-2 sm:ml-3 px-3 py-1.5 rounded bg-red-700 hover:bg-red-600 text-white text-sm font-medium shadow"
+                        title="Restart the Voice Commander daemon process">
+                    Restart daemon
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <div id="vc-toast-container" class="fixed top-4 right-4 z-50 space-y-2 pointer-events-none"></div>
+
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+
+    <script>
+    // ---- Toast helper -----------------------------------------------------
+    (function() {
+        function makeToast(message, kind, ttlMs) {
+            const colors = {
+                green: "bg-emerald-800 border-emerald-600 text-emerald-100",
+                amber: "bg-amber-800 border-amber-600 text-amber-100",
+                red:   "bg-red-800 border-red-600 text-red-100",
+            };
+            const cls = colors[kind] || colors.red;
+            const container = document.getElementById("vc-toast-container");
+            if (!container) return;
+            const el = document.createElement("div");
+            el.className = "pointer-events-auto px-4 py-2 rounded shadow border text-sm max-w-sm " + cls;
+            el.textContent = message;
+            container.appendChild(el);
+            setTimeout(function() {
+                el.style.transition = "opacity 0.4s";
+                el.style.opacity = "0";
+                setTimeout(function() { el.remove(); }, 450);
+            }, ttlMs);
+        }
+
+        window.__vcRestartDaemon = async function() {
+            const btn = document.getElementById("restart-daemon-btn");
+            if (btn) btn.disabled = true;
+            try {
+                const resp = await fetch("/restart", {
+                    method: "POST",
+                    headers: { "HX-Request": "true" },
+                });
+                if (resp.status === 202) {
+                    makeToast("Restarting daemon…", "green", 5000);
+                } else if (resp.status === 503) {
+                    let msg = "Restart unavailable";
+                    try {
+                        const j = await resp.json();
+                        if (j && j.error) msg = j.error;
+                    } catch (e) { /* ignore */ }
+                    makeToast(msg, "amber", 8000);
+                } else {
+                    makeToast("Restart failed (HTTP " + resp.status + ")", "red", 8000);
+                }
+            } catch (err) {
+                makeToast("Restart failed: " + err, "red", 8000);
+            } finally {
+                if (btn) {
+                    setTimeout(function() { btn.disabled = false; }, 2000);
+                }
+            }
+        };
+    })();
+
+    // ---- SSE live-refresh ------------------------------------------------
+    // Reload fragments on daemon events. Handlers gracefully no-op when the
+    // target element is absent on the current page.
+    (function() {
+        if (typeof EventSource === "undefined") return;
+        const es = new EventSource("/events");
+        function reloadSection(selector, url) {
+            const el = document.querySelector(selector);
+            if (el && typeof htmx !== "undefined") {
+                htmx.ajax("GET", url, {target: selector, swap: "outerHTML"});
+            }
+        }
+        function reloadInner(selector, url) {
+            const el = document.querySelector(selector);
+            if (el && typeof htmx !== "undefined") {
+                htmx.ajax("GET", url, {target: selector, swap: "innerHTML"});
+            }
+        }
+        es.addEventListener("command_saved", () => reloadSection("#commands-list", "/commands"));
+        es.addEventListener("command_deleted", () => reloadSection("#commands-list", "/commands"));
+        es.addEventListener("workflow_saved", () => reloadSection("#workflows-list", "/workflows"));
+        es.addEventListener("workflow_deleted", () => reloadSection("#workflows-list", "/workflows"));
+        es.addEventListener("prompt_template_saved", () => reloadInner("#prompt-inspector-root", "/prompt"));
+    })();
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

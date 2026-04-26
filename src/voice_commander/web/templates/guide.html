@@ -1,21 +1,13 @@
-<!DOCTYPE html>
-<html lang="en" class="bg-neutral-950">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice Commander — Guide</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="/static/app.css">
-</head>
-<body class="bg-neutral-950 text-neutral-200 min-h-screen">
+{% extends "_layout.html" %}
+{% set active = 'guide' %}
+{% block title %}Guide — Voice Commander{% endblock %}
+
+{% block content %}
 <div class="max-w-4xl mx-auto px-6 py-10 space-y-10">
 
-    <header class="flex items-start justify-between">
-        <div>
-            <h1 class="text-3xl font-bold text-emerald-400">Voice Commander — Guide</h1>
-            <p class="text-neutral-400 mt-1">How the pieces actually fit together.</p>
-        </div>
-        <a href="/" class="text-sm text-neutral-400 hover:text-emerald-400">← back to dashboard</a>
+    <header>
+        <h1 class="text-3xl font-bold text-emerald-400">Voice Commander — Guide</h1>
+        <p class="text-neutral-400 mt-1">How the pieces actually fit together.</p>
     </header>
 
     <!-- End-to-end flow -->
@@ -242,5 +234,4 @@ Scroll Lock ──► StreamingRecorder ──► Silero VAD ──► faster-wh
     </section>
 
 </div>
-</body>
-</html>
+{% endblock %}

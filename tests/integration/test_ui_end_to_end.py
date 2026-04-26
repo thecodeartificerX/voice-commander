@@ -58,7 +58,13 @@ def live_server(tmp_path):
 
 @pytest.mark.integration
 def test_dashboard_loads(live_server):
+    # GET / now redirects to /page/commands; primitives (alpha/beta) live on
+    # /page/primitives.
     resp = httpx.get(f"{live_server['url']}/", timeout=5.0)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/page/commands"
+
+    resp = httpx.get(f"{live_server['url']}/page/primitives", timeout=5.0)
     assert resp.status_code == 200
     assert "alpha" in resp.text
 

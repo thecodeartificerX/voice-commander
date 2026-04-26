@@ -1,0 +1,14 @@
+{% extends "_layout.html" %}
+{% set active = 'config' %}
+{% block title %}Config — Voice Commander{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-8">
+    <section id="config">
+        <h2 class="text-xl font-semibold text-amber-300 mb-3">Config</h2>
+        <div hx-get="/config/edit" hx-trigger="load" hx-swap="innerHTML">
+            <p class="text-sm text-neutral-500">Loading…</p>
+        </div>
+    </section>
+</div>
+{% endblock %}

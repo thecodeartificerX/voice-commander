@@ -1,0 +1,20 @@
+{% extends "_layout.html" %}
+{% set active = 'primitives' %}
+{% block title %}Primitives — Voice Commander{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-8">
+    <section id="tools">
+        <h2 class="text-xl font-semibold text-neutral-400 mb-3">Primitives (internal)</h2>
+        <p class="text-xs text-neutral-500 mb-3">Raw primitives are dispatchable but hidden from the LLM. Commands and workflows above are the only things the LLM can pick.</p>
+        <div class="grid gap-4">
+            {% for category, tools in groups.items() %}
+            <div class="text-xs uppercase text-neutral-500 mt-2">{{ category }}</div>
+            {% for tool in tools %}
+            {% include "_tool_card.html" %}
+            {% endfor %}
+            {% endfor %}
+        </div>
+    </section>
+</div>
+{% endblock %}

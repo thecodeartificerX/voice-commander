@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, Form, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -70,18 +70,42 @@ def create_app(
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
     # ------------------------------------------------------------------
-    # GET / — full dashboard
+    # GET / — redirect to default page (Commands)
     # ------------------------------------------------------------------
 
-    @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request) -> HTMLResponse:
+    @app.get("/", include_in_schema=False)
+    async def index_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/page/commands", status_code=302)
+
+    # ------------------------------------------------------------------
+    # GET /page/{section} — full HTML pages, one per dashboard section
+    # ------------------------------------------------------------------
+
+    @app.get("/page/commands", response_class=HTMLResponse)
+    async def page_commands(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "page_commands.html", {})
+
+    @app.get("/page/workflows", response_class=HTMLResponse)
+    async def page_workflows(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "page_workflows.html", {})
+
+    @app.get("/page/prompt", response_class=HTMLResponse)
+    async def page_prompt(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "page_prompt.html", {})
+
+    @app.get("/page/config", response_class=HTMLResponse)
+    async def page_config(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "page_config.html", {})
+
+    @app.get("/page/primitives", response_class=HTMLResponse)
+    async def page_primitives(request: Request) -> HTMLResponse:
         tools = registry.all()
         grouped: dict[str, list[object]] = {}
         for t in tools:
             grouped.setdefault(t.category, []).append(t)
         return templates.TemplateResponse(
             request,
-            "index.html",
+            "page_primitives.html",
             {"groups": grouped},
         )
 
