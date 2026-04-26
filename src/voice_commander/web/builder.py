@@ -25,7 +25,7 @@ from fastapi.templating import Jinja2Templates
 from voice_commander.commands.graph_schema import GraphSchemaError, parse_graph, serialise_graph
 from voice_commander.commands.graph_validator import ValidationSeverity
 from voice_commander.commands.graph_validator import validate as validate_graph
-from voice_commander.commands.store import GraphStore
+from voice_commander.commands.store import GraphStore, GraphStoreError
 from voice_commander.registry import ToolRegistry
 
 
@@ -189,7 +189,11 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
     def delete_graph(name: str) -> dict[str, Any]:
         with ctx.reload_lock:
             for store in (ctx.command_store, ctx.workflow_store):
-                if store.delete(name):
+                try:
+                    found = store.delete(name)
+                except GraphStoreError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                if found:
                     ctx.reload_all_fn()
                     return {"ok": True}
         raise HTTPException(status_code=404, detail=f"graph {name!r} not found")
@@ -202,7 +206,10 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
                 if name in graphs:
                     g = graphs[name]
                     flipped = dataclasses.replace(g, enabled=not g.enabled)
-                    store.save_one(flipped)
+                    try:
+                        store.save_one(flipped)
+                    except GraphStoreError as exc:
+                        raise HTTPException(status_code=400, detail=str(exc)) from exc
                     ctx.reload_all_fn()
                     return {"ok": True, "enabled": flipped.enabled}
         raise HTTPException(status_code=404, detail=f"graph {name!r} not found")
