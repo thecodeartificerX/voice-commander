@@ -80,6 +80,7 @@ def create_app(
 
     @app.get("/", include_in_schema=False)
     async def index_redirect() -> RedirectResponse:
+        """``GET /`` — redirect to ``/page/commands``."""
         return RedirectResponse(url="/page/commands", status_code=302)
 
     # ------------------------------------------------------------------
@@ -88,22 +89,27 @@ def create_app(
 
     @app.get("/page/commands", response_class=HTMLResponse)
     async def page_commands(request: Request) -> HTMLResponse:
+        """``GET /page/commands`` — render the commands dashboard."""
         return templates.TemplateResponse(request, "page_commands.html", {})
 
     @app.get("/page/workflows", response_class=HTMLResponse)
     async def page_workflows(request: Request) -> HTMLResponse:
+        """``GET /page/workflows`` — render the workflows dashboard."""
         return templates.TemplateResponse(request, "page_workflows.html", {})
 
     @app.get("/page/prompt", response_class=HTMLResponse)
     async def page_prompt(request: Request) -> HTMLResponse:
+        """``GET /page/prompt`` — render the prompt inspector."""
         return templates.TemplateResponse(request, "page_prompt.html", {})
 
     @app.get("/page/config", response_class=HTMLResponse)
     async def page_config(request: Request) -> HTMLResponse:
+        """``GET /page/config`` — render the configuration dashboard."""
         return templates.TemplateResponse(request, "page_config.html", {})
 
     @app.get("/page/primitives", response_class=HTMLResponse)
     async def page_primitives(request: Request) -> HTMLResponse:
+        """``GET /page/primitives`` — render the tools/primitives page with tools grouped by category."""
         tools = registry.all()
         grouped: dict[str, list[object]] = {}
         for t in tools:
@@ -120,6 +126,7 @@ def create_app(
 
     @app.get("/guide", response_class=HTMLResponse)
     async def guide(request: Request) -> HTMLResponse:
+        """``GET /guide`` — render the architecture guide page."""
         return templates.TemplateResponse(request, "guide.html", {})
 
     # ------------------------------------------------------------------
@@ -128,6 +135,7 @@ def create_app(
 
     @app.get("/healthz")
     async def healthz() -> JSONResponse:
+        """``GET /healthz`` — liveness probe; returns ``{"status": "ok"}``."""
         return JSONResponse({"status": "ok"})
 
     # ------------------------------------------------------------------
@@ -136,6 +144,11 @@ def create_app(
 
     @app.get("/events", response_model=None)
     async def events(request: Request) -> StreamingResponse | JSONResponse:
+        """``GET /events`` — Server-Sent Events stream for daemon state changes.
+
+        Honours the ``Last-Event-ID`` header for replay from the ring buffer.
+        Sends keepalive pings on idle. Returns 503 if EventBus is not configured.
+        """
         if event_bus is None:
             return JSONResponse({"error": "EventBus not configured"}, status_code=503)
 
@@ -192,6 +205,7 @@ def create_app(
 
     @app.get("/tool/{name}/edit", response_class=HTMLResponse)
     async def tool_edit(request: Request, name: str) -> HTMLResponse:
+        """``GET /tool/{name}/edit`` — render the inline tool-edit form; 404 if tool not found."""
         tool = registry.by_name(name)
         if tool is None:
             return HTMLResponse(
@@ -210,6 +224,7 @@ def create_app(
 
     @app.get("/tool/{name}/cancel", response_class=HTMLResponse)
     async def tool_cancel(request: Request, name: str) -> HTMLResponse:
+        """``GET /tool/{name}/cancel`` — swap edit form back to read-only tool card; 404 if not found."""
         tool = registry.by_name(name)
         if tool is None:
             return HTMLResponse(
@@ -234,6 +249,12 @@ def create_app(
         description: str = Form(default=""),
         category: str = Form(default=""),
     ) -> HTMLResponse:
+        """``POST /tool/{name}`` — update tool metadata (phrases, description, category).
+
+        Validates that at least one phrase is provided and checks for phrase
+        duplicates across other tools. Preserves the current enabled state.
+        Returns updated card partial on success, or an error banner on failure.
+        """
         # --- Parse phrases ---
         parsed_phrases = [p.strip() for p in phrases.splitlines() if p.strip()]
         if not parsed_phrases:
@@ -301,6 +322,7 @@ def create_app(
 
     @app.post("/tool/{name}/toggle", response_class=HTMLResponse)
     async def tool_toggle(request: Request, name: str) -> HTMLResponse:
+        """``POST /tool/{name}/toggle`` — flip tool's enabled state via sidecar TOML and hot-reload registry."""
         current = registry.by_name(name)
         if current is None:
             return HTMLResponse(

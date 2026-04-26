@@ -26,6 +26,7 @@ class GraphRuntime:
     """Executes a Graph against a ToolRegistry; produces a PlanOutcome."""
 
     def __init__(self, registry: ToolRegistry, graph_lookup: _GraphLookup) -> None:
+        """Store tool registry and graph-lookup closure for use during execution."""
         self._registry = registry
         self._graph_lookup = graph_lookup
 
@@ -315,6 +316,12 @@ class GraphRuntime:
         fired_branch_true: set[str],
         fired_branch_false: set[str],
     ) -> bool:
+        """Check if a node's control-flow dependencies are satisfied.
+
+        Returns True when the node has no incoming control edges (unconditional
+        start) or when at least one incoming edge's source port (ok, error,
+        true, false, item, after) has fired.
+        """
         incoming = [e for e in edges if e.dst.node_id == node.id and e.dst.port == "in"]
         if not incoming:
             return True
@@ -340,6 +347,12 @@ class GraphRuntime:
         edges: tuple[Edge, ...],
         port_values: dict[str, Any],
     ) -> dict[str, Any]:
+        """Build the kwargs dict for a node.
+
+        Starts from the node's static kwargs, then overlays values arriving
+        on data-wire edges.  Uses the ``input.<port>`` shorthand key when the
+        source is a graph-input node.
+        """
         out = dict(node.kwargs)
         for e in edges:
             if e.dst.node_id != node.id or e.dst.port == "in":
@@ -360,6 +373,12 @@ class GraphRuntime:
         ret: Any,
         port_values: dict[str, Any],
     ) -> None:
+        """Cache a tool's return value in port_values under the node's output ports.
+
+        If the tool declares a single return port the value is stored directly.
+        For multiple return ports, unpacks a tuple/list return into individual
+        ports when the lengths match.
+        """
         meta = getattr(entry, "returns_meta", None) or {}
         if not meta:
             return
@@ -373,6 +392,7 @@ class GraphRuntime:
                     port_values[f"{node.id}.{k}"] = v
 
     def _has_error_edge(self, node_id: str, edges: tuple[Edge, ...]) -> bool:
+        """Return True if any outgoing edge from *node_id* has source port ``"error"``."""
         return any(e.src.node_id == node_id and e.src.port == "error" for e in edges)
 
     # Control ports that carry the body membership signal from a foreach node.
