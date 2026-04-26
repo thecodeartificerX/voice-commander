@@ -123,7 +123,9 @@
   }
 
   // ---------- HTML escape for attribute / text context ----------
-  // Covers attribute-name, attribute-value, and text-node contexts.
+  // Neutralises HTML-special chars for attribute values, text nodes,
+  // and custom attribute name fragments (prevents injection, not
+  // spec-valid attribute names from arbitrary input).
   function escapeAttr(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -160,10 +162,12 @@
 
     // Short display name for the node header
     const shortName = ref.includes('.') ? ref.split('.').slice(1).join('.') : ref;
+    const safeShortName = escapeAttr(shortName);
+    const safeId = escapeAttr(id);
 
     const html = `<div class="df-node-wrap">
-  <div class="df-node-title">${shortName}</div>
-  <div class="df-node-id">${id}</div>
+  <div class="df-node-title">${safeShortName}</div>
+  <div class="df-node-id">${safeId}</div>
   ${kwargsHtml ? `<div class="df-node-kwargs">${kwargsHtml}</div>` : ''}
 </div>`;
 

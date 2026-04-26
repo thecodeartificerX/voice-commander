@@ -259,18 +259,61 @@ def test_validate_graph_returns_200_and_422(client: TestClient) -> None:
     assert resp3.status_code == 422
 
 
-def test_builder_page_escapes_arg_names_in_html(client, tmp_path):
-    """Verify that arg names with XSS payloads are escaped in node HTML.
+def test_builder_js_contains_escape_attr(client: TestClient) -> None:
+    """Smoke-test: escapeAttr() exists in the served builder.js.
 
-    Regression test for #57: attribute-context XSS in builder.js.
-    The actual escaping happens client-side in addNodeToCanvas(),
-    so this test verifies that the palette endpoint delivers arg names
-    verbatim (no server-side mangling) and the client JS is responsible
-    for escaping.  A full browser-based test would be needed for
-    end-to-end XSS validation.
+    Regression guard for #57: verifies that the escape helper and all 5
+    HTML-entity replacements are present in the JS source.  If escapeAttr()
+    were accidentally removed, this test will fail.
     """
-    # This is a documentation / smoke-test placeholder.
-    # True XSS testing requires a browser environment (e.g., Playwright).
-    # The fix is verified by code review of the escapeAttr() application.
-    pass
+    resp = client.get("/static/builder.js")
+    assert resp.status_code == 200
+    js = resp.text
+    assert "escapeAttr" in js, "escapeAttr helper must be present in builder.js"
+    # Verify all 5 HTML-special-character replacements are present
+    assert "&amp;" in js
+    assert "&quot;" in js
+    assert "&#39;" in js
+    assert "&lt;" in js
+    assert "&gt;" in js
+
+
+def test_xss_arg_name_stored_verbatim(client: TestClient) -> None:
+    """Server must not mangle arg names -- escaping is client-side only.
+
+    Regression test for #57: confirms the server stores XSS-payload arg names
+    verbatim.  The contract is: server stores raw, client (escapeAttr) escapes.
+    """
+    xss_name = '"><img src=x onerror=alert(1)>'
+    payload = {
+        "schema_version": 1,
+        "name": "xss_test",
+        "kind": "command",
+        "description": "",
+        "synonyms": [],
+        "inputs": [],
+        "llm_visible": True,
+        "strict": False,
+        "enabled": True,
+        "timeout_ms": 5000,
+        "nodes": [
+            # Include required 'combo' kwarg to pass _rule_orphan_required validation,
+            # plus the XSS-payload key to verify it is stored verbatim.
+            {"id": "n1", "ref": "pipeline.press", "kwargs": {"combo": "ctrl+c", xss_name: "value"}, "pos": [0, 0]},
+        ],
+        "edges": [],
+    }
+    r = client.post("/graph/xss_test", json=payload)
+    assert r.status_code == 200
+    r2 = client.get("/graph/xss_test")
+    assert r2.status_code == 200
+    nodes = r2.json()["nodes"]
+    # nodes may be a list or dict depending on schema; find the one with id "n1"
+    if isinstance(nodes, list):
+        n1_kwargs = next(n["kwargs"] for n in nodes if n["id"] == "n1")
+    else:
+        n1_kwargs = nodes["n1"]["kwargs"]
+    assert xss_name in n1_kwargs, (
+        "Server must store arg names verbatim without HTML-escaping"
+    )
 
