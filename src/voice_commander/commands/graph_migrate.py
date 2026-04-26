@@ -72,7 +72,16 @@ def _migrate_file(path: Path, legacy_key: str, kind: str) -> int:
     # Write .bak (skip if already exists)
     bak_path = path.with_suffix(path.suffix + ".bak")
     if not bak_path.exists():
-        bak_path.write_bytes(path.read_bytes())
+        original_bytes = path.read_bytes()
+        bak_path.write_bytes(original_bytes)
+        actual_size = bak_path.stat().st_size
+        if actual_size != len(original_bytes):
+            bak_path.unlink(missing_ok=True)
+            raise OSError(
+                f"Backup {bak_path} size mismatch "
+                f"(expected {len(original_bytes)}, got {actual_size}); "
+                f"aborting migration of {path}"
+            )
 
     canonical = {
         "schema_version": CURRENT_SCHEMA_VERSION,
@@ -182,6 +191,16 @@ def _migrate_workflow(name: str, entry: dict[str, Any]) -> dict[str, Any]:
                     # Still include kwarg as empty string (runtime will override via edge)
                     step_kwargs[kwarg_name] = ""
                 else:
+                    if placeholders:
+                        logger.warning(
+                            "Workflow %r step %d kwarg %r contains placeholder(s) %s "
+                            "not in workflow args %s; keeping literal value",
+                            name,
+                            i,
+                            kwarg_name,
+                            placeholders,
+                            sorted(arg_names),
+                        )
                     step_kwargs[kwarg_name] = kwarg_val
             else:
                 step_kwargs[kwarg_name] = kwarg_val

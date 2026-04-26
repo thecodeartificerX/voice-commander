@@ -19,6 +19,8 @@ from voice_commander.registry import tool
 
 logger = logging.getLogger(__name__)
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
 
 class OcrEngineUnavailable(RuntimeError):
     """Raised when no OCR engine (winrt or tesseract) is available."""
@@ -62,7 +64,7 @@ def _select_engine() -> _Engine:
     try:
         from voice_commander.config import Config
 
-        cfg = Config.load(Path("config.toml"))
+        cfg = Config.load(_REPO_ROOT / "config.toml")
         pref = getattr(cfg.perception, "ocr_engine", "auto")
     except (FileNotFoundError, AttributeError):
         pref = "auto"
@@ -127,4 +129,10 @@ def _ocr_tesseract(img_path: Path) -> str:
         text=True,
         timeout=10,
     )
+    if out.returncode != 0:
+        logger.warning(
+            "tesseract exited with code %d; stderr: %s",
+            out.returncode,
+            out.stderr.strip(),
+        )
     return out.stdout.strip()

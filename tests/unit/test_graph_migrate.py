@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from pathlib import Path
+
+import pytest
 
 from voice_commander.commands.graph_migrate import migrate_legacy_to_graphs
 
@@ -98,3 +101,68 @@ def test_migrate_ref_separator(tmp_path: Path) -> None:
     data = json.loads(wf_path.read_text())
     nodes = data["graphs"]["test_wf"]["nodes"]
     assert any(n["ref"] == "pipeline.press" for n in nodes)
+
+
+def test_migrate_bak_size_mismatch_raises_oserror(tmp_path: Path, monkeypatch) -> None:
+    """M9: .bak size mismatch raises OSError with diagnostic message (not FileNotFoundError)."""
+    cmd_data = {
+        "commands": {
+            "copy": {
+                "primitive": "press",
+                "kwargs": {"combo": "ctrl+c"},
+                "description": "",
+                "synonyms": [],
+                "enabled": True,
+            }
+        }
+    }
+    cmd_path = tmp_path / "commands.json"
+    cmd_path.write_text(json.dumps(cmd_data))
+    (tmp_path / "workflows.json").write_text(json.dumps({"workflows": {}}))
+
+    bak_path = cmd_path.with_suffix(cmd_path.suffix + ".bak")
+
+    original_write_bytes = Path.write_bytes
+
+    def _write_then_truncate(self: Path, data: bytes) -> int:
+        result = original_write_bytes(self, data)
+        # After writing, truncate the .bak to simulate a short/partial write
+        if self == bak_path:
+            with self.open("r+b") as f:
+                f.truncate(len(data) // 2)
+        return result
+
+    monkeypatch.setattr(Path, "write_bytes", _write_then_truncate)
+
+    with pytest.raises(OSError, match="size mismatch"):
+        migrate_legacy_to_graphs(cmd_path, tmp_path / "workflows.json")
+
+    # .bak must be cleaned up after size mismatch (not left as corrupt partial file)
+    assert not bak_path.exists()
+
+
+def test_migrate_placeholder_warning_logged(tmp_path: Path, caplog) -> None:
+    """M10: unbound placeholder in kwarg triggers warning with workflow/kwarg/placeholder info."""
+    wf_data = {
+        "workflows": {
+            "open_thing": {
+                "description": "open",
+                "synonyms": [],
+                "enabled": True,
+                "args": [],  # no args defined — {target} has nowhere to bind
+                "steps": [
+                    {"ref": "primitive:focus", "kwargs": {"target": "{target}"}},
+                ],
+            }
+        }
+    }
+    (tmp_path / "commands.json").write_text(json.dumps({"commands": {}}))
+    wf_path = tmp_path / "workflows.json"
+    wf_path.write_text(json.dumps(wf_data))
+
+    with caplog.at_level(logging.WARNING, logger="voice_commander.commands.graph_migrate"):
+        migrate_legacy_to_graphs(tmp_path / "commands.json", wf_path)
+
+    assert "placeholder" in caplog.text.lower()
+    assert "open_thing" in caplog.text
+    assert "target" in caplog.text
