@@ -122,6 +122,17 @@
     return [];
   }
 
+  // ---------- HTML escape for attribute / text context ----------
+  // Covers attribute-name, attribute-value, and text-node contexts.
+  function escapeAttr(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
   // ---------- Add node to canvas ----------
   // Returns the Drawflow numeric node ID
   function addNodeToCanvas(ref, x, y, canonicalId, kwargsData) {
@@ -136,12 +147,13 @@
       const args = desc.args || desc.inputs || [];
       for (const arg of args) {
         const val = kwargVals[arg.name] !== undefined ? kwargVals[arg.name] : '';
-        const escapedVal = String(val).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+        const safeName = escapeAttr(arg.name);
+        const safeVal = escapeAttr(val);
         if (arg.type === 'bool' || arg.type === 'boolean') {
-          kwargsHtml += `<label class="flex items-center gap-1"><input type="checkbox" df-kwarg-${arg.name} ${val ? 'checked' : ''}><span class="text-xs">${arg.name}</span></label>`;
+          kwargsHtml += `<label class="flex items-center gap-1"><input type="checkbox" df-kwarg-${safeName} ${val ? 'checked' : ''}><span class="text-xs">${safeName}</span></label>`;
         } else {
           const inputType = (arg.type === 'int' || arg.type === 'integer') ? 'number' : 'text';
-          kwargsHtml += `<input type="${inputType}" df-kwarg-${arg.name} value="${escapedVal}" placeholder="${arg.name}" class="df-input" title="${arg.name}">`;
+          kwargsHtml += `<input type="${inputType}" df-kwarg-${safeName} value="${safeVal}" placeholder="${safeName}" class="df-input" title="${safeName}">`;
         }
       }
     }
