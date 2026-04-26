@@ -22,11 +22,23 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+from voice_commander.commands.graph import Graph
 from voice_commander.commands.graph_schema import GraphSchemaError, parse_graph, serialise_graph
 from voice_commander.commands.graph_validator import ValidationSeverity
 from voice_commander.commands.graph_validator import validate as validate_graph
 from voice_commander.commands.store import GraphStore
 from voice_commander.registry import ToolRegistry
+
+
+def _describe_graph(g: Graph) -> dict[str, Any]:
+    return {
+        "name": g.name,
+        "description": g.description,
+        "inputs": [
+            {"name": inp.name, "type": inp.type, "required": inp.required}
+            for inp in g.inputs
+        ],
+    }
 
 
 @dataclass
@@ -68,28 +80,8 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
             for e in ctx.registry.all()
             if e.internal and e.origin == "primitive" and e.enabled
         ]
-        commands = [
-            {
-                "name": g.name,
-                "description": g.description,
-                "inputs": [
-                    {"name": inp.name, "type": inp.type, "required": inp.required}
-                    for inp in g.inputs
-                ],
-            }
-            for g in ctx.command_store.load_all().values()
-        ]
-        workflows = [
-            {
-                "name": g.name,
-                "description": g.description,
-                "inputs": [
-                    {"name": inp.name, "type": inp.type, "required": inp.required}
-                    for inp in g.inputs
-                ],
-            }
-            for g in ctx.workflow_store.load_all().values()
-        ]
+        commands = [_describe_graph(g) for g in ctx.command_store.load_all().values()]
+        workflows = [_describe_graph(g) for g in ctx.workflow_store.load_all().values()]
         return {
             "pipeline": pipeline,
             "commands": commands,

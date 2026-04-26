@@ -8,6 +8,7 @@ minimal deployments), the admin surface simply isn't registered.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import threading
 from pathlib import Path
@@ -69,8 +70,6 @@ def attach_admin_routes(
         cmd = cmds.get(name)
         if cmd is None:
             return HTMLResponse(content=f"{name!r} not found", status_code=404)
-        import dataclasses
-
         flipped = dataclasses.replace(cmd, enabled=not cmd.enabled)
         try:
             command_store.save_one(flipped)
@@ -105,8 +104,6 @@ def attach_admin_routes(
         wf = wfs.get(name)
         if wf is None:
             return HTMLResponse(content=f"{name!r} not found", status_code=404)
-        import dataclasses
-
         flipped = dataclasses.replace(wf, enabled=not wf.enabled)
         try:
             workflow_store.save_one(flipped)
