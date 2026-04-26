@@ -470,3 +470,25 @@ See ADR 0047 (updated) for the per-state pitch override.
 - **Taskbar layered windows.** `WS_EX_LAYERED | WS_EX_TRANSPARENT |
   WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` survive `set_location` calls —
   no need to re-apply after moves.
+
+---
+
+## 27. Graph data-edge resolution order
+
+Data edges are resolved before kwargs are dispatched to a node's tool function. If a node's kwarg is wired via a data edge from an upstream node, the **edge value takes precedence** over any baked-in kwargs stored in `Node.kwargs`.
+
+Concretely: if you wire `input.query → type.text` AND the `type` node has `kwargs: {"text": "fallback"}`, the upstream value wins and `"fallback"` is silently ignored. This is intentional — edges are how the graph wires runtime data; baked-in kwargs are only defaults when no edge is present.
+
+**Rule for graph authors:** if a kwarg is wired via an edge, do not set it in the node's baked-in kwargs. The baked-in value is dead code and will confuse readers.
+
+---
+
+## 28. Foreach body detection
+
+The foreach body is determined by a **forward walk from the `<foreach_node>.item` output port**. Any node reachable from that port (following edges transitively) is part of the foreach body and is executed once per iteration with `item` bound to the current element.
+
+Nodes reachable only via the `<foreach_node>.after` output port are **NOT** part of the body and execute once after the loop completes.
+
+**Common bug:** accidentally wiring the `after` edge to a node that was intended to be inside the body. Symptom: the node executes only once regardless of list length. To fix, trace the edge path — if the node is reachable only via `after`, it is outside the body.
+
+**Validator rule 7** checks that the foreach body is non-empty (at least one node reachable from `.item`). It does not detect the misplaced-`after` variant since that is semantically valid; the author must inspect the graph visually or trace the edge walk manually.

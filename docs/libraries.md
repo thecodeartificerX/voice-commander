@@ -388,6 +388,38 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 
 ---
 
+---
+
+## Drawflow 0.0.60 — Node-graph editor (vendored)
+
+**Purpose in this project:** Powers the visual node-graph canvas at `/page/builder`. Users drag tools from the palette onto the canvas and draw data edges between ports. The canvas export is submitted to `builder.py` which converts it to the canonical `Graph` schema via `graph_drawflow.py`.
+
+**Why vendored:** Single-file JS + CSS bundle. No npm, no build step — consistent with ADR 0022 (no SPA build step). Upgraded by deliberate file replacement under `web/static/`.
+
+**Files:** `src/voice_commander/web/static/drawflow.min.js`, `src/voice_commander/web/static/drawflow.min.css`
+
+**ADR:** [`decisions/0062-drawflow-vendored-node-graph-editor.md`](decisions/0062-drawflow-vendored-node-graph-editor.md)
+
+---
+
+## `winrt-runtime`, `winrt-Windows.Graphics.Imaging`, `winrt-Windows.Media.Ocr` — Windows OCR (optional)
+
+**Purpose in this project:** Optional Windows Runtime OCR dependencies for the `ocr_region(x, y, w, h)` perception primitive in `tools/ocr.py`. When present, `ocr_region` captures a screen region via GDI BitBlt, wraps it as a `SoftwareBitmap`, feeds it to `Windows.Media.Ocr.OcrEngine`, and returns the recognised text in under 100 ms without a GPU.
+
+**Why optional:** The winrt Python bindings are Windows-only and add ~15 MB to the environment. Tesseract subprocess is the fallback for environments where winrt cannot be installed (e.g. LTSC Windows builds without the OCR language pack). The dependency is listed in `pyproject.toml` under an optional `[ocr]` extras group.
+
+**ADR:** [`decisions/0066-perception-primitives-layer.md`](decisions/0066-perception-primitives-layer.md)
+
+---
+
+## Tesseract — OCR CLI subprocess fallback
+
+**Purpose in this project:** Fallback OCR engine for `ocr_region` when `winrt` is unavailable. `tools/ocr.py` calls `subprocess.run(["tesseract", "-", "stdout"])` with a piped PNG. Not a Python package dependency — installed separately via the UB Mannheim Windows installer (`tesseract-ocr-w64-setup-*.exe`). `tesseract` must be on `PATH` for the fallback to work; the function logs a warning and returns `""` if the subprocess call fails.
+
+**ADR:** [`decisions/0066-perception-primitives-layer.md`](decisions/0066-perception-primitives-layer.md)
+
+---
+
 ## Cross-reference index
 
 | Library | ADR |
