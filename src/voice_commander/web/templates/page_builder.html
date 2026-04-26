@@ -1,0 +1,25 @@
+{% extends "_layout.html" %}
+{% set active = 'builder' %}
+{% block title %}Builder — Voice Commander{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8">
+    <section id="builder">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-xl font-semibold text-teal-400">Node Graph Builder</h2>
+        </div>
+        <div id="builder-canvas" class="w-full h-[600px] rounded border border-neutral-700 bg-neutral-900 relative overflow-hidden">
+            <!-- Drawflow node-graph canvas mounts here -->
+        </div>
+    </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- drawflow.min.js loaded here for node-graph editing -->
+<script>
+// drawflow.min.js placeholder — full integration in Task 9.3
+window.__vcBuilderKind = {{ kind | tojson }};
+window.__vcBuilderExisting = {{ existing | tojson }};
+</script>
+{% endblock %}

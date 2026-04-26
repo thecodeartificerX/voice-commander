@@ -58,7 +58,11 @@ def create_app(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         """Reject POST requests without the HX-Request header (HTMX sends it)."""
-        if request.method == "POST" and request.headers.get("HX-Request") != "true":
+        if (
+            request.method == "POST"
+            and request.headers.get("HX-Request") != "true"
+            and not request.headers.get("content-type", "").startswith("application/json")
+        ):
             return HTMLResponse(
                 content="Forbidden: missing HX-Request header",
                 status_code=403,
@@ -377,6 +381,22 @@ def create_app(
             reload_lock=reload_lock,
             event_bus=event_bus,
         )
+
+    if (
+        command_store is not None
+        and workflow_store is not None
+    ):
+        from ..commands.registrar import reload_all as _registrar_reload_all
+        from .builder import BuilderContext, make_router as builder_router
+
+        builder_ctx = BuilderContext(
+            command_store=command_store,
+            workflow_store=workflow_store,
+            registry=registry,
+            reload_lock=reload_lock,
+            reload_all_fn=lambda: _registrar_reload_all(registry, command_store, workflow_store),
+        )
+        app.include_router(builder_router(templates=templates, ctx=builder_ctx))
 
     return app
 

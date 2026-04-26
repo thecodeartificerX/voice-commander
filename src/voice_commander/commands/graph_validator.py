@@ -114,7 +114,10 @@ def _rule_orphan_required(graph: Graph, registry: Any) -> list[ValidationError]:
             continue
         args_meta = getattr(entry, "args_meta", None) or {}
         for arg_name, meta in args_meta.items():
-            required = meta.get("required", False)
+            if hasattr(meta, "required"):
+                required = meta.required
+            else:
+                required = meta.get("required", False)
             if isinstance(required, str):
                 required = required.lower() == "true"
             if not required:
