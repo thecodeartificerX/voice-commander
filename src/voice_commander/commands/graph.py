@@ -47,7 +47,7 @@ class PortRef:
 
     @property
     def is_input_shorthand(self) -> bool:
-        """True when this PortRef uses the ``input.<name>`` shorthand for the singleton Input node."""
+        """True when PortRef uses ``input.<name>`` shorthand for the Input node."""
         return self.node_id == "input"
 
 

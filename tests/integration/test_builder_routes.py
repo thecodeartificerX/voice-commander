@@ -190,3 +190,70 @@ def test_graph_post_returns_422_on_validation_error(client: TestClient) -> None:
     r = client.post("/graph/smoke", json=payload)
     assert r.status_code == 422
     assert "errors" in r.json()
+
+
+def test_delete_graph_returns_200(client: TestClient) -> None:
+    resp = client.delete("/graph/copy", headers={"HX-Request": "true"})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    # confirm gone
+    assert client.get("/graph/copy").status_code == 404
+
+
+def test_delete_graph_returns_404_for_missing(client: TestClient) -> None:
+    assert client.delete("/graph/no_such_graph", headers={"HX-Request": "true"}).status_code == 404
+
+
+def test_toggle_graph_returns_200(client: TestClient) -> None:
+    resp = client.post("/graph/copy/toggle", headers={"HX-Request": "true"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["enabled"] is False  # was True, now flipped
+
+    # toggle back
+    resp2 = client.post("/graph/copy/toggle", headers={"HX-Request": "true"})
+    assert resp2.status_code == 200
+    assert resp2.json()["enabled"] is True
+
+
+def test_toggle_graph_returns_404_for_missing(client: TestClient) -> None:
+    resp = client.post("/graph/no_such_graph/toggle", headers={"HX-Request": "true"})
+    assert resp.status_code == 404
+
+
+def test_validate_graph_returns_200_and_422(client: TestClient) -> None:
+    # 200: valid schema, no graph errors
+    valid_payload = {
+        "schema_version": 1,
+        "name": "vtest",
+        "kind": "command",
+        "description": "",
+        "synonyms": [],
+        "inputs": [],
+        "llm_visible": True,
+        "strict": True,
+        "enabled": True,
+        "timeout_ms": 5000,
+        "nodes": [],
+        "edges": [],
+    }
+    resp = client.post("/graph/validate", json=valid_payload)
+    assert resp.status_code == 200
+    assert resp.json()["errors"] == []
+
+    # 200: valid schema, graph validation errors (unknown ref)
+    bad_ref_payload = {
+        **valid_payload,
+        "nodes": [
+            {"id": "n1", "ref": "pipeline.bogus", "kwargs": {}, "pos": [0, 0]},
+        ],
+    }
+    resp2 = client.post("/graph/validate", json=bad_ref_payload)
+    assert resp2.status_code == 200
+    errs = resp2.json()["errors"]
+    assert len(errs) > 0
+
+    # 422: malformed schema (missing required fields)
+    resp3 = client.post("/graph/validate", json={"name": "bad"})
+    assert resp3.status_code == 422
