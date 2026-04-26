@@ -134,8 +134,9 @@ def test_page_commands_renders(client: TestClient) -> None:
     resp = client.get("/page/commands")
     assert resp.status_code == 200
     assert "Commands" in resp.text
-    # New command button is part of the page content
+    # New command button is an <a> link with href to builder
     assert "+ New command" in resp.text
+    assert "/page/builder?kind=command" in resp.text
     # Restart button comes from the shared layout
     assert "Restart daemon" in resp.text
 
@@ -144,7 +145,9 @@ def test_page_workflows_renders(client: TestClient) -> None:
     resp = client.get("/page/workflows")
     assert resp.status_code == 200
     assert "Workflows" in resp.text
+    # New workflow button is an <a> link with href to builder
     assert "+ New workflow" in resp.text
+    assert "/page/builder?kind=workflow" in resp.text
     assert "Restart daemon" in resp.text
 
 
@@ -205,3 +208,27 @@ def test_restart_button_targets_restart_endpoint(client: TestClient, url: str) -
     assert "Restart daemon" in body
     # The restart click handler posts to /restart — it must be wired up.
     assert "/restart" in body
+
+
+# ---------------------------------------------------------------------------
+# Builder page and card actions
+# ---------------------------------------------------------------------------
+
+
+def test_builder_page_contains_drawflow_assets(client: TestClient) -> None:
+    resp = client.get("/page/builder?kind=command")
+    assert resp.status_code == 200
+    assert "drawflow.min.js" in resp.text
+    assert "drawflow.min.css" in resp.text
+
+
+def test_command_list_has_open_in_builder(client: TestClient) -> None:
+    resp = client.get("/commands")
+    assert resp.status_code == 200
+    assert "Open in Builder" in resp.text
+
+
+def test_workflow_list_has_open_in_builder(client: TestClient) -> None:
+    resp = client.get("/workflows")
+    assert resp.status_code == 200
+    assert "Open in Builder" in resp.text
