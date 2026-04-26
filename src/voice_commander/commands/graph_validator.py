@@ -115,9 +115,7 @@ def _rule_orphan_required(graph: Graph, registry: Any) -> list[ValidationError]:
     if registry is None:
         return []
     out: list[ValidationError] = []
-    edges_by_dst: set[tuple[str, str]] = {
-        (e.dst.node_id, e.dst.port) for e in graph.edges
-    }
+    edges_by_dst: set[tuple[str, str]] = {(e.dst.node_id, e.dst.port) for e in graph.edges}
     for node in graph.nodes:
         if not node.ref.startswith("pipeline."):
             continue
