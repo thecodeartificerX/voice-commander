@@ -1,0 +1,11 @@
+{
+  "commands": {
+    "new_tab": {
+      "description": "Open a new tab",
+      "synonyms": ["new tab"],
+      "enabled": true,
+      "primitive": "press",
+      "kwargs": {"combo": "ctrl+t"}
+    }
+  }
+}

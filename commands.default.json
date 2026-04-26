@@ -1,158 +1,678 @@
 {
-  "commands": {
+  "schema_version": 1,
+  "graphs": {
     "new_tab": {
+      "schema_version": 1,
+      "name": "new_tab",
+      "kind": "command",
       "description": "Open a new tab in the focused app",
-      "synonyms": ["new tab", "open new tab", "open a new tab"],
+      "synonyms": [
+        "new tab",
+        "open new tab",
+        "open a new tab"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+t"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+t"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "close_tab": {
+      "schema_version": 1,
+      "name": "close_tab",
+      "kind": "command",
       "description": "Close the current tab or document",
-      "synonyms": ["close tab", "close", "close this tab"],
+      "synonyms": [
+        "close tab",
+        "close",
+        "close this tab"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+w"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+w"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "reopen_tab": {
+      "schema_version": 1,
+      "name": "reopen_tab",
+      "kind": "command",
       "description": "Reopen the most recently closed tab",
-      "synonyms": ["reopen tab", "restore tab", "undo close tab"],
+      "synonyms": [
+        "reopen tab",
+        "restore tab",
+        "undo close tab"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+shift+t"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+shift+t"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "new_window": {
+      "schema_version": 1,
+      "name": "new_window",
+      "kind": "command",
       "description": "Open a new window in the focused app",
-      "synonyms": ["new window", "open new window"],
+      "synonyms": [
+        "new window",
+        "open new window"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+n"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+n"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "close_window": {
+      "schema_version": 1,
+      "name": "close_window",
+      "kind": "command",
       "description": "Close the focused window (Alt+F4)",
-      "synonyms": ["close window", "close app", "quit", "quit app"],
+      "synonyms": [
+        "close window",
+        "close app",
+        "quit",
+        "quit app"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "alt+f4"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "alt+f4"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "next_tab": {
+      "schema_version": 1,
+      "name": "next_tab",
+      "kind": "command",
       "description": "Switch to the next tab",
-      "synonyms": ["next tab", "switch tab"],
+      "synonyms": [
+        "next tab",
+        "switch tab"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+tab"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+tab"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "previous_tab": {
+      "schema_version": 1,
+      "name": "previous_tab",
+      "kind": "command",
       "description": "Switch to the previous tab",
-      "synonyms": ["previous tab", "last tab", "prev tab"],
+      "synonyms": [
+        "previous tab",
+        "last tab",
+        "prev tab"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+shift+tab"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+shift+tab"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "last_window": {
+      "schema_version": 1,
+      "name": "last_window",
+      "kind": "command",
       "description": "Alt+Tab to the previous window",
-      "synonyms": ["last window", "previous window", "go back", "alt tab"],
+      "synonyms": [
+        "last window",
+        "previous window",
+        "go back",
+        "alt tab"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "alt+tab"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "alt+tab"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "select_all": {
+      "schema_version": 1,
+      "name": "select_all",
+      "kind": "command",
       "description": "Select all (Ctrl+A)",
-      "synonyms": ["select all", "highlight all"],
+      "synonyms": [
+        "select all",
+        "highlight all"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+a"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+a"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "copy": {
+      "schema_version": 1,
+      "name": "copy",
+      "kind": "command",
       "description": "Copy to clipboard",
-      "synonyms": ["copy", "copy that"],
+      "synonyms": [
+        "copy",
+        "copy that"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+c"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+c"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "cut": {
+      "schema_version": 1,
+      "name": "cut",
+      "kind": "command",
       "description": "Cut to clipboard",
-      "synonyms": ["cut", "cut that"],
+      "synonyms": [
+        "cut",
+        "cut that"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+x"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+x"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "paste": {
+      "schema_version": 1,
+      "name": "paste",
+      "kind": "command",
       "description": "Paste from clipboard",
-      "synonyms": ["paste", "paste it"],
+      "synonyms": [
+        "paste",
+        "paste it"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+v"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+v"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "undo": {
+      "schema_version": 1,
+      "name": "undo",
+      "kind": "command",
       "description": "Undo last action",
-      "synonyms": ["undo", "undo that"],
+      "synonyms": [
+        "undo",
+        "undo that"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+z"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+z"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "redo": {
+      "schema_version": 1,
+      "name": "redo",
+      "kind": "command",
       "description": "Redo last action",
-      "synonyms": ["redo"],
+      "synonyms": [
+        "redo"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+y"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+y"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "save": {
+      "schema_version": 1,
+      "name": "save",
+      "kind": "command",
       "description": "Save current document",
-      "synonyms": ["save", "save this", "save file"],
+      "synonyms": [
+        "save",
+        "save this",
+        "save file"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+s"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+s"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "find": {
+      "schema_version": 1,
+      "name": "find",
+      "kind": "command",
       "description": "Open find dialog",
-      "synonyms": ["find", "search page", "find in page"],
+      "synonyms": [
+        "find",
+        "search page",
+        "find in page"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+f"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+f"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "address_bar": {
+      "schema_version": 1,
+      "name": "address_bar",
+      "kind": "command",
       "description": "Focus the browser address bar",
-      "synonyms": ["address bar", "url bar", "focus address bar"],
+      "synonyms": [
+        "address bar",
+        "url bar",
+        "focus address bar"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "ctrl+l"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "ctrl+l"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "refresh": {
+      "schema_version": 1,
+      "name": "refresh",
+      "kind": "command",
       "description": "Refresh the page",
-      "synonyms": ["refresh", "reload", "reload page"],
+      "synonyms": [
+        "refresh",
+        "reload",
+        "reload page"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "f5"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "f5"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "minimize": {
+      "schema_version": 1,
+      "name": "minimize",
+      "kind": "command",
       "description": "Minimize the focused window",
-      "synonyms": ["minimize", "minimise"],
+      "synonyms": [
+        "minimize",
+        "minimise"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "win+down"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "win+down"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "maximize": {
+      "schema_version": 1,
+      "name": "maximize",
+      "kind": "command",
       "description": "Maximize the focused window",
-      "synonyms": ["maximize", "maximise", "full screen"],
+      "synonyms": [
+        "maximize",
+        "maximise",
+        "full screen"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "win+up"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "win+up"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "screenshot": {
+      "schema_version": 1,
+      "name": "screenshot",
+      "kind": "command",
       "description": "Start Windows screenshot tool",
-      "synonyms": ["screenshot", "take screenshot", "snip"],
+      "synonyms": [
+        "screenshot",
+        "take screenshot",
+        "snip"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "win+shift+s"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "win+shift+s"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     },
     "lock_screen": {
+      "schema_version": 1,
+      "name": "lock_screen",
+      "kind": "command",
       "description": "Lock the Windows session",
-      "synonyms": ["lock screen", "lock computer"],
+      "synonyms": [
+        "lock screen",
+        "lock computer"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
       "enabled": true,
-      "primitive": "press",
-      "kwargs": {"combo": "win+l"}
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.press",
+          "kwargs": {
+            "combo": "win+l"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     }
   }
 }

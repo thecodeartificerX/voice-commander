@@ -1,0 +1,15 @@
+{
+  "workflows": {
+    "search_web": {
+      "description": "Search the web",
+      "synonyms": ["search {query}"],
+      "enabled": true,
+      "args": [{"name": "query", "type": "string", "required": true}],
+      "steps": [
+        {"ref": "primitive:focus", "kwargs": {"target": "{default_browser}"}},
+        {"ref": "primitive:press", "kwargs": {"combo": "ctrl+t"}},
+        {"ref": "primitive:type",  "kwargs": {"text": "{query}"}}
+      ]
+    }
+  }
+}
