@@ -122,6 +122,19 @@
     return [];
   }
 
+  // ---------- HTML escape for attribute / text context ----------
+  // Neutralises HTML-special chars for attribute values, text nodes,
+  // and custom attribute name fragments (prevents injection, not
+  // spec-valid attribute names from arbitrary input).
+  function escapeAttr(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
   // ---------- Add node to canvas ----------
   // Returns the Drawflow numeric node ID
   function addNodeToCanvas(ref, x, y, canonicalId, kwargsData) {
@@ -136,22 +149,25 @@
       const args = desc.args || desc.inputs || [];
       for (const arg of args) {
         const val = kwargVals[arg.name] !== undefined ? kwargVals[arg.name] : '';
-        const escapedVal = String(val).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+        const safeName = escapeAttr(arg.name);
+        const safeVal = escapeAttr(val);
         if (arg.type === 'bool' || arg.type === 'boolean') {
-          kwargsHtml += `<label class="flex items-center gap-1"><input type="checkbox" df-kwarg-${arg.name} ${val ? 'checked' : ''}><span class="text-xs">${arg.name}</span></label>`;
+          kwargsHtml += `<label class="flex items-center gap-1"><input type="checkbox" df-kwarg-${safeName} ${val ? 'checked' : ''}><span class="text-xs">${safeName}</span></label>`;
         } else {
           const inputType = (arg.type === 'int' || arg.type === 'integer') ? 'number' : 'text';
-          kwargsHtml += `<input type="${inputType}" df-kwarg-${arg.name} value="${escapedVal}" placeholder="${arg.name}" class="df-input" title="${arg.name}">`;
+          kwargsHtml += `<input type="${inputType}" df-kwarg-${safeName} value="${safeVal}" placeholder="${safeName}" class="df-input" title="${safeName}">`;
         }
       }
     }
 
     // Short display name for the node header
     const shortName = ref.includes('.') ? ref.split('.').slice(1).join('.') : ref;
+    const safeShortName = escapeAttr(shortName);
+    const safeId = escapeAttr(id);
 
     const html = `<div class="df-node-wrap">
-  <div class="df-node-title">${shortName}</div>
-  <div class="df-node-id">${id}</div>
+  <div class="df-node-title">${safeShortName}</div>
+  <div class="df-node-id">${safeId}</div>
   ${kwargsHtml ? `<div class="df-node-kwargs">${kwargsHtml}</div>` : ''}
 </div>`;
 

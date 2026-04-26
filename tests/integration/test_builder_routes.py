@@ -257,3 +257,68 @@ def test_validate_graph_returns_200_and_422(client: TestClient) -> None:
     # 422: malformed schema (missing required fields)
     resp3 = client.post("/graph/validate", json={"name": "bad"})
     assert resp3.status_code == 422
+
+
+def test_builder_js_contains_escape_attr(client: TestClient) -> None:
+    """Smoke-test: escapeAttr() exists in the served builder.js.
+
+    Regression guard for #57: verifies that the escape helper and all 5
+    HTML-entity replacements are present in the JS source.  If escapeAttr()
+    were accidentally removed, this test will fail.
+    """
+    resp = client.get("/static/builder.js")
+    assert resp.status_code == 200
+    js = resp.text
+    assert "escapeAttr" in js, "escapeAttr helper must be present in builder.js"
+    # Verify all 5 HTML-special-character replacements are present
+    assert "&amp;" in js
+    assert "&quot;" in js
+    assert "&#39;" in js
+    assert "&lt;" in js
+    assert "&gt;" in js
+
+
+def test_xss_arg_name_stored_verbatim(client: TestClient) -> None:
+    """Server must not mangle arg names -- escaping is client-side only.
+
+    Regression test for #57: confirms the server stores XSS-payload arg names
+    verbatim.  The contract is: server stores raw, client (escapeAttr) escapes.
+    """
+    xss_name = '"><img src=x onerror=alert(1)>'
+    payload = {
+        "schema_version": 1,
+        "name": "xss_test",
+        "kind": "command",
+        "description": "",
+        "synonyms": [],
+        "inputs": [],
+        "llm_visible": True,
+        "strict": False,
+        "enabled": True,
+        "timeout_ms": 5000,
+        "nodes": [
+            # Include required 'combo' kwarg to pass _rule_orphan_required validation,
+            # plus the XSS-payload key to verify it is stored verbatim.
+            {
+                "id": "n1",
+                "ref": "pipeline.press",
+                "kwargs": {"combo": "ctrl+c", xss_name: "value"},
+                "pos": [0, 0],
+            },
+        ],
+        "edges": [],
+    }
+    r = client.post("/graph/xss_test", json=payload)
+    assert r.status_code == 200
+    r2 = client.get("/graph/xss_test")
+    assert r2.status_code == 200
+    nodes = r2.json()["nodes"]
+    # nodes may be a list or dict depending on schema; find the one with id "n1"
+    if isinstance(nodes, list):
+        n1_kwargs = next(n["kwargs"] for n in nodes if n["id"] == "n1")
+    else:
+        n1_kwargs = nodes["n1"]["kwargs"]
+    assert xss_name in n1_kwargs, (
+        "Server must store arg names verbatim without HTML-escaping"
+    )
+
