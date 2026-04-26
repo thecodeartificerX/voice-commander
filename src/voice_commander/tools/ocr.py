@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -50,8 +51,6 @@ def _capture_region(x: int, y: int, w: int, h: int) -> Path:
     import pyautogui  # already a project dep
 
     fd, path_str = tempfile.mkstemp(suffix=".png", prefix="vc_ocr_")
-    import os
-
     os.close(fd)
     img = pyautogui.screenshot(region=(x, y, w, h))
     img.save(path_str)
@@ -61,11 +60,9 @@ def _capture_region(x: int, y: int, w: int, h: int) -> Path:
 def _select_engine() -> _Engine:
     # Check config for explicit engine preference
     try:
-        from pathlib import Path as _Path
-
         from voice_commander.config import Config
 
-        cfg = Config.load(_Path("config.toml"))
+        cfg = Config.load(Path("config.toml"))
         pref = getattr(cfg.perception, "ocr_engine", "auto")
     except (FileNotFoundError, AttributeError):
         pref = "auto"
