@@ -109,7 +109,8 @@ class StreamingDaemon:
             ``_wav_executor`` — single-worker :class:`~concurrent.futures.ThreadPoolExecutor`
             for fire-and-forget async WAV / JSON writes.
             ``_session_active`` / ``_muted`` — boolean state flags (not thread-safe;
-            only mutated on the pynput hotkey-listener thread).
+            primarily mutated on the pynput hotkey-listener thread, also reset by
+            :meth:`shutdown` during teardown).
         """
         self._feedback = feedback
         self._recorder = recorder
@@ -127,6 +128,7 @@ class StreamingDaemon:
 
         self._utt_q: queue.Queue[npt.NDArray[np.float32] | None] = queue.Queue(maxsize=8)
         self._pipeline_thread: threading.Thread | None = None
+        self._heartbeat_thread: threading.Thread | None = None
         self._hotkey: HotkeyController | None = None
         self._shutdown = threading.Event()
         self._shutdown_lock = threading.Lock()
@@ -544,7 +546,8 @@ class StreamingDaemon:
         Teardown order:
 
         1. Stop the web server (no late UI requests land on a half-dead registry).
-        2. Close any open recording session (calls ``recorder.close_session()``).
+        2. Close any open recording session (calls ``recorder.close_session()`` unless
+           already muted, in which case the stream was closed by the mute handler).
         3. Stop the hotkey listener.
         4. Poison ``_utt_q`` with a ``None`` sentinel → join ``vc-pipeline`` thread
            (5 s timeout, logs warning on timeout).
@@ -590,7 +593,7 @@ class StreamingDaemon:
             self._pipeline_thread = None
 
         # Join heartbeat thread.
-        if hasattr(self, "_heartbeat_thread") and self._heartbeat_thread is not None:
+        if self._heartbeat_thread is not None:
             self._heartbeat_thread.join(timeout=2.0)
             if self._heartbeat_thread.is_alive():
                 logger.warning("Heartbeat thread did not exit within 2 s")
