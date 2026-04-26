@@ -1,7 +1,7 @@
 # Testing Strategy
 
 **Project:** Voice Commander
-**Last updated:** 2026-04-19
+**Last updated:** 2026-04-26
 **Status:** Authoritative — update this document whenever test structure changes.
 
 ---
@@ -40,7 +40,7 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 - **Location:** `tests/unit/`
 - **Markers:** *(no marker — runs by default)*
 - **Speed:** milliseconds per test; whole suite under 30 s.
-- **Principle:** every subsystem is independently testable. Hardware dependencies (`pynput`, `sounddevice`, `faster-whisper`, `winsound`) are mocked or replaced with fakes. No GPU required.
+- **Principle:** every subsystem is independently testable. Hardware dependencies (`pynput`, `sounddevice`, `faster-whisper`, `winsound`) are mocked or replaced with fakes. No GPU required. Graph modules (`commands/graph*.py`, `store.py`, `registrar.py`) are pure-Python with no hardware dependencies — all graph tests run in Layer 1.
 - **Triggered by:** every `uv run pytest` invocation; CI on every push.
 
 ### Layer 2 — Integration tests (canned WAVs)
@@ -82,6 +82,15 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 | `Config` | `tests/unit/test_config.py` | Round-trip: write TOML → `Config.load()` → values match, defaults applied when keys absent, invalid types raise `ConfigError`, `Config` is frozen (mutation raises `FrozenInstanceError`) | `tmp_path` fixture for temp `config.toml`; no external deps |
 | `Daemon` | `tests/unit/test_daemon.py` | `Daemon.shutdown()` sets shutdown event and worker drains; all subsystem constructors called with values from `Config`; worker thread restarted once on death then exits | All subsystems mocked with `MagicMock`; `threading.Event` used to control shutdown timing |
 | `PlanOutcome` | `tests/unit/test_plan_outcome.py` | `from_event_dict` round-trip (ok/miss/error), frozen dataclass mutation raises, 7 parametrized malformed-input cases (KeyError / ValueError / TypeError), `try_from_event_dict` returns None on bad input and populated outcome on valid input | No external deps; pure dataclass tests |
+| `Graph` (value objects) | `tests/unit/test_graph_types.py` | Frozen dataclasses (`Node`, `Edge`, `Graph`, `PortRef`, `GraphInput`, `GraphOutput`), equality, immutability | No external deps; pure dataclass tests |
+| `GraphSchema` | `tests/unit/test_graph_schema.py` | JSON ↔ `Graph` round-trip, schema version check, `GraphSchemaError` on malformed input (ADR 0063) | No external deps; canned JSON dicts |
+| `GraphValidator` | `tests/unit/test_graph_validator.py` | All 7 validation rules, `ValidationSeverity` enum, edge-case inputs (empty graph, orphan nodes, duplicate edges) (ADR 0063) | In-memory `Graph` objects built from helpers; no external deps |
+| `GraphRuntime` | `tests/unit/test_graph_runtime_linear.py`, `test_graph_runtime_data.py`, `test_graph_runtime_branch.py`, `test_graph_runtime_foreach.py`, `test_graph_runtime_nested.py`, `test_graph_runtime_value_nodes.py`, `test_graph_runtime_strict_timeout.py` | Linear execution, data-wire propagation, branch control flow, foreach loops, nested/cross-graph calls, value nodes, strict mode + timeout (ADR 0064) | Stub `ToolRegistry` with fake tool functions; in-memory `Graph` objects |
+| `GraphTopo` | `tests/unit/test_graph_topo.py` | Topological sort correctness, `CycleError` on cyclic graphs, single-node and empty-graph edge cases | No external deps; in-memory `Graph` objects |
+| `GraphDrawflow` | `tests/unit/test_graph_drawflow.py` | `to_drawflow()` / `from_drawflow()` round-trip guarantee, Drawflow port naming convention (ADR 0062, 0063) | No external deps; canned Drawflow JSON dicts |
+| `GraphMigrate` | `tests/unit/test_graph_migrate.py` | Legacy `commands.json` / `workflows.json` → canonical graph schema conversion, idempotency | `tmp_path` fixture for temp JSON files; canned legacy format dicts |
+| `GraphStore` | *(no dedicated unit test — covered by integration tests)* | `load()` / `save()` / `list()` / `delete()` operations, file-backed JSON persistence | `tmp_path` fixture for temp store directory |
+| `Registrar` | *(no dedicated unit test — covered by integration tests)* | `register_graphs()` synthesises `ToolEntry` per graph, `reload_all()` picks up changes, `llm_visible` flag respected (ADR 0067) | Stub `GraphStore` + in-memory `ToolRegistry` |
 
 ---
 
@@ -243,6 +252,42 @@ uv run voice-commander
 
 ---
 
+### Node-Graph Builder — Feature Gate
+
+**Gate task:** `VC-GRAPH-GATE`
+
+This gate validates the node-graph builder subsystem introduced in PR #51. Run after the builder UI is functional and graph modules are integrated.
+
+**Automated validation:**
+
+- [ ] `uv run pytest tests/unit/test_graph_types.py tests/unit/test_graph_schema.py tests/unit/test_graph_validator.py tests/unit/test_graph_topo.py -v` — all graph value-object, schema, validator, and topo tests pass.
+- [ ] `uv run pytest tests/unit/test_graph_drawflow.py -v` — Drawflow ↔ canonical round-trip tests pass.
+- [ ] `uv run pytest tests/unit/test_graph_migrate.py -v` — legacy migration tests pass.
+- [ ] `uv run pytest tests/unit/test_graph_runtime_linear.py tests/unit/test_graph_runtime_data.py tests/unit/test_graph_runtime_branch.py tests/unit/test_graph_runtime_foreach.py tests/unit/test_graph_runtime_nested.py tests/unit/test_graph_runtime_value_nodes.py tests/unit/test_graph_runtime_strict_timeout.py -v` — all runtime execution tests pass (linear, data-wire, branch, foreach, nested, value nodes, strict/timeout).
+- [ ] `uv run pytest tests/integration/test_graph_end_to_end.py tests/integration/test_graph_hot_reload.py tests/integration/test_graph_migrate_e2e.py -v` — all graph integration tests pass.
+
+**Graph round-trip validation:**
+
+- [ ] Create a command graph in the builder UI with ≥ 2 nodes and 1 data wire.
+- [ ] Save → reload page → graph renders identically (round-trip via `graph_schema` + `graph_drawflow`).
+- [ ] Export JSON from `/graph/{name}` endpoint — validate it matches canonical schema (ADR 0063).
+
+**Validation rule coverage:**
+
+- [ ] Attempt to save a graph with a cycle → UI shows validation error (rule: acyclicity).
+- [ ] Attempt to save a graph with an orphan node (no edges) → UI shows warning.
+- [ ] Attempt to save a graph with a dangling edge (missing target) → UI shows validation error.
+
+**Runtime execution:**
+
+- [ ] Create a simple 2-node command graph (e.g., `focus("Notepad")` → `type("hello")`).
+- [ ] Trigger via voice — LLM resolves to graph, `GraphRuntime` executes nodes in topological order, side-effects observed.
+- [ ] Create a graph with `llm_visible = false` (ADR 0067) — verify it does NOT appear in LLM tool list but IS callable from other graphs.
+
+**Cross-references:** ADR 0062 (Drawflow), ADR 0063 (canonical schema), ADR 0064 (graph runtime), ADR 0065 (typed returns), ADR 0066 (perception primitives), ADR 0067 (llm_visible flag), ADR 0068 (commander skill authoring).
+
+---
+
 ## 4. Adding a New Tool Test
 
 Follow this procedure every time a new `@tool`-decorated function is added to `src/voice_commander/tools/`.
@@ -353,6 +398,8 @@ def test_<tool_name>_wav_triggers_tool(pipeline):
 - [ ] `uv run pytest tests/unit/test_tools_<module>.py -v` passes.
 - [ ] `uv run pytest tests/integration/test_<module>_e2e.py -v` passes.
 - [ ] Phrase added to the MVP phrase list in `docs/architecture.md`.
+
+> **Note for graph-type commands:** For commands defined as canonical JSON graphs (not `@tool`-decorated Python), see the Node-Graph Builder gate checklist in §3 and ADR 0068 for the authoring workflow. Graph commands do not require fixture WAVs or `@tool` unit tests — they are validated via the graph gate instead.
 
 ---
 
