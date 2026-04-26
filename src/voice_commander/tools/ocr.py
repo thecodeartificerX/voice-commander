@@ -98,9 +98,10 @@ def _ocr_winrt(img_path: Path) -> str:
     Internally async (WinRT APIs are coroutine-based).  Safe to call from
     **both** sync contexts (daemon pipeline thread) and async contexts
     (FastAPI route handlers).  When a running event loop is detected the
-    coroutine is scheduled on a background thread's fresh loop via
-    ``asyncio.run_coroutine_threadsafe`` + a one-off thread, avoiding the
-    ``RuntimeError`` that ``asyncio.run()`` raises inside a running loop.
+    coroutine is executed on a throwaway thread via
+    ``ThreadPoolExecutor`` + ``asyncio.run()``, giving it a fresh event
+    loop and avoiding the ``RuntimeError`` that ``asyncio.run()`` raises
+    inside a running loop.
     """
     import asyncio
     import concurrent.futures
@@ -140,9 +141,14 @@ def _ocr_winrt(img_path: Path) -> str:
 
     # Async context (e.g. FastAPI route) — spin up a fresh loop on a
     # throwaway thread so the WinRT coroutine can run without nesting.
+    logger.debug("Running event loop detected; dispatching WinRT OCR to background thread")
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(asyncio.run, _run())
-        return future.result()
+        try:
+            return future.result(timeout=15)
+        except concurrent.futures.TimeoutError:
+            logger.error("WinRT OCR timed out after 15s (async-context path)")
+            raise OcrEngineUnavailable("WinRT OCR timed out") from None
 
 
 def _ocr_tesseract(img_path: Path) -> str:

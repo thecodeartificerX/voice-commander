@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import builtins
 import logging
+import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -130,7 +131,7 @@ def test_select_engine_resolves_config_from_package_root(tmp_path, monkeypatch):
 
 
 async def test_ocr_winrt_from_async_context(tmp_path, monkeypatch):
-    """_ocr_winrt must not raise RuntimeError when called inside a running loop."""
+    """ocr_region dispatches to _ocr_winrt correctly when called from an async context."""
     fake_img = tmp_path / "fake.png"
     fake_img.write_bytes(b"PNG")
 
@@ -167,8 +168,97 @@ def test_ocr_winrt_sync_context_still_works(tmp_path, monkeypatch):
 
 
 async def test_ocr_winrt_loop_detection():
-    """_ocr_winrt's loop detection correctly identifies async context."""
+    """Smoke test: pytest-asyncio provides a running loop (validates test infra)."""
     # We're inside a running loop (pytest-asyncio).
     # Verify get_running_loop succeeds — this is the branch _ocr_winrt takes.
     loop = asyncio.get_running_loop()
     assert loop is not None  # Confirms we're in the async branch
+
+
+def _make_winrt_mocks() -> tuple[dict, str]:
+    """Build minimal WinRT module stubs. Returns (modules_dict, expected_text)."""
+    expected_text = "mocked ocr output"
+
+    mock_result = MagicMock()
+    mock_result.text = expected_text
+
+    mock_engine = MagicMock()
+    mock_engine.recognize_async = AsyncMock(return_value=mock_result)
+
+    mock_bitmap = MagicMock()
+    mock_decoder = MagicMock()
+    mock_decoder.get_software_bitmap_async = AsyncMock(return_value=mock_bitmap)
+
+    mock_stream = MagicMock()
+    mock_file = MagicMock()
+    mock_file.open_async = AsyncMock(return_value=mock_stream)
+
+    mock_ocr_engine_cls = MagicMock()
+    mock_ocr_engine_cls.try_create_from_user_profile_languages = MagicMock(return_value=mock_engine)
+
+    mock_bitmap_decoder_cls = MagicMock()
+    mock_bitmap_decoder_cls.create_async = AsyncMock(return_value=mock_decoder)
+
+    mock_storage_file_cls = MagicMock()
+    mock_storage_file_cls.get_file_from_path_async = AsyncMock(return_value=mock_file)
+
+    modules = {
+        "winrt": MagicMock(),
+        "winrt.windows": MagicMock(),
+        "winrt.windows.graphics": MagicMock(),
+        "winrt.windows.graphics.imaging": MagicMock(BitmapDecoder=mock_bitmap_decoder_cls),
+        "winrt.windows.media": MagicMock(),
+        "winrt.windows.media.ocr": MagicMock(OcrEngine=mock_ocr_engine_cls),
+        "winrt.windows.storage": MagicMock(StorageFile=mock_storage_file_cls),
+        "winrt.windows.storage.streams": MagicMock(),
+    }
+    return modules, expected_text
+
+
+async def test_ocr_winrt_async_branch_exercises_threadpool(tmp_path, monkeypatch):
+    """Real _ocr_winrt called from async context — loop detection routes to ThreadPoolExecutor.
+
+    Unlike test_ocr_winrt_from_async_context, this test does NOT replace _ocr_winrt itself.
+    WinRT modules are mocked at sys.modules level so the real loop-detection +
+    ThreadPoolExecutor branch executes. A regression that reverts to bare asyncio.run()
+    in the async branch would raise RuntimeError and fail this test.
+    """
+    import voice_commander.tools.ocr as ocr_mod
+
+    fake_img = tmp_path / "fake.png"
+    fake_img.write_bytes(b"PNG")
+
+    winrt_modules, expected_text = _make_winrt_mocks()
+    for mod_name, mock_mod in winrt_modules.items():
+        monkeypatch.setitem(sys.modules, mod_name, mock_mod)
+
+    # We're inside an async test — asyncio.get_running_loop() will succeed.
+    # The real _ocr_winrt must detect this and dispatch via ThreadPoolExecutor.
+    result = ocr_mod._ocr_winrt(fake_img)
+    assert result == expected_text
+
+
+def test_ocr_winrt_sync_branch_exercises_asyncio_run(tmp_path, monkeypatch):
+    """Real _ocr_winrt called from sync context — no loop detected, asyncio.run() used directly.
+
+    Verifies the sync path still works after the async-context fix was added.
+    A regression that breaks the sync branch would raise here.
+    """
+    import voice_commander.tools.ocr as ocr_mod
+
+    fake_img = tmp_path / "fake.png"
+    fake_img.write_bytes(b"PNG")
+
+    # Guard: this test must run outside a running event loop
+    try:
+        asyncio.get_running_loop()
+        pytest.skip("test must run outside a running event loop")
+    except RuntimeError:
+        pass
+
+    winrt_modules, expected_text = _make_winrt_mocks()
+    for mod_name, mock_mod in winrt_modules.items():
+        monkeypatch.setitem(sys.modules, mod_name, mock_mod)
+
+    result = ocr_mod._ocr_winrt(fake_img)
+    assert result == expected_text
