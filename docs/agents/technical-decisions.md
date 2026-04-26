@@ -80,3 +80,15 @@ When you touch any row, also update the corresponding ADR (never the other way a
 | Dispatcher continue-on-error | `Plan.strict=False` enables continue-on-error; `strict=True` default preserves existing halt semantics | [0055](../decisions/0055-plan-strict-continue-on-error.md) |
 
 All ADRs live in [`../decisions/`](../decisions/). Add a new row here whenever you add a new ADR.
+
+## Node-Graph Builder
+
+| Decision | Choice | Why | ADR |
+|---|---|---|---|
+| Node-graph editor library | Drawflow vendored as `drawflow.min.js` + `drawflow.min.css` under `web/static/`; no npm, no build step | Zero runtime deps; plain `<script>` include satisfies ADR 0022 no-SPA rule; deliberate-bump upgrade model | [0062](../decisions/0062-drawflow-vendored-node-graph-editor.md) |
+| Graph on-disk format | Canonical JSON schema (`schema_version`, `name`, `kind`, `nodes`, `edges`, `inputs`, `outputs`) with a thin `graph_drawflow.py` adapter converting to/from Drawflow's native export shape | Human-readable, hand-editable, lib-portable; roundtrip fixed-point tests are mandatory | [0063](../decisions/0063-canonical-graph-schema-with-lib-isolated-adapter.md) |
+| Graph execution model | `GraphRuntime` walks canonical graphs as DAGs; `LLMRouter.route()` and `Dispatcher.run_plan()` interfaces unchanged; graphs register as `ToolEntry` closures | LLM sees flat `Plan` of named calls; small models cannot reliably author DAGs at runtime; `PlanOutcome` wire format preserved | [0064](../decisions/0064-graph-runtime-supersedes-linear-workflow-steps.md) |
+| Primitive return values | `focus`, `open`, `last` return `hwnd: int`; existing void callers unaffected (Python discards unused returns) | Graph runtime needs source values for data wires; no wrapper class overhead; no breaking changes | [0065](../decisions/0065-typed-return-values-on-window-process-primitives.md) |
+| Perception primitives | `read_clipboard`, `get_active_window_title`, `get_cursor_pos`, `ocr_region(x,y,w,h)` as new `[perception]` tool group; `winrt` primary, Tesseract fallback | Branch nodes need readable desktop state; leaving perception out removes the main reason for typed data wires | [0066](../decisions/0066-perception-primitives-layer.md) |
+| LLM tool-list filtering | `Graph.llm_visible: bool = True`; when `False`, graph is callable cross-graph but excluded from `LLMRouter.all_llm_visible()` | Small MoEs degrade past ~30 tools; helper graphs should not pollute the LLM tool list | [0067](../decisions/0067-per-graph-llm-visible-flag.md) |
+| Commander skill scope | Skill expanded to interview for all three layers (primitive → command → workflow); commands/workflows written as canonical JSON direct file write; no web-UI dependency | Terminal-driven, stateless, offline-capable; hot-reload picks up new files automatically | [0068](../decisions/0068-commander-skill-multi-layer-authoring.md) |
