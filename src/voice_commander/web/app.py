@@ -109,7 +109,9 @@ def create_app(
 
     @app.get("/page/primitives", response_class=HTMLResponse)
     async def page_primitives(request: Request) -> HTMLResponse:
-        """``GET /page/primitives`` — render the tools/primitives page with tools grouped by category."""
+        """``GET /page/primitives`` — render the tools/primitives page
+        with tools grouped by category.
+        """
         tools = registry.all()
         grouped: dict[str, list[object]] = {}
         for t in tools:
@@ -224,7 +226,9 @@ def create_app(
 
     @app.get("/tool/{name}/cancel", response_class=HTMLResponse)
     async def tool_cancel(request: Request, name: str) -> HTMLResponse:
-        """``GET /tool/{name}/cancel`` — swap edit form back to read-only tool card; 404 if not found."""
+        """``GET /tool/{name}/cancel`` — swap edit form back to read-only
+        tool card; 404 if not found.
+        """
         tool = registry.by_name(name)
         if tool is None:
             return HTMLResponse(
@@ -322,7 +326,9 @@ def create_app(
 
     @app.post("/tool/{name}/toggle", response_class=HTMLResponse)
     async def tool_toggle(request: Request, name: str) -> HTMLResponse:
-        """``POST /tool/{name}/toggle`` — flip tool's enabled state via sidecar TOML and hot-reload registry."""
+        """``POST /tool/{name}/toggle`` — flip tool's enabled state
+        via sidecar TOML and hot-reload registry.
+        """
         current = registry.by_name(name)
         if current is None:
             return HTMLResponse(

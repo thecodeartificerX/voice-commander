@@ -130,7 +130,7 @@ def _str(raw: Mapping[str, Any], key: str) -> str:
 
 
 def _parse_input(raw: Any) -> GraphInput:
-    """Parse a raw mapping into a ``GraphInput`` with defaults for type, required, and description."""
+    """Parse raw mapping into a ``GraphInput``, defaulting type/required/description."""
     if not isinstance(raw, Mapping):
         raise GraphSchemaError(f"input must be an object, got {type(raw).__name__}")
     return GraphInput(

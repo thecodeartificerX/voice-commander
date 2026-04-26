@@ -68,7 +68,9 @@ def attach_admin_routes(
 
     @app.post("/command/{name}/toggle", response_class=HTMLResponse)
     async def command_toggle(request: Request, name: str) -> HTMLResponse:
-        """``POST /command/{name}/toggle`` — flip enabled state and return the updated card partial; 404 if absent."""
+        """``POST /command/{name}/toggle`` — flip enabled state and return the updated card partial;
+        404 if absent.
+        """
         cmds = command_store.load_all()
         cmd = cmds.get(name)
         if cmd is None:
@@ -84,7 +86,9 @@ def attach_admin_routes(
 
     @app.post("/command/{name}/delete", response_class=HTMLResponse)
     async def command_delete(request: Request, name: str) -> HTMLResponse:
-        """``POST /command/{name}/delete`` — remove command from store and registry; return empty 200."""
+        """``POST /command/{name}/delete`` — remove command from store
+        and registry; return empty 200.
+        """
         command_store.delete(name)
         registry.remove(name)
         _reload()
@@ -105,7 +109,9 @@ def attach_admin_routes(
 
     @app.post("/workflow/{name}/toggle", response_class=HTMLResponse)
     async def workflow_toggle(request: Request, name: str) -> HTMLResponse:
-        """``POST /workflow/{name}/toggle`` — flip enabled state and return the updated card partial; 404 if absent."""
+        """``POST /workflow/{name}/toggle`` — flip enabled state and
+        return the updated card partial; 404 if absent.
+        """
         wfs = workflow_store.load_all()
         wf = wfs.get(name)
         if wf is None:
@@ -121,7 +127,9 @@ def attach_admin_routes(
 
     @app.post("/workflow/{name}/delete", response_class=HTMLResponse)
     async def workflow_delete(request: Request, name: str) -> HTMLResponse:
-        """``POST /workflow/{name}/delete`` — remove workflow from store and registry; return empty 200."""
+        """``POST /workflow/{name}/delete`` — remove workflow from store
+        and registry; return empty 200.
+        """
         workflow_store.delete(name)
         registry.remove(name)
         _reload()

@@ -118,7 +118,7 @@ def _rule_unknown_ref(
 
 
 def _rule_orphan_required(graph: Graph, registry: Any) -> list[ValidationError]:
-    """Reject pipeline nodes with required args that have neither a kwarg nor an incoming data wire."""
+    """Reject pipeline nodes whose required args lack both a kwarg and a data wire."""
     if registry is None:
         return []
     out: list[ValidationError] = []

@@ -200,7 +200,7 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
 
     @r.delete("/graph/{name}")
     def delete_graph(name: str) -> dict[str, Any]:
-        """``DELETE /graph/{name}`` — remove a graph from the store and hot-reload; 404 if absent."""
+        """``DELETE /graph/{name}`` — remove graph from store and hot-reload; 404 if absent."""
         with ctx.reload_lock:
             for store in (ctx.command_store, ctx.workflow_store):
                 try:
