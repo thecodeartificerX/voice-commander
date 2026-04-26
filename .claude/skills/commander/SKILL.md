@@ -1,23 +1,30 @@
 ---
 name: commander
-description: Interactive skill for creating, editing, renaming, disabling, or deleting voice-commander LLM-visible verbs in this repo. Walks the user through a short interview, then writes or patches the Python function in `tools/primitives.py`, its sidecar TOML entry in `tools/primitives.toml`, its unit test in `tests/unit/test_tools_primitives.py`, and (when disambiguation is involved) the system prompt in `llm_router.py`. Verifies with `pytest` + `--validate`. Use whenever the user says "new voice command", "add a verb", "create a voice tool", "edit voice command", "change tool description", "rename command", "disable command", "delete command", "extend the voice commander", "/commander", or otherwise wants to wire up, modify, or remove an LLM-routable verb. Invoke even when the user does not name the skill — any request to add, change, or remove an LLM-visible verb here should trigger it.
+description: Interactive skill for creating voice-commander primitives, commands, and workflows. For primitives: walks through a seven-question interview, then writes the Python function in `tools/primitives.py`, its sidecar TOML entry, its unit test, and (when disambiguation is involved) the system prompt. For commands/workflows: interviews for graph metadata and node/edge definitions, then writes canonical JSON to `commands.json`/`workflows.json` via GraphStore and runs `--validate`. Also handles editing, renaming, toggling, and deleting existing verbs. Use whenever the user says "new voice command", "add a verb", "create a voice tool", "build a workflow", "make a command", "edit voice command", "change tool description", "rename command", "disable command", "delete command", "extend the voice commander", "/commander", or otherwise wants to wire up, modify, or remove an LLM-routable verb. Invoke even when the user does not name the skill — any request to add, change, or remove an LLM-visible verb here should trigger it.
 ---
 
 # Commander — Verb Catalog Editor (LLM-only world)
 
 Guides the user through a terse interview and produces or patches a voice-commander verb
-(Python function + sidecar TOML entry + unit test; optional prompt edit) with all paths,
-decorator shape, resolver touchpoints, and safety blocklists hard-coded below. Do not
-discover anything — this file has the facts.
+across three authoring layers:
+
+- **Primitive** — Python function + sidecar TOML + unit test (+ optional prompt edit)
+- **Command** — single-graph canonical JSON written to `commands.json` via `GraphStore`
+- **Workflow** — multi-step canonical JSON written to `workflows.json` via `GraphStore`
+
+All paths, decorator shape, resolver touchpoints, safety blocklists, and JSON schema
+details are hard-coded below. Do not discover anything — this file has the facts.
 
 The repo is post-rework: rapidfuzz no longer routes commands, there are no tool groups,
 there is no `phrases_only` / `both` routing mode. A single LLM plans tool chains from a
-small verb catalog. See ADRs 0040–0044 for the full history. This skill reflects `main`
-today.
+small verb catalog, with graphs registering as ToolEntry closures. See ADRs 0040–0044,
+0062–0068 for the full history. This skill reflects `main` today.
+
+**ADR:** [0068 — Commander skill multi-layer authoring](../../../docs/decisions/0068-commander-skill-multi-layer-authoring.md)
 
 ## Trigger
 
-- **Create**: "new voice command", "add a verb", "add tool", "make a primitive"
+- **Create**: "new voice command", "add a verb", "add tool", "make a primitive", "build a workflow", "make a command"
 - **Edit**: "change the description for X", "rename verb X", "edit the action for X",
   "update prompt disambiguation for X"
 - **Toggle**: "disable verb X", "enable verb X"
@@ -26,7 +33,19 @@ today.
 - "/commander"
 - Any request to add, change, or remove an LLM-visible verb in this repo
 
-## Mode selection (first question after trigger)
+## Question 0 — Authoring layer (always ask first)
+
+Before anything else, ask:
+
+> "Are you authoring a **primitive** (new Python function + TOML + test), a **command** (single graph in `commands.json`), or a **workflow** (multi-step graph in `workflows.json`)?"
+
+- **Primitive** — continue to the existing **Mode selection** and interview below (unchanged).
+- **Command** — jump to **Mode: Create Command** section below.
+- **Workflow** — jump to **Mode: Create Workflow** section below.
+
+If the user's message makes the layer obvious (e.g. "add a Python tool for volume up" = primitive; "build a workflow that opens Spotify then types a song name" = workflow), skip the question and confirm your interpretation.
+
+## Mode selection (first question after layer = primitive)
 
 If the user's message does not already pin it down, ask:
 
@@ -54,6 +73,12 @@ Each mode below is self-contained. Skip straight to the matching section.
 | Validate registry | `uv run python -m voice_commander --validate` |
 | Run verb tests | `uv run pytest tests/unit/test_tools_primitives.py -q` |
 | Run resolver tests | `uv run pytest tests/unit/test_resolver.py -q` |
+| Commands store | `src/voice_commander/commands/store.py` — `GraphStore` |
+| Commands JSON | `commands.json` (user-data dir, seeded from starter pack) |
+| Workflows JSON | `workflows.json` (user-data dir, seeded from starter pack) |
+| Graph schema | `src/voice_commander/commands/graph_schema.py` — `parse_graph`, `serialise_graph` |
+| Graph validator | `src/voice_commander/commands/graph_validator.py` — `validate` |
+| Graph registrar | `src/voice_commander/commands/registrar.py` — `reload_all` |
 
 ### One home for verbs
 
@@ -237,12 +262,10 @@ it intersects any of these:
    Already applied post-resolve inside `open`.
 3. **`_PRESS_BLOCKLIST`** (`primitives.py`) — set of `frozenset({...})` destructive
    chords rejected by `press` (`shift+delete`, `win+r`). Normalized to sorted lowercase
-   token set. Extend if a new chord class is destructive (e.g. `ctrl+alt+delete` is
-   already intercepted by the OS so no need; `win+r` opens a script-entry surface).
+   token set. Extend if a new chord class is destructive.
 4. **`_DANGEROUS_DISPLAY_PATTERNS`** (`resolver.py`) — regex over Start Menu +
    AppsFolder display names; filtered **at cache-build time**, so `resolve_app` never
-   even scores destructive entries. Covers the uninstall / repair / setup / admin-panel
-   surface.
+   even scores destructive entries.
 
 **Rule for new verbs:** any tool that introduces a *new* destructive capability
 (file deletion, process kill, registry write, arbitrary shell exec) must require a
@@ -253,12 +276,12 @@ entry in the relevant blocklist. Flag this in the interview (red flags section).
 
 The LLM learns the verb catalog from **two** surfaces:
 
-1. **Tools array** — auto-generated from `primitives.toml` via `tool_schema.py` → passed
+1. **Tools array** — auto-generated from `primitives.toml` via `tool_schema.py` — passed
    in the OpenAI-style `tools=[...]` field of the chat completion. Descriptions and arg
    schemas come from here.
 2. **System prompt** — `_SYSTEM_PROMPT_TEMPLATE` in `llm_router.py`. Contains:
    - Principles (prefer precise verbs; bans on window-sweep chords).
-   - Disambiguation rules (close vs close_window; "browser" → default_browser).
+   - Disambiguation rules (close vs close_window; "browser" to default_browser).
    - Hard bans (destructive chords / launches).
    - Few-shot examples with `{default_browser}` templated.
 
@@ -266,14 +289,9 @@ The LLM learns the verb catalog from **two** surfaces:
 
 Edit `_SYSTEM_PROMPT_TEMPLATE` when the new / edited verb introduces any of:
 
-- **Disambiguation vs another verb.** Canonical example: `close` vs `close_window`. The
-  prompt says *"When 'close' is ambiguous, prefer close() (tab). Only use close_window()
-  when the user explicitly says window, app, or quit."*
-- **Hard ban against a chord that would otherwise look tempting.** Canonical example:
-  `press(combo='win+d')` / `press(combo='win+m')` / `press(combo='win+up')` are banned
-  in favor of `minimize()` / `maximize()`.
-- **A new natural-language surface** the few-shot examples don't already cover (e.g. a
-  new "send" / "submit" / "search" intent that should chain verbs).
+- **Disambiguation vs another verb.** Canonical example: `close` vs `close_window`.
+- **Hard ban against a chord that would otherwise look tempting.**
+- **A new natural-language surface** the few-shot examples don't already cover.
 
 Do NOT edit the prompt for a verb that is an additive keystroke with no overlap — the
 tools array carries the description through on its own.
@@ -385,17 +403,16 @@ rg -n "^\[tools\.<name>\]|<description fragment>" src/voice_commander/tools/prim
 rg -n "^def <name>|@tool\(name=\"<name>\"\)" src/voice_commander/tools/primitives.py
 ```
 
-Show the user a one-line confirmation before changing anything: `"Found <name> in
-primitives.py (Python symbol: <symbol>), settle_ms=<n>, description=<oneline>. Proceed?"`
+Show the user a one-line confirmation before changing anything: "Found <name> in
+primitives.py (Python symbol: <symbol>), settle_ms=<n>, description=<oneline>. Proceed?"
 
-## Mode: Create
+## Mode: Create (primitive)
 
 Ask one question at a time. Propose defaults from prior answers so the user can confirm
 with one word.
 
 1. **Intent sentence** — "One sentence the LLM will read as the tool description. State
-   the default utterance this tool owns; state any hard bans (e.g. 'NEVER emit press
-   for this')."
+   the default utterance this tool owns; state any hard bans."
 2. **Python symbol** — propose a `snake_case` name. Only diverges from the LLM-visible
    name when it would shadow a builtin.
 3. **LLM-visible name** — same as Python symbol unless shadowed. If different, confirm
@@ -409,45 +426,132 @@ with one word.
    never hand-edit `pyproject.toml`.
 6. **Resolver use** — does the tool take a fuzzy-matched target? Call
    `resolver.resolve_window(target)` or `resolver.resolve_app(target)` — do NOT roll new
-   enumeration logic. If the author proposes "iterate EnumWindows here" in their
-   description, redirect them to the resolver.
+   enumeration logic.
 7. **Self-verify** — required for any tool that changes foreground, creates a window,
-   closes something, or types into an input. Pick the matching helper pattern
-   (`_verify_foreground` raises; `_verify_open` / `_close_with_verify` log + return).
+   closes something, or types into an input.
 8. **settle_ms** — 0 for no-ops / pure waits; 50–100 ms for keystrokes; 200–500 ms for
    focus / launch.
-9. **Disambiguation bans** — any utterance that should NOT map here? E.g. "should the
-   LLM ever pick `press(combo='win+d')` instead of this? If no, that's a ban." If yes,
-   plan a `_SYSTEM_PROMPT_TEMPLATE` edit in the same PR.
+9. **Disambiguation bans** — any utterance that should NOT map here?
 10. **Config fields** — need a tunable? Propose `LLMConfig.<field>` shape; pick a
     default; confirm you'll add a `config.toml` row.
 11. **Safety** — does the verb introduce a new destructive capability (delete, kill,
     write, exec)? If yes, require `confirm=True` default-False, and identify which
     blocklist gets a new entry.
 
-Then run the **Create checklist** below.
+Then run the **Create checklist (primitive)** below.
 
-### Create checklist
+### Create checklist (primitive)
 
 1. **Add dependency if needed**: `uv add <pkg>`. Announce success. Stop on failure.
 2. **Edit `primitives.py`** — add the `@tool` (or `@tool(name="...")`) function. Import
-   anything lazily at the top of the function body if it is Windows-only (see how
-   `focus` and `minimize` do their `import win32gui` inside the function).
+   anything lazily at the top of the function body if it is Windows-only.
 3. **Edit `primitives.toml`** — add `[tools.<name>]` with `phrases = []`,
    `description`, `enabled = true`, `settle_ms`, `llm_only = true`, plus
-   `[tools.<name>.args.<arg>]` sub-tables. Descriptions on this side are prompt
-   surface — author them for the LLM (DEFAULTS / BANS / "use X not Y").
-4. **Edit `test_tools_primitives.py`** — one mocked test per behavior you care about
-   (happy path, verify success, verify-timeout WARNING, resolver-miss error). Include
-   a signature assertion for arg-bearing verbs.
+   `[tools.<name>.args.<arg>]` sub-tables.
+4. **Edit `test_tools_primitives.py`** — one mocked test per behavior you care about.
+   Include a signature assertion for arg-bearing verbs.
 5. **Edit `_SYSTEM_PROMPT_TEMPLATE`** in `llm_router.py` — ONLY if the verb introduces
-   disambiguation, a hard ban, or a new natural-language surface. Update any golden
-   fixture for the prompt test.
+   disambiguation, a hard ban, or a new natural-language surface.
 6. **Edit `config.py` + `config.toml`** — ONLY if the verb needs a new `LLMConfig` field.
 7. **Verify** — shared verification block below.
-8. **Post-write validation** — `uv run python -m voice_commander --validate`. Scan the
-   log for a source line for any new config field.
+8. **Post-write validation** — `uv run python -m voice_commander --validate`.
 9. **Report** — reporting block below.
+
+## Mode: Create Command
+
+A **command** is a single-purpose graph in `commands.json`: typically a linear or
+branching sequence of primitives wired together via data edges. The LLM sees it as a
+named tool call.
+
+### Interview for a command
+
+Ask one question at a time:
+
+1. **Name** — `snake_case`, unique across commands and primitives.
+2. **Synonyms** — comma-separated alternate phrasings the LLM can use to invoke it.
+   Can be empty.
+3. **Description** — one sentence. State the default utterance. Write for the LLM.
+4. **llm_visible** — should the LLM see this as a top-level tool? Default `true`.
+   Set `false` for helper graphs called only from workflows (ADR 0067).
+5. **Inputs** (typed, optional) — if the graph needs runtime parameters, list them:
+   `name`, `type` (`str`/`int`/`bool`/`float`), `required`, `description`. For a
+   zero-input command (fixed sequence), skip.
+6. **Nodes** — list each step as `tool_name` + `kwargs` (baked-in values).
+   Assign each a short id (e.g. `n1`, `n2`) for edge wiring.
+7. **Edges (data wiring)** — which output ports feed which input kwargs?
+   For a linear command with no data dependencies, no edges needed.
+
+Then run the **Create checklist (command / workflow)** below.
+
+### Canonical graph JSON shape
+
+```json
+{
+  "schema_version": 1,
+  "graphs": {
+    "<name>": {
+      "schema_version": 1,
+      "name": "<name>",
+      "kind": "command",
+      "description": "...",
+      "synonyms": ["..."],
+      "llm_visible": true,
+      "enabled": true,
+      "inputs": [
+        {"name": "query", "type": "str", "required": true, "description": "..."}
+      ],
+      "outputs": [],
+      "nodes": [
+        {"id": "n1", "tool": "focus", "kwargs": {"target": "chrome"}},
+        {"id": "n2", "tool": "press", "kwargs": {"combo": "ctrl+t"}}
+      ],
+      "edges": [
+        {"src": {"node_id": "n1", "port": "result"}, "dst": {"node_id": "n2", "port": "target"}}
+      ]
+    }
+  }
+}
+```
+
+`inputs[]` items with `required=true` become mandatory kwargs the LLM must supply.
+`edges[]` src/dst `port` values must match actual tool output/input names — run
+`--validate` to confirm.
+
+### Create checklist (command / workflow)
+
+1. **Read the current store file** — `commands.json` or `workflows.json`. If absent,
+   create it with the minimal `{"schema_version": 1, "graphs": {}}` wrapper.
+2. **Validate the node tool names** — each `tool` value must be registered. Run
+   `uv run python -m voice_commander --validate` to confirm after writing.
+3. **Write the graph entry** into the `"graphs"` object using the canonical shape above.
+   Use atomic tmp+rename (write `.json.tmp`, then `os.replace`) if editing programmatically.
+4. **Run `uv run python -m voice_commander --validate`** — must exit 0.
+5. **No unit test required for the graph itself** — `graph_validator.py` validates
+   structure; the runtime integration test covers execution. If the command uses a new
+   primitive that has no test, add the primitive test first.
+6. **Report** — reporting block below (adapted: "Graph written to `commands.json`").
+
+## Mode: Create Workflow
+
+A **workflow** is a multi-step graph in `workflows.json`: same JSON shape as a command
+but `"kind": "workflow"`. Workflows can call other commands/workflows as sub-graphs
+(cross-graph references via `tool` field = graph name).
+
+### Interview for a workflow
+
+Same questions as **Create Command** (name, synonyms, description, llm_visible, inputs,
+nodes, edges) plus:
+
+- **Inputs (typed, required)** — workflows typically have typed inputs since they
+  orchestrate other tools. Collect all input names, types, and descriptions up front.
+- **Sub-graph calls** — if a node's `tool` field refers to another command/workflow name
+  (not a primitive), confirm the referenced graph exists and is enabled. Cross-graph
+  calls are resolved at runtime via `GraphRuntime`'s `lookup` function.
+
+### Create checklist (workflow)
+
+Same as **Create checklist (command / workflow)** above, but write to `workflows.json`
+with `"kind": "workflow"`.
 
 ## Mode: Edit
 
@@ -456,7 +560,7 @@ Run the Locate steps first. Then ask only the questions the edit requires. Edit 
 | Edit | `primitives.py` | `primitives.toml` | `test_tools_primitives.py` | `llm_router.py` | `config.py` + `config.toml` |
 |---|---|---|---|---|---|
 | Rename Python symbol (LLM name unchanged) | yes | no | yes (import + patch targets) | no | no |
-| Rename LLM-visible name | maybe (`@tool(name=...)` if symbol stays) | yes (`[tools.<old>]` → `[tools.<new>]`) | yes | yes (all prompt mentions) | no |
+| Rename LLM-visible name | maybe (`@tool(name=...)` if symbol stays) | yes (`[tools.<old>]` to `[tools.<new>]`) | yes | yes (all prompt mentions) | no |
 | Change description | no | yes | no (unless docstring kept in sync) | maybe (if disambiguation changed) | no |
 | Change action body | yes | no | yes (mocks / assertions) | no | maybe |
 | Swap library | yes | no | yes | no | maybe (`uv add`) |
@@ -464,6 +568,9 @@ Run the Locate steps first. Then ask only the questions the edit requires. Edit 
 | Change settle_ms | no | yes | no | no | no |
 | Add disambiguation / ban | no | yes (reflect in description) | no | yes | no |
 | Add a tunable | maybe (read it) | no | yes | no | yes |
+
+For graph commands/workflows: edit the JSON directly in `commands.json` / `workflows.json`,
+then re-run `--validate`.
 
 Always show a unified before/after summary before writing.
 
@@ -481,16 +588,19 @@ Always show a unified before/after summary before writing.
 
 ## Mode: Toggle (enable / disable)
 
-No code change. Flip `enabled` in the sidecar TOML.
+**Primitive:** No code change. Flip `enabled` in the sidecar TOML.
 
 1. Locate the `[tools.<name>]` table.
-2. `enabled = true` ↔ `enabled = false`.
+2. `enabled = true` or `enabled = false`.
 3. Verify — primitives test file suffices:
    ```bash
    uv run pytest tests/unit/test_tools_primitives.py -q
    ```
-4. Report — one line: `"<name> now enabled=<bool>; disabled verbs are filtered out of
-   the LLM's tools array on next daemon start."`
+4. Report — one line: "<name> now enabled=<bool>; disabled verbs are filtered out of
+   the LLM's tools array on next daemon start."
+
+**Command / Workflow:** Flip `"enabled": false` in the graph's JSON entry in
+`commands.json` / `workflows.json`. No code change. Run `--validate` to confirm.
 
 Disabled verbs stay registered but `ToolRegistry.all_llm_visible()` skips them, so the
 LLM never sees them in the tools array.
@@ -498,6 +608,8 @@ LLM never sees them in the tools array.
 ## Mode: Delete
 
 Destructive. Confirm the verb name with the user verbatim before touching files.
+
+**Primitive:**
 
 1. Locate.
 2. Confirm — "Delete `<name>` from primitives, its test, and any prompt mentions? This
@@ -517,6 +629,13 @@ Destructive. Confirm the verb name with the user verbatim before touching files.
 9. Post-write validation — `uv run python -m voice_commander --validate`. Must not list
    the deleted verb.
 10. Report.
+
+**Command / Workflow:**
+
+1. Confirm the graph name verbatim.
+2. Delete the `"<name>"` key from the `"graphs"` object in `commands.json` / `workflows.json`.
+3. Run `uv run python -m voice_commander --validate`.
+4. Report.
 
 ## Shared verification block
 
@@ -544,42 +663,44 @@ Four lines max:
 - Files changed (paths, relative to repo root).
 - Tests passing (count).
 - Prompt changed: Y / N (and which rule/example if Y).
-- How to try it: `"Restart the daemon (uv run voice-commander), press Scroll Lock, say
-  '<example utterance>'. The LLM should emit <expected tool chain>."` For delete, skip
+- How to try it: "Restart the daemon (uv run voice-commander), press Scroll Lock, say
+  '<example utterance>'. The LLM should emit <expected tool chain>." For delete, skip
   the utterance line.
 
 ## Red flags — stop and ask
 
-- **Writes, deletes, or moves files** outside a clearly scoped, user-provided path →
+- **Writes, deletes, or moves files** outside a clearly scoped, user-provided path —
   demand a `confirm: bool = False` param. Document blast radius in the description.
   Consider whether the filename belongs in a blocklist.
-- **Network traffic to a non-local endpoint** → demand `confirm: bool = False` and URL
+- **Network traffic to a non-local endpoint** — demand `confirm: bool = False` and URL
   logging at INFO. The LLM prompt needs a rule so it doesn't emit the call for
   ambiguous utterances.
-- **Rename of a Python symbol that's imported elsewhere in `src/`** → grep the whole
+- **Rename of a Python symbol that's imported elsewhere in `src/`** — grep the whole
   source tree before renaming. The primitives module is intentionally self-contained,
   but private helpers occasionally get referenced from tests.
 - **New destructive capability** (delete_file, kill_process, write_registry,
-  arbitrary_exec) → require `confirm=True` default-False; AND add to the relevant
+  arbitrary_exec) — require `confirm=True` default-False; AND add to the relevant
   blocklist (`_LAUNCH_BLOCKLIST` / `_PRESS_BLOCKLIST` / a new verb-specific blocklist).
   Update the system prompt with a hard ban.
 - **Verb signature that can't express via JSON schema** (nested objects, unions beyond
-  `str | None`, callables) → flatten. The OpenAI tools array doesn't carry complex
+  `str | None`, callables) — flatten. The OpenAI tools array doesn't carry complex
   shapes cleanly across LM Studio backends.
 - **Description collides with an existing verb's natural-language surface** (e.g. a new
-  "close something" verb, or a new "open X" variant) → design the disambiguation rule
-  BEFORE writing code; update `_SYSTEM_PROMPT_TEMPLATE` in the same PR. See how
-  `close` vs `close_window` and `minimize` vs `press(combo='win+d')` are spelled out —
-  mimic that prose shape.
-- **Verb takes a human utterance but doesn't call the resolver** → redirect to
+  "close something" verb, or a new "open X" variant) — design the disambiguation rule
+  BEFORE writing code; update `_SYSTEM_PROMPT_TEMPLATE` in the same PR.
+- **Verb takes a human utterance but doesn't call the resolver** — redirect to
   `resolver.resolve_window` / `resolver.resolve_app`. Rolling a new EnumWindows / Start
   Menu scan is almost always a mistake (misses the `_DANGEROUS_DISPLAY_PATTERNS` filter,
   misses threshold config, bypasses caching).
+- **Graph node references an unregistered tool name** — run `--validate` before claiming
+  the graph is complete. Unknown tool names are validation rule 1.
 
 ## Why this skill is shaped like this
 
 - Hard-coded paths and decorator shape mean zero filesystem discovery per invocation.
   The verb home is one file pair, not a tree.
+- Question 0 (layer selection) separates the primitive interview from the graph JSON
+  authoring flow, keeping both short and focused.
 - Mode selection up front keeps the interview short — Toggle should not ask nine
   questions.
 - Resolver + safety-blocklist rules catch the two realistic "new destructive verb"
@@ -590,3 +711,6 @@ Four lines max:
 - Config + `log_llm_sources` ensures no silent default ever lands on a user's machine
   without a visible log line at startup. A new tunable without a `config.toml` row is
   a bug.
+- Graph commands/workflows write directly to `commands.json` / `workflows.json` so the
+  hot-reload path (`reload_all`) picks them up on the next daemon restart without any
+  web-UI dependency (ADR 0068).
