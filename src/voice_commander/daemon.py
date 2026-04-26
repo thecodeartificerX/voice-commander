@@ -505,9 +505,8 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
             logger.warning("LLM router warmup failed — LM Studio may be offline")
 
     # Load user-defined commands + workflows (first-run seeding + registration).
-    from voice_commander.commands import CommandStore, WorkflowStore
+    from voice_commander.commands import GraphStore, seed_if_missing
     from voice_commander.commands.registrar import reload_all as reload_commands_all
-    from voice_commander.commands.store import seed_if_missing
 
     repo_root = Path(__file__).resolve().parents[2]
     commands_path = repo_root / "commands.json"
@@ -515,18 +514,14 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     seed_if_missing(commands_path, repo_root / "commands.default.json")
     seed_if_missing(workflows_path, repo_root / "workflows.default.json")
 
-    command_store = CommandStore(commands_path)
-    workflow_store = WorkflowStore(workflows_path)
-    llm_context = {"default_browser": cfg.llm.default_browser}
+    command_store = GraphStore(commands_path, kind="command")
+    workflow_store = GraphStore(workflows_path, kind="workflow")
     with reload_lock:
-        cmd_names, wf_names = reload_commands_all(
-            registry, command_store, workflow_store, dispatcher, llm_context
-        )
+        cmd_names, wf_names = reload_commands_all(registry, command_store, workflow_store)
     logger.info(
-        "Loaded %d commands + %d workflows (default_browser=%s)",
+        "Loaded %d commands + %d workflows",
         len(cmd_names),
         len(wf_names),
-        cfg.llm.default_browser,
     )
 
     # Web server — enabled by config + not suppressed by env var.
@@ -539,8 +534,6 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
             event_bus=event_bus,
             command_store=command_store,
             workflow_store=workflow_store,
-            dispatcher=dispatcher,
-            llm_context=dict(llm_context),
             config_path=repo_root / "config.toml",
             llm_router=llm_router,
         )

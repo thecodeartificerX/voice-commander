@@ -19,17 +19,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from voice_commander.commands.store import (
-    CommandDef,
-    CommandStore,
-    WorkflowArg,
-    WorkflowDef,
-    WorkflowStep,
-    WorkflowStore,
-)
-from voice_commander.dispatcher import Dispatcher
+from voice_commander.commands.graph import Graph, GraphInput, Node
+from voice_commander.commands.store import GraphStore
 from voice_commander.event_bus import EventBus
-from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.registry import ToolEntry, ToolRegistry
 from voice_commander.tool_metadata import ArgMetadata, ToolMetadataStore
 from voice_commander.web.app import create_app
@@ -72,32 +64,42 @@ def _primitive_registry() -> ToolRegistry:
     return reg
 
 
-def _seed_stores(root: Path) -> tuple[CommandStore, WorkflowStore, Path]:
+def _seed_stores(root: Path) -> tuple[GraphStore, GraphStore, Path]:
     config_path = root / "config.toml"
     config_path.write_text(
         '[llm]\nmodel_id = "test-model"\nendpoint_url = "http://x/"\n',
         encoding="utf-8",
     )
-    cs = CommandStore(root / "commands.json")
-    cs.save_one(
-        CommandDef(
-            name="copy",
-            description="Copy",
-            synonyms=("copy",),
-            primitive="press",
-            kwargs={"combo": "ctrl+c"},
-        )
-    )
-    ws = WorkflowStore(root / "workflows.json")
-    ws.save_one(
-        WorkflowDef(
-            name="say_hi",
-            description="",
-            synonyms=("hello",),
-            args=(WorkflowArg(name="name", required=True),),
-            steps=(WorkflowStep(ref="primitive:type", kwargs={"text": "Hi {name}"}),),
-        )
-    )
+    cs = GraphStore(root / "commands.json", kind="command")
+    cs.save_one(Graph(
+        name="copy",
+        kind="command",
+        description="Copy",
+        synonyms=("copy",),
+        inputs=(),
+        llm_visible=True,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+c"}),),
+        edges=(),
+    ))
+    ws = GraphStore(root / "workflows.json", kind="workflow")
+    ws.save_one(Graph(
+        name="say_hi",
+        kind="workflow",
+        description="",
+        synonyms=("hello",),
+        inputs=(GraphInput(name="name", type="str", required=True),),
+        llm_visible=True,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=(Node("n1", "pipeline.type", {"text": "Hi {name}"}),),
+        edges=(),
+    ))
     return cs, ws, config_path
 
 
@@ -105,7 +107,6 @@ def _seed_stores(root: Path) -> tuple[CommandStore, WorkflowStore, Path]:
 def client(tmp_path: Path) -> TestClient:
     reg = _primitive_registry()
     cs, ws, config_path = _seed_stores(tmp_path)
-    disp = Dispatcher(CapturingFeedbackSink())
     # Minimal ToolMetadataStore for the app — empty dir avoids TOML pairing.
     store = ToolMetadataStore(tmp_path / "tools_meta_empty")
     (tmp_path / "tools_meta_empty").mkdir()
@@ -116,8 +117,6 @@ def client(tmp_path: Path) -> TestClient:
         event_bus=EventBus(),
         command_store=cs,
         workflow_store=ws,
-        dispatcher=disp,
-        llm_context={"default_browser": "chrome"},
         config_path=config_path,
     )
     return TestClient(app)
@@ -165,10 +164,11 @@ def test_command_save_roundtrip(client: TestClient, tmp_path: Path) -> None:
     assert resp.status_code == 200, resp.text
     assert "new_tab" in resp.text
 
-    # Read back from the store.
+    # Read back from the store (new schema uses "graphs" key).
     raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert "new_tab" in raw["commands"]
-    assert raw["commands"]["new_tab"]["kwargs"] == {"combo": "ctrl+t"}
+    assert "new_tab" in raw["graphs"]
+    saved_node = raw["graphs"]["new_tab"]["nodes"][0]
+    assert saved_node["kwargs"] == {"combo": "ctrl+t"}
 
 
 def test_new_command_name_from_form(client: TestClient, tmp_path: Path) -> None:
@@ -190,8 +190,8 @@ def test_new_command_name_from_form(client: TestClient, tmp_path: Path) -> None:
     assert "mute_mic" in resp.text
 
     raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert "mute_mic" in raw["commands"], "name from form field must be persisted"
-    assert "new" not in raw["commands"], "literal 'new' must not be saved as a command"
+    assert "mute_mic" in raw["graphs"], "name from form field must be persisted"
+    assert "new" not in raw["graphs"], "literal 'new' must not be saved as a command"
 
 
 def test_new_workflow_name_from_form(client: TestClient, tmp_path: Path) -> None:
@@ -213,8 +213,8 @@ def test_new_workflow_name_from_form(client: TestClient, tmp_path: Path) -> None
     assert resp.status_code == 200, resp.text
 
     raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
-    assert "morning_routine" in raw["workflows"], "name from form field must be persisted"
-    assert "new" not in raw["workflows"], "literal 'new' must not be saved as a workflow"
+    assert "morning_routine" in raw["graphs"], "name from form field must be persisted"
+    assert "new" not in raw["graphs"], "literal 'new' must not be saved as a workflow"
 
 
 def test_new_command_empty_name_rejected(client: TestClient, tmp_path: Path) -> None:
@@ -234,7 +234,7 @@ def test_new_command_empty_name_rejected(client: TestClient, tmp_path: Path) -> 
     )
     assert resp.status_code == 400
     raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert "new" not in raw["commands"], "literal 'new' must not be saved on empty name submission"
+    assert "new" not in raw["graphs"], "literal 'new' must not be saved on empty name submission"
 
 
 def test_new_workflow_empty_name_rejected(client: TestClient, tmp_path: Path) -> None:
@@ -253,7 +253,7 @@ def test_new_workflow_empty_name_rejected(client: TestClient, tmp_path: Path) ->
     )
     assert resp.status_code == 400
     raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
-    assert "new" not in raw["workflows"], "literal 'new' must not be saved on empty name submission"
+    assert "new" not in raw["graphs"], "literal 'new' must not be saved on empty name submission"
 
 
 def test_new_command_reserved_name_rejected(client: TestClient, tmp_path: Path) -> None:
@@ -273,7 +273,7 @@ def test_new_command_reserved_name_rejected(client: TestClient, tmp_path: Path) 
     )
     assert resp.status_code == 400
     raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert "new" not in raw["commands"], "reserved name 'new' must not be persisted"
+    assert "new" not in raw["graphs"], "reserved name 'new' must not be persisted"
 
 
 def test_new_workflow_reserved_name_rejected(client: TestClient, tmp_path: Path) -> None:
@@ -292,7 +292,7 @@ def test_new_workflow_reserved_name_rejected(client: TestClient, tmp_path: Path)
     )
     assert resp.status_code == 400
     raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
-    assert "new" not in raw["workflows"], "reserved name 'new' must not be persisted"
+    assert "new" not in raw["graphs"], "reserved name 'new' must not be persisted"
 
 
 def test_command_delete_removes_file_entry(client: TestClient, tmp_path: Path) -> None:
@@ -302,7 +302,7 @@ def test_command_delete_removes_file_entry(client: TestClient, tmp_path: Path) -
     )
     assert resp.status_code == 200
     raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert "copy" not in raw["commands"]
+    assert "copy" not in raw["graphs"]
 
 
 def test_command_toggle_flips_enabled(client: TestClient, tmp_path: Path) -> None:
@@ -312,7 +312,7 @@ def test_command_toggle_flips_enabled(client: TestClient, tmp_path: Path) -> Non
     )
     assert resp.status_code == 200
     raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert raw["commands"]["copy"]["enabled"] is False
+    assert raw["graphs"]["copy"]["enabled"] is False
 
 
 def test_kwargs_form_returns_fragment_for_known_primitive(client: TestClient) -> None:
@@ -355,9 +355,9 @@ def test_command_save_guided_mode_coerces_types(client: TestClient, tmp_path: Pa
     )
     assert resp.status_code == 200, resp.text
     raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert "guided_cmd" in raw["commands"]
+    assert "guided_cmd" in raw["graphs"]
     # Verifies the guided parse branch ran (not JSON fallback)
-    assert raw["commands"]["guided_cmd"]["kwargs"] == {"combo": "ctrl+a"}
+    assert raw["graphs"]["guided_cmd"]["nodes"][0]["kwargs"] == {"combo": "ctrl+a"}
 
 
 def test_command_save_guided_mode_required_field_missing_returns_400(
@@ -420,7 +420,7 @@ def test_command_save_advanced_mode_parses_json(client: TestClient, tmp_path: Pa
     )
     assert resp.status_code == 200, resp.text
     raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
-    assert raw["commands"]["adv_cmd"]["kwargs"] == {"combo": "ctrl+z"}
+    assert raw["graphs"]["adv_cmd"]["nodes"][0]["kwargs"] == {"combo": "ctrl+z"}
 
 
 # ---------------------------------------------------------------------------
@@ -442,10 +442,10 @@ def test_workflow_save_with_args(client: TestClient, tmp_path: Path) -> None:
     )
     assert resp.status_code == 200, resp.text
     raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
-    assert "say_bye" in raw["workflows"]
-    saved = raw["workflows"]["say_bye"]
-    assert saved["args"][0]["name"] == "name"
-    assert saved["steps"][0]["kwargs"] == {"text": "Bye {name}"}
+    assert "say_bye" in raw["graphs"]
+    saved = raw["graphs"]["say_bye"]
+    assert saved["inputs"][0]["name"] == "name"
+    assert saved["nodes"][0]["kwargs"] == {"text": "Bye {name}"}
 
 
 def test_workflow_delete(client: TestClient, tmp_path: Path) -> None:
@@ -455,7 +455,7 @@ def test_workflow_delete(client: TestClient, tmp_path: Path) -> None:
     )
     assert resp.status_code == 200
     raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
-    assert "say_hi" not in raw["workflows"]
+    assert "say_hi" not in raw["graphs"]
 
 
 # ---------------------------------------------------------------------------
@@ -538,8 +538,6 @@ def test_config_save_restart_required_banner(client: TestClient) -> None:
 
 def test_config_save_hot_reload_banner(client: TestClient) -> None:
     # All restart-required fields match the seed config defaults → hot reload.
-    # Seed config has no [audio] or [transcription] sections, so device=-1
-    # and model_size="small.en" are the effective defaults.
     resp = client.post(
         "/config",
         headers={"HX-Request": "true"},

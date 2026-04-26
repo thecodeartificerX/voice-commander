@@ -19,7 +19,7 @@ from ..tool_metadata import ToolMetadata, ToolMetadataError, ToolMetadataStore
 from .admin import attach_admin_routes
 
 if TYPE_CHECKING:
-    from ..commands.store import CommandStore, WorkflowStore
+    from ..commands.store import GraphStore
     from ..dispatcher import Dispatcher
     from ..event_bus import EventBus
     from ..llm_router import LLMRouter
@@ -36,8 +36,8 @@ def create_app(
     reload_lock: threading.Lock,
     event_bus: EventBus | None = None,
     *,
-    command_store: CommandStore | None = None,
-    workflow_store: WorkflowStore | None = None,
+    command_store: GraphStore | None = None,
+    workflow_store: GraphStore | None = None,
     dispatcher: Dispatcher | None = None,
     llm_context: dict[str, object] | None = None,
     config_path: Path | None = None,
@@ -354,7 +354,6 @@ def create_app(
     if (
         command_store is not None
         and workflow_store is not None
-        and dispatcher is not None
         and config_path is not None
     ):
         attach_admin_routes(
@@ -364,8 +363,6 @@ def create_app(
             reload_lock=reload_lock,
             command_store=command_store,
             workflow_store=workflow_store,
-            dispatcher=dispatcher,
-            llm_context=dict(llm_context or {}),
             config_path=config_path,
             event_bus=event_bus,
         )

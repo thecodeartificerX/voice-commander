@@ -2,9 +2,8 @@
 
 Kept in a sibling module so ``app.py`` stays focused on the legacy tool
 CRUD flow. :func:`attach_admin_routes` wires a self-contained router onto
-an existing FastAPI application; when the necessary stores + dispatcher
-are absent (tests, minimal deployments), the admin surface simply isn't
-registered.
+an existing FastAPI application; when the necessary stores are absent (tests,
+minimal deployments), the admin surface simply isn't registered.
 """
 
 from __future__ import annotations
@@ -19,25 +18,18 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from ..commands.registrar import reload_all as reload_commands_all
-from ..commands.store import (
-    CommandDef,
-    CommandStore,
-    CommandStoreError,
-    WorkflowArg,
-    WorkflowDef,
-    WorkflowStep,
-    WorkflowStore,
-)
+from ..commands.graph import Graph, GraphInput, Node
+from ..commands.registrar import reload_all as _reload_all
+from ..commands.store import GraphStore, GraphStoreError
 from ..config import Config, ConfigWriteError, update_user_config
 from ..registry import ToolRegistry
 
 if TYPE_CHECKING:
-    from ..dispatcher import Dispatcher
     from ..event_bus import EventBus
     from ..tool_metadata import ArgMetadata
 
 logger = logging.getLogger(__name__)
+
 
 def attach_admin_routes(
     app: FastAPI,
@@ -45,12 +37,10 @@ def attach_admin_routes(
     templates: Jinja2Templates,
     registry: ToolRegistry,
     reload_lock: threading.Lock,
-    command_store: CommandStore,
-    workflow_store: WorkflowStore,
-    dispatcher: Dispatcher,
-    llm_context: dict[str, Any],
+    command_store: GraphStore,
+    workflow_store: GraphStore,
     config_path: Path,
-    event_bus: EventBus | None = None,
+    event_bus: "EventBus | None" = None,
 ) -> None:
     """Register /command, /workflow, /config, /restart routes on *app*."""
 
@@ -61,7 +51,7 @@ def attach_admin_routes(
     def _reload() -> None:
         """Reload commands + workflows under reload_lock."""
         with reload_lock:
-            reload_commands_all(registry, command_store, workflow_store, dispatcher, llm_context)
+            _reload_all(registry, command_store, workflow_store)
 
     # ------------------------------------------------------------------
     # Commands
@@ -82,7 +72,15 @@ def attach_admin_routes(
         cmd = cmds.get(name)
         if cmd is None:
             return HTMLResponse(content=f"Command {name!r} not found", status_code=404)
-        entry = registry.by_name(cmd.primitive)
+        # For a simple single-node graph, get the primitive name and kwargs from the first node
+        primitive = ""
+        kwargs: dict[str, Any] = {}
+        if cmd.nodes:
+            n = cmd.nodes[0]
+            if n.ref.startswith("pipeline."):
+                primitive = n.ref.removeprefix("pipeline.")
+            kwargs = dict(n.kwargs)
+        entry = registry.by_name(primitive) if primitive else None
         args_meta = entry.args_meta if entry is not None else {}
         return templates.TemplateResponse(
             request,
@@ -91,19 +89,26 @@ def attach_admin_routes(
                 "cmd": cmd,
                 "is_new": False,
                 "args_meta": args_meta,
-                "kwargs": cmd.kwargs,
+                "kwargs": kwargs,
                 "mode": "guided",
             },
         )
 
     @app.get("/command/new", response_class=HTMLResponse)
     async def command_new(request: Request) -> HTMLResponse:
-        blank = CommandDef(
+        blank = Graph(
             name="",
+            kind="command",
             description="",
             synonyms=(),
-            primitive="press",
-            kwargs={"combo": ""},
+            inputs=(),
+            llm_visible=True,
+            strict=True,
+            enabled=True,
+            timeout_ms=5000,
+            foreach_iteration_cap=50,
+            nodes=(Node("n1", "pipeline.press", {"combo": ""}),),
+            edges=(),
         )
         entry = registry.by_name("press")
         args_meta = entry.args_meta if entry is not None else {}
@@ -114,7 +119,7 @@ def attach_admin_routes(
                 "cmd": blank,
                 "is_new": True,
                 "args_meta": args_meta,
-                "kwargs": blank.kwargs,
+                "kwargs": {"combo": ""},
                 "mode": "guided",
             },
         )
@@ -161,7 +166,7 @@ def attach_admin_routes(
             name = resolved
         form_data = await request.form()
         kwarg_fields = {
-            k[len("kwarg_") :]: str(v) for k, v in form_data.items() if k.startswith("kwarg_")
+            k[len("kwarg_"):]: str(v) for k, v in form_data.items() if k.startswith("kwarg_")
         }
         entry = registry.by_name(primitive)
         args_meta = entry.args_meta if entry is not None else {}
@@ -180,7 +185,7 @@ def attach_admin_routes(
             return HTMLResponse(content=parsed, status_code=400)
         try:
             command_store.save_one(parsed)
-        except CommandStoreError as exc:
+        except GraphStoreError as exc:
             return HTMLResponse(content=str(exc), status_code=400)
         _reload()
         _publish("command_saved", {"name": parsed.name})
@@ -192,17 +197,11 @@ def attach_admin_routes(
         cmd = cmds.get(name)
         if cmd is None:
             return HTMLResponse(content=f"{name!r} not found", status_code=404)
-        flipped = CommandDef(
-            name=cmd.name,
-            description=cmd.description,
-            synonyms=cmd.synonyms,
-            primitive=cmd.primitive,
-            kwargs=dict(cmd.kwargs),
-            enabled=not cmd.enabled,
-        )
+        import dataclasses
+        flipped = dataclasses.replace(cmd, enabled=not cmd.enabled)
         try:
             command_store.save_one(flipped)
-        except CommandStoreError as exc:
+        except GraphStoreError as exc:
             return HTMLResponse(content=str(exc), status_code=400)
         _reload()
         _publish("command_saved", {"name": cmd.name})
@@ -239,12 +238,19 @@ def attach_admin_routes(
 
     @app.get("/workflow/new", response_class=HTMLResponse)
     async def workflow_new(request: Request) -> HTMLResponse:
-        blank = WorkflowDef(
+        blank = Graph(
             name="",
+            kind="workflow",
             description="",
             synonyms=(),
-            args=(),
-            steps=(),
+            inputs=(),
+            llm_visible=True,
+            strict=True,
+            enabled=True,
+            timeout_ms=5000,
+            foreach_iteration_cap=50,
+            nodes=(),
+            edges=(),
         )
         return templates.TemplateResponse(
             request, "_workflow_edit.html", {"wf": blank, "is_new": True}
@@ -285,7 +291,7 @@ def attach_admin_routes(
             return HTMLResponse(content=parsed, status_code=400)
         try:
             workflow_store.save_one(parsed)
-        except CommandStoreError as exc:
+        except GraphStoreError as exc:
             return HTMLResponse(content=str(exc), status_code=400)
         _reload()
         _publish("workflow_saved", {"name": parsed.name})
@@ -297,17 +303,11 @@ def attach_admin_routes(
         wf = wfs.get(name)
         if wf is None:
             return HTMLResponse(content=f"{name!r} not found", status_code=404)
-        flipped = WorkflowDef(
-            name=wf.name,
-            description=wf.description,
-            synonyms=wf.synonyms,
-            args=wf.args,
-            steps=wf.steps,
-            enabled=not wf.enabled,
-        )
+        import dataclasses
+        flipped = dataclasses.replace(wf, enabled=not wf.enabled)
         try:
             workflow_store.save_one(flipped)
-        except CommandStoreError as exc:
+        except GraphStoreError as exc:
             return HTMLResponse(content=str(exc), status_code=400)
         _reload()
         _publish("workflow_saved", {"name": wf.name})
@@ -368,10 +368,6 @@ def attach_admin_routes(
         new_cfg = Config.load(config_path)
         _publish("config_saved", {"path": str(config_path)})
 
-        # Detect restart-required fields that actually changed value.
-        # Only fields the form submits today are checked. Adding a hot-cold
-        # field to the form (e.g. hotkey.key, web.port) means adding the
-        # corresponding `prev_cfg.x != new_cfg.x` arm here and to ADR 0058.
         needs_restart = (
             prev_cfg.audio.device != new_cfg.audio.device
             or prev_cfg.transcription.model_size != new_cfg.transcription.model_size
@@ -433,15 +429,12 @@ def _parse_command_form(
     kwargs_json: str,
     kwargs_mode: str = "guided",
     kwarg_fields: dict[str, str] | None = None,
-    args_meta: dict[str, ArgMetadata] | None = None,
+    args_meta: "dict[str, ArgMetadata] | None" = None,
     enabled: str,
-) -> CommandDef | str:
-    """Parse and validate an HTML command form submission into a CommandDef.
+) -> Graph | str:
+    """Parse and validate an HTML command form submission into a Graph (command kind).
 
-    Branching rule: uses guided kwarg_* fields when ``kwargs_mode == "guided"``
-    AND ``args_meta`` is non-empty; otherwise falls back to JSON parse of
-    ``kwargs_json``.  Returns the validated ``CommandDef`` on success or an
-    error string on validation failure.
+    Returns the validated ``Graph`` on success or an error string on failure.
     """
     synonyms_list = tuple(s.strip() for s in synonyms.splitlines() if s.strip())
 
@@ -472,13 +465,22 @@ def _parse_command_form(
             else:
                 kwargs[arg_name] = raw
 
-    return CommandDef(
+    primitive = primitive.strip()
+    node = Node(id="n1", ref=f"pipeline.{primitive}", kwargs=kwargs)
+
+    return Graph(
         name=name.strip(),
+        kind="command",
         description=description.strip(),
         synonyms=synonyms_list,
-        primitive=primitive.strip(),
-        kwargs=kwargs,
+        inputs=(),
+        llm_visible=True,
+        strict=True,
         enabled=enabled.lower() in {"true", "on", "1", "yes"},
+        timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=(node,),
+        edges=(),
     )
 
 
@@ -490,7 +492,8 @@ def _parse_workflow_form(
     args_json: str,
     steps_json: str,
     enabled: str,
-) -> WorkflowDef | str:
+) -> Graph | str:
+    """Parse and validate an HTML workflow form submission into a Graph (workflow kind)."""
     synonyms_list = tuple(s.strip() for s in synonyms.splitlines() if s.strip())
     try:
         args_raw = json_mod.loads(args_json) if args_json.strip() else []
@@ -501,30 +504,53 @@ def _parse_workflow_form(
         return "args and steps must be JSON arrays"
 
     try:
-        args = tuple(
-            WorkflowArg(
+        inputs = tuple(
+            GraphInput(
                 name=str(a["name"]),
-                type_str=str(a.get("type", "string")),
+                type=str(a.get("type", "string")),
                 required=bool(a.get("required", True)),
                 description=str(a.get("description", "")),
             )
             for a in args_raw
         )
-        steps = tuple(
-            WorkflowStep(
-                ref=str(s["ref"]),
-                kwargs=s.get("kwargs", {}) or {},
+        nodes = tuple(
+            Node(
+                id=f"n{i + 1}",
+                ref=_normalise_step_ref(str(s["ref"])),
+                kwargs=dict(s.get("kwargs", {}) or {}),
             )
-            for s in steps_raw
+            for i, s in enumerate(steps_raw)
         )
     except (KeyError, TypeError) as exc:
         return f"args/steps malformed: {exc}"
 
-    return WorkflowDef(
+    return Graph(
         name=name.strip(),
+        kind="workflow",
         description=description.strip(),
         synonyms=synonyms_list,
-        args=args,
-        steps=steps,
+        inputs=inputs,
+        llm_visible=True,
+        strict=True,
         enabled=enabled.lower() in {"true", "on", "1", "yes"},
+        timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=nodes,
+        edges=(),
     )
+
+
+def _normalise_step_ref(ref: str) -> str:
+    """Convert legacy ``primitive:<name>`` / ``command:<name>`` step refs to node-graph refs.
+
+    The old workflow form used colon-separated refs (``primitive:press``,
+    ``command:copy``). The new graph schema uses dot-separated namespace refs
+    (``pipeline.press``, ``command.copy``). This helper bridges the two for
+    form submissions that may come from either the old or new UI.
+    """
+    if ":" in ref and "." not in ref:
+        namespace, _, tail = ref.partition(":")
+        if namespace == "primitive":
+            return f"pipeline.{tail}"
+        return f"{namespace}.{tail}"
+    return ref
