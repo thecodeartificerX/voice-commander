@@ -3,17 +3,19 @@
         <div class="flex items-center gap-2">
             <h3 class="text-lg font-medium {{ 'line-through text-neutral-500' if not wf.enabled else 'text-neutral-100' }}">{{ wf.name }}</h3>
             <span class="text-xs px-2 py-0.5 rounded-full bg-indigo-900 text-indigo-300">workflow</span>
-            {% if wf.args %}
-            <span class="text-xs px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-400">{{ wf.args|length }} arg{{ 's' if wf.args|length != 1 else '' }}</span>
+            {% if wf.inputs %}
+            <span class="text-xs px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-400">{{ wf.inputs|length }} input{{ 's' if wf.inputs|length != 1 else '' }}</span>
             {% endif %}
-            <span class="text-xs px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-400">{{ wf.steps|length }} step{{ 's' if wf.steps|length != 1 else '' }}</span>
+            {% if wf.nodes %}
+            <span class="text-xs px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-400">{{ wf.nodes|length }} node{{ 's' if wf.nodes|length != 1 else '' }}</span>
+            {% endif %}
             {% if not wf.enabled %}
             <span class="text-xs px-2 py-0.5 rounded-full bg-red-900 text-red-400">disabled</span>
             {% endif %}
         </div>
         <div class="flex gap-2">
-            <button hx-get="/workflow/{{ wf.name }}/edit" hx-target="#workflow-{{ wf.name }}" hx-swap="outerHTML"
-                class="text-sm px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300">Edit</button>
+            <a href="/page/builder?kind=workflow&graph={{ wf.name }}"
+               class="text-sm px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300">Open in Builder</a>
             <button hx-post="/workflow/{{ wf.name }}/toggle" hx-target="#workflow-{{ wf.name }}" hx-swap="outerHTML"
                 class="text-sm px-3 py-1 rounded {{ 'bg-red-900 hover:bg-red-800 text-red-300' if wf.enabled else 'bg-emerald-900 hover:bg-emerald-800 text-emerald-300' }}">
                 {{ "Disable" if wf.enabled else "Enable" }}
@@ -26,11 +28,6 @@
     {% if wf.description %}
     <p class="text-sm text-neutral-400 mb-2">{{ wf.description }}</p>
     {% endif %}
-    <ol class="text-xs text-neutral-400 mb-2 list-decimal list-inside space-y-1">
-        {% for step in wf.steps %}
-        <li><code class="text-neutral-200">{{ step.ref }}</code>({{ step.kwargs }})</li>
-        {% endfor %}
-    </ol>
     <div class="flex flex-wrap gap-1">
         {% for phrase in wf.synonyms %}
         <span class="text-xs px-2 py-1 rounded bg-neutral-800 text-neutral-300 {{ 'line-through' if not wf.enabled else '' }}">{{ phrase }}</span>
