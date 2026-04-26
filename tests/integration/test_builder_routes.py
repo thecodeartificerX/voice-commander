@@ -318,7 +318,4 @@ def test_xss_arg_name_stored_verbatim(client: TestClient) -> None:
         n1_kwargs = next(n["kwargs"] for n in nodes if n["id"] == "n1")
     else:
         n1_kwargs = nodes["n1"]["kwargs"]
-    assert xss_name in n1_kwargs, (
-        "Server must store arg names verbatim without HTML-escaping"
-    )
-
+    assert xss_name in n1_kwargs, "Server must store arg names verbatim without HTML-escaping"
