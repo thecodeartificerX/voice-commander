@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html as html_mod
 import json as json_mod
 import logging
 import queue as _queue_mod
@@ -402,12 +403,7 @@ def create_app(
 
 def _render_error(message: str) -> str:
     """Return raw HTML for the error banner (used before templates are available)."""
-    escaped = (
-        message.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
+    escaped = html_mod.escape(message)
     return (
         f'<div id="error-banner" '
         f'class="bg-red-900/50 border border-red-700 text-red-300 rounded-lg p-3 mb-4 text-sm" '
