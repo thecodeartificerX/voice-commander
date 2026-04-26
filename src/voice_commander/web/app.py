@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import html as html_mod
 import json as json_mod
 import logging
@@ -345,13 +346,7 @@ def create_app(
                 status_code=500,
             )
 
-        new_md = ToolMetadata(
-            name=current_md.name,
-            phrases=current_md.phrases,
-            description=current_md.description,
-            category=current_md.category,
-            enabled=not current_md.enabled,
-        )
+        new_md = dataclasses.replace(current_md, enabled=not current_md.enabled)
 
         try:
             store.save(name, new_md)

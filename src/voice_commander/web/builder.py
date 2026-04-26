@@ -176,9 +176,7 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
             )
 
         store = ctx.command_store if g.kind == "command" else ctx.workflow_store
-        peers_cmd = ctx.command_store.load_all()
-        peers_wf = ctx.workflow_store.load_all()
-        peers = {**peers_cmd, **peers_wf}
+        peers = {**ctx.command_store.load_all(), **ctx.workflow_store.load_all()}
         peers.pop(name, None)
 
         errors = validate_graph(g, registry=ctx.registry, peers=peers)

@@ -129,7 +129,7 @@ class GraphRuntime:
 
             # --- control.foreach ---
             if node.ref == "control.foreach":
-                items = list(kwargs.get("list", []) or [])
+                items = list(kwargs.get("list") or [])
                 cap = graph.foreach_iteration_cap
                 if len(items) > cap:
                     items = items[:cap]
@@ -298,7 +298,7 @@ class GraphRuntime:
             fired_err.add(node.id)
             steps.append(ToolCall(name=node.ref, kwargs=kwargs))
             exc_str = str(exc)
-            msg = (exc_str[:256] + "...") if len(exc_str) > 256 else exc_str
+            msg = exc_str[:256] + ("..." if len(exc_str) > 256 else "")
             if graph.strict and not self._has_error_edge(node.id, graph.edges):
                 return "break", msg
             return "continue", msg

@@ -169,7 +169,6 @@ def _rule_foreach_cap(graph: Graph) -> list[ValidationError]:
                     severity=ValidationSeverity.ERROR,
                     message=f"foreach cap={cap} exceeds global ceiling {FOREACH_GLOBAL_CEILING}",
                     node_id=node.id,
-                    port=None,
                 )
             )
     # Also check the graph-level foreach_iteration_cap
@@ -182,7 +181,6 @@ def _rule_foreach_cap(graph: Graph) -> list[ValidationError]:
                     f" exceeds global ceiling {FOREACH_GLOBAL_CEILING}"
                 ),
                 node_id="f1",
-                port=None,
             )
         )
     return out
@@ -208,7 +206,6 @@ def _rule_branch_unreachable(graph: Graph) -> list[ValidationError]:
                     severity=ValidationSeverity.WARNING,
                     message="branch has no condition wired — node is unreachable",
                     node_id=node.id,
-                    port=None,
                 )
             )
         elif not true_wired and not false_wired:
@@ -220,7 +217,6 @@ def _rule_branch_unreachable(graph: Graph) -> list[ValidationError]:
                         " (unreachable)"
                     ),
                     node_id=node.id,
-                    port=None,
                 )
             )
     return out
