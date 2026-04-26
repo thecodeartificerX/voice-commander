@@ -165,6 +165,7 @@ def test_foreach_body_error_surfaces_in_outcome():
     assert outcome.error_msg is not None
     assert "body exploded" in outcome.error_msg
     assert "iter 1" in outcome.error_msg  # iteration index included
+    assert call_count == 3  # strict=True stops body nodes within iteration but outer loop continues
 
 
 def test_foreach_respects_cap():
@@ -210,3 +211,59 @@ def test_foreach_respects_cap():
     outcome, _ = runtime.run(g, {})
     assert outcome.status == "ok"
     assert recorded == ["a", "b"]
+
+
+def test_foreach_body_error_nonstrict_continues_all_iterations():
+    """Non-strict graph: body error must not halt remaining iterations."""
+    recorded: list = []
+    call_count = 0
+
+    def _fail_on_bad(item):
+        nonlocal call_count
+        call_count += 1
+        recorded.append(item)
+        if item == "bad":
+            raise RuntimeError("body exploded")
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolEntry(
+            name="maybe_fail",
+            phrases=(),
+            func=_fail_on_bad,
+            module="x",
+            docstring=None,
+            internal=True,
+        )
+    )
+
+    g = Graph(
+        name="test",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=False,
+        strict=False,  # non-strict: continue on body error
+        enabled=True,
+        timeout_ms=5000,
+        nodes=(
+            Node(id="f1", ref="control.foreach", kwargs={"list": ["ok1", "bad", "ok2"]}),
+            Node(id="m1", ref="pipeline.maybe_fail", kwargs={}),
+        ),
+        edges=(
+            Edge(PortRef("f1", "item"), PortRef("m1", "in")),
+            Edge(PortRef("f1", "item"), PortRef("m1", "item")),
+        ),
+        foreach_iteration_cap=50,
+    )
+
+    outcome, _ = GraphRuntime(registry=reg, graph_lookup=lambda n: None).run(g, {})
+    # All three iterations must run
+    assert call_count == 3
+    assert recorded == ["ok1", "bad", "ok2"]
+    # Error still surfaces in outcome
+    assert outcome.status == "error"
+    assert outcome.error_msg is not None
+    assert "body exploded" in outcome.error_msg
+    assert "iter 1" in outcome.error_msg

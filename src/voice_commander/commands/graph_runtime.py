@@ -135,25 +135,15 @@ class GraphRuntime:
                 body_ids = self._foreach_body_ids(node.id, graph)
                 body_nodes = [n for n in order if n.id in body_ids]
                 # Collect port keys written by body nodes so we can clear between iterations
-                body_port_keys: list[str] = [
-                    f"{bn.id}.{port}"
-                    for bn in body_nodes
-                    for port in (
-                        list(
-                            (
-                                getattr(
-                                    self._registry.by_name(bn.ref.removeprefix("pipeline.")),
-                                    "returns_meta",
-                                    None,
-                                )
-                                or {}
-                            ).keys()
-                        )
-                        if bn.ref.startswith("pipeline.")
-                        and self._registry.by_name(bn.ref.removeprefix("pipeline."))
-                        else []
-                    )
-                ]
+                body_port_keys: list[str] = []
+                for bn in body_nodes:
+                    if not bn.ref.startswith("pipeline."):
+                        continue
+                    entry = self._registry.by_name(bn.ref.removeprefix("pipeline."))
+                    if entry is None:
+                        continue
+                    for port in (getattr(entry, "returns_meta", None) or {}):
+                        body_port_keys.append(f"{bn.id}.{port}")
                 foreach_has_error = False
                 foreach_first_error: str | None = None
                 foreach_timed_out = False
@@ -303,6 +293,7 @@ class GraphRuntime:
         if entry is None:
             logger.warning("foreach body: unknown pipeline ref %r (node %s)", node.ref, node.id)
             fired_err.add(node.id)
+            steps.append(ToolCall(name=node.ref, kwargs=kwargs))
             if graph.strict:
                 return "break", f"unknown pipeline ref: {node.ref}"
             return "continue", f"unknown pipeline ref: {node.ref}"
@@ -312,7 +303,7 @@ class GraphRuntime:
             logger.warning("foreach body node %s raised: %s", node.ref, exc)
             fired_err.add(node.id)
             steps.append(ToolCall(name=node.ref, kwargs=kwargs))
-            msg = str(exc)[:256]
+            msg = str(exc)[:256] + ("..." if len(str(exc)) > 256 else "")
             if graph.strict and not self._has_error_edge(node.id, graph.edges):
                 return "break", msg
             return "continue", msg
