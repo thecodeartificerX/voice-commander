@@ -4,6 +4,8 @@
 # validate() calls typing.get_type_hints(entry.func) which needs real runtime
 # annotations, not stringified ones.
 
+import pytest
+
 from dataclasses import replace
 from unittest.mock import MagicMock
 
@@ -267,3 +269,41 @@ def test_rule_c1_timeout_ms_above_minimum_is_valid():
     errors = validate_config(cfg)
 
     assert errors == [], f"Expected no errors at timeout_ms=600, got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# validate_graphs_or_die: startup graph validation
+# ---------------------------------------------------------------------------
+
+
+def test_validate_graphs_or_die_raises_on_cycle(tmp_path):
+    """validate_graphs_or_die raises SystemExit when a graph has a cycle."""
+    import json
+    from pathlib import Path
+    from voice_commander.commands.store import GraphStore
+    from voice_commander.commands.graph import Edge, Graph, Node, PortRef
+    from voice_commander.registry import ToolRegistry
+    from voice_commander.validator import validate_graphs_or_die
+
+    # Build a graph with a cycle
+    cmd_path = tmp_path / "commands.json"
+    store = GraphStore(cmd_path, kind="command")
+    g = Graph(
+        name="cyclic", kind="command", description="", synonyms=(), inputs=(),
+        llm_visible=True, strict=True, enabled=True, timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=(Node("a", "pipeline.press", {}), Node("b", "pipeline.press", {})),
+        edges=(
+            Edge(PortRef("a", "ok"), PortRef("b", "in")),
+            Edge(PortRef("b", "ok"), PortRef("a", "in")),
+        ),
+    )
+    store.save_one(g)
+    wf_path = tmp_path / "workflows.json"
+    wf_path.write_text(json.dumps({"schema_version": 1, "graphs": {}}))
+    wf_store = GraphStore(wf_path, kind="workflow")
+
+    reg = ToolRegistry()
+
+    with pytest.raises(SystemExit):
+        validate_graphs_or_die(store, wf_store, reg)
