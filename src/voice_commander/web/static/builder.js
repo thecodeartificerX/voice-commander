@@ -20,10 +20,18 @@
    */
 
   /**
-   * @typedef {Object} CanonicalEdge
-   * @property {string} from  - Source port ref "node_id.port_name"
-   * @property {string} to    - Destination port ref "node_id.port_name"
+   * @typedef {Object} PortRef
+   * @property {string} node_id  - Canonical node ID, e.g. "n1713000000000"
+   * @property {string} port     - Port name, e.g. "ok", "error", "in"
    */
+
+  /**
+   * @typedef {Object} CanonicalEdge
+   * @property {PortRef} from  - Source port reference
+   * @property {PortRef} to    - Destination port reference
+   */
+  // NOTE: Server wire format serialises from/to as flat strings "node_id.port"
+  // (see graph_schema.py:101); builder.js uses objects internally.
 
   /**
    * @typedef {Object} CanonicalGraph
@@ -121,7 +129,7 @@
    * click handler calls {@link addNodeToCanvas} with a randomised position.
    *
    * @param {string} title        - Section heading, e.g. "Pipeline"
-   * @param {Array<{name: string, description: string}>} items
+   * @param {Array<{name: string, description?: string}>} items
    *   Palette descriptors; empty array is a no-op (early return).
    * @param {string} refPrefix    - Prefix prepended to item name to form
    *   the node ref, e.g. "pipeline." → "pipeline.fetch"
@@ -168,7 +176,6 @@
    * @returns {PortResolution} Object with `inPorts` and `outPorts` arrays.
    */
   function resolvePortsForRef(ref, graphInputs) {
-    // graphInputs: array of {name, type} from existing graph or page data
     if (ref === 'value.input') {
       const ins = graphInputs || [];
       return { inPorts: [], outPorts: ins.map(i => i.name) };
