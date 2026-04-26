@@ -20,10 +20,13 @@ def test_spawn_returns_instance() -> None:
 
 def test_spawn_swallows_failure(caplog: pytest.LogCaptureFixture) -> None:
     """If spawning the sprite fails, log a warning and return a no-op instance."""
-    with patch(
-        "voice_commander.supervisor.sprite.spawn",
-        side_effect=FileNotFoundError("uv not on PATH"),
-    ), caplog.at_level(logging.WARNING):
+    with (
+        patch(
+            "voice_commander.supervisor.sprite.spawn",
+            side_effect=FileNotFoundError("uv not on PATH"),
+        ),
+        caplog.at_level(logging.WARNING),
+    ):
         sprite = SpriteChild.spawn()
     assert sprite.handle is None
     assert any("sprite" in r.message.lower() for r in caplog.records)

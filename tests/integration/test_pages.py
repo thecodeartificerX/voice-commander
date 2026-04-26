@@ -64,35 +64,39 @@ def _seed_stores(root: Path) -> tuple[GraphStore, GraphStore, Path]:
         encoding="utf-8",
     )
     cs = GraphStore(root / "commands.json", kind="command")
-    cs.save_one(Graph(
-        name="copy",
-        kind="command",
-        description="Copy",
-        synonyms=("copy",),
-        inputs=(),
-        llm_visible=True,
-        strict=True,
-        enabled=True,
-        timeout_ms=5000,
-        foreach_iteration_cap=50,
-        nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+c"}),),
-        edges=(),
-    ))
+    cs.save_one(
+        Graph(
+            name="copy",
+            kind="command",
+            description="Copy",
+            synonyms=("copy",),
+            inputs=(),
+            llm_visible=True,
+            strict=True,
+            enabled=True,
+            timeout_ms=5000,
+            foreach_iteration_cap=50,
+            nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+c"}),),
+            edges=(),
+        )
+    )
     ws = GraphStore(root / "workflows.json", kind="workflow")
-    ws.save_one(Graph(
-        name="say_hi",
-        kind="workflow",
-        description="",
-        synonyms=("hello",),
-        inputs=(GraphInput(name="name", type="str", required=True),),
-        llm_visible=True,
-        strict=True,
-        enabled=True,
-        timeout_ms=5000,
-        foreach_iteration_cap=50,
-        nodes=(Node("n1", "pipeline.type", {"text": "Hi {name}"}),),
-        edges=(),
-    ))
+    ws.save_one(
+        Graph(
+            name="say_hi",
+            kind="workflow",
+            description="",
+            synonyms=("hello",),
+            inputs=(GraphInput(name="name", type="str", required=True),),
+            llm_visible=True,
+            strict=True,
+            enabled=True,
+            timeout_ms=5000,
+            foreach_iteration_cap=50,
+            nodes=(Node("n1", "pipeline.type", {"text": "Hi {name}"}),),
+            edges=(),
+        )
+    )
     return cs, ws, config_path
 
 

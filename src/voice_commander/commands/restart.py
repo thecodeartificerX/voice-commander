@@ -36,8 +36,7 @@ def request_restart(delay_s: float = 0.5) -> None:
     """
     if os.environ.get("VC_SUPERVISED") != "1":
         raise RestartUnavailable(
-            "Restart requires the supervisor. Launch with start.ps1 or "
-            "voice-commander-supervisor."
+            "Restart requires the supervisor. Launch with start.ps1 or voice-commander-supervisor."
         )
 
     def _do() -> None:

@@ -1,4 +1,5 @@
 """Tests for the rewritten graph registrar."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,8 +15,15 @@ def test_register_graphs_synthesises_tool_entries(tmp_path: Path) -> None:
     delegates to GraphRuntime.run when invoked."""
     store = GraphStore(tmp_path / "commands.json", kind="command")
     g = Graph(
-        name="example", kind="command", description="ex", synonyms=("e",),
-        inputs=(), llm_visible=True, strict=True, enabled=True, timeout_ms=5000,
+        name="example",
+        kind="command",
+        description="ex",
+        synonyms=("e",),
+        inputs=(),
+        llm_visible=True,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
         foreach_iteration_cap=50,
         nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+a"}),),
         edges=(),
@@ -24,10 +32,16 @@ def test_register_graphs_synthesises_tool_entries(tmp_path: Path) -> None:
 
     reg = ToolRegistry()
     pressed: list[str] = []
-    reg.register(ToolEntry(
-        name="press", phrases=(), func=lambda combo: pressed.append(combo),
-        module="x", docstring=None, internal=True,
-    ))
+    reg.register(
+        ToolEntry(
+            name="press",
+            phrases=(),
+            func=lambda combo: pressed.append(combo),
+            module="x",
+            docstring=None,
+            internal=True,
+        )
+    )
 
     names = register_graphs(reg, store)
     assert names == ["example"]
@@ -41,8 +55,15 @@ def test_register_graphs_synthesises_tool_entries(tmp_path: Path) -> None:
 def test_register_graphs_excludes_disabled(tmp_path: Path) -> None:
     store = GraphStore(tmp_path / "commands.json", kind="command")
     g = Graph(
-        name="disabled_cmd", kind="command", description="", synonyms=(),
-        inputs=(), llm_visible=True, strict=True, enabled=False, timeout_ms=5000,
+        name="disabled_cmd",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=True,
+        strict=True,
+        enabled=False,
+        timeout_ms=5000,
         foreach_iteration_cap=50,
         nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+a"}),),
         edges=(),
@@ -59,16 +80,38 @@ def test_reload_all_updates_both_stores(tmp_path: Path) -> None:
     cmd_store = GraphStore(tmp_path / "commands.json", kind="command")
     wf_store = GraphStore(tmp_path / "workflows.json", kind="workflow")
 
-    cmd_store.save_one(Graph(
-        name="cmd1", kind="command", description="", synonyms=(),
-        inputs=(), llm_visible=True, strict=True, enabled=True, timeout_ms=5000,
-        foreach_iteration_cap=50, nodes=(), edges=(),
-    ))
-    wf_store.save_one(Graph(
-        name="wf1", kind="workflow", description="", synonyms=(),
-        inputs=(), llm_visible=True, strict=True, enabled=True, timeout_ms=5000,
-        foreach_iteration_cap=50, nodes=(), edges=(),
-    ))
+    cmd_store.save_one(
+        Graph(
+            name="cmd1",
+            kind="command",
+            description="",
+            synonyms=(),
+            inputs=(),
+            llm_visible=True,
+            strict=True,
+            enabled=True,
+            timeout_ms=5000,
+            foreach_iteration_cap=50,
+            nodes=(),
+            edges=(),
+        )
+    )
+    wf_store.save_one(
+        Graph(
+            name="wf1",
+            kind="workflow",
+            description="",
+            synonyms=(),
+            inputs=(),
+            llm_visible=True,
+            strict=True,
+            enabled=True,
+            timeout_ms=5000,
+            foreach_iteration_cap=50,
+            nodes=(),
+            edges=(),
+        )
+    )
 
     reg = ToolRegistry()
     cmd_names, wf_names = reload_all(reg, cmd_store, wf_store)
@@ -86,9 +129,16 @@ def test_register_graphs_peer_graphs_cross_resolution(tmp_path: Path) -> None:
 
     # Command graph with a simple press node
     cmd = Graph(
-        name="do_press", kind="command", description="press",
-        synonyms=(), inputs=(), llm_visible=True, strict=True,
-        enabled=True, timeout_ms=5000, foreach_iteration_cap=50,
+        name="do_press",
+        kind="command",
+        description="press",
+        synonyms=(),
+        inputs=(),
+        llm_visible=True,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
+        foreach_iteration_cap=50,
         nodes=(Node("n1", "pipeline.press", {"combo": "ctrl+a"}),),
         edges=(),
     )
@@ -96,9 +146,16 @@ def test_register_graphs_peer_graphs_cross_resolution(tmp_path: Path) -> None:
 
     # Workflow graph that references the command via command.do_press
     wf = Graph(
-        name="wf_calls_cmd", kind="workflow", description="wf",
-        synonyms=(), inputs=(), llm_visible=True, strict=True,
-        enabled=True, timeout_ms=5000, foreach_iteration_cap=50,
+        name="wf_calls_cmd",
+        kind="workflow",
+        description="wf",
+        synonyms=(),
+        inputs=(),
+        llm_visible=True,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
+        foreach_iteration_cap=50,
         nodes=(Node("n1", "command.do_press", {}),),
         edges=(),
     )
@@ -106,17 +163,25 @@ def test_register_graphs_peer_graphs_cross_resolution(tmp_path: Path) -> None:
 
     reg = ToolRegistry()
     pressed: list[str] = []
-    reg.register(ToolEntry(
-        name="press", phrases=(), func=lambda combo: pressed.append(combo),
-        module="x", docstring=None, internal=True,
-    ))
+    reg.register(
+        ToolEntry(
+            name="press",
+            phrases=(),
+            func=lambda combo: pressed.append(combo),
+            module="x",
+            docstring=None,
+            internal=True,
+        )
+    )
 
     # Register commands first (no peers needed — commands are standalone)
     register_graphs(reg, cmd_store)
 
     # Register workflows WITH peer_graphs pointing at commands
     names = register_graphs(
-        reg, wf_store, peer_graphs=cmd_store.load_all(),
+        reg,
+        wf_store,
+        peer_graphs=cmd_store.load_all(),
     )
     assert "wf_calls_cmd" in names
 

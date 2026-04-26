@@ -10,13 +10,27 @@ def test_foreach_iterates_body():
         recorded.append(item)
 
     reg = ToolRegistry()
-    reg.register(ToolEntry(
-        name="record", phrases=(), func=_record, module="x", docstring=None, internal=True,
-    ))
+    reg.register(
+        ToolEntry(
+            name="record",
+            phrases=(),
+            func=_record,
+            module="x",
+            docstring=None,
+            internal=True,
+        )
+    )
 
     g = Graph(
-        name="test", kind="command", description="", synonyms=(), inputs=(),
-        llm_visible=False, strict=True, enabled=True, timeout_ms=5000,
+        name="test",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=False,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
         nodes=(
             Node(id="f1", ref="control.foreach", kwargs={"list": ["a", "b", "c"]}),
             Node(id="r1", ref="pipeline.record", kwargs={}),
@@ -41,13 +55,27 @@ def test_foreach_respects_cap():
         recorded.append(item)
 
     reg = ToolRegistry()
-    reg.register(ToolEntry(
-        name="record", phrases=(), func=_record, module="x", docstring=None, internal=True,
-    ))
+    reg.register(
+        ToolEntry(
+            name="record",
+            phrases=(),
+            func=_record,
+            module="x",
+            docstring=None,
+            internal=True,
+        )
+    )
 
     g = Graph(
-        name="test", kind="command", description="", synonyms=(), inputs=(),
-        llm_visible=False, strict=True, enabled=True, timeout_ms=5000,
+        name="test",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=False,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
         nodes=(
             Node(id="f1", ref="control.foreach", kwargs={"list": ["a", "b", "c", "d"]}),
             Node(id="r1", ref="pipeline.record", kwargs={}),

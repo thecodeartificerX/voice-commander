@@ -153,9 +153,7 @@ class GraphStore:
     def save_one(self, g: Graph) -> None:
         _validate_name(self._kind, g.name)
         if g.kind != self._kind:
-            raise GraphStoreError(
-                f"GraphStore[{self._kind}] cannot save graph of kind {g.kind!r}"
-            )
+            raise GraphStoreError(f"GraphStore[{self._kind}] cannot save graph of kind {g.kind!r}")
         with _file_lock(self._path):
             raw = _read_json(self._path)
             if raw:

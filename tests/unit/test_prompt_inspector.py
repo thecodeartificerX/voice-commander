@@ -23,15 +23,9 @@ def _prompt_env(
     """Create a minimal app with prompt routes wired up."""
     # Use tmp_path for template file so tests don't touch the real one
     template_file = tmp_path / "prompt_template.txt"
-    template_file.write_text(
-        "Test prompt for {default_browser}.\n", encoding="utf-8"
-    )
-    monkeypatch.setattr(
-        "voice_commander.llm_router._TEMPLATE_PATH", template_file
-    )
-    monkeypatch.setattr(
-        "voice_commander.web.prompt._TEMPLATE_PATH", template_file
-    )
+    template_file.write_text("Test prompt for {default_browser}.\n", encoding="utf-8")
+    monkeypatch.setattr("voice_commander.llm_router._TEMPLATE_PATH", template_file)
+    monkeypatch.setattr("voice_commander.web.prompt._TEMPLATE_PATH", template_file)
 
     tools_dir = tmp_path / "tools"
     tools_dir.mkdir()

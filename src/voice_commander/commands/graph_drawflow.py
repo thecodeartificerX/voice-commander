@@ -119,14 +119,18 @@ def to_drawflow(graph: Graph) -> dict[str, Any]:
         src_key = (src_id, f"output_{src_port_idx}")
         dst_key = (dst_id, f"input_{dst_port_idx}")
 
-        src_connections.setdefault(src_key, []).append({
-            "node": str(node_to_int[dst_id]),
-            "output": f"input_{dst_port_idx}",
-        })
-        dst_connections.setdefault(dst_key, []).append({
-            "node": str(node_to_int[src_id]),
-            "input": f"output_{src_port_idx}",
-        })
+        src_connections.setdefault(src_key, []).append(
+            {
+                "node": str(node_to_int[dst_id]),
+                "output": f"input_{dst_port_idx}",
+            }
+        )
+        dst_connections.setdefault(dst_key, []).append(
+            {
+                "node": str(node_to_int[src_id]),
+                "input": f"output_{src_port_idx}",
+            }
+        )
 
     # Pass 2 — assemble df_nodes with complete, semantically-named port lists.
     df_nodes: dict[str, Any] = {}
@@ -192,12 +196,14 @@ def from_drawflow(
         canonical_id = df_node.get("_canonical_id") or f"n{node_int_str}"
         int_to_canonical[node_int_str] = canonical_id
 
-        nodes.append(Node(
-            id=canonical_id,
-            ref=df_node["name"],
-            kwargs=dict(df_node.get("data", {})),
-            pos=(int(df_node.get("pos_x", 0)), int(df_node.get("pos_y", 0))),
-        ))
+        nodes.append(
+            Node(
+                id=canonical_id,
+                ref=df_node["name"],
+                kwargs=dict(df_node.get("data", {})),
+                pos=(int(df_node.get("pos_x", 0)), int(df_node.get("pos_y", 0))),
+            )
+        )
 
     # Reconstruct edges from output connections
     edges: list[Edge] = []
@@ -231,10 +237,12 @@ def from_drawflow(
                 edge_key = (src_canonical, src_port, dst_canonical, dst_port)
                 if edge_key not in seen_edges:
                     seen_edges.add(edge_key)
-                    edges.append(Edge(
-                        src=PortRef(src_canonical, src_port),
-                        dst=PortRef(dst_canonical, dst_port),
-                    ))
+                    edges.append(
+                        Edge(
+                            src=PortRef(src_canonical, src_port),
+                            dst=PortRef(dst_canonical, dst_port),
+                        )
+                    )
 
     return Graph(
         name=name,

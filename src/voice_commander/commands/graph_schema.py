@@ -53,9 +53,7 @@ def parse_graph(raw: Mapping[str, Any]) -> Graph:
         raise GraphSchemaError(f"timeout_ms must be a positive integer, got {timeout_ms}")
     foreach_iteration_cap = int(raw.get("foreach_iteration_cap", 50))
     if foreach_iteration_cap < 1:
-        raise GraphSchemaError(
-            f"foreach_iteration_cap must be >= 1, got {foreach_iteration_cap}"
-        )
+        raise GraphSchemaError(f"foreach_iteration_cap must be >= 1, got {foreach_iteration_cap}")
     nodes = tuple(_parse_node(n) for n in raw.get("nodes", []) or ())
     edges = tuple(_parse_edge(e) for e in raw.get("edges", []) or ())
 

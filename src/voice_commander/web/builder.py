@@ -62,23 +62,32 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
     @r.get("/graph/palette")
     def palette() -> dict[str, Any]:
         from voice_commander.tool_schema import describe_tool_for_builder
+
         pipeline = [
             describe_tool_for_builder(e)
             for e in ctx.registry.all()
             if e.internal and e.origin == "primitive" and e.enabled
         ]
         commands = [
-            {"name": g.name, "description": g.description, "inputs": [
-                {"name": inp.name, "type": inp.type, "required": inp.required}
-                for inp in g.inputs
-            ]}
+            {
+                "name": g.name,
+                "description": g.description,
+                "inputs": [
+                    {"name": inp.name, "type": inp.type, "required": inp.required}
+                    for inp in g.inputs
+                ],
+            }
             for g in ctx.command_store.load_all().values()
         ]
         workflows = [
-            {"name": g.name, "description": g.description, "inputs": [
-                {"name": inp.name, "type": inp.type, "required": inp.required}
-                for inp in g.inputs
-            ]}
+            {
+                "name": g.name,
+                "description": g.description,
+                "inputs": [
+                    {"name": inp.name, "type": inp.type, "required": inp.required}
+                    for inp in g.inputs
+                ],
+            }
             for g in ctx.workflow_store.load_all().values()
         ]
         return {
@@ -126,17 +135,19 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
         peers = {**ctx.command_store.load_all(), **ctx.workflow_store.load_all()}
         peers.pop(g.name, None)
         errors = validate_graph(g, registry=ctx.registry, peers=peers)
-        return JSONResponse(content={
-            "errors": [
-                {
-                    "severity": e.severity.value,
-                    "node_id": e.node_id,
-                    "port": e.port,
-                    "message": e.message,
-                }
-                for e in errors
-            ]
-        })
+        return JSONResponse(
+            content={
+                "errors": [
+                    {
+                        "severity": e.severity.value,
+                        "node_id": e.node_id,
+                        "port": e.port,
+                        "message": e.message,
+                    }
+                    for e in errors
+                ]
+            }
+        )
 
     @r.post("/graph/{name}")
     async def save_graph(name: str, request: Request) -> JSONResponse:
@@ -160,10 +171,14 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
         errors = validate_graph(g, registry=ctx.registry, peers=peers)
         hard = [e for e in errors if e.severity == ValidationSeverity.ERROR]
         if hard:
-            return JSONResponse(status_code=422, content={"errors": [
-                {"node_id": e.node_id, "port": e.port, "message": e.message}
-                for e in hard
-            ]})
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "errors": [
+                        {"node_id": e.node_id, "port": e.port, "message": e.message} for e in hard
+                    ]
+                },
+            )
 
         with ctx.reload_lock:
             store.save_one(g)

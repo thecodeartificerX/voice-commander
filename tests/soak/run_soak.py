@@ -130,9 +130,7 @@ def scenario_foreach_dag(duration_s: int = 60) -> int:
     deadline = start_time + duration_s
     iteration = 0
 
-    print(
-        f"foreach_dag soak: duration={duration_s}s graph=8 nodes, foreach cap=50"
-    )
+    print(f"foreach_dag soak: duration={duration_s}s graph=8 nodes, foreach cap=50")
 
     while time.time() < deadline:
         t0 = time.perf_counter()
@@ -147,10 +145,7 @@ def scenario_foreach_dag(duration_s: int = 60) -> int:
     if latencies_ms:
         p50 = statistics.median(latencies_ms)
         p95 = sorted(latencies_ms)[int(len(latencies_ms) * 0.95)]
-        print(
-            f"iterations={iteration} p50={p50:.1f}ms p95={p95:.1f}ms "
-            f"delta_rss={delta_mb:+.2f}MB"
-        )
+        print(f"iterations={iteration} p50={p50:.1f}ms p95={p95:.1f}ms delta_rss={delta_mb:+.2f}MB")
 
         if p95 > 1500:
             print(f"FAIL: p95 latency {p95:.1f}ms > 1500ms")
@@ -166,12 +161,16 @@ def scenario_foreach_dag(duration_s: int = 60) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Voice Commander RSS soak test.")
     parser.add_argument(
-        "--pid", type=int, required=False,
-        help="PID of running voice-commander daemon (required in PID monitor mode)"
+        "--pid",
+        type=int,
+        required=False,
+        help="PID of running voice-commander daemon (required in PID monitor mode)",
     )
     parser.add_argument(
-        "--scenario", choices=["foreach_dag"], default=None,
-        help="Scenario name (self-contained test)"
+        "--scenario",
+        choices=["foreach_dag"],
+        default=None,
+        help="Scenario name (self-contained test)",
     )
     parser.add_argument(
         "--hours", type=float, default=1.0, help="Duration in hours (PID monitor mode)"
@@ -180,8 +179,7 @@ def main() -> int:
         "--duration", type=int, default=60, help="Duration in seconds (scenario mode)"
     )
     parser.add_argument(
-        "--interval", type=float, default=30.0,
-        help="Sample interval in seconds (PID monitor mode)"
+        "--interval", type=float, default=30.0, help="Sample interval in seconds (PID monitor mode)"
     )
     parser.add_argument("--limit-mb", type=float, default=100.0)
     parser.add_argument("--csv", type=Path, default=None)

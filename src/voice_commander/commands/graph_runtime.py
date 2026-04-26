@@ -81,8 +81,7 @@ class GraphRuntime:
                 break
 
             if not self._control_satisfied(
-                node, graph.edges, fired_ok, fired_err,
-                fired_branch_true, fired_branch_false
+                node, graph.edges, fired_ok, fired_err, fired_branch_true, fired_branch_false
             ):
                 continue
 
@@ -144,14 +143,17 @@ class GraphRuntime:
                     body_fired_branch_false: set[str] = set()
                     for bn in body_nodes:
                         if not self._control_satisfied(
-                            bn, graph.edges, body_fired_ok, body_fired_err,
-                            body_fired_branch_true, body_fired_branch_false
+                            bn,
+                            graph.edges,
+                            body_fired_ok,
+                            body_fired_err,
+                            body_fired_branch_true,
+                            body_fired_branch_false,
                         ):
                             continue
                         bkwargs = self._resolve_kwargs(bn, graph.edges, port_values)
                         result = self._dispatch_pipeline_node(
-                            bn, bkwargs, graph, steps, port_values,
-                            body_fired_ok, body_fired_err
+                            bn, bkwargs, graph, steps, port_values, body_fired_ok, body_fired_err
                         )
                         if result == "break":
                             break

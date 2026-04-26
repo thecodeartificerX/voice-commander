@@ -28,10 +28,14 @@ from voice_commander.registry import ToolEntry, ToolRegistry
 logger = logging.getLogger(__name__)
 
 _TYPE_MAP: dict[str, str] = {
-    "str": "string", "string": "string",
-    "int": "integer", "integer": "integer",
-    "bool": "boolean", "boolean": "boolean",
-    "float": "number", "number": "number",
+    "str": "string",
+    "string": "string",
+    "int": "integer",
+    "integer": "integer",
+    "bool": "boolean",
+    "boolean": "boolean",
+    "float": "number",
+    "number": "number",
 }
 
 
@@ -39,9 +43,8 @@ def register_graphs(
     registry: ToolRegistry,
     store: GraphStore,
     *,
-    runtime_factory: Callable[
-        [ToolRegistry, Callable[[str], Graph | None]], GraphRuntime
-    ] | None = None,
+    runtime_factory: Callable[[ToolRegistry, Callable[[str], Graph | None]], GraphRuntime]
+    | None = None,
     peer_graphs: dict[str, Graph] | None = None,
 ) -> list[str]:
     """Register every enabled graph in *store* as a ToolEntry.
@@ -92,9 +95,8 @@ def reload_all(
     command_store: GraphStore,
     workflow_store: GraphStore,
     *,
-    runtime_factory: Callable[
-        [ToolRegistry, Callable[[str], Graph | None]], GraphRuntime
-    ] | None = None,
+    runtime_factory: Callable[[ToolRegistry, Callable[[str], Graph | None]], GraphRuntime]
+    | None = None,
 ) -> tuple[list[str], list[str]]:
     """Reload both command and workflow stores into a shared runtime.
 
@@ -166,6 +168,7 @@ def _make_func(g: Graph, runtime: GraphRuntime) -> Any:
         outcome, _ret = runtime.run(g, call_kwargs)
         if outcome.status == "error":
             raise RuntimeError(outcome.error_msg or "graph execution failed")
+
     _run.__name__ = f"graph__{g.name}"
     _run.__doc__ = g.description or None
     return _run

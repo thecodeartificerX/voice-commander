@@ -15,20 +15,41 @@ def _make_reg_with_fail() -> tuple[ToolRegistry, list]:
     def _fail(**kw):
         raise RuntimeError("tool failed")
 
-    reg.register(ToolEntry(
-        name="ok_tool", phrases=(), func=_ok, module="x", docstring=None, internal=True,
-    ))
-    reg.register(ToolEntry(
-        name="fail_tool", phrases=(), func=_fail, module="x", docstring=None, internal=True,
-    ))
+    reg.register(
+        ToolEntry(
+            name="ok_tool",
+            phrases=(),
+            func=_ok,
+            module="x",
+            docstring=None,
+            internal=True,
+        )
+    )
+    reg.register(
+        ToolEntry(
+            name="fail_tool",
+            phrases=(),
+            func=_fail,
+            module="x",
+            docstring=None,
+            internal=True,
+        )
+    )
     return reg, log
 
 
 def test_strict_true_halts_on_first_failure():
     reg, log = _make_reg_with_fail()
     g = Graph(
-        name="test", kind="command", description="", synonyms=(), inputs=(),
-        llm_visible=False, strict=True, enabled=True, timeout_ms=5000,
+        name="test",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=False,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
         nodes=(
             Node(id="n1", ref="pipeline.fail_tool", kwargs={}),
             Node(id="n2", ref="pipeline.ok_tool", kwargs={}),
@@ -44,11 +65,18 @@ def test_strict_true_halts_on_first_failure():
 def test_strict_false_continues_after_failure():
     reg, log = _make_reg_with_fail()
     g = Graph(
-        name="test", kind="command", description="", synonyms=(), inputs=(),
-        llm_visible=False, strict=False, enabled=True, timeout_ms=5000,
+        name="test",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=False,
+        strict=False,
+        enabled=True,
+        timeout_ms=5000,
         nodes=(
             Node(id="n1", ref="pipeline.fail_tool", kwargs={}),
-            Node(id="n2", ref="pipeline.ok_tool",   kwargs={}),
+            Node(id="n2", ref="pipeline.ok_tool", kwargs={}),
         ),
         edges=(),  # no control dependency — both run in topo order
         foreach_iteration_cap=50,
@@ -64,13 +92,27 @@ def test_timeout_aborts_graph():
     def _slow(**kw):
         time.sleep(0.1)
 
-    reg.register(ToolEntry(
-        name="slow", phrases=(), func=_slow, module="x", docstring=None, internal=True,
-    ))
+    reg.register(
+        ToolEntry(
+            name="slow",
+            phrases=(),
+            func=_slow,
+            module="x",
+            docstring=None,
+            internal=True,
+        )
+    )
 
     g = Graph(
-        name="test", kind="command", description="", synonyms=(), inputs=(),
-        llm_visible=False, strict=True, enabled=True, timeout_ms=10,  # 10ms
+        name="test",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=False,
+        strict=True,
+        enabled=True,
+        timeout_ms=10,  # 10ms
         nodes=(
             Node(id="n1", ref="pipeline.slow", kwargs={}),
             Node(id="n2", ref="pipeline.slow", kwargs={}),

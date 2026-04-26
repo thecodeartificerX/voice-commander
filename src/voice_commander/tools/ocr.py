@@ -48,8 +48,10 @@ def ocr_region(x: int, y: int, w: int, h: int) -> str:
 def _capture_region(x: int, y: int, w: int, h: int) -> Path:
     """Save a PNG of the screen region to a tmp file and return the path."""
     import pyautogui  # already a project dep
+
     fd, path_str = tempfile.mkstemp(suffix=".png", prefix="vc_ocr_")
     import os
+
     os.close(fd)
     img = pyautogui.screenshot(region=(x, y, w, h))
     img.save(path_str)
@@ -62,6 +64,7 @@ def _select_engine() -> _Engine:
         from pathlib import Path as _Path
 
         from voice_commander.config import Config
+
         cfg = Config.load(_Path("config.toml"))
         pref = getattr(cfg.perception, "ocr_engine", "auto")
     except (FileNotFoundError, AttributeError):
@@ -81,6 +84,7 @@ def _select_engine() -> _Engine:
     # auto: try winrt first
     try:
         import winrt.windows.media.ocr  # noqa: F401
+
         return "winrt"
     except ImportError:
         pass
@@ -92,6 +96,7 @@ def _select_engine() -> _Engine:
 def _ocr_winrt(img_path: Path) -> str:
     """OCR via Windows.Media.Ocr (winrt)."""
     import asyncio
+
     try:
         from winrt.windows.graphics.imaging import BitmapDecoder
         from winrt.windows.media.ocr import OcrEngine
@@ -121,6 +126,8 @@ def _ocr_tesseract(img_path: Path) -> str:
     """OCR via tesseract subprocess."""
     out = subprocess.run(
         ["tesseract", str(img_path), "-", "-l", "eng", "--psm", "6"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     return out.stdout.strip()

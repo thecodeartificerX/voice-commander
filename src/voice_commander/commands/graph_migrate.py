@@ -66,9 +66,7 @@ def _migrate_file(path: Path, legacy_key: str, kind: str) -> int:
     graphs: dict[str, Any] = {}
 
     for name, entry in legacy_entries.items():
-        g = (
-            _migrate_command(name, entry) if kind == "command" else _migrate_workflow(name, entry)
-        )
+        g = _migrate_command(name, entry) if kind == "command" else _migrate_workflow(name, entry)
         graphs[name] = g
 
     # Write .bak (skip if already exists)
@@ -151,12 +149,14 @@ def _migrate_workflow(name: str, entry: dict[str, Any]) -> dict[str, Any]:
 
     # Add input node if there are args
     if args:
-        nodes.append({
-            "id": "input_node",
-            "ref": "value.input",
-            "kwargs": {},
-            "pos": [0, 120],
-        })
+        nodes.append(
+            {
+                "id": "input_node",
+                "ref": "value.input",
+                "kwargs": {},
+                "pos": [0, 120],
+            }
+        )
 
     prev_node_id: str | None = None
     for i, step in enumerate(steps):
@@ -173,10 +173,12 @@ def _migrate_workflow(name: str, entry: dict[str, Any]) -> dict[str, Any]:
                 if len(placeholders) == 1 and placeholders[0] in arg_names:
                     # Replace entire value with data edge
                     arg_name = placeholders[0]
-                    edges.append({
-                        "from": f"input_node.{arg_name}",
-                        "to": f"{node_id}.{kwarg_name}",
-                    })
+                    edges.append(
+                        {
+                            "from": f"input_node.{arg_name}",
+                            "to": f"{node_id}.{kwarg_name}",
+                        }
+                    )
                     # Still include kwarg as empty string (runtime will override via edge)
                     step_kwargs[kwarg_name] = ""
                 else:
@@ -184,12 +186,14 @@ def _migrate_workflow(name: str, entry: dict[str, Any]) -> dict[str, Any]:
             else:
                 step_kwargs[kwarg_name] = kwarg_val
 
-        nodes.append({
-            "id": node_id,
-            "ref": ref,
-            "kwargs": step_kwargs,
-            "pos": [80 + i * 200, 120],
-        })
+        nodes.append(
+            {
+                "id": node_id,
+                "ref": ref,
+                "kwargs": step_kwargs,
+                "pos": [80 + i * 200, 120],
+            }
+        )
 
         # Chain control flow
         if prev_node_id is not None:
@@ -218,13 +222,13 @@ def _migrate_ref(ref: str) -> str:
     """Convert legacy ref format to canonical ref format."""
     # "primitive:press" → "pipeline.press"
     if ref.startswith("primitive:"):
-        return "pipeline." + ref[len("primitive:"):]
+        return "pipeline." + ref[len("primitive:") :]
     # "command:foo" → "command.foo"
     if ref.startswith("command:"):
-        return "command." + ref[len("command:"):]
+        return "command." + ref[len("command:") :]
     # "workflow:foo" → "workflow.foo"
     if ref.startswith("workflow:"):
-        return "workflow." + ref[len("workflow:"):]
+        return "workflow." + ref[len("workflow:") :]
     # Already canonical or bare name
     if "." not in ref and ":" not in ref:
         return "pipeline." + ref

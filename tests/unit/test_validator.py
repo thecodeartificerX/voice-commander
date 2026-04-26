@@ -289,8 +289,15 @@ def test_validate_graphs_or_die_raises_on_cycle(tmp_path):
     cmd_path = tmp_path / "commands.json"
     store = GraphStore(cmd_path, kind="command")
     g = Graph(
-        name="cyclic", kind="command", description="", synonyms=(), inputs=(),
-        llm_visible=True, strict=True, enabled=True, timeout_ms=5000,
+        name="cyclic",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=True,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
         foreach_iteration_cap=50,
         nodes=(Node("a", "pipeline.press", {}), Node("b", "pipeline.press", {})),
         edges=(

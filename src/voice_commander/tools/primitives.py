@@ -436,6 +436,7 @@ def last(tab: bool = False) -> int:
     _close_with_verify(("alt", "tab"), verb="last")
     try:
         import win32gui
+
         return win32gui.GetForegroundWindow()  # type: ignore[no-any-return]
     except ImportError:
         return 0
