@@ -102,7 +102,9 @@ def test_select_engine_resolves_config_from_package_root(tmp_path, monkeypatch):
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", _block_winrt)
-    monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/tesseract" if cmd == "tesseract" else None)
+    monkeypatch.setattr(
+        "shutil.which", lambda cmd: "/usr/bin/tesseract" if cmd == "tesseract" else None
+    )
 
     from voice_commander.tools.ocr import _select_engine
 

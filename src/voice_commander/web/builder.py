@@ -35,8 +35,7 @@ def _describe_graph(g: Graph) -> dict[str, Any]:
         "name": g.name,
         "description": g.description,
         "inputs": [
-            {"name": inp.name, "type": inp.type, "required": inp.required}
-            for inp in g.inputs
+            {"name": inp.name, "type": inp.type, "required": inp.required} for inp in g.inputs
         ],
     }
 
