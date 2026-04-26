@@ -299,7 +299,12 @@ def test_xss_arg_name_stored_verbatim(client: TestClient) -> None:
         "nodes": [
             # Include required 'combo' kwarg to pass _rule_orphan_required validation,
             # plus the XSS-payload key to verify it is stored verbatim.
-            {"id": "n1", "ref": "pipeline.press", "kwargs": {"combo": "ctrl+c", xss_name: "value"}, "pos": [0, 0]},
+            {
+                "id": "n1",
+                "ref": "pipeline.press",
+                "kwargs": {"combo": "ctrl+c", xss_name: "value"},
+                "pos": [0, 0],
+            },
         ],
         "edges": [],
     }
