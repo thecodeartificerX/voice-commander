@@ -180,7 +180,7 @@ def _rule_foreach_cap(graph: Graph) -> list[ValidationError]:
                     f"foreach cap={graph.foreach_iteration_cap}"
                     f" exceeds global ceiling {FOREACH_GLOBAL_CEILING}"
                 ),
-                node_id="f1",
+                node_id=None,
             )
         )
     return out

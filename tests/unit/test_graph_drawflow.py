@@ -80,6 +80,23 @@ def test_round_trip_preserves_graph():
     assert recovered.edges[0].dst.port == "in"
 
 
+def _roundtrip(g: Graph) -> Graph:
+    df = to_drawflow(g)
+    return from_drawflow(
+        df,
+        name=g.name,
+        kind=g.kind,
+        description=g.description,
+        synonyms=g.synonyms,
+        inputs=g.inputs,
+        llm_visible=g.llm_visible,
+        strict=g.strict,
+        enabled=g.enabled,
+        timeout_ms=g.timeout_ms,
+        foreach_iteration_cap=g.foreach_iteration_cap,
+    )
+
+
 def test_branch_node_round_trip():
     g = Graph(
         name="branch_test",
@@ -122,3 +139,93 @@ def test_branch_node_round_trip():
     edge_ports = {(e.src.port, e.dst.port) for e in recovered.edges}
     assert ("true", "in") in edge_ports
     assert ("false", "in") in edge_ports
+
+
+def test_data_edge_round_trip():
+    """Data wire (non-control port) between two nodes survives to_drawflow → from_drawflow."""
+    g = Graph(
+        name="data_edge_test",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=True,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=(
+            Node(id="p1", ref="pipeline.read_clipboard", kwargs={}, pos=(80, 120)),
+            Node(id="p2", ref="pipeline.type", kwargs={}, pos=(280, 120)),
+        ),
+        edges=(
+            Edge(PortRef("p1", "ok"), PortRef("p2", "in")),
+            Edge(PortRef("p1", "hwnd"), PortRef("p2", "hwnd")),  # data edge
+        ),
+    )
+    recovered = _roundtrip(g)
+    assert len(recovered.nodes) == 2
+    assert len(recovered.edges) == 2
+    edge_ports = {(e.src.port, e.dst.port) for e in recovered.edges}
+    assert ("ok", "in") in edge_ports
+    assert ("hwnd", "hwnd") in edge_ports
+
+
+def test_value_input_node_round_trip():
+    """value.input node feeding a pipeline node via data edge survives roundtrip."""
+    g = Graph(
+        name="value_input_test",
+        kind="workflow",
+        description="",
+        synonyms=(),
+        inputs=(GraphInput(name="query", type="str", required=True, description=""),),
+        llm_visible=True,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=(
+            Node(id="vi1", ref="value.input", kwargs={}, pos=(0, 120)),
+            Node(id="p1", ref="pipeline.search", kwargs={}, pos=(200, 120)),
+        ),
+        edges=(
+            Edge(PortRef("vi1", "query"), PortRef("p1", "query")),
+        ),
+    )
+    recovered = _roundtrip(g)
+    assert len(recovered.nodes) == 2
+    assert len(recovered.edges) == 1
+    assert recovered.edges[0].src.port == "query"
+    assert recovered.edges[0].dst.port == "query"
+
+
+def test_value_constant_node_round_trip():
+    """value.constant node with literal kwargs and data edge survives roundtrip."""
+    g = Graph(
+        name="value_const_test",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=True,
+        strict=True,
+        enabled=True,
+        timeout_ms=5000,
+        foreach_iteration_cap=50,
+        nodes=(
+            Node(id="vc1", ref="value.constant", kwargs={"value": "hello"}, pos=(0, 120)),
+            Node(id="p1", ref="pipeline.type", kwargs={}, pos=(200, 120)),
+        ),
+        edges=(
+            Edge(PortRef("vc1", "value"), PortRef("p1", "text")),
+        ),
+    )
+    recovered = _roundtrip(g)
+    assert len(recovered.nodes) == 2
+    assert len(recovered.edges) == 1
+    # Verify kwargs preserved
+    vc_node = next(n for n in recovered.nodes if n.ref == "value.constant")
+    assert vc_node.kwargs["value"] == "hello"
+    # Verify data edge preserved
+    assert recovered.edges[0].src.port == "value"
+    assert recovered.edges[0].dst.port == "text"

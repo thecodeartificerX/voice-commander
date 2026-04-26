@@ -205,12 +205,15 @@ def _migrate_workflow(name: str, entry: dict[str, Any]) -> dict[str, Any]:
             else:
                 step_kwargs[kwarg_name] = kwarg_val
 
+        _NODES_PER_ROW = 5
+        col = i % _NODES_PER_ROW
+        row = i // _NODES_PER_ROW
         nodes.append(
             {
                 "id": node_id,
                 "ref": ref,
                 "kwargs": step_kwargs,
-                "pos": [80 + i * 200, 120],
+                "pos": [80 + col * 200, 120 + row * 150],
             }
         )
 
