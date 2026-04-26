@@ -297,7 +297,7 @@ def test_select_engine_config_forces_winrt(monkeypatch):
 
 
 def test_select_engine_config_forces_tesseract(monkeypatch):
-    """Config with ocr_engine='tesseract' makes _select_engine return 'tesseract' without import check."""
+    """Config ocr_engine='tesseract' → _select_engine returns 'tesseract' without import check."""
     mock_cfg = MagicMock()
     mock_cfg.perception.ocr_engine = "tesseract"
 
