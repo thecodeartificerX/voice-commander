@@ -40,6 +40,7 @@ class ToolMetadata:
     # user-defined commands/workflows should remain visible.
     internal: bool = False
     args: dict[str, ArgMetadata] = field(default_factory=dict)
+    returns: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 class ToolMetadataError(Exception):
@@ -69,7 +70,14 @@ class ToolMetadataStore:
     """
 
     def __init__(self, tools_dir: Path) -> None:
-        self._tools_dir = tools_dir
+        # Accept either a directory (normal use) or a single .toml file
+        # (useful in tests that construct a fixture file directly).
+        if tools_dir.is_file():
+            self._tools_dir = tools_dir.parent
+            self._single_file: Path | None = tools_dir
+        else:
+            self._tools_dir = tools_dir
+            self._single_file = None
         # name -> toml path; populated by load_all()
         self._index: dict[str, Path] = {}
 
@@ -86,7 +94,8 @@ class ToolMetadataStore:
         result: dict[str, ToolMetadata] = {}
         new_index: dict[str, Path] = {}
 
-        for toml_path in sorted(self._tools_dir.glob("*.toml")):
+        toml_files = [self._single_file] if self._single_file else sorted(self._tools_dir.glob("*.toml"))
+        for toml_path in toml_files:
             try:
                 file_data = _read_toml(toml_path)
             except ToolMetadataError:
@@ -258,6 +267,16 @@ def _parse_tool(
                         required=bool(arg_data.get("required", True)),
                         default=str(arg_data["default"]) if "default" in arg_data else None,
                     )
+
+        returns: dict[str, dict[str, str]] = {}
+        returns_raw = raw.get("returns")
+        if isinstance(returns_raw, dict):
+            for port_name, port_data in returns_raw.items():
+                if isinstance(port_data, dict):
+                    returns[port_name] = {
+                        "type": str(port_data.get("type", "")),
+                        "description": str(port_data.get("description", "")),
+                    }
     except (KeyError, TypeError) as exc:
         raise ToolMetadataError(
             f"Malformed tool section '[tools.{name}]' in {source}: {exc}"
@@ -273,6 +292,7 @@ def _parse_tool(
         llm_only=llm_only,
         internal=internal,
         args=args,
+        returns=returns,
     )
 
 

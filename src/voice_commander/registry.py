@@ -43,6 +43,7 @@ class ToolEntry:
     internal: bool = False
     origin: Origin = "primitive"
     args_meta: dict[str, ArgMetadata] = field(default_factory=dict)  # web UI kwargs form schema
+    returns_meta: dict[str, dict[str, str]] = field(default_factory=dict)  # output port schema for node graph
 
 
 class ToolRegistry:
@@ -128,6 +129,7 @@ class ToolRegistry:
             entry.llm_only = md.llm_only
             entry.internal = md.internal
             entry.args_meta = dict(md.args)
+            entry.returns_meta = dict(md.returns)
 
     def reload_metadata(self, store: ToolMetadataStore) -> None:
         """Re-read all TOML and update existing entries.
@@ -149,6 +151,7 @@ class ToolRegistry:
             entry.llm_only = md.llm_only
             entry.internal = md.internal
             entry.args_meta = dict(md.args)
+            entry.returns_meta = dict(md.returns)
 
     def __len__(self) -> int:
         return len(self._by_name)
