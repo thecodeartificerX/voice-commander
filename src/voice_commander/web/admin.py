@@ -43,6 +43,7 @@ def attach_admin_routes(
     """Register /command, /workflow, /config, /restart routes on *app*."""
 
     def _publish(event_type: str, data: dict[str, Any] | None = None) -> None:
+        """Fire *event_type* on the event bus if one is configured."""
         if event_bus is not None:
             event_bus.publish(event_type, data)
 
@@ -57,6 +58,7 @@ def attach_admin_routes(
 
     @app.get("/commands", response_class=HTMLResponse)
     async def list_commands(request: Request) -> HTMLResponse:
+        """``GET /commands`` — render the command list partial (HTMX fragment)."""
         cmds = command_store.load_all()
         return templates.TemplateResponse(
             request,
@@ -66,6 +68,9 @@ def attach_admin_routes(
 
     @app.post("/command/{name}/toggle", response_class=HTMLResponse)
     async def command_toggle(request: Request, name: str) -> HTMLResponse:
+        """``POST /command/{name}/toggle`` — flip enabled state and return the updated card partial;
+        404 if absent.
+        """
         cmds = command_store.load_all()
         cmd = cmds.get(name)
         if cmd is None:
@@ -81,6 +86,9 @@ def attach_admin_routes(
 
     @app.post("/command/{name}/delete", response_class=HTMLResponse)
     async def command_delete(request: Request, name: str) -> HTMLResponse:
+        """``POST /command/{name}/delete`` — remove command from store
+        and registry; return empty 200.
+        """
         command_store.delete(name)
         registry.remove(name)
         _reload()
@@ -93,6 +101,7 @@ def attach_admin_routes(
 
     @app.get("/workflows", response_class=HTMLResponse)
     async def list_workflows(request: Request) -> HTMLResponse:
+        """``GET /workflows`` — render the workflow list partial (HTMX fragment)."""
         wfs = workflow_store.load_all()
         return templates.TemplateResponse(
             request, "_workflow_list.html", {"workflows": list(wfs.values())}
@@ -100,6 +109,9 @@ def attach_admin_routes(
 
     @app.post("/workflow/{name}/toggle", response_class=HTMLResponse)
     async def workflow_toggle(request: Request, name: str) -> HTMLResponse:
+        """``POST /workflow/{name}/toggle`` — flip enabled state and
+        return the updated card partial; 404 if absent.
+        """
         wfs = workflow_store.load_all()
         wf = wfs.get(name)
         if wf is None:
@@ -115,6 +127,9 @@ def attach_admin_routes(
 
     @app.post("/workflow/{name}/delete", response_class=HTMLResponse)
     async def workflow_delete(request: Request, name: str) -> HTMLResponse:
+        """``POST /workflow/{name}/delete`` — remove workflow from store
+        and registry; return empty 200.
+        """
         workflow_store.delete(name)
         registry.remove(name)
         _reload()
@@ -127,6 +142,7 @@ def attach_admin_routes(
 
     @app.get("/config/edit", response_class=HTMLResponse)
     async def config_edit(request: Request) -> HTMLResponse:
+        """``GET /config/edit`` — render the config editor form with current TOML values."""
         import tomllib
 
         raw = {}
@@ -146,6 +162,14 @@ def attach_admin_routes(
         transcription_model_size: str = Form(default="small.en"),
         transcription_min_confidence: float = Form(default=0.3),
     ) -> HTMLResponse:
+        """``POST /config`` — persist config changes from form fields.
+
+        Form fields: llm_endpoint_url, llm_model_id, llm_default_browser,
+        llm_timeout_ms, audio_device, transcription_model_size,
+        transcription_min_confidence.  Returns a green banner on success, amber
+        if a restart is needed (audio device or model changed), or an error
+        banner on failure.
+        """
         updates: dict[str, dict[str, Any]] = {
             "llm": {
                 "endpoint_url": llm_endpoint_url,
@@ -188,6 +212,7 @@ def attach_admin_routes(
 
     @app.post("/restart")
     async def restart() -> JSONResponse:
+        """``POST /restart`` — request daemon restart; 202 if accepted, 503 if unavailable."""
         from ..commands.restart import RestartUnavailable, request_restart
 
         try:

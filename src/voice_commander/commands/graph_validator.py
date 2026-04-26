@@ -58,6 +58,7 @@ def validate(
 
 
 def _rule_intra_cycle(graph: Graph) -> list[ValidationError]:
+    """Reject graphs containing cycles — ``topo_sort`` must succeed."""
     try:
         topo_sort(graph.nodes, graph.edges)
     except CycleError as exc:
@@ -75,6 +76,11 @@ def _rule_unknown_ref(
     registry: Any,
     peers: dict[str, Graph],
 ) -> list[ValidationError]:
+    """Reject nodes whose ref is not resolvable.
+
+    Checks pipeline.* refs against the registry, command.*/workflow.* refs
+    against peers, and rejects any other unknown prefixes.
+    """
     out: list[ValidationError] = []
     for node in graph.nodes:
         ref = node.ref
@@ -112,6 +118,7 @@ def _rule_unknown_ref(
 
 
 def _rule_orphan_required(graph: Graph, registry: Any) -> list[ValidationError]:
+    """Reject pipeline nodes whose required args lack both a kwarg and a data wire."""
     if registry is None:
         return []
     out: list[ValidationError] = []
@@ -146,6 +153,11 @@ def _rule_orphan_required(graph: Graph, registry: Any) -> list[ValidationError]:
 
 
 def _rule_foreach_cap(graph: Graph) -> list[ValidationError]:
+    """Reject foreach iteration caps exceeding the global ceiling (1 000).
+
+    Checks both node-level ``cap`` kwargs and the graph-level
+    ``foreach_iteration_cap`` field.
+    """
     out: list[ValidationError] = []
     for node in graph.nodes:
         if node.ref != "control.foreach":
@@ -157,7 +169,6 @@ def _rule_foreach_cap(graph: Graph) -> list[ValidationError]:
                     severity=ValidationSeverity.ERROR,
                     message=f"foreach cap={cap} exceeds global ceiling {FOREACH_GLOBAL_CEILING}",
                     node_id=node.id,
-                    port=None,
                 )
             )
     # Also check the graph-level foreach_iteration_cap
@@ -170,13 +181,18 @@ def _rule_foreach_cap(graph: Graph) -> list[ValidationError]:
                     f" exceeds global ceiling {FOREACH_GLOBAL_CEILING}"
                 ),
                 node_id="f1",
-                port=None,
             )
         )
     return out
 
 
 def _rule_branch_unreachable(graph: Graph) -> list[ValidationError]:
+    """Warn when a branch node is unreachable or has no downstream wiring.
+
+    Emits WARNINGs (not ERRORs) for two cases:
+    - ``cond`` input not wired — the branch node is unreachable.
+    - ``cond`` wired but neither ``true`` nor ``false`` outputs connected — dead path.
+    """
     out: list[ValidationError] = []
     for node in graph.nodes:
         if node.ref != "control.branch":
@@ -190,7 +206,6 @@ def _rule_branch_unreachable(graph: Graph) -> list[ValidationError]:
                     severity=ValidationSeverity.WARNING,
                     message="branch has no condition wired — node is unreachable",
                     node_id=node.id,
-                    port=None,
                 )
             )
         elif not true_wired and not false_wired:
@@ -202,7 +217,6 @@ def _rule_branch_unreachable(graph: Graph) -> list[ValidationError]:
                         " (unreachable)"
                     ),
                     node_id=node.id,
-                    port=None,
                 )
             )
     return out
@@ -244,6 +258,7 @@ def _rule_cross_graph_cycle(graph: Graph, peers: dict[str, Graph]) -> list[Valid
 
 
 def _rule_name_collision(graph: Graph, peers: dict[str, Graph]) -> list[ValidationError]:
+    """Reject graphs whose name collides with an existing peer graph."""
     if graph.name in peers:
         return [
             ValidationError(

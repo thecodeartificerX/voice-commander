@@ -27,6 +27,16 @@ class GraphSchemaError(ValueError):
 
 
 def parse_graph(raw: Mapping[str, Any]) -> Graph:
+    """Parse a raw JSON-like mapping into a ``Graph`` value-object.
+
+    Validates schema version, requires ``name`` and ``kind``, and extracts
+    optional fields with sensible defaults (strict=True, enabled=True,
+    timeout_ms=5000, etc.).
+
+    Raises:
+        GraphSchemaError: If any required field is missing or invalid, or if
+            the schema version is not supported.
+    """
     if not isinstance(raw, Mapping):
         raise GraphSchemaError(f"graph JSON must be an object, got {type(raw).__name__}")
 
@@ -74,6 +84,11 @@ def parse_graph(raw: Mapping[str, Any]) -> Graph:
 
 
 def serialise_graph(g: Graph) -> dict[str, Any]:
+    """Convert a ``Graph`` back into a canonical JSON-serialisable dict.
+
+    Embeds the current schema version; flattens inputs, nodes (with pos as a
+    two-element list), and edges (with PortRef string representation).
+    """
     return {
         "schema_version": CURRENT_SCHEMA_VERSION,
         "name": g.name,
@@ -103,6 +118,11 @@ def serialise_graph(g: Graph) -> dict[str, Any]:
 
 
 def _str(raw: Mapping[str, Any], key: str) -> str:
+    """Extract and validate a required string field from *raw*.
+
+    Raises:
+        GraphSchemaError: If the field is missing or empty.
+    """
     val = raw.get(key)
     if not isinstance(val, str) or not val:
         raise GraphSchemaError(f"required string field {key!r} missing or empty")
@@ -110,6 +130,7 @@ def _str(raw: Mapping[str, Any], key: str) -> str:
 
 
 def _parse_input(raw: Any) -> GraphInput:
+    """Parse raw mapping into a ``GraphInput``, defaulting type/required/description."""
     if not isinstance(raw, Mapping):
         raise GraphSchemaError(f"input must be an object, got {type(raw).__name__}")
     return GraphInput(
@@ -121,6 +142,13 @@ def _parse_input(raw: Any) -> GraphInput:
 
 
 def _parse_node(raw: Any) -> Node:
+    """Parse a raw mapping into a ``Node``.
+
+    Validates that ``pos`` is a two-element coordinate pair.
+
+    Raises:
+        GraphSchemaError: If the mapping is invalid or pos is malformed.
+    """
     if not isinstance(raw, Mapping):
         raise GraphSchemaError(f"node must be an object, got {type(raw).__name__}")
     pos_raw = raw.get("pos", [0, 0])
@@ -135,6 +163,11 @@ def _parse_node(raw: Any) -> Node:
 
 
 def _parse_edge(raw: Any) -> Edge:
+    """Parse a raw mapping into an ``Edge``.
+
+    Delegates port-ref parsing to ``PortRef.parse()``, wrapping ``ValueError``
+    in ``GraphSchemaError``.
+    """
     if not isinstance(raw, Mapping):
         raise GraphSchemaError(f"edge must be an object, got {type(raw).__name__}")
     src_raw = raw.get("from")
