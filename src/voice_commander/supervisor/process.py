@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # Windows Job Object — process-wide singleton.
 # ---------------------------------------------------------------------------
 
-_JOB_HANDLE: int | None = None  # type: ignore[assignment] — Windows-only HANDLE
+_JOB_HANDLE: int | None = None  # Windows-only HANDLE
 
 
 def _ensure_job_object() -> int | None:
@@ -53,7 +53,7 @@ def _ensure_job_object() -> int | None:
         return _JOB_HANDLE
 
     try:
-        import win32job  # type: ignore[import-not-found]
+        import win32job  # type: ignore[import-untyped]
     except ImportError:
         logger.warning(
             "pywin32 not available; child cleanup on supervisor crash not guaranteed"
@@ -79,9 +79,9 @@ def _assign_to_job(pid: int) -> None:
     if job is None:
         return
     try:
-        import win32api  # type: ignore[import-not-found]
-        import win32con  # type: ignore[import-not-found]
-        import win32job  # type: ignore[import-not-found]
+        import win32api
+        import win32con
+        import win32job
     except ImportError:
         return
 

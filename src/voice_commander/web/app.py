@@ -9,7 +9,7 @@ import queue as _queue_mod
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from ..commands.store import GraphStore
     from ..event_bus import EventBus
     from ..llm_router import LLMRouter
+    from ..observability.store import Store
+    from ..observability.tracer import Tracer
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +44,8 @@ def create_app(
     llm_context: dict[str, object] | None = None,
     config_path: Path | None = None,
     llm_router: LLMRouter | None = None,
-    observability_store=None,
-    observability_tracer=None,
+    observability_store: Store | None = None,
+    observability_tracer: Tracer | None = None,
 ) -> FastAPI:
     """Create and return the FastAPI application for the command management dashboard.
 
@@ -443,9 +445,9 @@ def create_app(
                 return HTMLResponse("<p>not found</p>", status_code=404)
             spans = observability_store.get_spans(run_id)
             by_id = {s["span_id"]: s for s in spans}
-            depth_cache: dict = {}
+            depth_cache: dict[str, int] = {}
 
-            def _depth(s: dict) -> int:
+            def _depth(s: dict[str, Any]) -> int:
                 if s["span_id"] in depth_cache:
                     return depth_cache[s["span_id"]]
                 parent = by_id.get(s["parent_span_id"])

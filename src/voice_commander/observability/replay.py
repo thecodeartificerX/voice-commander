@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from voice_commander.observability.store import Store
+from voice_commander.observability.tracer import Tracer
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,7 @@ def replay_llm(store: Store, run_id: str, router: Any) -> ReplayResult:
 
 def replay_full(
     store: Store, run_id: str, router: Any,
-    dispatcher: Any, registry: Any, tracer: Any,
+    dispatcher: Any, registry: Any, tracer: Tracer,
 ) -> str:
     """Re-route AND re-fire the plan. **DESTRUCTIVE** — re-types into foreground.
 

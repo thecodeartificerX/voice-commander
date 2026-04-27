@@ -21,11 +21,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from voice_commander.event_bus import EventBus
+from voice_commander.observability.protocols import StoreProtocol
 from voice_commander.observability.store import (
     RunRecord,
     RunUpdate,
     SpanRecord,
-    Store,
 )
 
 logger = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ class Tracer:
     def __init__(
         self,
         *,
-        store: Store,
+        store: StoreProtocol,
         bus: EventBus,
         enabled: bool,
         slow_run_ms: int = 2000,
