@@ -170,7 +170,7 @@ class Tracer:
 
         handle = RunHandle(run_id=run_id, started_at=started_at)
         # Open the synthetic root "run" span so all children parent under it.
-        with self._open_root_span(run_id, transcript) as root:
+        with self.span("run", name="run", transcript=transcript) as root:
             captured_exc: BaseException | None = None
             try:
                 yield handle
@@ -224,11 +224,6 @@ class Tracer:
                 )
                 _current_run_id.reset(token)
                 _run_has_error.reset(err_token)
-
-    @contextlib.contextmanager
-    def _open_root_span(self, run_id: str, transcript: str) -> Iterator[Span | _NullSpan]:
-        with self.span("run", name="run", transcript=transcript) as s:
-            yield s
 
     # ------------------------------------------------------------------
     # span context manager
