@@ -207,36 +207,49 @@ class GraphRuntime:
                     if (time.monotonic() - start) * 1000 > graph.timeout_ms:
                         foreach_timed_out = True
                         break
-                    for key in body_port_keys:
-                        port_values.pop(key, None)
-                    port_values[f"{node.id}.item"] = item_val
-                    body_fired_ok: set[str] = set()
-                    body_fired_ok.add(node.id)  # foreach node itself is "ok" for body
-                    body_fired_err: set[str] = set()
-                    body_fired_branch_true: set[str] = set()
-                    body_fired_branch_false: set[str] = set()
-                    for bn in body_nodes:
-                        if (time.monotonic() - start) * 1000 > graph.timeout_ms:
-                            foreach_timed_out = True
-                            break
-                        if not self._control_satisfied(
-                            bn,
-                            graph.edges,
-                            body_fired_ok,
-                            body_fired_err,
-                            body_fired_branch_true,
-                            body_fired_branch_false,
-                        ):
-                            continue
-                        bkwargs = self._resolve_kwargs(bn, graph.edges, port_values)
-                        action, body_err_msg = self._dispatch_pipeline_node(
-                            bn, bkwargs, graph, steps, port_values, body_fired_ok, body_fired_err
+                    _iter_ctx = (
+                        self._tracer.span(
+                            "foreach_iter",
+                            name=f"{node.ref}[{iter_idx}]",
+                            node_id=node.id,
+                            iter_idx=iter_idx,
+                            item=repr(item_val)[:128],
                         )
-                        if body_err_msg is not None and not foreach_has_error:
-                            foreach_has_error = True
-                            foreach_first_error = f"foreach iter {iter_idx}: {body_err_msg}"
-                        if action == "break":
-                            break
+                        if self._tracer is not None and getattr(self._tracer, "enabled", False)
+                        else contextlib.nullcontext()
+                    )
+                    with _iter_ctx:
+                        for key in body_port_keys:
+                            port_values.pop(key, None)
+                        port_values[f"{node.id}.item"] = item_val
+                        body_fired_ok: set[str] = set()
+                        body_fired_ok.add(node.id)  # foreach node itself is "ok" for body
+                        body_fired_err: set[str] = set()
+                        body_fired_branch_true: set[str] = set()
+                        body_fired_branch_false: set[str] = set()
+                        for bn in body_nodes:
+                            if (time.monotonic() - start) * 1000 > graph.timeout_ms:
+                                foreach_timed_out = True
+                                break
+                            if not self._control_satisfied(
+                                bn,
+                                graph.edges,
+                                body_fired_ok,
+                                body_fired_err,
+                                body_fired_branch_true,
+                                body_fired_branch_false,
+                            ):
+                                continue
+                            bkwargs = self._resolve_kwargs(bn, graph.edges, port_values)
+                            action, body_err_msg = self._dispatch_pipeline_node(
+                                bn, bkwargs, graph, steps,
+                                port_values, body_fired_ok, body_fired_err,
+                            )
+                            if body_err_msg is not None and not foreach_has_error:
+                                foreach_has_error = True
+                                foreach_first_error = f"foreach iter {iter_idx}: {body_err_msg}"
+                            if action == "break":
+                                break
                     if foreach_timed_out:
                         break
                     steps.append(ToolCall(name=f"{node.ref}/iter", kwargs={"item": item_val}))
@@ -347,17 +360,26 @@ class GraphRuntime:
             steps.append(ToolCall(name=node.ref, kwargs=kwargs))
             action = "break" if graph.strict else "continue"
             return action, f"unknown pipeline ref: {node.ref}"
-        try:
-            ret = entry.func(**kwargs)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("foreach body node %s raised: %s", node.ref, exc)
-            fired_err.add(node.id)
-            steps.append(ToolCall(name=node.ref, kwargs=kwargs))
-            exc_str = str(exc)
-            msg = exc_str[:256] + ("..." if len(exc_str) > 256 else "")
-            if graph.strict and not self._has_error_edge(node.id, graph.edges):
-                return "break", msg
-            return "continue", msg
+        _node_ctx = (
+            self._tracer.span("node", name=node.ref, node_id=node.id)
+            if self._tracer is not None and getattr(self._tracer, "enabled", False)
+            else contextlib.nullcontext()
+        )
+        ret = None
+        with _node_ctx as _node_span:
+            try:
+                ret = entry.func(**kwargs)
+                if _node_span is not None and hasattr(_node_span, "set_output"):
+                    _node_span.set_output(ret)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("foreach body node %s raised: %s", node.ref, exc)
+                fired_err.add(node.id)
+                steps.append(ToolCall(name=node.ref, kwargs=kwargs))
+                exc_str = str(exc)
+                msg = exc_str[:256] + ("..." if len(exc_str) > 256 else "")
+                if graph.strict and not self._has_error_edge(node.id, graph.edges):
+                    return "break", msg
+                return "continue", msg
         fired_ok.add(node.id)
         self._record_returns(node, entry, ret, port_values)
         steps.append(ToolCall(name=node.ref, kwargs=kwargs))

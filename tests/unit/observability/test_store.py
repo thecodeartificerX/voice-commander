@@ -4,6 +4,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+import pytest
+
 from voice_commander.observability.store import (
     RunRecord,
     RunUpdate,
@@ -126,3 +128,82 @@ def test_store_recover_stale_runs_on_startup(tmp_path):
         assert run["error_msg"] == "daemon crash"
     finally:
         store_b.stop()
+
+
+def test_set_keep_runs_validates_minimum(tmp_path):
+    """M8: set_keep_runs rejects n < 1."""
+    s = Store(tmp_path / "runs.db", keep_runs=10, queue_max=64, daemon_pid=1)
+    s.start()
+    try:
+        s.set_keep_runs(5)
+        assert s._keep_runs == 5
+        with pytest.raises(ValueError):
+            s.set_keep_runs(0)
+        with pytest.raises(ValueError):
+            s.set_keep_runs(-1)
+    finally:
+        s.stop()
+
+
+def test_list_runs_graph_filter_sql(tmp_path):
+    """M9: graph_name filter uses SQL EXISTS subquery."""
+    s = Store(tmp_path / "runs.db", keep_runs=100, queue_max=64, daemon_pid=1)
+    s.start()
+    try:
+        # Insert two runs
+        s.write_run_start(RunRecord("aaa", 1000.0, "run aaa", 1))
+        s.write_run_end(RunUpdate("aaa", 1000.5, "ok", None, 500))
+        s.write_run_start(RunRecord("bbb", 1001.0, "run bbb", 1))
+        s.write_run_end(RunUpdate("bbb", 1001.5, "ok", None, 500))
+        # Insert a graph span only for run "aaa"
+        s.write_span(SpanRecord(
+            span_id="sp1", run_id="aaa", parent_span_id=None,
+            type="graph", name="greet",
+            started_at=1000.0, ended_at=1001.0, duration_ms=1000, status="ok",
+        ))
+        _drain(s)
+        matched = s.list_runs(graph_name="greet")
+        assert len(matched) == 1
+        assert matched[0]["run_id"] == "aaa"
+        # Non-matching graph name
+        empty = s.list_runs(graph_name="nonexistent")
+        assert len(empty) == 0
+    finally:
+        s.stop()
+
+
+def test_writer_circuit_breaker_trips_after_threshold(tmp_path):
+    """M15: circuit_open becomes True after _CIRCUIT_OPEN_THRESHOLD consecutive errors."""
+    from voice_commander.observability.store import _CIRCUIT_OPEN_THRESHOLD
+    s = Store(tmp_path / "runs.db", keep_runs=10, queue_max=256, daemon_pid=1)
+    s.start()
+    try:
+        assert not s.circuit_open
+        # Trigger consecutive errors by closing the writer connection externally
+        # We can simulate this by monkey-patching _insert_run_start to raise
+        original_insert = s._insert_run_start
+
+        call_count = 0
+
+        def failing_insert(conn, rec):
+            nonlocal call_count
+            call_count += 1
+            raise sqlite3.OperationalError("simulated failure")
+
+        s._insert_run_start = failing_insert  # type: ignore[method-assign]
+
+        # Enqueue enough writes to trip the circuit
+        for i in range(_CIRCUIT_OPEN_THRESHOLD):
+            s.write_run_start(RunRecord(f"r{i}", 1000.0 + i, f"t{i}", 1))
+
+        # Give the writer thread time to process
+        import time as _t
+        _t.sleep(0.2)
+        _drain(s)
+
+        assert s.circuit_open, "circuit should be open after consecutive failures"
+
+        # Restore
+        s._insert_run_start = original_insert  # type: ignore[method-assign]
+    finally:
+        s.stop()

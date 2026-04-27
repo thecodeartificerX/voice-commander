@@ -162,19 +162,32 @@ def test_tracer_context_var_reset_after_exception_in_nested_span(store: Store, b
 
 
 def test_tracer_step_counter_increments_per_tool_call(store: Store, bus: EventBus):
-    """_step_counters increments once per tool_call span and is cleaned up after run ends."""
+    """Step counter on RunHandle increments once per tool_call span."""
     tracer = Tracer(store=store, bus=bus, enabled=True)
     with tracer.run("count steps") as run:
         with tracer.span("tool_call", name="press"):
             pass
         with tracer.span("tool_call", name="type"):
             pass
-        # step counters exist during the run
-        assert tracer._step_counters.get(run.run_id, 0) == 2, (
-            f"expected 2 steps during run, got {tracer._step_counters.get(run.run_id, 0)}"
+        assert run.step_count == 2, (
+            f"expected 2 steps during run, got {run.step_count}"
         )
 
-    # after run exits, step_counters entry must be cleaned up to prevent memory leak
-    assert run.run_id not in tracer._step_counters, (
-        f"_step_counters still has entry for {run.run_id!r} after run ended"
+    # step_count is accessible on the handle after run ends
+    assert run.step_count == 2, (
+        f"expected step_count=2 after run ended, got {run.step_count}"
     )
+
+
+def test_step_counter_per_run_handle(store: Store, bus: EventBus):
+    """M1: step counter lives on RunHandle, not shared dict."""
+    tracer = Tracer(store=store, bus=bus, enabled=True)
+    with tracer.run("test transcript") as handle:
+        with tracer.span("tool_call", name="focus"):
+            pass
+        with tracer.span("tool_call", name="open"):
+            pass
+        # Non-tool_call span should NOT increment
+        with tracer.span("llm_call", name="route"):
+            pass
+    assert handle.step_count == 2

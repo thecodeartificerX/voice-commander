@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 _current_run_id: ContextVar[str] = ContextVar("vc_obs_run_id", default="")
 _current_span_id: ContextVar[str] = ContextVar("vc_obs_span_id", default="")
 _run_has_error: ContextVar[bool] = ContextVar("vc_obs_run_has_error", default=False)
+_current_run_handle: ContextVar[RunHandle | None] = ContextVar("vc_obs_run_handle", default=None)
 
 
 def _short_id() -> str:
@@ -44,10 +45,19 @@ class RunHandle:
     run_id: str
     started_at: float = 0.0
     _override_status: str = ""
+    _step_count: int = 0
 
     def set_status(self, status: str) -> None:
         """Override the run's final status (e.g. 'miss') from outside the tracer."""
         self._override_status = status
+
+    def increment_step(self) -> None:
+        """Increment the tool-call step counter for this run."""
+        self._step_count += 1
+
+    @property
+    def step_count(self) -> int:
+        return self._step_count
 
 
 class Span:
@@ -129,7 +139,6 @@ class Tracer:
         self._enabled = enabled
         self._slow_run_ms = slow_run_ms
         self._daemon_pid = daemon_pid
-        self._step_counters: dict[str, int] = {}
 
     @property
     def enabled(self) -> bool:
@@ -149,6 +158,8 @@ class Tracer:
         run_id = _short_id()
         token = _current_run_id.set(run_id)
         err_token = _run_has_error.set(False)
+        handle = RunHandle(run_id=run_id, started_at=0.0)
+        handle_token = _current_run_handle.set(handle)
         started_at = time.time()
         start_mono = time.monotonic()
 
@@ -168,7 +179,7 @@ class Tracer:
         except Exception:
             logger.exception("tracer: failed to start run")
 
-        handle = RunHandle(run_id=run_id, started_at=started_at)
+        handle.started_at = started_at
         # Open the synthetic root "run" span so all children parent under it.
         with self.span("run", name="run", transcript=transcript) as root:
             captured_exc: BaseException | None = None
@@ -213,7 +224,7 @@ class Tracer:
                     )
                 except Exception:
                     logger.exception("tracer: failed to end run")
-                steps = self._step_counters.pop(run_id, 0)
+                steps = handle.step_count
                 logger.info(
                     "run %s %-5s %5d ms  %d step(s)  %r",
                     run_id[:8],
@@ -224,6 +235,7 @@ class Tracer:
                 )
                 _current_run_id.reset(token)
                 _run_has_error.reset(err_token)
+                _current_run_handle.reset(handle_token)
 
     # ------------------------------------------------------------------
     # span context manager
@@ -315,7 +327,9 @@ class Tracer:
                 )
                 # Count tool_call spans per run for the summary line
                 if span_type == "tool_call" and s.run_id:
-                    self._step_counters[s.run_id] = self._step_counters.get(s.run_id, 0) + 1
+                    _h = _current_run_handle.get()
+                    if _h is not None:
+                        _h.increment_step()
             except Exception:
                 logger.exception("tracer: failed to write span")
             _current_span_id.reset(token)
