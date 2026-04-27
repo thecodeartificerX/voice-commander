@@ -25,3 +25,13 @@ def test_real_store_satisfies_protocol() -> None:
     from voice_commander.observability.store import Store
     # Store has these methods, so it satisfies the protocol structurally
     assert issubclass(Store, StoreProtocol)
+
+
+def test_incomplete_class_fails_protocol() -> None:
+    """A class missing methods must NOT satisfy StoreProtocol."""
+
+    class _Incomplete:
+        def write_run_start(self, *a, **k) -> None: ...
+        def write_run_end(self, *a, **k) -> None: ...
+
+    assert not isinstance(_Incomplete(), StoreProtocol)
