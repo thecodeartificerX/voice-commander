@@ -27,8 +27,13 @@ commands.json.lock
 workflows.json.lock
 *.json.bak
 
-# Archon worktree per-clone config
-.archon/
+# Archon — track workflow + command definitions (project tooling); ignore
+# only runtime artefacts and any MCP server configs that may carry secrets.
+# See .archon/config.yaml for worktree.copyFiles entries.
+.archon/mcp/
+.archon/runs/
+.archon/state/
+.archon/cache/
 
 # start.ps1 last-choice persistence
 .last-router-mode

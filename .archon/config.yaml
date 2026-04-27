@@ -1,0 +1,30 @@
+# Archon — repo-level configuration.
+# Global config lives at ~/.archon/config.yaml; this file overrides per-repo.
+# See .claude/skills/archon/references/repo-init.md for the full schema.
+
+worktree:
+  # baseBranch is auto-detected from git when omitted (we use main).
+
+  # copyFiles lists git-ignored files that Archon must carry into a fresh
+  # worktree before the workflow runs. Tracked files are already there via
+  # `git worktree add` — only list things that .gitignore blocks but the
+  # daemon needs to build / run / test.
+  copyFiles:
+    # Local LM Studio overrides + per-machine secrets, if you ever add them.
+    - .env
+    - .env.local
+
+    # Uncomment to share the live command + workflow catalogs with worktrees.
+    # If left commented, each worktree's daemon re-seeds them from
+    # commands.default.json / workflows.default.json on first start — clean
+    # but loses any local edits. Enable when iterating on commands inside a
+    # worktree-driven workflow.
+    # - commands.json
+    # - workflows.json
+
+# Bundled defaults — keep both on so the global Archon workflows
+# (archon-fix-github-issue, archon-comprehensive-pr-review, etc.) remain
+# available in addition to the project-specific ones in .archon/workflows/.
+defaults:
+  loadDefaultCommands: true
+  loadDefaultWorkflows: true
