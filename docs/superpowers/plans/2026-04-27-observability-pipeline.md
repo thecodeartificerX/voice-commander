@@ -26,7 +26,7 @@ A new `observability/` Python package introduces a `Tracer` (contextvars-based, 
 | `src/voice_commander/observability/api.py` | FastAPI `APIRouter` mounted on existing app — `/api/runs/*` |
 | `src/voice_commander/observability/replay.py` | LLM-replay + full-replay executors |
 | `src/voice_commander/observability/cli.py` | `vc debug` + `vc tail` subcommand handlers |
-| `src/voice_commander/web/templates/runs.html` | `/page/runs` HTMX page (inline `<style>` for layout) |
+| `src/voice_commander/web/templates/page_runs.html` | `/page/runs` HTMX page; extends `_layout.html` |
 | `src/voice_commander/web/templates/_run_detail.html` | HTMX fragment: span tree for one run |
 | `src/voice_commander/web/templates/_runs_row.html` | HTMX fragment: one row in run list |
 | `src/voice_commander/web/static/runs.js` | SSE consumer for live runs feed + Builder overlay |
@@ -50,7 +50,7 @@ A new `observability/` Python package introduces a `Tracer` (contextvars-based, 
 | `src/voice_commander/commands/graph_runtime.py` | `run()` opens `graph` span; node loop opens `node` span per node |
 | `src/voice_commander/web/app.py` | Mount `observability.api.router`; add `/page/runs` route; pass `tracer`/`store` |
 | `src/voice_commander/web/builder.py` | Hook overlay JS + runs panel into builder template |
-| `src/voice_commander/web/templates/builder.html` | Add Runs panel HTML + include `runs.js` |
+| `src/voice_commander/web/templates/page_builder.html` | Add Runs panel HTML + include `runs.js` |
 | `src/voice_commander/web/static/builder.js` | Hook into runs.js for node highlight by `data-node-id` |
 | `src/voice_commander/web/static/builder.css` | Status classes (`.run-node-ok`, `.run-node-error`, `.run-node-pulse`) |
 | `src/voice_commander/__main__.py` | Wire `vc debug` / `vc tail` subcommands into existing argparse |
@@ -168,6 +168,10 @@ git commit -m "feat(config): add [observability] section with defaults"
 - Create: `src/voice_commander/observability/store.py`
 - Create: `tests/unit/observability/__init__.py`
 - Create: `tests/unit/observability/test_store.py`
+
+> **Read first:** `docs/references/sqlite3-wal-threading.md` — covers `connect(check_same_thread=False)`, `PRAGMA journal_mode=WAL` / `synchronous=NORMAL` / `foreign_keys=ON` (per-connection gotcha), `sqlite3.Row` factory, single-writer-thread pattern, `LIMIT -1 OFFSET N` prune syntax, corrupt-DB rename-and-recreate recipe, and the 14 most common failure modes for this exact stack.
+
+> **Audit correction (Wave 2A):** the SQLite connection in `_connect()` MUST pass `check_same_thread=False` because reader connections are opened on FastAPI request threads while the writer thread holds its own connection. The reference doc above explains the trap. Without this flag, every read raises `ProgrammingError`. Update the snippet in Step 4 below: `conn = sqlite3.connect(self._db_path, isolation_level=None, check_same_thread=False)`.
 
 - [ ] **Step 1: Create empty package markers**
 
@@ -731,6 +735,10 @@ git commit -m "feat(observability): store reader methods, prune, crash recovery"
 - Create: `tests/unit/observability/test_tracer.py`
 - Modify: `src/voice_commander/observability/__init__.py`
 
+> **Audit correction (Wave 2A):** the Tracer's public surface MUST include `update_transcript(run_id: str, transcript: str) -> None` — Task 6 calls it. Add to the implementation in Step 3 below (already provided at the bottom of `tracer.py` in Task 6, but the reference is forward; consolidate into the single `Tracer` class definition created here).
+>
+> Also: when `Span.__exit__` re-raises (the `raise` after capturing `error_type`/`error_msg`/`traceback`), the run's status rollup needs to see the error. Verify the `_open_root_span` propagates: the root span's `status` becomes `error` automatically because the inner exception bubbles up through it before the run's `finally` runs `write_run_end`. Confirmed correct in the snippet — call this out in code-review.
+
 - [ ] **Step 1: Write failing tests**
 
 Create `tests/unit/observability/test_tracer.py`:
@@ -1190,7 +1198,9 @@ User verifies the smoke output and then approves moving to Phase 2 (instrumentat
 
 **Files:**
 - Modify: `src/voice_commander/daemon.py`
-- Modify: `tests/unit/test_daemon_wiring.py` (new file if absent — check first)
+- Create: `tests/unit/test_daemon_tracing_wiring.py`
+
+> **Audit correction (Wave 1A/2A):** the existing test file is `tests/unit/test_streaming_daemon.py`, NOT `test_daemon_wiring.py`. Plan creates a NEW dedicated file `test_daemon_tracing_wiring.py` to keep tracing-specific wiring tests isolated from the existing streaming-daemon tests. Original wording said "new file if absent — check first"; this is now the prescriptive choice.
 
 - [ ] **Step 1: Inspect existing daemon-wiring test**
 
@@ -1342,7 +1352,9 @@ git commit -m "feat(daemon): construct Tracer + Store in build_streaming_daemon"
 
 **Files:**
 - Modify: `src/voice_commander/daemon.py`
-- Modify: `tests/unit/test_dispatcher.py` or new `tests/unit/test_daemon_tracing.py`
+- Create: `tests/unit/test_daemon_tracing.py`
+
+> **Audit correction (Wave 1A/2A):** the test's `TranscriptionResult(...)` construction MUST include the required fields `language` and `duration_ms` — they have NO defaults on the dataclass. Replace every occurrence of `TranscriptionResult(text="hello world", confidence=0.95, no_speech_prob=0.01)` with `TranscriptionResult(text="hello world", language="en", duration_ms=1200, confidence=0.95, no_speech_prob=0.01)`. (Source: `src/voice_commander/transcriber.py` dataclass definition; fact-sheet §14.)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1666,6 +1678,8 @@ git commit -m "feat(llm_router): record llm_call span with full prompt + raw res
 - Modify: `src/voice_commander/dispatcher.py`
 - Modify: `tests/unit/test_dispatcher.py`
 
+> **Audit correction (Wave 1A/2A):** the `ToolEntry(...)` test construction MUST include `module` and `docstring` (both required, no defaults on the dataclass). Replace `ToolEntry(name="focus", func=fake_func, description="", phrases=(), settle_ms=0)` with `ToolEntry(name="focus", phrases=(), func=fake_func, module="tests.unit.test_dispatcher", docstring="test", description="", settle_ms=0)`. Note also that field order matters — pass by keyword to avoid drift. (Source: `src/voice_commander/registry.py` dataclass; fact-sheet §13.)
+
 - [ ] **Step 1: Write the failing test**
 
 Append to `tests/unit/test_dispatcher.py`:
@@ -1800,7 +1814,36 @@ git commit -m "feat(dispatcher): plan span + per-step tool_call spans"
 
 **Files:**
 - Modify: `src/voice_commander/commands/graph_runtime.py`
-- Modify: `tests/unit/test_graph_runtime.py` (or new `test_graph_runtime_tracing.py`)
+- Modify: `src/voice_commander/daemon.py` (use `runtime_factory` kwarg, no signature change to `reload_all`)
+- Create: `tests/unit/test_graph_runtime_tracing.py`
+
+> **Audit correction (Wave 1A/2A) — three corrections combined here:**
+>
+> **1. Use the existing `runtime_factory` extension point — do NOT modify `reload_all`'s signature.** `registrar.reload_all` already accepts `runtime_factory: Callable[[ToolRegistry, Callable[[str], Graph | None]], GraphRuntime] | None = None` as the documented extension hook. From `build_streaming_daemon`, pass:
+> ```python
+> from voice_commander.commands.graph_runtime import GraphRuntime
+> cmd_names, wf_names = reload_commands_all(
+>     registry, command_store, workflow_store,
+>     runtime_factory=lambda r, lookup: GraphRuntime(r, lookup, tracer=tracer),
+> )
+> ```
+> No edit to `registrar.py`. Step 3.5 below (the registrar/reload_all signature change) is REMOVED.
+>
+> **2. The `Graph(...)` test construction has wrong fields.** Actual `Graph` fields (frozen dataclass): `name, kind, description, synonyms, inputs, llm_visible, strict, enabled, timeout_ms, nodes, edges, foreach_iteration_cap=50`. There is **no `outputs` field**. Drop the `outputs=()` kwarg. The test must be:
+> ```python
+> g = Graph(
+>     name="demo", kind="command", description="", synonyms=(),
+>     inputs=(), llm_visible=True, strict=True, enabled=True,
+>     timeout_ms=5000,
+>     nodes=(Node(id="n1", ref="pipeline.focus", kwargs={"target": "chrome"}, pos=(0, 0)),),
+>     edges=(),
+>     foreach_iteration_cap=10,
+> )
+> ```
+>
+> **3. The `Edge(...)` placeholder will not work — `Edge` takes `PortRef` objects.** The test above uses `edges=()` so the issue does not arise; but for any test that constructs an Edge, use `Edge(src=PortRef(node_id="n1", port="ok"), dst=PortRef(node_id="n2", port="in"))`. Confirm `PortRef` field names against `src/voice_commander/commands/graph.py` before writing the test.
+>
+> **4. `ToolEntry` construction in this test** has the same required-field issue as Task 8 — pass `module="tests.unit.test_graph_runtime_tracing"` and `docstring="test"` explicitly.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2065,6 +2108,13 @@ git commit -m "feat(observability): one-line run summary in daemon log"
 - Create: `tests/unit/observability/test_api.py`
 - Modify: `src/voice_commander/web/app.py`
 
+> **Audit correction (Wave 2A):** when extending `create_app`'s signature, do NOT add `observability_registry` — `registry` is already a positional argument. Add only:
+> - `observability_store: Store | None = None`
+> - `observability_tracer: Tracer | None = None`
+> - `observability_dispatcher: Dispatcher | None = None`
+>
+> The existing `llm_router=` kwarg is reused by the replay endpoints. The full replay endpoint reuses `registry` (already positional), `llm_router` (already kwarg), the new `observability_dispatcher`, and `observability_tracer`. No fifth observability kwarg.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `tests/unit/observability/test_api.py`:
@@ -2278,6 +2328,10 @@ git commit -m "feat(observability): /api/runs REST endpoints (list, last, by-id,
 - Modify: `src/voice_commander/observability/api.py`
 - Modify: `tests/unit/observability/test_api.py`
 
+> **Read first:** `docs/references/fastapi-sse-streamingresponse.md` — covers `StreamingResponse(..., media_type="text/event-stream")`, the `asyncio.run_in_executor` bridge from a sync `queue.Queue` to an async generator, `request.is_disconnected()` polling, `Last-Event-ID` header replay, keepalive comment frames, the exact SSE byte format (`id:` / `event:` / `data:` / `\n\n`), and the five most common failure modes for this pattern.
+
+> **Audit correction (Wave 2A):** the test in Step 1 uses `client.stream("GET", "/api/runs/stream")` then `bus.publish(...)` from the same thread — this works because `TestClient` runs the request on a worker. However, `client.stream` enters a context manager; the body iteration `for chunk in response.iter_bytes()` will block forever waiting for the generator to yield. The test must publish events BEFORE entering the iteration loop or use a timeout. Concrete fix: publish events inside the `with` block but BEFORE `iter_bytes()`, then add `import time; time.sleep(0.05)` to let the generator drain into the response buffer. The test as-written may flake; tighten with explicit ordering.
+
 - [ ] **Step 1: Write the failing test**
 
 Append to `tests/unit/observability/test_api.py`:
@@ -2381,6 +2435,21 @@ git commit -m "feat(observability): SSE /api/runs/stream filters trace.* events"
 - Create: `src/voice_commander/observability/cli.py`
 - Create: `tests/unit/observability/test_cli.py`
 - Modify: `src/voice_commander/__main__.py`
+
+> **Audit correction (Wave 1A/2A):** `__main__.py` currently has a single `argparse.ArgumentParser` with only `--validate`. Plan's `sys.argv[1] == "debug"` dispatch bypasses argparse entirely and is fragile (no `--help`, no validation). Refactor `_build_parser` to use subparsers:
+> ```python
+> def _build_parser() -> argparse.ArgumentParser:
+>     parser = argparse.ArgumentParser(prog="voice-commander")
+>     parser.add_argument("--validate", action="store_true",
+>                         help="Discover tools, validate config, print OK, and exit.")
+>     subparsers = parser.add_subparsers(dest="subcommand")
+>     debug_p = subparsers.add_parser("debug", help="Inspect runs.db")
+>     # … parented subparsers for last/run/runs/errors/grep/llm/replay-llm/replay-full
+>     tail_p = subparsers.add_parser("tail", help="Live-tail runs.db")
+>     # … args for tail
+>     return parser
+> ```
+> Then in `main`, branch on `args.subcommand`. The default-no-subcommand path remains the daemon-start path. The full subparser layout is built inside `observability.cli.build_debug_parser()` / `build_tail_parser()` — call these from `__main__.py` to attach the subparsers (each function takes a `_SubParsersAction` and returns the configured parser).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2773,13 +2842,17 @@ git commit -m "feat(observability): vc tail (polling, --no-follow, span-tree for
 ### Task 15: `/page/runs` standalone inspector
 
 **Files:**
-- Create: `src/voice_commander/web/templates/runs.html`
+- Create: `src/voice_commander/web/templates/page_runs.html`
 - Create: `src/voice_commander/web/templates/_run_detail.html`
 - Create: `src/voice_commander/web/templates/_runs_row.html`
 - Create: `src/voice_commander/web/static/runs.js`
 - Create: `src/voice_commander/web/static/runs.css`
 - Modify: `src/voice_commander/web/app.py`
 - Create: `tests/unit/test_web_runs_page.py`
+
+> **Audit correction (Wave 1A/2A):** the project's template-naming convention is `page_<route>.html` for full pages and `_<thing>.html` for fragments (verified against the existing templates: `page_commands.html`, `page_workflows.html`, `page_prompt.html`, `page_config.html`, `page_primitives.html`, `page_builder.html`, `_command_card.html`, `_layout.html`, etc.). Rename `runs.html` → `page_runs.html` everywhere in this task: file create path, every `templates.TemplateResponse("runs.html", …)` call, and the route handler. The fragment names (`_run_detail.html`, `_runs_row.html`) are already convention-compliant.
+>
+> Also: the existing pages extend `_layout.html`. The new `page_runs.html` should `{% extends "_layout.html" %}` and override the body block, not be a standalone `<!doctype html>` document. Match the existing `page_*.html` files for the exact extension contract.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3041,10 +3114,14 @@ git commit -m "feat(web): /page/runs standalone inspector + run-detail HTMX frag
 ### Task 16: Builder UI overlay — Runs panel + static node highlight
 
 **Files:**
-- Modify: `src/voice_commander/web/templates/builder.html` (or wherever the builder shell lives)
+- Modify: `src/voice_commander/web/templates/page_builder.html`
 - Modify: `src/voice_commander/web/static/builder.js`
 - Modify: `src/voice_commander/web/static/builder.css`
-- Modify: `tests/unit/test_web_builder.py` (or new file)
+- Modify: `tests/unit/test_web_routes.py` (existing test file covering builder routes)
+
+> **Audit correction (Wave 1A/2A):** the builder template is `page_builder.html`, NOT `builder.html` (verified against the templates directory listing). Use the exact filename. Step 1 of this task says "locate the Builder template" — the answer is locked: `src/voice_commander/web/templates/page_builder.html`.
+>
+> Also: `data-node-id` is currently NOT emitted on Drawflow node DOM elements (verified — zero occurrences in `builder.js`). Step 5 of this task is mandatory, not optional. Locate the `addNode` callback (or the `nodeCreated` event hook) inside `builder.js` and ensure each created node element receives `setAttribute("data-node-id", node.id)` immediately after creation. Without this, the overlay JS in this task and Task 17 cannot find the DOM nodes to highlight.
 
 - [ ] **Step 1: Locate the Builder template**
 
@@ -3146,7 +3223,9 @@ git commit -m "feat(builder): runs side-panel + static node-status overlay"
 
 **Files:**
 - Modify: `src/voice_commander/web/static/builder.js`
-- Modify: `src/voice_commander/web/templates/builder.html` (live-mode toggle handler)
+- Modify: `src/voice_commander/web/templates/page_builder.html` (live-mode toggle handler)
+
+> **Audit correction (Wave 1A):** template name is `page_builder.html` per project convention. Same correction as Task 16.
 
 - [ ] **Step 1: Append live-mode JS**
 
@@ -3698,3 +3777,38 @@ git commit -m "docs(observability): ADR 0070 + architecture + technical-decision
 * **Spec coverage:** every section of the design spec maps to a numbered task: §3.1 architecture → Tasks 4–9 (Tracer + instrumentation seams); §3.2 span tree → Task 4 (run/transcribe), Tasks 6–9 (the rest); §3.3 Tracer API → Task 4; §3.4 storage → Tasks 2–3; §3.5 LLM capture → Task 7; §3.6 EventBus events → Task 4 (publish_safe inside Tracer); §3.7 stdout one-liner → Task 10; §3.8 `vc tail` → Task 14; §3.9 `vc debug` → Task 13; §3.10 REST → Tasks 11–12; §3.11 web UI → Tasks 15–17; §4.5 replay safety → Task 19; §4.3 crash recovery → Task 3; §5 config → Task 1; §6 phasing → mirrored by Phase 1–6 + gates.
 * **Type consistency:** `Tracer.span(type, name=..., **attrs)` and `Tracer.run(transcript)` signatures used identically in every task. `Span.set_output(value)` / `Span.set_attr(k, v)` consistent. `RunHandle` exposes only `run_id` + `started_at`; transcript update goes through `Tracer.update_transcript` (Task 6).
 * **Placeholder scan:** every code block is concrete; no "TODO / TBD" left. Where existing code's exact shape is unknown (Builder template path, exact registrar signature) the plan instructs the executor to discover with a `grep` first, then make the concrete edit.
+
+---
+
+## Verification log
+
+- **Verified:** 2026-04-27
+- **Verification waves:**
+  - Wave 1A (Haiku, codebase fact-sheet): full inventory of every file the plan touches — dataclass shapes, function signatures, existing tests, ADR numbers, commit conventions.
+  - Wave 1B (Haiku, dependency matrix): no new deps; sqlite3 + contextvars are stdlib; FastAPI / httpx / pytest already present.
+  - Wave 2A (Sonnet, gap analysis): identified 9 concrete gaps in plan vs codebase.
+  - Wave 2B (Sonnet, reference audit): two new vendored references warranted; nothing to extend.
+  - Wave 3 (Haiku × 2, parallel doc fetches): vendored `docs/references/sqlite3-wal-threading.md` and `docs/references/fastapi-sse-streamingresponse.md`.
+- **Codebase audit summary:** nine gaps surfaced and resolved inline — required-field omissions in `ToolEntry` / `TranscriptionResult` / `Graph` test constructions; bogus `outputs` field on `Graph`; non-existent test files renamed to actual ones; `builder.html` corrected to `page_builder.html`; `runs.html` renamed to `page_runs.html` per project convention; `reload_all` signature change replaced with the existing `runtime_factory` extension hook; `observability_registry` redundant kwarg dropped from `create_app`; `sys.argv[1]` dispatch in `__main__.py` replaced with proper argparse subparser; SQLite `connect(check_same_thread=False)` requirement added to Task 2.
+- **References vendored:**
+  - `docs/references/sqlite3-wal-threading.md` — Python stdlib `sqlite3` in WAL mode with single-writer/multi-reader threading; covers `check_same_thread=False`, the per-connection `PRAGMA foreign_keys=ON` trap, `LIMIT -1 OFFSET N` prune, corrupt-DB rename-and-recreate, 14 common failure modes.
+  - `docs/references/fastapi-sse-streamingresponse.md` — FastAPI / Starlette `StreamingResponse` with `media_type="text/event-stream"`; sync-queue → async-generator bridge via `run_in_executor`; `request.is_disconnected()` polling; SSE wire format; `Last-Event-ID` replay; five common failure modes.
+- **References extended:** none.
+- **Inline corrections applied (by task):**
+  1. **Task 2** — `> Read first` pointer to sqlite3 reference; mandatory `check_same_thread=False` on connect.
+  2. **Task 4** — `Tracer.update_transcript` lifted into the public API definition.
+  3. **Task 5** — test file renamed to `test_daemon_tracing_wiring.py` (existing file is `test_streaming_daemon.py`).
+  4. **Task 6** — `TranscriptionResult` test fix: include `language` and `duration_ms`.
+  5. **Task 8** — `ToolEntry` test fix: include `module` and `docstring`.
+  6. **Task 9** — three combined fixes: use `runtime_factory` not `reload_all` signature change; drop bogus `outputs=()` from `Graph(...)`; correct `Edge`/`PortRef` usage; `ToolEntry` required fields.
+  7. **Task 11** — drop redundant `observability_registry` kwarg from `create_app`; final new kwargs are `observability_store`, `observability_tracer`, `observability_dispatcher`.
+  8. **Task 12** — `> Read first` pointer to FastAPI SSE reference; tightened the SSE test ordering against `TestClient.stream`.
+  9. **Task 13** — `__main__.py` integration uses argparse subparsers, not `sys.argv[1]` raw dispatch.
+  10. **Task 15** — `runs.html` renamed `page_runs.html`; extends `_layout.html`.
+  11. **Tasks 16–17** — template name is `page_builder.html`; `data-node-id` injection in `builder.js` is mandatory, not optional.
+  12. **File structure header table** — updated to reflect the corrected template names.
+- **Outstanding risks:**
+  - `PortRef` field-name lookup deferred to executor — confirm against `src/voice_commander/commands/graph.py` before constructing `Edge` in tests (small, low-risk).
+  - `Store.recover_stale_runs()` is implemented in Task 3 with a no-arg signature; Task 5 calls it with no args — confirmed consistent.
+  - The `_layout.html` block names used by existing `page_*.html` templates were not enumerated by Wave 1A — executor must `cat` `_layout.html` before writing `page_runs.html` to discover the correct `{% block %}` names. Trivial to resolve at task time.
+- **Verdict:** ready to execute.
