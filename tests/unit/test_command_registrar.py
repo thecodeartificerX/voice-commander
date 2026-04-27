@@ -138,6 +138,39 @@ def test_register_graphs_store_wins_over_peers(tmp_path: Path) -> None:
     assert pressed == ["ctrl+a"], "Store graph should win over peer graph"
 
 
+def test_register_graphs_drops_shadowed_disabled_primitive(tmp_path: Path) -> None:
+    """A graph whose name collides with a disabled+internal legacy primitive
+    silently replaces it instead of raising DuplicateToolError."""
+    store = GraphStore(tmp_path / "commands.json", kind="command")
+    store.save_one(
+        _make_graph(
+            "close_window",
+            nodes=(Node("n1", "pipeline.press", {"combo": "alt+f4"}),),
+        )
+    )
+
+    pressed: list[str] = []
+    reg = _press_registry(pressed)
+    reg.register(
+        ToolEntry(
+            name="close_window",
+            phrases=(),
+            func=lambda: None,
+            module="x",
+            docstring=None,
+            enabled=False,
+            internal=True,
+            origin="primitive",
+        )
+    )
+
+    names = register_graphs(reg, store)
+    assert names == ["close_window"]
+    entry = reg.by_name("close_window")
+    assert entry is not None
+    assert entry.origin == "command"
+
+
 def test_register_graphs_peer_graphs_cross_resolution(tmp_path: Path) -> None:
     """When peer_graphs is supplied, the runtime lookup resolves
     references from the peer set — not just the store's own graphs."""

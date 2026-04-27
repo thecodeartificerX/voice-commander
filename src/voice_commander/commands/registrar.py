@@ -83,6 +83,7 @@ def register_graphs(
             continue
         internal = not g.llm_visible
         params_schema = _build_schema(g)
+        _drop_shadowed_primitive(registry, g.name)
         entry = _build_entry(g, runtime, origin, internal, params_schema)
         registry.register(entry)
         names.append(g.name)
@@ -124,6 +125,7 @@ def reload_all(
     for g in cmd_graphs.values():
         if not g.enabled:
             continue
+        _drop_shadowed_primitive(registry, g.name)
         entry = _build_entry(g, runtime, "command", not g.llm_visible, _build_schema(g))
         registry.register(entry)
         cmd_names.append(g.name)
@@ -132,6 +134,7 @@ def reload_all(
     for g in wf_graphs.values():
         if not g.enabled:
             continue
+        _drop_shadowed_primitive(registry, g.name)
         entry = _build_entry(g, runtime, "workflow", not g.llm_visible, _build_schema(g))
         registry.register(entry)
         wf_names.append(g.name)
@@ -199,3 +202,20 @@ def _drop_origin(registry: ToolRegistry, origin: str) -> None:
     """Remove all ToolEntry instances with the given origin from the registry."""
     for entry in list(registry.by_origin(origin)):  # type: ignore[arg-type]
         registry.remove(entry.name)
+
+
+def _drop_shadowed_primitive(registry: ToolRegistry, name: str) -> None:
+    """Drop a same-named primitive when it's a disabled legacy stub.
+
+    Legacy primitives like ``close_window`` are kept in source as raw
+    Python functions but flipped to ``enabled=false, internal=true`` in
+    sidecar TOML so user-defined commands of the same name can replace
+    them (see primitives.toml comment block).  Without this drop, the
+    graph registration step trips ``DuplicateToolError``.
+    """
+    existing = registry.by_name(name)
+    if existing is None:
+        return
+    if existing.origin == "primitive" and not existing.enabled and existing.internal:
+        registry.remove(name)
+        logger.info("Dropped shadowed legacy primitive '%s' for graph override", name)
