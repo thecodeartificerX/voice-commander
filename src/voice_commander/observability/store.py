@@ -148,9 +148,7 @@ class Store:
             finally:
                 conn.close()
         except sqlite3.DatabaseError as exc:
-            backup = self._db_path.with_name(
-                f"{self._db_path.name}.corrupt-{int(time.time())}"
-            )
+            backup = self._db_path.with_name(f"{self._db_path.name}.corrupt-{int(time.time())}")
             logger.warning(
                 "observability db unreadable (%s); backing up to %s and recreating",
                 exc,
@@ -193,9 +191,7 @@ class Store:
             self._q.put_nowait(item)
         except queue.Full:
             self._dropped += 1
-            logger.info(
-                "observability queue full; dropped %d record(s) total", self._dropped
-            )
+            logger.info("observability queue full; dropped %d record(s) total", self._dropped)
 
     # ------------------------------------------------------------------
     # writer thread
@@ -243,8 +239,7 @@ class Store:
 
     def _insert_run_end(self, conn: sqlite3.Connection, upd: RunUpdate) -> None:
         conn.execute(
-            "UPDATE runs SET ended_at=?, status=?, error_msg=?, duration_ms=? "
-            "WHERE run_id=?",
+            "UPDATE runs SET ended_at=?, status=?, error_msg=?, duration_ms=? WHERE run_id=?",
             (upd.ended_at, upd.status, upd.error_msg, upd.duration_ms, upd.run_id),
         )
 
@@ -292,9 +287,7 @@ class Store:
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         conn = self._connect()
         try:
-            row = conn.execute(
-                "SELECT * FROM runs WHERE run_id=?", (run_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
         finally:
             conn.close()
         return dict(row) if row else None
@@ -347,9 +340,7 @@ class Store:
     def get_last_run(self) -> dict[str, Any] | None:
         conn = self._connect()
         try:
-            row = conn.execute(
-                "SELECT * FROM runs ORDER BY started_at DESC LIMIT 1"
-            ).fetchone()
+            row = conn.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT 1").fetchone()
         finally:
             conn.close()
         return dict(row) if row else None

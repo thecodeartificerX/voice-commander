@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from voice_commander.observability.store import Store
+from voice_commander.observability.tracer import Tracer
 
 
 @dataclass(frozen=True)
@@ -25,17 +26,17 @@ def replay_llm(store: Store, run_id: str, router: Any) -> ReplayResult:
     spans = store.get_spans(run_id)
     llm = next((s for s in spans if s["type"] == "llm_call"), None)
     if llm is None:
-        return ReplayResult(run_id=run_id, old_plan=[], new_plan=None,
-                            changed=False, error="no llm_call span")
+        return ReplayResult(
+            run_id=run_id, old_plan=[], new_plan=None, changed=False, error="no llm_call span"
+        )
     _run = store.get_run(run_id)
-    transcript = llm["attrs"].get("transcript") or (
-        _run["transcript"] if _run is not None else ""
-    )
+    transcript = llm["attrs"].get("transcript") or (_run["transcript"] if _run is not None else "")
     old_plan = (llm["output"] or {}).get("steps", [])
     plan = router.route(transcript)
     new_plan = (
         [{"name": s.name, "kwargs": dict(s.kwargs)} for s in plan.steps]
-        if plan is not None else None
+        if plan is not None
+        else None
     )
     return ReplayResult(
         run_id=run_id,
@@ -46,8 +47,12 @@ def replay_llm(store: Store, run_id: str, router: Any) -> ReplayResult:
 
 
 def replay_full(
-    store: Store, run_id: str, router: Any,
-    dispatcher: Any, registry: Any, tracer: Any,
+    store: Store,
+    run_id: str,
+    router: Any,
+    dispatcher: Any,
+    registry: Any,
+    tracer: Tracer,
 ) -> str:
     """Re-route AND re-fire the plan. **DESTRUCTIVE** — re-types into foreground.
 

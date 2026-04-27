@@ -202,11 +202,13 @@ class LLMRouter:
         logger.debug("LLM router request: %s", json.dumps(body, default=str))
 
         tracer = self._tracer
-        _span_ctx = tracer.span("llm_call", name="llm_call", model=self._config.model_id) if (
-            tracer is not None and getattr(tracer, "enabled", False)
-        ) else None
+        _span_ctx = (
+            tracer.span("llm_call", name="llm_call", model=self._config.model_id)
+            if (tracer is not None and getattr(tracer, "enabled", False))
+            else None
+        )
 
-        with (_span_ctx if _span_ctx is not None else contextlib.nullcontext()) as _llm_span:
+        with _span_ctx if _span_ctx is not None else contextlib.nullcontext() as _llm_span:
             if _llm_span is not None and hasattr(_llm_span, "set_attr"):
                 with contextlib.suppress(Exception):
                     _llm_span.set_attr("prompt_full", json.dumps(messages, default=str))

@@ -21,11 +21,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from voice_commander.event_bus import EventBus
+from voice_commander.observability.protocols import StoreProtocol
 from voice_commander.observability.store import (
     RunRecord,
     RunUpdate,
     SpanRecord,
-    Store,
 )
 
 logger = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ class Tracer:
     def __init__(
         self,
         *,
-        store: Store,
+        store: StoreProtocol,
         bus: EventBus,
         enabled: bool,
         slow_run_ms: int = 2000,
@@ -170,7 +170,7 @@ class Tracer:
 
         handle = RunHandle(run_id=run_id, started_at=started_at)
         # Open the synthetic root "run" span so all children parent under it.
-        with self._open_root_span(run_id, transcript) as root:
+        with self.span("run", name="run", transcript=transcript) as root:
             captured_exc: BaseException | None = None
             try:
                 yield handle
@@ -184,10 +184,10 @@ class Tracer:
                 # Use handle._override_status to allow callers (e.g. daemon miss paths)
                 # to mark the run status without raising.
                 duration_ms = int((time.monotonic() - start_mono) * 1000)
-                status = root.status if root.status == "error" else (
-                    "error" if _run_has_error.get() else (
-                        handle._override_status or "ok"
-                    )
+                status = (
+                    root.status
+                    if root.status == "error"
+                    else ("error" if _run_has_error.get() else (handle._override_status or "ok"))
                 )
                 # Capture error_msg directly from the caught exception; root.error_msg
                 # is populated by the span() context manager's except block which runs
@@ -225,18 +225,17 @@ class Tracer:
                 _current_run_id.reset(token)
                 _run_has_error.reset(err_token)
 
-    @contextlib.contextmanager
-    def _open_root_span(self, run_id: str, transcript: str) -> Iterator[Span | _NullSpan]:
-        with self.span("run", name="run", transcript=transcript) as s:
-            yield s
-
     # ------------------------------------------------------------------
     # span context manager
     # ------------------------------------------------------------------
 
     @contextlib.contextmanager
     def span(
-        self, span_type: str, *, name: str | None = None, **attrs: Any,
+        self,
+        span_type: str,
+        *,
+        name: str | None = None,
+        **attrs: Any,
     ) -> Iterator[Span | _NullSpan]:
         if not self._enabled or _current_run_id.get() == "":
             yield _NULL_SPAN
@@ -316,9 +315,7 @@ class Tracer:
                 )
                 # Count tool_call spans per run for the summary line
                 if span_type == "tool_call" and s.run_id:
-                    self._step_counters[s.run_id] = (
-                        self._step_counters.get(s.run_id, 0) + 1
-                    )
+                    self._step_counters[s.run_id] = self._step_counters.get(s.run_id, 0) + 1
             except Exception:
                 logger.exception("tracer: failed to write span")
             _current_span_id.reset(token)

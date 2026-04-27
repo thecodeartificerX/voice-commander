@@ -39,14 +39,20 @@ def build_observability_router(
         q: str | None = None,
     ) -> dict[str, Any]:
         runs = store.list_runs(
-            limit=limit, status=status,
-            since_ts=since, transcript_like=q,
+            limit=limit,
+            status=status,
+            since_ts=since,
+            transcript_like=q,
         )
         if graph:
-            runs = [r for r in runs if any(
-                sp["type"] == "graph" and sp["name"] == graph
-                for sp in store.get_spans(r["run_id"])
-            )]
+            runs = [
+                r
+                for r in runs
+                if any(
+                    sp["type"] == "graph" and sp["name"] == graph
+                    for sp in store.get_spans(r["run_id"])
+                )
+            ]
         return {"count": len(runs), "runs": runs}
 
     @router.get("/last")
@@ -65,6 +71,7 @@ def build_observability_router(
         async def gen() -> AsyncGenerator[str, None]:
             import asyncio
             import json as _json
+
             q = bus.subscribe()
             try:
                 yield ": keepalive\n\n"  # immediate flush so client sees headers
@@ -72,9 +79,7 @@ def build_observability_router(
                     if await request.is_disconnected():
                         break
                     try:
-                        ev = await asyncio.get_event_loop().run_in_executor(
-                            None, q.get, True, 1.0
-                        )
+                        ev = await asyncio.get_event_loop().run_in_executor(None, q.get, True, 1.0)
                     except Exception:
                         yield ": keepalive\n\n"
                         continue
@@ -82,7 +87,7 @@ def build_observability_router(
                         continue
                     yield f"event: {ev.type}\ndata: {_json.dumps(ev.data)}\n\n"
             finally:
-                if hasattr(bus, 'unsubscribe'):
+                if hasattr(bus, "unsubscribe"):
                     bus.unsubscribe(q)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
@@ -123,6 +128,7 @@ def build_observability_router(
         if llm_router is None:
             raise HTTPException(503, detail="llm_router not configured")
         from voice_commander.observability.replay import replay_llm as _replay_llm
+
         result = _replay_llm(store, run_id, llm_router)
         return {
             "run_id": result.run_id,
@@ -142,6 +148,7 @@ def build_observability_router(
         if not all([llm_router, dispatcher, registry, tracer]):
             raise HTTPException(503, detail="full replay requires daemon services")
         from voice_commander.observability.replay import replay_full as _replay_full
+
         new_id = _replay_full(store, run_id, llm_router, dispatcher, registry, tracer)
         return {"new_run_id": new_id, "replay_of": run_id}
 

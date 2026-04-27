@@ -1,5 +1,6 @@
 """Observability — live tracing, replay, and run inspection."""
 
+from voice_commander.observability.protocols import StoreProtocol
 from voice_commander.observability.store import (
     RunRecord,
     RunUpdate,
@@ -8,4 +9,4 @@ from voice_commander.observability.store import (
 )
 from voice_commander.observability.tracer import Span, Tracer
 
-__all__ = ["Tracer", "Span", "Store", "RunRecord", "RunUpdate", "SpanRecord"]
+__all__ = ["Tracer", "Span", "Store", "StoreProtocol", "RunRecord", "RunUpdate", "SpanRecord"]
