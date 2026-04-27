@@ -114,3 +114,59 @@ def test_foreach_emits_per_iteration_spans(tmp_path):
         f"Expected 2 foreach_iter spans, got {len(iter_spans)}: {[s['name'] for s in spans]}"
     )
     store.stop()
+
+
+def test_foreach_node_span_on_tool_error(tmp_path):
+    """L-3/M4: when a foreach body node raises, the node span still closes cleanly (no orphan)."""
+    from voice_commander.commands.graph import Edge, PortRef
+
+    bus = EventBus()
+    store = Store(tmp_path / "runs.db", keep_runs=10, queue_max=128, daemon_pid=1)
+    store.start()
+    tracer = Tracer(store=store, bus=bus, enabled=True)
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolEntry(
+            name="failing_tool",
+            phrases=(),
+            func=lambda **_k: (_ for _ in ()).throw(RuntimeError("tool boom")),
+            module="x",
+            docstring=None,
+            internal=True,
+        )
+    )
+
+    g = Graph(
+        name="test_error_span",
+        kind="command",
+        description="",
+        synonyms=(),
+        inputs=(),
+        llm_visible=False,
+        strict=False,  # lenient so the graph continues past the error
+        enabled=True,
+        timeout_ms=5000,
+        nodes=(
+            Node(id="f1", ref="control.foreach", kwargs={"list": ["x"]}),
+            Node(id="e1", ref="pipeline.failing_tool", kwargs={}),
+        ),
+        edges=(
+            Edge(PortRef("f1", "item"), PortRef("e1", "in")),
+            Edge(PortRef("f1", "item"), PortRef("e1", "item")),
+        ),
+        foreach_iteration_cap=10,
+    )
+
+    runtime = GraphRuntime(reg, lambda n: None, tracer=tracer)
+    with tracer.run("error span test") as run:
+        runtime.run(g, {})
+
+    _drain(store)
+    spans = store.get_spans(run.run_id)
+    # The node span must exist — the error path must not orphan or skip span creation
+    node_spans = [s for s in spans if s["type"] == "node"]
+    assert len(node_spans) >= 1, (
+        f"Expected at least 1 node span even on tool error, got {[s['type'] for s in spans]}"
+    )
+    store.stop()

@@ -113,7 +113,7 @@ def build_observability_router(
         keep = int(body.get("keep", 0))
         if keep > 0:
             store.set_keep_runs(keep)
-        return {"keep_runs": store._keep_runs}
+        return {"keep_runs": store.keep_runs}
 
     @router.post("/{run_id}/replay-llm")
     def replay_llm_ep(run_id: str) -> dict[str, Any]:

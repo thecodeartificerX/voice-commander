@@ -188,3 +188,32 @@ def test_step_counter_per_run_handle(store: Store, bus: EventBus):
         with tracer.span("llm_call", name="route"):
             pass
     assert handle.step_count == 2
+
+
+def test_step_counter_thread_isolated(store: Store, bus: EventBus):
+    """M1: concurrent runs on separate threads get independent step counts (ContextVar isolation)."""
+    import threading
+
+    tracer = Tracer(store=store, bus=bus, enabled=True)
+    results: dict[str, int] = {}
+    barrier = threading.Barrier(2)
+
+    def worker(name: str, n_steps: int) -> None:
+        with tracer.run(f"thread-{name}") as handle:
+            barrier.wait(timeout=5)  # ensure both runs are active simultaneously
+            for _ in range(n_steps):
+                with tracer.span("tool_call", name=f"step-{name}"):
+                    pass
+        results[name] = handle.step_count
+
+    t1 = threading.Thread(target=worker, args=("A", 3))
+    t2 = threading.Thread(target=worker, args=("B", 5))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert not t1.is_alive(), "thread A did not finish"
+    assert not t2.is_alive(), "thread B did not finish"
+    assert results["A"] == 3, f"thread A: expected 3 steps, got {results['A']}"
+    assert results["B"] == 5, f"thread B: expected 5 steps, got {results['B']}"

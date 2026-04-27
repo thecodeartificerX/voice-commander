@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,8 @@ from voice_commander.observability.store import (
     RunUpdate,
     SpanRecord,
     Store,
+    _CIRCUIT_COOLDOWN_S,
+    _CIRCUIT_OPEN_THRESHOLD,
 )
 
 
@@ -186,21 +189,16 @@ def test_list_runs_graph_filter_sql(tmp_path):
 
 def test_writer_circuit_breaker_trips_after_threshold(tmp_path):
     """M15: circuit_open becomes True after _CIRCUIT_OPEN_THRESHOLD consecutive errors."""
-    from voice_commander.observability.store import _CIRCUIT_OPEN_THRESHOLD
+    import time as _t
 
     s = Store(tmp_path / "runs.db", keep_runs=10, queue_max=256, daemon_pid=1)
     s.start()
     try:
         assert not s.circuit_open
-        # Trigger consecutive errors by closing the writer connection externally
-        # We can simulate this by monkey-patching _insert_run_start to raise
+        # Trigger consecutive errors by monkey-patching _insert_run_start to raise
         original_insert = s._insert_run_start
 
-        call_count = 0
-
         def failing_insert(conn, rec):
-            nonlocal call_count
-            call_count += 1
             raise sqlite3.OperationalError("simulated failure")
 
         s._insert_run_start = failing_insert  # type: ignore[method-assign]
@@ -209,15 +207,101 @@ def test_writer_circuit_breaker_trips_after_threshold(tmp_path):
         for i in range(_CIRCUIT_OPEN_THRESHOLD):
             s.write_run_start(RunRecord(f"r{i}", 1000.0 + i, f"t{i}", 1))
 
-        # Give the writer thread time to process
-        import time as _t
-
-        _t.sleep(0.2)
-        _drain(s)
+        # Poll for circuit to open — cannot use flush() as it returns False when circuit is open
+        for _ in range(40):
+            if s.circuit_open:
+                break
+            _t.sleep(0.05)
 
         assert s.circuit_open, "circuit should be open after consecutive failures"
 
         # Restore
         s._insert_run_start = original_insert  # type: ignore[method-assign]
+    finally:
+        s.stop()
+
+
+def _trip_circuit(s: Store) -> None:
+    """Monkey-patch _insert_run_start to raise, enqueue writes, wait for circuit to open."""
+    import time as _t
+
+    original_insert = s._insert_run_start
+
+    def failing_insert(conn, rec):  # noqa: ANN001
+        raise sqlite3.OperationalError("simulated failure")
+
+    s._insert_run_start = failing_insert  # type: ignore[method-assign]
+    for i in range(_CIRCUIT_OPEN_THRESHOLD):
+        s.write_run_start(RunRecord(f"trip{i}", 1000.0 + i, f"trip{i}", 1))
+    # Poll for circuit to open — cannot use flush() as it returns False when open
+    for _ in range(40):
+        if s.circuit_open:
+            break
+        _t.sleep(0.05)
+    s._insert_run_start = original_insert  # type: ignore[method-assign]
+
+
+def test_circuit_breaker_recovers_after_cooldown(tmp_path: Path):
+    """M15: circuit transitions half-open → closed after cooldown + successful write."""
+    s = Store(tmp_path / "runs.db", keep_runs=10, queue_max=256, daemon_pid=1)
+    s.start()
+    try:
+        _trip_circuit(s)
+        assert s.circuit_open, "circuit should be open after consecutive failures"
+
+        # Fake cooldown expiry so the writer will probe recovery on next item
+        s._circuit_open_since = time.monotonic() - _CIRCUIT_COOLDOWN_S - 1.0
+
+        # Enqueue a legitimate write to trigger the half-open probe
+        s.write_run_start(RunRecord("recovery", 2000.0, "recovered", 1))
+        import time as _t
+
+        _t.sleep(0.5)
+
+        assert not s.circuit_open, "circuit should close after successful probe write"
+        assert s.get_run("recovery") is not None, "recovery write should be persisted"
+    finally:
+        s.stop()
+
+
+def test_flush_returns_false_when_circuit_open(tmp_path: Path):
+    """M15 + M-1: flush() must return False (not True) when circuit breaker is open."""
+    s = Store(tmp_path / "runs.db", keep_runs=10, queue_max=256, daemon_pid=1)
+    s.start()
+    try:
+        _trip_circuit(s)
+        assert s.circuit_open
+        result = s.flush(timeout=1.0)
+        assert result is False, "flush() must return False when circuit is open"
+    finally:
+        s.stop()
+
+
+def test_circuit_dropped_counter_increments(tmp_path: Path):
+    """M-2: records dropped while circuit is open increment circuit_dropped counter."""
+    s = Store(tmp_path / "runs.db", keep_runs=10, queue_max=256, daemon_pid=1)
+    s.start()
+    try:
+        _trip_circuit(s)
+        assert s.circuit_open
+        before = s.circuit_dropped
+        # Enqueue a write that will be dropped (circuit open, cooldown not expired)
+        s.write_run_start(RunRecord("dropped1", 3000.0, "dropped", 1))
+        import time as _t
+
+        _t.sleep(0.2)
+        assert s.circuit_dropped > before, "circuit_dropped should increment for dropped writes"
+    finally:
+        s.stop()
+
+
+def test_keep_runs_property(tmp_path: Path):
+    """L-1: keep_runs property returns current value without accessing private attr."""
+    s = Store(tmp_path / "runs.db", keep_runs=10, queue_max=64, daemon_pid=1)
+    s.start()
+    try:
+        assert s.keep_runs == 10
+        s.set_keep_runs(25)
+        assert s.keep_runs == 25
     finally:
         s.stop()

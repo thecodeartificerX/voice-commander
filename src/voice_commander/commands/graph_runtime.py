@@ -352,10 +352,11 @@ class GraphRuntime:
         fired_ok: set[str],
         fired_err: set[str],
     ) -> tuple[str, str | None]:
-        """Dispatch a pipeline node. Returns (action, error_msg).
+        """Dispatch a pipeline node inside a foreach body. Returns (action, error_msg).
 
-        *action* is ``"break"`` when strict mode should halt the loop,
-        otherwise ``"continue"``.  *error_msg* is ``None`` on success.
+        Called exclusively from the foreach body iteration loop; *action* is
+        ``"break"`` when strict mode should halt the foreach loop, otherwise
+        ``"continue"``.  *error_msg* is ``None`` on success.
         """
         tool_name = node.ref.removeprefix("pipeline.")
         entry = self._registry.by_name(tool_name)

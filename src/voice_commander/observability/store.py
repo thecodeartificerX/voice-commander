@@ -120,6 +120,7 @@ class Store:
         self._writer: threading.Thread | None = None
         self._stop = threading.Event()
         self._dropped = 0
+        self._circuit_dropped = 0
         self._inserts_since_prune = 0
         self._consecutive_errors = 0
         self._circuit_open = False
@@ -214,8 +215,11 @@ class Store:
                 if self._circuit_open:
                     now = time.monotonic()
                     if now - self._circuit_open_since < _CIRCUIT_COOLDOWN_S:
-                        if isinstance(item, tuple) and item[0] == "_flush":
-                            item[1].set()
+                        self._circuit_dropped += 1
+                        logger.debug(
+                            "observability circuit open; dropped record (%d total circuit-drops)",
+                            self._circuit_dropped,
+                        )
                         continue
                     # Half-open: attempt one write to probe recovery
                     self._circuit_open = False
@@ -308,9 +312,19 @@ class Store:
         return self._dropped
 
     @property
+    def circuit_dropped(self) -> int:
+        """Records dropped while the circuit breaker was open."""
+        return self._circuit_dropped
+
+    @property
     def circuit_open(self) -> bool:
         """True when the writer has tripped its circuit breaker."""
         return self._circuit_open
+
+    @property
+    def keep_runs(self) -> int:
+        """Maximum number of runs retained after pruning."""
+        return self._keep_runs
 
     def set_keep_runs(self, n: int) -> None:
         """Update the maximum number of runs to retain after pruning.
@@ -418,8 +432,11 @@ class Store:
 
         Enqueues a synchronisation sentinel; the writer thread signals it when
         processed. Returns True if flushed within *timeout* seconds, False if
-        the writer did not respond in time.
+        the writer did not respond in time or if the circuit breaker is open
+        (in which case preceding writes may have been dropped).
         """
+        if self._circuit_open:
+            return False
         done = threading.Event()
         self._enqueue(("_flush", done))
         return done.wait(timeout=timeout)
