@@ -60,13 +60,7 @@ class GraphRuntime:
                 ),
                 None,
             )
-        tracer = self._tracer
-        _graph_ctx = (
-            tracer.span("graph", name=graph.name, kind=graph.kind)
-            if tracer is not None and getattr(tracer, "enabled", False)
-            else contextlib.nullcontext()
-        )
-        with _graph_ctx as _graph_span:
+        with self._span("graph", name=graph.name, kind=graph.kind) as _graph_span:
             outcome, graph_return = self._run_inner(graph, inputs, _call_depth=_call_depth)
             if _graph_span is not None and hasattr(_graph_span, "set_output"):
                 _graph_span.set_output({"status": outcome.status, "steps": len(outcome.steps)})
@@ -145,12 +139,7 @@ class GraphRuntime:
                     if graph.strict and not self._has_error_edge(node.id, graph.edges):
                         break
                     continue
-                _node_ctx = (
-                    self._tracer.span("node", name=node.ref, node_id=node.id)
-                    if self._tracer is not None and getattr(self._tracer, "enabled", False)
-                    else contextlib.nullcontext()
-                )
-                with _node_ctx as _node_span:
+                with self._span("node", name=node.ref, node_id=node.id) as _node_span:
                     try:
                         ret = entry.func(**kwargs)
                         if _node_span is not None and hasattr(_node_span, "set_output"):
@@ -207,18 +196,13 @@ class GraphRuntime:
                     if (time.monotonic() - start) * 1000 > graph.timeout_ms:
                         foreach_timed_out = True
                         break
-                    _iter_ctx = (
-                        self._tracer.span(
-                            "foreach_iter",
-                            name=f"{node.ref}[{iter_idx}]",
-                            node_id=node.id,
-                            iter_idx=iter_idx,
-                            item=repr(item_val)[:128],
-                        )
-                        if self._tracer is not None and getattr(self._tracer, "enabled", False)
-                        else contextlib.nullcontext()
-                    )
-                    with _iter_ctx:
+                    with self._span(
+                        "foreach_iter",
+                        name=f"{node.ref}[{iter_idx}]",
+                        node_id=node.id,
+                        iter_idx=iter_idx,
+                        item=repr(item_val)[:128],
+                    ):
                         for key in body_port_keys:
                             port_values.pop(key, None)
                         port_values[f"{node.id}.item"] = item_val
@@ -366,13 +350,8 @@ class GraphRuntime:
             steps.append(ToolCall(name=node.ref, kwargs=kwargs))
             action = "break" if graph.strict else "continue"
             return action, f"unknown pipeline ref: {node.ref}"
-        _node_ctx = (
-            self._tracer.span("node", name=node.ref, node_id=node.id)
-            if self._tracer is not None and getattr(self._tracer, "enabled", False)
-            else contextlib.nullcontext()
-        )
         ret = None
-        with _node_ctx as _node_span:
+        with self._span("node", name=node.ref, node_id=node.id) as _node_span:
             try:
                 ret = entry.func(**kwargs)
                 if _node_span is not None and hasattr(_node_span, "set_output"):
@@ -482,6 +461,12 @@ class GraphRuntime:
                     len(keys),
                     type(ret).__name__,
                 )
+
+    def _span(self, *args: Any, **kwargs: Any) -> contextlib.AbstractContextManager[Any]:
+        """Return a live tracer span, or a no-op context if tracing is disabled."""
+        if self._tracer is not None and getattr(self._tracer, "enabled", False):
+            return self._tracer.span(*args, **kwargs)
+        return contextlib.nullcontext()
 
     def _has_error_edge(self, node_id: str, edges: tuple[Edge, ...]) -> bool:
         """Return True if any outgoing edge from *node_id* has source port ``"error"``."""
