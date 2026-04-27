@@ -89,3 +89,25 @@ def test_page_runs_detail_404_for_unknown(
     client, _ = _app_with_store
     r = client.get("/page/runs/does-not-exist")
     assert r.status_code == 404
+
+
+def test_page_runs_list_returns_html_rows(
+    _app_with_store: tuple[TestClient, Store],
+) -> None:
+    """htmx swap target must receive HTML <tr> rows, not JSON."""
+    client, _ = _app_with_store
+    r = client.get("/page/runs/list")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "<tr" in r.text
+    assert "aaa" in r.text
+
+
+def test_page_runs_list_status_filter(
+    _app_with_store: tuple[TestClient, Store],
+) -> None:
+    """Filter by status should work and still return HTML."""
+    client, _ = _app_with_store
+    r = client.get("/page/runs/list?status=ok")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]

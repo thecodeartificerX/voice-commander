@@ -439,6 +439,26 @@ def create_app(
             runs = observability_store.list_runs(limit=50)
             return templates.TemplateResponse(request, "runs.html", {"runs": runs})
 
+        @app.get("/page/runs/list", response_class=HTMLResponse)
+        async def page_runs_list(
+            request: Request,
+            limit: int = 50,
+            status: str | None = None,
+            q: str | None = None,
+        ) -> HTMLResponse:
+            """Return rendered <tr> rows for htmx swap into #runs-tbody."""
+            runs = observability_store.list_runs(
+                limit=limit,
+                status=status or None,
+                transcript_like=q or None,
+            )
+            html_parts = []
+            for r in runs:
+                html_parts.append(
+                    templates.get_template("_runs_row.html").render({"r": r})
+                )
+            return HTMLResponse("".join(html_parts))
+
         @app.get("/page/runs/{run_id}", response_class=HTMLResponse)
         async def page_runs_detail(request: Request, run_id: str) -> HTMLResponse:
             """``GET /page/runs/{run_id}`` — render the run detail partial."""
