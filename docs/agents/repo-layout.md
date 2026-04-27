@@ -80,7 +80,8 @@ voice-commander/
 │       ├── static/                 # htmx + tailwind bundles, app.css
 │       │   ├── drawflow.min.js     # vendored Drawflow 0.0.60
 │       │   ├── drawflow.min.css    # vendored Drawflow 0.0.60 styles
-│       │   └── builder.js          # canvas init, palette, save/validate
+│       │   ├── builder.js          # canvas init, palette, save/validate
+│       │   └── builder.css         # Drawflow node visual taxonomy (ADR 0069)
 │       ├── templates/              # Jinja2 templates (HTMX fragments)
 │       │   ├── page_builder.html   # three-column builder page (palette | canvas | metadata)
 │       │   └── _prompt_inspector.html  # Prompt Inspector panel template

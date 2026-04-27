@@ -226,6 +226,17 @@ def test_builder_page_contains_drawflow_assets(client: TestClient) -> None:
     assert "drawflow.min.css" in resp.text
 
 
+def test_builder_page_links_builder_css(client: TestClient) -> None:
+    """builder.css stylesheet must be referenced in the builder page.
+
+    Regression guard: if builder.css is accidentally deleted or removed from
+    the template, the entire visual taxonomy (ADR 0069) disappears silently.
+    """
+    resp = client.get("/page/builder?kind=command")
+    assert resp.status_code == 200
+    assert "builder.css" in resp.text
+
+
 def test_command_list_has_open_in_builder(client: TestClient) -> None:
     resp = client.get("/commands")
     assert resp.status_code == 200

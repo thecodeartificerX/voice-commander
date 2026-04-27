@@ -42,8 +42,9 @@ def _press_args() -> dict[str, ArgMetadata]:
 
 
 def _primitive_registry() -> ToolRegistry:
+    # The fixture registers: press, focus, type, open, click
     reg = ToolRegistry()
-    for name in ("press", "focus", "type", "open"):
+    for name in ("press", "focus", "type", "open", "click"):
         reg.register(
             ToolEntry(
                 name=name,
@@ -313,8 +314,8 @@ def test_palette_includes_known_primitives(client: TestClient) -> None:
     assert r.status_code == 200
     body = r.json()
     pipeline_names = {entry["name"] for entry in body.get("pipeline", [])}
-    # The fixture registers: press, focus, type, open
-    for expected in ("press", "focus", "type", "open"):
+    # The fixture registers: press, focus, type, open, click
+    for expected in ("press", "focus", "type", "open", "click"):
         assert expected in pipeline_names, (
             f"primitive {expected!r} missing from palette pipeline section"
         )
@@ -361,3 +362,20 @@ def test_xss_arg_name_stored_verbatim(client: TestClient) -> None:
     else:
         n1_kwargs = nodes["n1"]["kwargs"]
     assert xss_name in n1_kwargs, "Server must store arg names verbatim without HTML-escaping"
+
+
+def test_builder_js_contains_normalize_args(client: TestClient) -> None:
+    """normalizeArgs helper must exist in builder.js.
+
+    Regression guard for the pipeline primitive drag bug (ADR 0069):
+    ensures the dict→array normalisation function is present and handles
+    both dict and array shapes.  If normalizeArgs() were accidentally removed
+    or its two shape-handling branches dropped, this test will fail.
+    """
+    resp = client.get("/static/builder.js")
+    assert resp.status_code == 200
+    js = resp.text
+    assert "normalizeArgs" in js, "normalizeArgs helper must be present in builder.js"
+    # Verify it handles both dict and array shapes
+    assert "Array.isArray" in js, "Array.isArray branch must be present in normalizeArgs"
+    assert "Object.entries" in js, "Object.entries branch must be present in normalizeArgs"

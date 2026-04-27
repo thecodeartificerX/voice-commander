@@ -189,7 +189,7 @@
         btn.style.display = match ? '' : 'none';
         if (match) anyVisible = true;
       });
-      // Keep section header visible even if no buttons match, so user sees the category
+      // Hide the entire section if no buttons match, unless query is empty (show all)
       det.style.display = anyVisible || !query ? '' : 'none';
     });
   });
@@ -209,7 +209,7 @@
    */
   function normalizeArgs(rawArgs) {
     if (!rawArgs) return [];
-    if (Array.isArray(rawArgs)) return rawArgs;
+    if (Array.isArray(rawArgs)) return rawArgs.map(a => a);  // shallow copy — matches dict-path behaviour
     // Dict shape: {name: {type, description, required}}
     return Object.entries(rawArgs).map(([name, meta]) => ({
       name,
@@ -297,6 +297,7 @@
   /**
    * Tint all SVG connection paths in the editor to match their source port color.
    * Called after connections are added (creation or hydration).
+   * @returns {void}
    */
   function tintAllConnections() {
     // Each connection SVG has class e.g. "connection node_in_node-2 node_out_node-1 output_1 input_1"
