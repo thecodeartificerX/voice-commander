@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI, Form, Request, Response
+from fastapi import FastAPI, Form, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -442,7 +442,7 @@ def create_app(
         @app.get("/page/runs/list", response_class=HTMLResponse)
         async def page_runs_list(
             request: Request,
-            limit: int = 50,
+            limit: int = Query(50, ge=1, le=500),
             status: str | None = None,
             q: str | None = None,
         ) -> HTMLResponse:
