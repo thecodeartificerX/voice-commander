@@ -24,6 +24,7 @@ from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
 from .llm_router import LLMRouter
+from .observability import Store, Tracer
 from .plan import Plan, PlanOutcome
 from .registry import ToolRegistry, discover
 from .streaming_recorder import StreamingRecorder
@@ -37,6 +38,17 @@ from .web.app import create_app
 from .web.server import WebServer
 
 logger = logging.getLogger(__name__)
+
+
+class _NoopStore:
+    """Stand-in store passed to a disabled Tracer (no I/O ever happens)."""
+
+    _daemon_pid = 0
+
+    def write_run_start(self, *_a: Any, **_k: Any) -> None: ...
+    def write_run_end(self, *_a: Any, **_k: Any) -> None: ...
+    def write_span(self, *_a: Any, **_k: Any) -> None: ...
+    def write_run_transcript_update(self, *_a: Any, **_k: Any) -> None: ...
 
 
 class StreamingDaemon:
@@ -68,6 +80,8 @@ class StreamingDaemon:
         output_dir: str = "outputs",
         web_server: WebServer | None = None,
         event_bus: EventBus | None = None,
+        tracer: Tracer | None = None,
+        store: Store | None = None,
     ) -> None:
         """Composition root — wire all subsystems together. No I/O, no threads started.
 
@@ -125,6 +139,10 @@ class StreamingDaemon:
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._web_server = web_server
         self._event_bus = event_bus
+        self._tracer = tracer if tracer is not None else Tracer(
+            store=_NoopStore(), bus=event_bus or EventBus(), enabled=False
+        )
+        self._store = store
 
         self._utt_q: queue.Queue[npt.NDArray[np.float32] | None] = queue.Queue(maxsize=8)
         self._pipeline_thread: threading.Thread | None = None
@@ -302,76 +320,88 @@ class StreamingDaemon:
         # Async write for post-mortem debugging
         self._write_utterance_async(utterance)
 
-        start_s = time.perf_counter()
+        with self._tracer.run("") as run:
+            start_s = time.perf_counter()
 
-        def _publish_miss(transcript: str) -> None:
-            self._publish(
-                "plan_outcome",
-                PlanOutcome(
-                    transcript=transcript,
-                    steps=(),
-                    status="miss",
-                    failed_step_index=None,
-                    error_msg=None,
-                    duration_ms=int((time.perf_counter() - start_s) * 1000),
-                ).to_event_dict(),
-            )
+            def _publish_miss(transcript: str) -> None:
+                self._publish(
+                    "plan_outcome",
+                    PlanOutcome(
+                        transcript=transcript,
+                        steps=(),
+                        status="miss",
+                        failed_step_index=None,
+                        error_msg=None,
+                        duration_ms=int((time.perf_counter() - start_s) * 1000),
+                    ).to_event_dict(),
+                )
 
-        self._publish("transcribing")
-        result: TranscriptionResult = self._transcriber.transcribe(utterance)
-        self._feedback.on_transcript(result.text, result.confidence)
+            with self._tracer.span("transcribe", name="transcribe") as ts:
+                self._publish("transcribing")
+                result: TranscriptionResult = self._transcriber.transcribe(utterance)
+                ts.set_attr("confidence", result.confidence)
+                ts.set_attr("no_speech_prob", result.no_speech_prob)
+                ts.set_output({"text": result.text})
 
-        # Gate: word-count  (infrastructure noise — no plan_outcome)
-        word_count = len(result.text.split())
-        if word_count < self._min_word_count:
-            logger.debug("Gate: word-count %d < %d, dropping", word_count, self._min_word_count)
-            return
+            self._tracer.update_transcript(run.run_id, result.text)
+            self._feedback.on_transcript(result.text, result.confidence)
 
-        # Gate: no_speech_prob  (infrastructure noise — no plan_outcome)
-        if result.no_speech_prob > self._max_no_speech_prob:
-            logger.debug(
-                "Gate: no_speech_prob %.2f > %.2f, dropping",
-                result.no_speech_prob,
-                self._max_no_speech_prob,
-            )
-            return
+            # Gate: word-count  (infrastructure noise — no plan_outcome)
+            word_count = len(result.text.split())
+            if word_count < self._min_word_count:
+                logger.debug("Gate: word-count %d < %d, dropping", word_count, self._min_word_count)
+                return
 
-        # Gate: confidence  (emits plan_outcome status=miss — user-visible)
-        if result.confidence < self._min_confidence:
-            self._feedback.on_miss(result.text, ())
-            _publish_miss(result.text)
-            return
+            # Gate: no_speech_prob  (infrastructure noise — no plan_outcome)
+            if result.no_speech_prob > self._max_no_speech_prob:
+                logger.debug(
+                    "Gate: no_speech_prob %.2f > %.2f, dropping",
+                    result.no_speech_prob,
+                    self._max_no_speech_prob,
+                )
+                return
 
-        # Mute guard: utterance may have been mid-transcription when mute fired.
-        if self._muted:
-            logger.debug("Mute guard: dropping utterance '%s' (muted during pipeline)", result.text)
-            return
+            # Gate: confidence  (emits plan_outcome status=miss — user-visible)
+            if result.confidence < self._min_confidence:
+                run.set_status("miss")
+                self._feedback.on_miss(result.text, ())
+                _publish_miss(result.text)
+                return
 
-        self._publish("llm_thinking")
-        plan = self._llm_router.route(result.text)
-        if plan is None:
-            # No match in the command/workflow catalog. Chime once and stop —
-            # no agentic retry, no env-seeded second call. The user can either
-            # rephrase or add a command for the missing intent via the UI.
-            self._feedback.on_miss(result.text, ())
-            _publish_miss(result.text)
-            return
-        if self._registry is None:
-            logger.error("Registry not set — cannot execute plan for '%s'", result.text)
-            self._publish(
-                "plan_outcome",
-                PlanOutcome(
-                    transcript=result.text,
-                    steps=plan.steps,
-                    status="error",
-                    failed_step_index=None,
-                    error_msg="registry not initialized",
-                    duration_ms=int((time.perf_counter() - start_s) * 1000),
-                ).to_event_dict(),
-            )
-            return
-        self._dispatcher.run_plan(result.text, plan, self._registry)
-        self._write_plan_async(result.text, plan)
+            # Mute guard: utterance may have been mid-transcription when mute fired.
+            if self._muted:
+                logger.debug(
+                    "Mute guard: dropping utterance '%s' (muted during pipeline)",
+                    result.text,
+                )
+                return
+
+            self._publish("llm_thinking")
+            plan = self._llm_router.route(result.text)
+            if plan is None:
+                # No match in the command/workflow catalog. Chime once and stop —
+                # no agentic retry, no env-seeded second call. The user can either
+                # rephrase or add a command for the missing intent via the UI.
+                run.set_status("miss")
+                self._feedback.on_miss(result.text, ())
+                _publish_miss(result.text)
+                return
+            if self._registry is None:
+                logger.error("Registry not set — cannot execute plan for '%s'", result.text)
+                self._publish(
+                    "plan_outcome",
+                    PlanOutcome(
+                        transcript=result.text,
+                        steps=plan.steps,
+                        status="error",
+                        failed_step_index=None,
+                        error_msg="registry not initialized",
+                        duration_ms=int((time.perf_counter() - start_s) * 1000),
+                    ).to_event_dict(),
+                )
+                return
+            self._dispatcher.run_plan(result.text, plan, self._registry)
+            self._write_plan_async(result.text, plan)
 
     def _write_utterance_async(self, utterance: npt.NDArray[np.float32]) -> None:
         path = self._output_dir / "last_utterance.wav"
@@ -609,6 +639,13 @@ class StreamingDaemon:
         # Shut down the WAV writer executor.
         self._wav_executor.shutdown(wait=False)
 
+        # Stop observability store.
+        if self._store is not None:
+            try:
+                self._store.stop()
+            except Exception:
+                logger.exception("Error stopping observability store")
+
         # Release model.
         try:
             self._transcriber.unload()
@@ -700,6 +737,39 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     from voice_commander.commands.registrar import reload_all as reload_commands_all
 
     repo_root = Path(__file__).resolve().parents[2]
+
+    # Observability — create store + tracer now that repo_root is known.
+    _obs_store: Store | None = None
+    _obs_tracer: Tracer | None = None
+    if cfg.observability.enabled:
+        db_path = repo_root / cfg.observability.db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        _obs_store = Store(
+            db_path,
+            keep_runs=cfg.observability.keep_runs,
+            queue_max=cfg.observability.queue_max,
+            daemon_pid=os.getpid(),
+        )
+        _obs_store.start()
+        recovered = _obs_store.recover_stale_runs()
+        if recovered:
+            logger.info(
+                "observability: marked %d stale 'running' runs as crashed", recovered
+            )
+        _obs_tracer = Tracer(
+            store=_obs_store,
+            bus=event_bus,
+            enabled=True,
+            slow_run_ms=cfg.observability.slow_run_ms,
+            daemon_pid=os.getpid(),
+        )
+    else:
+        _obs_tracer = Tracer(store=_NoopStore(), bus=event_bus, enabled=False)
+
+    # Wire tracer into dispatcher and LLM router.
+    dispatcher._tracer = _obs_tracer
+    llm_router.set_tracer(_obs_tracer)
+
     commands_path = repo_root / "commands.json"
     workflows_path = repo_root / "workflows.json"
     seed_if_missing(commands_path, repo_root / "commands.default.json")
@@ -727,6 +797,8 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
             workflow_store=workflow_store,
             config_path=repo_root / "config.toml",
             llm_router=llm_router,
+            observability_store=_obs_store,
+            observability_tracer=_obs_tracer,
         )
         web_server = WebServer(app, host=cfg.web.host, port=cfg.web.port)
 
@@ -745,6 +817,8 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         output_dir=cfg.audio.output_dir,
         web_server=web_server,
         event_bus=event_bus,
+        tracer=_obs_tracer,
+        store=_obs_store,
     )
     daemon._recorder = StreamingRecorder(
         device=cfg.audio.device if cfg.audio.device >= 0 else None,

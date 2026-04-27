@@ -323,3 +323,27 @@ def test_sprite_config_invalid_key(tmp_path):
     toml_file.write_text("[sprite]\nbogus = 42\n")
     with pytest.raises(ValueError, match="Unknown config key 'bogus'"):
         Config.load(toml_file)
+
+
+def test_observability_section_defaults(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("")
+    cfg = Config.load(cfg_path)
+    assert cfg.observability.enabled is True
+    assert cfg.observability.keep_runs == 1000
+    assert cfg.observability.db_path == "outputs/runs.db"
+    assert cfg.observability.queue_max == 4096
+    assert cfg.observability.slow_run_ms == 2000
+
+
+def test_observability_section_overrides(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        "[observability]\n"
+        "enabled = false\n"
+        "keep_runs = 50\n"
+    )
+    cfg = Config.load(cfg_path)
+    assert cfg.observability.enabled is False
+    assert cfg.observability.keep_runs == 50
+    assert cfg.observability.db_path == "outputs/runs.db"  # default preserved

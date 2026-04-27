@@ -835,3 +835,69 @@
   }
 
 })();
+
+// ==========================================================================
+// Runs overlay — paints node spans onto the Drawflow canvas.
+// ==========================================================================
+
+window.vcBuilderApplyRunOverlay = function (runId) {
+  fetch('/api/runs/' + runId)
+    .then(function(r) { return r.json(); })
+    .then(function(run) {
+      var nodeSpans = run.spans.filter(function(s) { return s.type === 'node'; });
+      document.querySelectorAll('.drawflow .drawflow-node').forEach(function(el) {
+        el.classList.remove('run-node-ok', 'run-node-error', 'run-node-skipped');
+      });
+      nodeSpans.forEach(function(s) {
+        var el = document.querySelector('.drawflow .drawflow-node[data-node-id="' + s.name + '"]');
+        if (!el) return;
+        if (s.status === 'ok') el.classList.add('run-node-ok');
+        else if (s.status === 'error') el.classList.add('run-node-error');
+      });
+    });
+};
+
+// Live mode SSE node highlighting
+(function () {
+  var liveSrc = null;
+  var activeRunId = null;
+  var toggle = document.getElementById('live-mode-toggle');
+  if (!toggle) return;
+  toggle.addEventListener('change', function() {
+    if (toggle.checked) startLive(); else stopLive();
+  });
+
+  function startLive() {
+    if (liveSrc) return;
+    liveSrc = new EventSource('/api/runs/stream');
+    liveSrc.addEventListener('trace.run_started', function(ev) {
+      var data = JSON.parse(ev.data);
+      activeRunId = data.run_id;
+      document.querySelectorAll('.drawflow .drawflow-node').forEach(function(el) {
+        el.classList.remove('run-node-ok', 'run-node-error', 'run-node-pulse');
+      });
+    });
+    liveSrc.addEventListener('trace.span_started', function(ev) {
+      var data = JSON.parse(ev.data);
+      if (data.type !== 'node' || data.run_id !== activeRunId) return;
+      var el = document.querySelector('.drawflow .drawflow-node[data-node-id="' + data.name + '"]');
+      if (el) el.classList.add('run-node-pulse');
+    });
+    liveSrc.addEventListener('trace.span_ended', function(ev) {
+      var data = JSON.parse(ev.data);
+      if (data.type !== 'node' || data.run_id !== activeRunId) return;
+      var el = document.querySelector('.drawflow .drawflow-node[data-node-id="' + data.name + '"]');
+      if (!el) return;
+      el.classList.remove('run-node-pulse');
+      if (data.status === 'ok') el.classList.add('run-node-ok');
+      else if (data.status === 'error') el.classList.add('run-node-error');
+    });
+  }
+
+  function stopLive() {
+    if (!liveSrc) return;
+    liveSrc.close();
+    liveSrc = null;
+    activeRunId = null;
+  }
+})();

@@ -72,6 +72,13 @@ voice-commander/
 │   │   ├── primitives.py + .toml
 │   │   ├── ocr.py       + .toml    # OCR region capture (ocr_region) — winrt primary, Tesseract fallback
 │   │   └── perception.py + .toml   # read_clipboard, get_active_window_title, get_cursor_pos
+│   ├── observability/              # span-tree tracing pipeline (ADR 0070)
+│   │   ├── __init__.py             # re-exports Store, Tracer for convenience
+│   │   ├── tracer.py               # Tracer + Span + RunHandle context managers (contextvars-based)
+│   │   ├── store.py                # SQLite WAL store + single writer thread
+│   │   ├── api.py                  # FastAPI router: /api/runs/* REST + /api/runs/stream SSE
+│   │   ├── replay.py               # replay_llm (safe re-route) + replay_full (destructive re-fire)
+│   │   └── cli.py                  # `vc debug` + `vc tail` subcommands
 │   └── web/                        # embedded FastAPI management UI
 │       ├── app.py                  # routes
 │       ├── builder.py              # builder routes + BuilderContext (Drawflow canvas page)
@@ -81,9 +88,12 @@ voice-commander/
 │       │   ├── drawflow.min.js     # vendored Drawflow 0.0.60
 │       │   ├── drawflow.min.css    # vendored Drawflow 0.0.60 styles
 │       │   ├── builder.js          # canvas init, palette, save/validate
-│       │   └── builder.css         # Drawflow node visual taxonomy (ADR 0069)
+│       │   ├── builder.css         # Drawflow node visual taxonomy (ADR 0069)
+│       │   └── runs.js             # live SSE stream for /page/runs inspector
 │       ├── templates/              # Jinja2 templates (HTMX fragments)
 │       │   ├── page_builder.html   # three-column builder page (palette | canvas | metadata)
+│       │   ├── page_runs.html      # run list + live-update inspector (/page/runs)
+│       │   ├── _run_detail.html    # run detail panel (span tree, LLM, replay buttons)
 │       │   └── _prompt_inspector.html  # Prompt Inspector panel template
 │   └── event_bus.py                # in-process pub/sub for SSE consumers
 │
@@ -109,6 +119,12 @@ voice-commander/
 │
 ├── tests/
 │   ├── unit/                       # one file per src module, mocked hardware
+│   │   └── observability/          # observability package unit tests
+│   │       ├── test_store.py       # Store round-trip, WAL, corruption recovery, pruning
+│   │       ├── test_tracer.py      # Tracer run/span lifecycle, parenting, step counters
+│   │       ├── test_api.py         # /api/runs/* REST endpoints
+│   │       ├── test_cli.py         # vc debug + vc tail subcommands
+│   │       └── test_replay.py      # replay_llm + replay_full scenarios
 │   ├── integration/                # canned-WAV end-to-end, real model
 │   ├── soak/                       # overnight stability runs
 │   └── fixtures/                   # audio WAVs + sidecar TOML fixtures

@@ -940,3 +940,16 @@ inside a running asyncio loop (e.g., from a FastAPI route), it dispatches to a
   - [`decisions/0047-charsheet-grid-format-sidecar-toml.md`](decisions/0047-charsheet-grid-format-sidecar-toml.md)
   - [`decisions/0048-eventbus-sse-outbound-telemetry.md`](decisions/0048-eventbus-sse-outbound-telemetry.md)
   - [`decisions/0049-miss-chimes-retained.md`](decisions/0049-miss-chimes-retained.md)
+  - [`decisions/0070-observability-pipeline.md`](decisions/0070-observability-pipeline.md)
+
+---
+
+## Observability
+
+`observability/` (Tracer + Store + REST + CLI + replay) — see ADR 0070. The Tracer is constructed once in `build_streaming_daemon`, threaded into `LLMRouter`, `Dispatcher`, and `GraphRuntime`. Spans are written async via a single SQLite writer thread. Live trace events fan out over the existing EventBus under `trace.*`; the sprite ignores them.
+
+Every utterance persists as a span tree to `outputs/runs.db`. Surfaces:
+- `/api/runs/*` REST router + `/api/runs/stream` SSE
+- `/page/runs` HTMX web inspector
+- Builder UI overlay with live node highlighting
+- `vc debug` / `vc tail` CLIs
