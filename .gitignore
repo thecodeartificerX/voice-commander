@@ -25,6 +25,7 @@ commands.json
 workflows.json
 commands.json.lock
 workflows.json.lock
+*.json.bak
 
 # Archon worktree per-clone config
 .archon/
