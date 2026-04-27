@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from voice_commander.observability.store import Store
 
@@ -28,7 +28,9 @@ def replay_llm(store: Store, run_id: str, router: Any) -> ReplayResult:
         return ReplayResult(run_id=run_id, old_plan=[], new_plan=None,
                             changed=False, error="no llm_call span")
     _run = store.get_run(run_id)
-    transcript = llm["attrs"].get("transcript") or cast(dict[str, Any], _run)["transcript"]
+    transcript = llm["attrs"].get("transcript") or (
+        _run["transcript"] if _run is not None else ""
+    )
     old_plan = (llm["output"] or {}).get("steps", [])
     plan = router.route(transcript)
     new_plan = (
@@ -51,12 +53,14 @@ def replay_full(
 
     Returns the run_id of the new replay run.
     """
+    _run = store.get_run(run_id)
+    if _run is None:
+        raise ValueError(f"run {run_id} not found")
     spans = store.get_spans(run_id)
     llm = next((s for s in spans if s["type"] == "llm_call"), None)
     if llm is None:
         raise ValueError("no llm_call span; cannot replay")
-    _run = store.get_run(run_id)
-    transcript = llm["attrs"].get("transcript") or cast(dict[str, Any], _run)["transcript"]
+    transcript = llm["attrs"].get("transcript") or _run["transcript"]
 
     with tracer.run(transcript) as new_run:
         with tracer.span("replay_marker", name="replay_marker", replay_of=run_id):
@@ -64,4 +68,4 @@ def replay_full(
         plan = router.route(transcript)
         if plan is not None:
             dispatcher.run_plan(transcript, plan, registry)
-    return cast(str, new_run.run_id)
+    return new_run.run_id

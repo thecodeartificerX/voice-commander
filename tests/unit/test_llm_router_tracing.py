@@ -13,9 +13,7 @@ from voice_commander.registry import ToolEntry, ToolRegistry
 
 
 def _drain(store: Store) -> None:
-    while not store._q.empty():
-        time.sleep(0.01)
-    time.sleep(0.05)
+    store.flush()
 
 
 def test_llm_router_writes_prompt_and_response_to_span(tmp_path):
@@ -53,8 +51,7 @@ def test_llm_router_writes_prompt_and_response_to_span(tmp_path):
     assert llm_spans, f"Expected llm_call span, got types: {[s['type'] for s in spans]}"
     attrs = llm_spans[0]["attrs"]
     assert "prompt_full" in attrs, f"Expected 'prompt_full' in attrs, got {list(attrs.keys())}"
-    assert "raw_response" in attrs or "model" in attrs, (
-        f"Expected 'raw_response' or 'model' in attrs, got {list(attrs.keys())}"
-    )
+    assert "raw_response" in attrs, f"Expected 'raw_response' in attrs, got {list(attrs.keys())}"
+    assert "model" in attrs, f"Expected 'model' in attrs, got {list(attrs.keys())}"
 
     store.stop()

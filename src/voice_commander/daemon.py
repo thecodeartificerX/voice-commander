@@ -363,6 +363,7 @@ class StreamingDaemon:
 
             # Gate: confidence  (emits plan_outcome status=miss — user-visible)
             if result.confidence < self._min_confidence:
+                run.set_status("miss")
                 self._feedback.on_miss(result.text, ())
                 _publish_miss(result.text)
                 return
@@ -381,6 +382,7 @@ class StreamingDaemon:
                 # No match in the command/workflow catalog. Chime once and stop —
                 # no agentic retry, no env-seeded second call. The user can either
                 # rephrase or add a command for the missing intent via the UI.
+                run.set_status("miss")
                 self._feedback.on_miss(result.text, ())
                 _publish_miss(result.text)
                 return

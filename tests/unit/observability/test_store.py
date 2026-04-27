@@ -58,15 +58,11 @@ def test_store_recreates_on_corrupt_db(tmp_path: Path):
         store.stop()
 
 
-def _drain(store: Store, timeout: float = 1.0) -> None:
-    """Block until the writer queue is empty (test helper)."""
-    deadline = time.monotonic() + timeout
-    while not store._q.empty():
-        if time.monotonic() > deadline:
-            raise AssertionError("writer queue did not drain in time")
-        time.sleep(0.01)
-    # One more pass to let the writer commit the last row.
-    time.sleep(0.05)
+def _drain(store: Store, timeout: float = 2.0) -> None:
+    """Block until all queued writes have been committed to SQLite."""
+    flushed = store.flush(timeout=timeout)
+    if not flushed:
+        raise AssertionError(f"writer did not flush within {timeout}s")
 
 
 def test_store_round_trip_run_and_span(tmp_path):

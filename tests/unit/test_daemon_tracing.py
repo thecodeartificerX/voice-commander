@@ -14,12 +14,11 @@ from voice_commander.transcriber import TranscriptionResult
 
 
 def _drain_store(store: Store) -> None:
-    while not store._q.empty():
-        time.sleep(0.01)
-    time.sleep(0.05)
+    store.flush()
 
 
-def test_process_utterance_emits_run_with_transcribe_and_llm_spans(tmp_path: Path):
+def test_process_utterance_emits_run_with_transcribe_span_on_miss(tmp_path: Path):
+    # Router returns None (miss path) — expects run + transcribe spans, no llm_call span.
     bus = EventBus()
     store = Store(tmp_path / "runs.db", keep_runs=10, queue_max=128, daemon_pid=42)
     store.start()

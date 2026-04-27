@@ -82,7 +82,8 @@ def build_observability_router(
                         continue
                     yield f"event: {ev.type}\ndata: {_json.dumps(ev.data)}\n\n"
             finally:
-                pass  # queue is daemon-thread; GC handles cleanup
+                if hasattr(bus, 'unsubscribe'):
+                    bus.unsubscribe(q)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 

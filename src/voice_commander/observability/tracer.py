@@ -43,6 +43,11 @@ def _short_id() -> str:
 class RunHandle:
     run_id: str
     started_at: float = 0.0
+    _override_status: str = ""
+
+    def set_status(self, status: str) -> None:
+        """Override the run's final status (e.g. 'miss') from outside the tracer."""
+        self._override_status = status
 
 
 class Span:
@@ -151,7 +156,7 @@ class Tracer:
                     run_id=run_id,
                     started_at=started_at,
                     transcript=transcript,
-                    daemon_pid=self._store._daemon_pid,
+                    daemon_pid=self._daemon_pid,
                 )
             )
             self._publish_safe(
@@ -164,19 +169,28 @@ class Tracer:
         handle = RunHandle(run_id=run_id, started_at=started_at)
         # Open the synthetic root "run" span so all children parent under it.
         with self._open_root_span(run_id, transcript) as root:
+            captured_exc: BaseException | None = None
             try:
                 yield handle
-            except BaseException:
+            except BaseException as exc:
                 root.status = "error"
+                captured_exc = exc
                 raise
             finally:
                 # End the run row; status = "error" if exception propagated OR
                 # any child span errored (even if the exception was caught upstream).
+                # Use handle._override_status to allow callers (e.g. daemon miss paths)
+                # to mark the run status without raising.
                 duration_ms = int((time.monotonic() - start_mono) * 1000)
                 status = root.status if root.status == "error" else (
-                    "error" if _run_has_error.get() else "ok"
+                    "error" if _run_has_error.get() else (
+                        handle._override_status or "ok"
+                    )
                 )
-                error_msg = root.error_msg
+                # Capture error_msg directly from the caught exception; root.error_msg
+                # is populated by the span() context manager's except block which runs
+                # after this finally block, so it would always be None here.
+                error_msg = str(captured_exc)[:512] if captured_exc is not None else None
                 try:
                     self._store.write_run_end(
                         RunUpdate(

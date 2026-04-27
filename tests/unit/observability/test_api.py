@@ -17,9 +17,7 @@ from voice_commander.observability.store import (
 
 
 def _drain(s):
-    while not s._q.empty():
-        time.sleep(0.01)
-    time.sleep(0.05)
+    s.flush()
 
 
 @pytest.fixture

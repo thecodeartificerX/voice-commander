@@ -226,7 +226,9 @@ class Store:
                             "UPDATE runs SET transcript=? WHERE run_id=?",
                             (txt, rid),
                         )
-                except sqlite3.Error:
+                    elif kind == "_flush":
+                        payload.set()  # payload is threading.Event
+                except Exception:
                     logger.exception("observability writer error")
         finally:
             conn.close()
@@ -288,18 +290,24 @@ class Store:
     # ------------------------------------------------------------------
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             row = conn.execute(
                 "SELECT * FROM runs WHERE run_id=?", (run_id,)
             ).fetchone()
+        finally:
+            conn.close()
         return dict(row) if row else None
 
     def get_spans(self, run_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             rows = conn.execute(
                 "SELECT * FROM spans WHERE run_id=? ORDER BY started_at",
                 (run_id,),
             ).fetchall()
+        finally:
+            conn.close()
         out: list[dict[str, Any]] = []
         for r in rows:
             d = dict(r)
@@ -329,15 +337,21 @@ class Store:
             params.append(f"%{transcript_like}%")
         sql += " ORDER BY started_at DESC LIMIT ?"
         params.append(limit)
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             rows = conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
         return [dict(r) for r in rows]
 
     def get_last_run(self) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             row = conn.execute(
                 "SELECT * FROM runs ORDER BY started_at DESC LIMIT 1"
             ).fetchone()
+        finally:
+            conn.close()
         return dict(row) if row else None
 
     def write_run_transcript_update(self, run_id: str, transcript: str) -> None:
@@ -348,13 +362,27 @@ class Store:
 
         Called once at daemon startup. Returns the number of rows fixed.
         """
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             cur = conn.execute(
                 "UPDATE runs SET status='error', error_msg='daemon crash', "
                 "ended_at=? WHERE status='running' AND daemon_pid != ?",
                 (time.time(), self._daemon_pid),
             )
             return cur.rowcount or 0
+        finally:
+            conn.close()
+
+    def flush(self, timeout: float = 2.0) -> bool:
+        """Block until all currently-queued writes have been committed to SQLite.
+
+        Enqueues a synchronisation sentinel; the writer thread signals it when
+        processed. Returns True if flushed within *timeout* seconds, False if
+        the writer did not respond in time.
+        """
+        done = threading.Event()
+        self._enqueue(("_flush", done))
+        return done.wait(timeout=timeout)
 
 
 _SENTINEL = object()

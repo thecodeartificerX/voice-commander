@@ -10,9 +10,7 @@ from voice_commander.registry import ToolEntry, ToolRegistry
 
 
 def _drain(store: Store) -> None:
-    while not store._q.empty():
-        time.sleep(0.01)
-    time.sleep(0.05)
+    store.flush()
 
 
 def _make_graph() -> Graph:

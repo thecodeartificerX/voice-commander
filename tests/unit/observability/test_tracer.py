@@ -12,9 +12,7 @@ from voice_commander.observability.tracer import Tracer
 
 
 def _drain(store: Store) -> None:
-    while not store._q.empty():
-        _time.sleep(0.01)
-    _time.sleep(0.05)
+    store.flush()
 
 
 @pytest.fixture
@@ -106,3 +104,77 @@ def test_tracer_emits_oneline_summary_at_end_of_run(store, bus, caplog):
     assert run.run_id[:6] in msg, f"run_id prefix not in log message: {msg!r}"
     assert "ok" in msg, f"'ok' not in log message: {msg!r}"
     assert "open chrome" in msg, f"transcript not in log message: {msg!r}"
+
+
+def test_tracer_nested_spans_have_correct_parent_ids(store: Store, bus: EventBus):
+    """3-level nesting: run → transcribe → tool_call. Each child must reference its parent."""
+    tracer = Tracer(store=store, bus=bus, enabled=True)
+    with tracer.run("nested test") as run:
+        with tracer.span("transcribe", name="transcribe") as transcribe_span:
+            with tracer.span("tool_call", name="focus") as tool_span:
+                pass
+    _drain(store)
+
+    spans = store.get_spans(run.run_id)
+    by_type = {s["type"]: s for s in spans}
+
+    assert "run" in by_type, "missing root run span"
+    assert "transcribe" in by_type, "missing transcribe span"
+    assert "tool_call" in by_type, "missing tool_call span"
+
+    root_span = by_type["run"]
+    transcribe = by_type["transcribe"]
+    tool = by_type["tool_call"]
+
+    # transcribe must parent under root run span
+    assert transcribe["parent_span_id"] == root_span["span_id"], (
+        f"transcribe.parent_span_id={transcribe['parent_span_id']!r} "
+        f"!= root.span_id={root_span['span_id']!r}"
+    )
+    # tool_call must parent under transcribe
+    assert tool["parent_span_id"] == transcribe_span.span_id, (
+        f"tool_call.parent_span_id={tool['parent_span_id']!r} "
+        f"!= transcribe.span_id={transcribe_span.span_id!r}"
+    )
+
+
+def test_tracer_context_var_reset_after_exception_in_nested_span(store: Store, bus: EventBus):
+    """After an exception in a nested span, the parent span_id context var is restored."""
+    tracer = Tracer(store=store, bus=bus, enabled=True)
+    outer_span_id_after: list[str] = []
+
+    with tracer.run("exception test") as run:
+        with tracer.span("outer", name="outer") as outer:
+            try:
+                with tracer.span("inner", name="inner"):
+                    raise ValueError("boom")
+            except ValueError:
+                pass
+            # After inner span's context exits, current span_id should be outer
+            from voice_commander.observability.tracer import _current_span_id
+            outer_span_id_after.append(_current_span_id.get())
+    _drain(store)
+
+    assert outer_span_id_after[0] == outer.span_id, (
+        f"expected outer.span_id={outer.span_id!r} after inner exception, "
+        f"got {outer_span_id_after[0]!r}"
+    )
+
+
+def test_tracer_step_counter_increments_per_tool_call(store: Store, bus: EventBus):
+    """_step_counters increments once per tool_call span and is cleaned up after run ends."""
+    tracer = Tracer(store=store, bus=bus, enabled=True)
+    with tracer.run("count steps") as run:
+        with tracer.span("tool_call", name="press"):
+            pass
+        with tracer.span("tool_call", name="type"):
+            pass
+        # step counters exist during the run
+        assert tracer._step_counters.get(run.run_id, 0) == 2, (
+            f"expected 2 steps during run, got {tracer._step_counters.get(run.run_id, 0)}"
+        )
+
+    # after run exits, step_counters entry must be cleaned up to prevent memory leak
+    assert run.run_id not in tracer._step_counters, (
+        f"_step_counters still has entry for {run.run_id!r} after run ended"
+    )

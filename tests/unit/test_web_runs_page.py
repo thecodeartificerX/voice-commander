@@ -17,9 +17,7 @@ from voice_commander.web.app import create_app
 
 
 def _drain(s: Store) -> None:
-    while not s._q.empty():
-        time.sleep(0.01)
-    time.sleep(0.05)
+    s.flush()
 
 
 def _seed_store(tmp_path: Path) -> Store:
