@@ -271,3 +271,46 @@ def test_dispatch_no_event_bus_still_works():
     plan = Plan(steps=(ToolCall(name="copy", kwargs={}),), raw_response={})
     d.run_plan("copy", plan, registry)
     assert fired == [1]
+
+
+# ---------------------------------------------------------------------------
+# Observability integration
+# ---------------------------------------------------------------------------
+
+
+def test_dispatcher_emits_plan_and_tool_call_spans(tmp_path):
+    import time as _t
+
+    from voice_commander.event_bus import EventBus
+    from voice_commander.observability import Store, Tracer
+
+    bus = EventBus()
+    store = Store(tmp_path / "runs.db", keep_runs=10, queue_max=128, daemon_pid=1)
+    store.start()
+    tracer = Tracer(store=store, bus=bus, enabled=True)
+
+    registry = _make_registry(
+        ToolEntry(
+            name="focus", phrases=("focus",), func=lambda **_k: None,
+            module="m", docstring=None,
+        )
+    )
+    feedback = CapturingFeedbackSink()
+    disp = Dispatcher(feedback, event_bus=bus, tracer=tracer)
+
+    plan = Plan(steps=(ToolCall(name="focus", kwargs={"target": "chrome"}),), raw_response={})
+
+    with tracer.run("focus chrome") as run:
+        disp.run_plan("focus chrome", plan, registry)
+
+    # drain the store queue
+    while not store._q.empty():
+        _t.sleep(0.01)
+    _t.sleep(0.05)
+
+    spans = store.get_spans(run.run_id)
+    types = [s["type"] for s in spans]
+    assert "plan" in types, f"Expected 'plan' span, got {types}"
+    tool_spans = [s for s in spans if s["type"] == "tool_call"]
+    assert len(tool_spans) == 1, f"Expected 1 tool_call span, got {len(tool_spans)}"
+    store.stop()

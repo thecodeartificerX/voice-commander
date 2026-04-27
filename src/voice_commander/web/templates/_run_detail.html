@@ -1,0 +1,22 @@
+<header class="run-detail-header">
+  <h2>{{ run.run_id }} <span class="status status-{{ run.status }}">{{ run.status }}</span></h2>
+  <div>{{ run.duration_ms }} ms · {{ run.transcript }}</div>
+  <div class="actions">
+    <button hx-post="/api/runs/{{ run.run_id }}/replay-llm" hx-target="#replay-out" hx-swap="innerHTML">Replay LLM</button>
+    <details><summary>danger</summary>
+      <button hx-post="/api/runs/{{ run.run_id }}/replay-full"
+              hx-headers='{"X-Replay-Confirm":"yes"}' hx-target="#replay-out" hx-swap="innerHTML">Replay Full (re-fires plan)</button>
+    </details>
+  </div>
+</header>
+<div id="replay-out"></div>
+<ol class="span-tree">
+  {% for sp in tree %}
+    <li class="span span-{{ sp.type }} status-{{ sp.status }}" style="margin-left: {{ sp._depth * 16 }}px">
+      <span class="span-type">{{ sp.type }}/{{ sp.name }}</span>
+      <span class="span-ms">{{ sp.duration_ms }} ms</span>
+      {% if sp.error_msg %}<pre class="error">{{ sp.error_type }}: {{ sp.error_msg }}</pre>{% endif %}
+      {% if sp.attrs %}<details><summary>attrs</summary><pre>{{ sp.attrs_json }}</pre></details>{% endif %}
+    </li>
+  {% endfor %}
+</ol>

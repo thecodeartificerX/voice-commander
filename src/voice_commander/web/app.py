@@ -42,6 +42,8 @@ def create_app(
     llm_context: dict[str, object] | None = None,
     config_path: Path | None = None,
     llm_router: LLMRouter | None = None,
+    observability_store=None,
+    observability_tracer=None,
 ) -> FastAPI:
     """Create and return the FastAPI application for the command management dashboard.
 
@@ -413,6 +415,58 @@ def create_app(
             reload_all_fn=lambda: _registrar_reload_all(registry, command_store, workflow_store),
         )
         app.include_router(builder_router(templates=templates, ctx=builder_ctx))
+
+    if observability_store is not None:
+        import json as _json
+
+        from ..observability.api import build_observability_router
+
+        app.include_router(build_observability_router(
+            observability_store,
+            tracer=observability_tracer,
+            bus=event_bus,
+            llm_router=llm_router,
+        ))
+
+        @app.get("/page/runs", response_class=HTMLResponse)
+        async def page_runs(request: Request) -> HTMLResponse:
+            """``GET /page/runs`` — render the run inspector page."""
+            runs = observability_store.list_runs(limit=50)
+            return templates.TemplateResponse(request, "runs.html", {"runs": runs})
+
+        @app.get("/page/runs/{run_id}", response_class=HTMLResponse)
+        async def page_runs_detail(request: Request, run_id: str) -> HTMLResponse:
+            """``GET /page/runs/{run_id}`` — render the run detail partial."""
+            run = observability_store.get_run(run_id)
+            if run is None:
+                return HTMLResponse("<p>not found</p>", status_code=404)
+            spans = observability_store.get_spans(run_id)
+            by_id = {s["span_id"]: s for s in spans}
+            depth_cache: dict = {}
+
+            def _depth(s: dict) -> int:
+                if s["span_id"] in depth_cache:
+                    return depth_cache[s["span_id"]]
+                parent = by_id.get(s["parent_span_id"])
+                d = 0 if parent is None else _depth(parent) + 1
+                depth_cache[s["span_id"]] = d
+                return d
+
+            tree = []
+            for s in spans:
+                tree.append({
+                    **s,
+                    "_depth": _depth(s),
+                    "attrs_json": (
+                        _json.dumps(s["attrs"], indent=2, default=str) if s["attrs"] else ""
+                    ),
+                    "output_json": (
+                        _json.dumps(s["output"], indent=2, default=str) if s["output"] else ""
+                    ),
+                })
+            return templates.TemplateResponse(
+                request, "_run_detail.html", {"run": run, "tree": tree}
+            )
 
     return app
 

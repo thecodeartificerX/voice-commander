@@ -54,3 +54,9 @@ assets/sprite/Gemini_Generated_Image_*.png
 # OS
 Thumbs.db
 Desktop.ini
+
+# Observability SQLite store (ADR 0070)
+outputs/runs.db
+outputs/runs.db-wal
+outputs/runs.db-shm
+outputs/runs.db.corrupt-*

@@ -125,6 +125,15 @@ class PerceptionConfig:
 
 
 @dataclass(frozen=True)
+class ObservabilityConfig:
+    enabled: bool = True
+    keep_runs: int = 1000
+    db_path: str = "outputs/runs.db"
+    queue_max: int = 4096
+    slow_run_ms: int = 2000
+
+
+@dataclass(frozen=True)
 class Config:
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
@@ -136,6 +145,7 @@ class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     sprite: SpriteConfig = field(default_factory=SpriteConfig)
     perception: PerceptionConfig = field(default_factory=PerceptionConfig)
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     # Per-field source strings for [llm], keyed by field name. Populated by
     # :meth:`load`; empty when the config is constructed directly. Consumed by
     # :func:`log_llm_sources` at daemon startup so every field's origin is
@@ -168,6 +178,7 @@ class Config:
             llm=LLMConfig(**llm_values),
             sprite=_section(SpriteConfig, raw.get("sprite", {})),
             perception=_section(PerceptionConfig, raw.get("perception", {})),
+            observability=_section(ObservabilityConfig, raw.get("observability", {})),
             llm_sources=llm_sources,
         )
 

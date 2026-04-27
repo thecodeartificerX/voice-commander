@@ -67,6 +67,7 @@ class LLMRouter:
         self._config = config
         self._registry = registry
         self._reload_lock = reload_lock
+        self._tracer: Any = None  # set by build_streaming_daemon via set_tracer()
         # Metrics (simple counters, no external lib)
         self._total_calls: int = 0
         self._total_timeouts: int = 0
@@ -111,6 +112,10 @@ class LLMRouter:
             return _FALLBACK_TEMPLATE.format(
                 default_browser=self._config.default_browser,
             )
+
+    def set_tracer(self, tracer: Any) -> None:
+        """Inject the observability tracer. Called by build_streaming_daemon."""
+        self._tracer = tracer
 
     def reload_prompt(self) -> None:
         """Re-read the template file and rebuild the cached system prompt.
@@ -195,55 +200,73 @@ class LLMRouter:
         self._total_calls += 1
         logger.debug("LLM router request: %s", json.dumps(body, default=str))
 
-        start = time.perf_counter()
-        try:
-            resp = self._client.post("/chat/completions", json=body)
-            resp.raise_for_status()
-        except httpx.TimeoutException:
-            self._total_timeouts += 1
-            self._total_errors += 1
-            logger.warning("LLM router timeout for transcript=%r", transcript)
-            return None
-        except httpx.ConnectError:
-            self._total_errors += 1
-            logger.warning(
-                "LLM router connect error for transcript=%r",
+        tracer = self._tracer
+        _span_ctx = tracer.span("llm_call", name="llm_call", model=self._config.model_id) if (
+            tracer is not None and getattr(tracer, "enabled", False)
+        ) else None
+
+        import contextlib as _cl
+        with (_span_ctx if _span_ctx is not None else _cl.nullcontext()) as _llm_span:
+            if _llm_span is not None and hasattr(_llm_span, "set_attr"):
+                with _cl.suppress(Exception):
+                    _llm_span.set_attr("prompt_full", json.dumps(messages, default=str))
+
+            start = time.perf_counter()
+            try:
+                resp = self._client.post("/chat/completions", json=body)
+                resp.raise_for_status()
+            except httpx.TimeoutException:
+                self._total_timeouts += 1
+                self._total_errors += 1
+                logger.warning("LLM router timeout for transcript=%r", transcript)
+                return None
+            except httpx.ConnectError:
+                self._total_errors += 1
+                logger.warning(
+                    "LLM router connect error for transcript=%r",
+                    transcript,
+                )
+                return None
+            except httpx.HTTPStatusError as e:
+                self._total_errors += 1
+                logger.warning(
+                    "LLM router HTTP %d for transcript=%r",
+                    e.response.status_code,
+                    transcript,
+                )
+                return None
+            except httpx.HTTPError as e:
+                self._total_errors += 1
+                logger.warning("LLM router HTTP error: %s", e)
+                return None
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            self._total_latency_ms += elapsed_ms
+
+            try:
+                data = resp.json()
+            except (json.JSONDecodeError, ValueError):
+                self._total_errors += 1
+                logger.warning("LLM router: malformed JSON response body=%s", resp.text[:200])
+                return None
+
+            if _llm_span is not None and hasattr(_llm_span, "set_attr"):
+                try:
+                    _llm_span.set_attr("raw_response", json.dumps(data, default=str))
+                    _llm_span.set_attr("latency_ms", int(elapsed_ms))
+                except Exception:
+                    pass
+
+            logger.debug("LLM router response: %s", json.dumps(data, default=str))
+            plan = self._parse_response(data)
+            step_count = len(plan.steps) if plan else 0
+            logger.info(
+                "llm_router latency_ms=%d steps=%d transcript=%r",
+                int(elapsed_ms),
+                step_count,
                 transcript,
             )
-            return None
-        except httpx.HTTPStatusError as e:
-            self._total_errors += 1
-            logger.warning(
-                "LLM router HTTP %d for transcript=%r",
-                e.response.status_code,
-                transcript,
-            )
-            return None
-        except httpx.HTTPError as e:
-            self._total_errors += 1
-            logger.warning("LLM router HTTP error: %s", e)
-            return None
-
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        self._total_latency_ms += elapsed_ms
-
-        try:
-            data = resp.json()
-        except (json.JSONDecodeError, ValueError):
-            self._total_errors += 1
-            logger.warning("LLM router: malformed JSON response body=%s", resp.text[:200])
-            return None
-
-        logger.debug("LLM router response: %s", json.dumps(data, default=str))
-        plan = self._parse_response(data)
-        step_count = len(plan.steps) if plan else 0
-        logger.info(
-            "llm_router latency_ms=%d steps=%d transcript=%r",
-            int(elapsed_ms),
-            step_count,
-            transcript,
-        )
-        return plan
+            return plan
 
     def _parse_response(self, data: dict[str, Any]) -> Plan | None:
         """Parse OpenAI-style response into a Plan."""

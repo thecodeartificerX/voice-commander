@@ -1,0 +1,4 @@
+<tr hx-get="/page/runs/{{ r.run_id }}" hx-target="#run-detail" hx-trigger="click" class="run-row run-{{ r.status }}">
+  <td>{{ r.run_id }}</td><td>{{ r.status }}</td><td>{{ r.duration_ms or 0 }}</td>
+  <td class="ellide">{{ r.transcript }}</td>
+</tr>

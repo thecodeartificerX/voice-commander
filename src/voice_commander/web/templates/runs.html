@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Voice Commander — Runs</title>
+  <link rel="stylesheet" href="/static/runs.css">
+  <script src="https://unpkg.com/htmx.org@2.0.0"></script>
+</head>
+<body>
+  <header><h1>Runs</h1></header>
+  <main class="runs-layout">
+    <aside class="runs-list">
+      <form class="filter-bar"
+            hx-get="/api/runs"
+            hx-trigger="change, submit, every 5s"
+            hx-target="#runs-tbody"
+            hx-swap="innerHTML">
+        <select name="status">
+          <option value="">all</option>
+          <option value="ok">ok</option>
+          <option value="error">error</option>
+          <option value="miss">miss</option>
+        </select>
+        <input name="q" placeholder="grep transcript…" />
+        <input name="limit" type="number" value="50" min="1" max="500" />
+      </form>
+      <table>
+        <thead><tr><th>id</th><th>status</th><th>ms</th><th>transcript</th></tr></thead>
+        <tbody id="runs-tbody">
+          {% for r in runs %}
+          <tr hx-get="/page/runs/{{ r.run_id }}" hx-target="#run-detail" hx-trigger="click" class="run-row run-{{ r.status }}">
+            <td>{{ r.run_id }}</td><td>{{ r.status }}</td><td>{{ r.duration_ms or 0 }}</td>
+            <td class="ellide">{{ r.transcript }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </aside>
+    <section id="run-detail" class="run-detail">
+      <p class="placeholder">select a run</p>
+    </section>
+  </main>
+  <script src="/static/runs.js"></script>
+</body>
+</html>

@@ -7,15 +7,19 @@ into a PlanOutcome wire object that the daemon publishes via EventBus.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from voice_commander.commands.graph import Edge, Graph, Node
 from voice_commander.commands.graph_topo import CycleError, topo_sort
 from voice_commander.plan import PlanOutcome, PlanStatus, ToolCall
 from voice_commander.registry import ToolRegistry
+
+if TYPE_CHECKING:
+    from voice_commander.observability import Tracer
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +31,16 @@ _GraphLookup = Callable[[str], "Graph | None"]
 class GraphRuntime:
     """Executes a Graph against a ToolRegistry; produces a PlanOutcome."""
 
-    def __init__(self, registry: ToolRegistry, graph_lookup: _GraphLookup) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        graph_lookup: _GraphLookup,
+        tracer: Tracer | None = None,
+    ) -> None:
         """Store tool registry and graph-lookup closure for use during execution."""
         self._registry = registry
         self._graph_lookup = graph_lookup
+        self._tracer = tracer
 
     def run(
         self, graph: Graph, inputs: Mapping[str, Any], *, _call_depth: int = 0
@@ -50,6 +60,22 @@ class GraphRuntime:
                 ),
                 None,
             )
+        tracer = self._tracer
+        _graph_ctx = (
+            tracer.span("graph", name=graph.name, kind=graph.kind)
+            if tracer is not None and getattr(tracer, "enabled", False)
+            else contextlib.nullcontext()
+        )
+        with _graph_ctx as _graph_span:
+            outcome, graph_return = self._run_inner(graph, inputs, _call_depth=_call_depth)
+            if _graph_span is not None and hasattr(_graph_span, "set_output"):
+                _graph_span.set_output({"status": outcome.status, "steps": len(outcome.steps)})
+        return outcome, graph_return
+
+    def _run_inner(
+        self, graph: Graph, inputs: Mapping[str, Any], *, _call_depth: int = 0
+    ) -> tuple[PlanOutcome, Any]:
+        """Inner execution logic extracted so graph span wraps cleanly."""
         start = time.monotonic()
         port_values: dict[str, Any] = {}
         fired_ok: set[str] = set()
@@ -119,17 +145,25 @@ class GraphRuntime:
                     if graph.strict and not self._has_error_edge(node.id, graph.edges):
                         break
                     continue
-                try:
-                    ret = entry.func(**kwargs)
-                except Exception as exc:  # noqa: BLE001
-                    if failed_idx is None:
-                        failed_idx = len(steps)
-                        error_msg = str(exc)[:256]
-                    fired_err.add(node.id)
-                    steps.append(ToolCall(name=node.ref, kwargs=kwargs))
-                    if graph.strict and not self._has_error_edge(node.id, graph.edges):
-                        break
-                    continue
+                _node_ctx = (
+                    self._tracer.span("node", name=node.ref, node_id=node.id)
+                    if self._tracer is not None and getattr(self._tracer, "enabled", False)
+                    else contextlib.nullcontext()
+                )
+                with _node_ctx as _node_span:
+                    try:
+                        ret = entry.func(**kwargs)
+                        if _node_span is not None and hasattr(_node_span, "set_output"):
+                            _node_span.set_output(ret)
+                    except Exception as exc:  # noqa: BLE001
+                        if failed_idx is None:
+                            failed_idx = len(steps)
+                            error_msg = str(exc)[:256]
+                        fired_err.add(node.id)
+                        steps.append(ToolCall(name=node.ref, kwargs=kwargs))
+                        if graph.strict and not self._has_error_edge(node.id, graph.edges):
+                            break
+                        continue
                 fired_ok.add(node.id)
                 self._record_returns(node, entry, ret, port_values)
                 steps.append(ToolCall(name=node.ref, kwargs=kwargs))

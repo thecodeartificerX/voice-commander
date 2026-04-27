@@ -29,7 +29,17 @@
   <div id="builder-errors" class="hidden px-3 py-2 bg-red-900/40 border-b border-red-700 text-red-300 text-sm"></div>
   <div class="flex" style="height:calc(100vh - 80px)">
     <div id="builder-palette" class="w-48 overflow-auto p-2 border-r border-neutral-700 bg-neutral-900 flex-shrink-0 text-sm"></div>
-    <div id="builder-canvas" class="flex-1 relative overflow-hidden"></div>
+    <div id="builder-canvas" class="flex-1 relative overflow-hidden">
+      <aside id="builder-runs-panel" class="builder-runs-panel">
+        <header>
+          <h3>Runs</h3>
+          <label><input type="checkbox" id="live-mode-toggle" /> Live</label>
+        </header>
+        <div id="builder-runs-list" hx-get="/api/runs?limit=20" hx-trigger="load, every 10s" hx-swap="innerHTML">
+          loading…
+        </div>
+      </aside>
+    </div>
     <div id="builder-config" class="w-72 overflow-auto p-3 border-l border-neutral-700 bg-neutral-900 flex-shrink-0 text-sm"></div>
   </div>
 </div>
@@ -38,4 +48,6 @@
 {% block scripts %}
 <script src="/static/drawflow.min.js"></script>
 <script src="/static/builder.js"></script>
+<script src="https://unpkg.com/htmx.org@2.0.0"></script>
+<script src="/static/runs.js"></script>
 {% endblock %}

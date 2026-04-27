@@ -78,3 +78,10 @@ width_px = 220
 
 [perception]
 ocr_engine = "auto"
+
+# [observability]
+# enabled = true
+# keep_runs = 1000
+# db_path = "outputs/runs.db"
+# queue_max = 4096
+# slow_run_ms = 2000
