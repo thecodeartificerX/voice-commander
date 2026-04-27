@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time as _time
 from pathlib import Path
 
 import pytest
@@ -109,10 +108,12 @@ def test_tracer_emits_oneline_summary_at_end_of_run(store, bus, caplog):
 def test_tracer_nested_spans_have_correct_parent_ids(store: Store, bus: EventBus):
     """3-level nesting: run → transcribe → tool_call. Each child must reference its parent."""
     tracer = Tracer(store=store, bus=bus, enabled=True)
-    with tracer.run("nested test") as run:
-        with tracer.span("transcribe", name="transcribe") as transcribe_span:
-            with tracer.span("tool_call", name="focus") as tool_span:
-                pass
+    with (
+        tracer.run("nested test") as run,
+        tracer.span("transcribe", name="transcribe") as transcribe_span,
+        tracer.span("tool_call", name="focus"),
+    ):
+        pass
     _drain(store)
 
     spans = store.get_spans(run.run_id)
@@ -143,16 +144,16 @@ def test_tracer_context_var_reset_after_exception_in_nested_span(store: Store, b
     tracer = Tracer(store=store, bus=bus, enabled=True)
     outer_span_id_after: list[str] = []
 
-    with tracer.run("exception test") as run:
-        with tracer.span("outer", name="outer") as outer:
-            try:
-                with tracer.span("inner", name="inner"):
-                    raise ValueError("boom")
-            except ValueError:
-                pass
-            # After inner span's context exits, current span_id should be outer
-            from voice_commander.observability.tracer import _current_span_id
-            outer_span_id_after.append(_current_span_id.get())
+    with tracer.run("exception test"), tracer.span("outer", name="outer") as outer:
+        try:
+            with tracer.span("inner", name="inner"):
+                raise ValueError("boom")
+        except ValueError:
+            pass
+        # After inner span's context exits, current span_id should be outer
+        from voice_commander.observability.tracer import _current_span_id
+
+        outer_span_id_after.append(_current_span_id.get())
     _drain(store)
 
     assert outer_span_id_after[0] == outer.span_id, (
@@ -169,14 +170,10 @@ def test_tracer_step_counter_increments_per_tool_call(store: Store, bus: EventBu
             pass
         with tracer.span("tool_call", name="type"):
             pass
-        assert run.step_count == 2, (
-            f"expected 2 steps during run, got {run.step_count}"
-        )
+        assert run.step_count == 2, f"expected 2 steps during run, got {run.step_count}"
 
     # step_count is accessible on the handle after run ends
-    assert run.step_count == 2, (
-        f"expected step_count=2 after run ended, got {run.step_count}"
-    )
+    assert run.step_count == 2, f"expected step_count=2 after run ended, got {run.step_count}"
 
 
 def test_step_counter_per_run_handle(store: Store, bus: EventBus):

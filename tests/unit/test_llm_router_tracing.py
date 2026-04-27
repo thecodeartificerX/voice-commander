@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from unittest.mock import MagicMock, patch
 
 from voice_commander.config import LLMConfig
@@ -21,8 +20,14 @@ def test_llm_router_writes_prompt_and_response_to_span(tmp_path):
     registry = ToolRegistry()
     # Add an llm-visible tool so route() doesn't early-return on empty tools list
     focus_entry = ToolEntry(
-        name="focus", phrases=("focus",), func=lambda target=None: None,
-        module="m", docstring=None, llm_only=True, internal=False, enabled=True,
+        name="focus",
+        phrases=("focus",),
+        func=lambda target=None: None,
+        module="m",
+        docstring=None,
+        llm_only=True,
+        internal=False,
+        enabled=True,
         params_schema={"type": "function", "function": {"name": "focus", "parameters": {}}},
     )
     registry.register(focus_entry)

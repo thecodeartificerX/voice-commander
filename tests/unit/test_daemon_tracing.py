@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -26,8 +25,11 @@ def test_process_utterance_emits_run_with_transcribe_span_on_miss(tmp_path: Path
 
     transcriber = MagicMock()
     transcriber.transcribe.return_value = TranscriptionResult(
-        text="hello world", confidence=0.95, no_speech_prob=0.01,
-        language="en", duration_ms=500,
+        text="hello world",
+        confidence=0.95,
+        no_speech_prob=0.01,
+        language="en",
+        duration_ms=500,
     )
     llm_router = MagicMock()
     llm_router.route.return_value = None  # no plan → miss

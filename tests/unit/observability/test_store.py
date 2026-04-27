@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sqlite3
-import time
 from pathlib import Path
 
 import pytest
@@ -20,9 +19,7 @@ def test_store_creates_schema(tmp_path: Path):
     store.start()
     try:
         with sqlite3.connect(db) as conn:
-            cur = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-            )
+            cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
             names = [r[0] for r in cur.fetchall()]
         assert "runs" in names
         assert "spans" in names
@@ -74,9 +71,16 @@ def test_store_round_trip_run_and_span(tmp_path):
         store.write_run_start(RunRecord("r1", 1000.0, "open chrome", 42))
         store.write_span(
             SpanRecord(
-                span_id="s1", run_id="r1", parent_span_id=None,
-                type="run", name="run", started_at=1000.0, ended_at=1000.5,
-                duration_ms=500, status="ok", attrs={"transcript": "open chrome"},
+                span_id="s1",
+                run_id="r1",
+                parent_span_id=None,
+                type="run",
+                name="run",
+                started_at=1000.0,
+                ended_at=1000.5,
+                duration_ms=500,
+                status="ok",
+                attrs={"transcript": "open chrome"},
             )
         )
         store.write_run_end(RunUpdate("r1", 1000.5, "ok", None, 500))
@@ -156,11 +160,19 @@ def test_list_runs_graph_filter_sql(tmp_path):
         s.write_run_start(RunRecord("bbb", 1001.0, "run bbb", 1))
         s.write_run_end(RunUpdate("bbb", 1001.5, "ok", None, 500))
         # Insert a graph span only for run "aaa"
-        s.write_span(SpanRecord(
-            span_id="sp1", run_id="aaa", parent_span_id=None,
-            type="graph", name="greet",
-            started_at=1000.0, ended_at=1001.0, duration_ms=1000, status="ok",
-        ))
+        s.write_span(
+            SpanRecord(
+                span_id="sp1",
+                run_id="aaa",
+                parent_span_id=None,
+                type="graph",
+                name="greet",
+                started_at=1000.0,
+                ended_at=1001.0,
+                duration_ms=1000,
+                status="ok",
+            )
+        )
         _drain(s)
         matched = s.list_runs(graph_name="greet")
         assert len(matched) == 1
@@ -175,6 +187,7 @@ def test_list_runs_graph_filter_sql(tmp_path):
 def test_writer_circuit_breaker_trips_after_threshold(tmp_path):
     """M15: circuit_open becomes True after _CIRCUIT_OPEN_THRESHOLD consecutive errors."""
     from voice_commander.observability.store import _CIRCUIT_OPEN_THRESHOLD
+
     s = Store(tmp_path / "runs.db", keep_runs=10, queue_max=256, daemon_pid=1)
     s.start()
     try:
@@ -198,6 +211,7 @@ def test_writer_circuit_breaker_trips_after_threshold(tmp_path):
 
         # Give the writer thread time to process
         import time as _t
+
         _t.sleep(0.2)
         _drain(s)
 

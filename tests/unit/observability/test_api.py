@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import pytest
@@ -25,11 +24,19 @@ def store_with_runs(tmp_path: Path):
     s = Store(tmp_path / "runs.db", keep_runs=100, queue_max=64, daemon_pid=1)
     s.start()
     s.write_run_start(RunRecord("aaa", 1000.0, "open chrome", 1))
-    s.write_span(SpanRecord(
-        span_id="root", run_id="aaa", parent_span_id=None,
-        type="run", name="run", started_at=1000.0, ended_at=1000.5,
-        duration_ms=500, status="ok",
-    ))
+    s.write_span(
+        SpanRecord(
+            span_id="root",
+            run_id="aaa",
+            parent_span_id=None,
+            type="run",
+            name="run",
+            started_at=1000.0,
+            ended_at=1000.5,
+            duration_ms=500,
+            status="ok",
+        )
+    )
     s.write_run_end(RunUpdate("aaa", 1000.5, "ok", None, 500))
     s.write_run_start(RunRecord("bbb", 1100.0, "do the thing", 1))
     s.write_run_end(RunUpdate("bbb", 1100.7, "error", "FocusWindowError", 700))
@@ -123,8 +130,7 @@ def test_runs_stream_returns_200(store_with_runs):
             if message["type"] == "http.response.start":
                 received["status"] = message["status"]
                 received["headers"] = {
-                    k.decode(): v.decode()
-                    for k, v in message.get("headers", [])
+                    k.decode(): v.decode() for k, v in message.get("headers", [])
                 }
             # Don't block on body chunks
 

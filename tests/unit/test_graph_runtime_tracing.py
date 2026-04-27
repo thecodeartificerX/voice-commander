@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import time
-
 from voice_commander.commands.graph import Graph, Node
 from voice_commander.commands.graph_runtime import GraphRuntime
 from voice_commander.event_bus import EventBus
@@ -24,9 +22,7 @@ def _make_graph() -> Graph:
         strict=True,
         enabled=True,
         timeout_ms=5000,
-        nodes=(
-            Node(id="n1", ref="pipeline.focus", kwargs={"target": "chrome"}, pos=(0, 0)),
-        ),
+        nodes=(Node(id="n1", ref="pipeline.focus", kwargs={"target": "chrome"}, pos=(0, 0)),),
         edges=(),
         foreach_iteration_cap=10,
     )

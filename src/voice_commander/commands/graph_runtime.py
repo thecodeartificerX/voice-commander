@@ -242,8 +242,13 @@ class GraphRuntime:
                                 continue
                             bkwargs = self._resolve_kwargs(bn, graph.edges, port_values)
                             action, body_err_msg = self._dispatch_pipeline_node(
-                                bn, bkwargs, graph, steps,
-                                port_values, body_fired_ok, body_fired_err,
+                                bn,
+                                bkwargs,
+                                graph,
+                                steps,
+                                port_values,
+                                body_fired_ok,
+                                body_fired_err,
                             )
                             if body_err_msg is not None and not foreach_has_error:
                                 foreach_has_error = True

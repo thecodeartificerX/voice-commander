@@ -338,11 +338,7 @@ def test_observability_section_defaults(tmp_path):
 
 def test_observability_section_overrides(tmp_path):
     cfg_path = tmp_path / "config.toml"
-    cfg_path.write_text(
-        "[observability]\n"
-        "enabled = false\n"
-        "keep_runs = 50\n"
-    )
+    cfg_path.write_text("[observability]\nenabled = false\nkeep_runs = 50\n")
     cfg = Config.load(cfg_path)
     assert cfg.observability.enabled is False
     assert cfg.observability.keep_runs == 50
