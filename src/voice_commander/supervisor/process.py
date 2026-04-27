@@ -3,6 +3,16 @@
 Windows is the only target today, but POSIX paths are sketched so the door
 isn't slammed shut. Children inherit the supervisor's stdout/stderr (so log
 lines interleave naturally in the launching console). stdin is `DEVNULL`.
+
+Windows job-object guarantee
+----------------------------
+On Windows every spawned child is assigned to a single process-wide Job
+Object created with ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE``. When the
+supervisor process dies for ANY reason (clean exit, KeyboardInterrupt,
+hard kill from a parent shell, uv harness teardown), Windows closes the
+Job handle and reaps every assigned child immediately. This is the only
+reliable way to prevent orphan daemon/sprite processes when a launcher
+chain (start.bat → powershell → uv → supervisor) collapses unexpectedly.
 """
 
 from __future__ import annotations
@@ -18,6 +28,73 @@ import time
 from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Windows Job Object — process-wide singleton.
+# ---------------------------------------------------------------------------
+
+_JOB_HANDLE: int | None = None  # type: ignore[assignment] — Windows-only HANDLE
+
+
+def _ensure_job_object() -> int | None:
+    """Create (once) a Job Object configured to kill all children on close.
+
+    Returns the job handle (an opaque Windows HANDLE int), or None on
+    non-Windows or if the Win32 API is unavailable. Callers must assign
+    each new child to the returned handle via ``_assign_to_job``.
+
+    Idempotent — subsequent calls return the cached handle.
+    """
+    global _JOB_HANDLE
+    if sys.platform != "win32":
+        return None
+    if _JOB_HANDLE is not None:
+        return _JOB_HANDLE
+
+    try:
+        import win32job  # type: ignore[import-not-found]
+    except ImportError:
+        logger.warning(
+            "pywin32 not available; child cleanup on supervisor crash not guaranteed"
+        )
+        return None
+
+    job = win32job.CreateJobObject(None, "")
+    info = win32job.QueryInformationJobObject(job, win32job.JobObjectExtendedLimitInformation)
+    info["BasicLimitInformation"]["LimitFlags"] |= win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    win32job.SetInformationJobObject(job, win32job.JobObjectExtendedLimitInformation, info)
+    _JOB_HANDLE = job
+    logger.info("Created Job Object with KILL_ON_JOB_CLOSE for child supervision")
+    return _JOB_HANDLE
+
+
+def _assign_to_job(pid: int) -> None:
+    """Assign *pid* to the supervisor's Job Object.
+
+    On non-Windows or if pywin32 is unavailable, this is a no-op — the
+    supervisor falls back to its explicit terminate() path on shutdown.
+    """
+    job = _ensure_job_object()
+    if job is None:
+        return
+    try:
+        import win32api  # type: ignore[import-not-found]
+        import win32con  # type: ignore[import-not-found]
+        import win32job  # type: ignore[import-not-found]
+    except ImportError:
+        return
+
+    try:
+        # PROCESS_TERMINATE | PROCESS_SET_QUOTA = required by AssignProcessToJobObject
+        process_handle = win32api.OpenProcess(
+            win32con.PROCESS_TERMINATE | win32con.PROCESS_SET_QUOTA, False, pid
+        )
+        win32job.AssignProcessToJobObject(job, process_handle)
+        win32api.CloseHandle(process_handle)
+        logger.debug("Assigned pid=%d to supervisor Job Object", pid)
+    except Exception as exc:  # noqa: BLE001 — log and continue; not fatal
+        logger.warning("Failed to assign pid=%d to Job Object: %s", pid, exc)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -63,6 +140,11 @@ def spawn(
         stdin=subprocess.DEVNULL,
         creationflags=creationflags,
     )
+    # Bind the child to the supervisor's Job Object so it dies with the
+    # supervisor under any failure mode (clean shutdown, KeyboardInterrupt,
+    # parent-shell hard kill, uv harness teardown). Best-effort — see
+    # _ensure_job_object docstring for the no-op fallback.
+    _assign_to_job(popen.pid)
     return ChildHandle(name=name, pid=popen.pid, popen=popen)
 
 
