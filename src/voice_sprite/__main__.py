@@ -120,8 +120,8 @@ def main() -> None:
     llm_client: LLMSummaryClient | None = None
     if cfg.hud.enabled and cfg.hud.llm_fallback_enabled:
         llm_client = LLMSummaryClient(
-            endpoint_url=cfg.hud.llm_endpoint_url,
-            model_id=cfg.hud.llm_model_id,
+            endpoint_url=cfg.llm_endpoint_url,
+            model_id=cfg.llm_model_id,
             timeout_ms=cfg.hud.llm_summary_timeout_ms,
         )
     summarizer = Summarizer(

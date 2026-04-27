@@ -14,6 +14,11 @@ class SpriteConfigError(ValueError):
 class HudConfig:
     """HUD overlay configuration.
 
+    LLM endpoint + model are NOT defined here — the sprite reads them
+    from the top-level ``[llm]`` table via SpriteAppConfig so the web-UI
+    config form is the single source of truth for which model the
+    daemon AND the HUD summarizer call.
+
     Validation policy (enforced by load_sprite_config):
     - max_lines: int >= 1 (ChatLog rejects <= 0)
     - hold_ms: int >= 0 (0 = instant hide)
@@ -22,7 +27,6 @@ class HudConfig:
     - width_px: int >= 1
     - llm_summary_timeout_ms: int >= 1
     - enabled, llm_fallback_enabled: strict bool (int/str rejected)
-    - llm_endpoint_url, llm_model_id: str (any TOML scalar accepted)
     Type mismatches raise SpriteConfigError.
     """
 
@@ -34,8 +38,6 @@ class HudConfig:
     width_px: int = 220
     llm_summary_timeout_ms: int = 800
     llm_fallback_enabled: bool = True
-    llm_endpoint_url: str = "http://localhost:1234/v1"
-    llm_model_id: str = "google/gemma-4-26b-a4b"
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,11 @@ class SpriteAppConfig:
     margin_y: int = 8
     # HUD
     hud: HudConfig = field(default_factory=HudConfig)
+    # LLM — mirrored from the daemon's [llm] table so web-UI edits to
+    # endpoint_url / model_id apply to BOTH the router and the HUD
+    # summarizer (single source of truth).
+    llm_endpoint_url: str = "http://localhost:1234/v1"
+    llm_model_id: str = "google/gemma-4-e4b"
 
 
 def _require_int(
@@ -162,8 +169,6 @@ def _build_hud(hud_raw: dict[str, Any]) -> HudConfig:
         width_px=_opt_int("hud", hud_raw, "width_px", 220, min_val=1),
         llm_summary_timeout_ms=_opt_int("hud", hud_raw, "llm_summary_timeout_ms", 800, min_val=1),
         llm_fallback_enabled=_opt_bool("hud", hud_raw, "llm_fallback_enabled", True),
-        llm_endpoint_url=str(hud_raw.get("llm_endpoint_url", "http://localhost:1234/v1")),
-        llm_model_id=str(hud_raw.get("llm_model_id", "google/gemma-4-26b-a4b")),
     )
 
 
@@ -174,10 +179,28 @@ def load_sprite_config(config_path: Path) -> SpriteAppConfig:
     sprite_raw = raw.get("sprite", {})
     web_raw = raw.get("web", {})
     hud_raw = raw.get("hud", {})
+    llm_raw = raw.get("llm", {})
 
     host = web_raw.get("host", "127.0.0.1")
     port = web_raw.get("port", 8765)
     daemon_url = f"http://{host}:{port}"
+
+    # Single source of truth: LLM endpoint + model come from [llm], the
+    # same table the daemon and the web-UI config form use.
+    llm_endpoint_url = str(llm_raw.get("endpoint_url", "http://localhost:1234/v1"))
+    llm_model_id = str(llm_raw.get("model_id", "google/gemma-4-e4b"))
+
+    # Detect and warn on legacy [hud].llm_* keys (silently ignored now).
+    if "llm_endpoint_url" in hud_raw or "llm_model_id" in hud_raw:
+        import warnings
+
+        warnings.warn(
+            "[hud].llm_endpoint_url / [hud].llm_model_id are deprecated and ignored; "
+            "the sprite now reads endpoint_url and model_id from [llm] (single source "
+            "of truth with the daemon). Remove these keys from config.toml.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     return SpriteAppConfig(
         daemon_url=daemon_url,
@@ -197,6 +220,8 @@ def load_sprite_config(config_path: Path) -> SpriteAppConfig:
         margin_x=_opt_int("sprite", sprite_raw, "margin_x", 8, min_val=0),
         margin_y=_opt_int("sprite", sprite_raw, "margin_y", 8, min_val=0),
         hud=_build_hud(hud_raw),
+        llm_endpoint_url=llm_endpoint_url,
+        llm_model_id=llm_model_id,
     )
 
 
