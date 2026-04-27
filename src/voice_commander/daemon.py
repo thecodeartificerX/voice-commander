@@ -139,8 +139,10 @@ class StreamingDaemon:
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._web_server = web_server
         self._event_bus = event_bus
-        self._tracer = tracer if tracer is not None else Tracer(
-            store=_NoopStore(), bus=event_bus or EventBus(), enabled=False
+        self._tracer = (
+            tracer
+            if tracer is not None
+            else Tracer(store=_NoopStore(), bus=event_bus or EventBus(), enabled=False)
         )
         self._store = store
 
@@ -751,9 +753,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         _obs_store.start()
         recovered = _obs_store.recover_stale_runs()
         if recovered:
-            logger.info(
-                "observability: marked %d stale 'running' runs as crashed", recovered
-            )
+            logger.info("observability: marked %d stale 'running' runs as crashed", recovered)
         _obs_tracer = Tracer(
             store=_obs_store,
             bus=event_bus,

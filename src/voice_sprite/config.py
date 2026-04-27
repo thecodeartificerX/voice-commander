@@ -176,8 +176,14 @@ def load_sprite_config(config_path: Path) -> SpriteAppConfig:
     # Detect and warn on legacy [hud].llm_* keys (silently ignored now —
     # the HUD summarizer no longer calls an LLM at all).
     legacy_keys = [
-        k for k in ("llm_endpoint_url", "llm_model_id", "llm_summary_timeout_ms",
-                    "llm_fallback_enabled") if k in hud_raw
+        k
+        for k in (
+            "llm_endpoint_url",
+            "llm_model_id",
+            "llm_summary_timeout_ms",
+            "llm_fallback_enabled",
+        )
+        if k in hud_raw
     ]
     if legacy_keys:
         import warnings

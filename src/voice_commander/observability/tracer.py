@@ -184,10 +184,10 @@ class Tracer:
                 # Use handle._override_status to allow callers (e.g. daemon miss paths)
                 # to mark the run status without raising.
                 duration_ms = int((time.monotonic() - start_mono) * 1000)
-                status = root.status if root.status == "error" else (
-                    "error" if _run_has_error.get() else (
-                        handle._override_status or "ok"
-                    )
+                status = (
+                    root.status
+                    if root.status == "error"
+                    else ("error" if _run_has_error.get() else (handle._override_status or "ok"))
                 )
                 # Capture error_msg directly from the caught exception; root.error_msg
                 # is populated by the span() context manager's except block which runs
@@ -236,7 +236,11 @@ class Tracer:
 
     @contextlib.contextmanager
     def span(
-        self, span_type: str, *, name: str | None = None, **attrs: Any,
+        self,
+        span_type: str,
+        *,
+        name: str | None = None,
+        **attrs: Any,
     ) -> Iterator[Span | _NullSpan]:
         if not self._enabled or _current_run_id.get() == "":
             yield _NULL_SPAN
@@ -316,9 +320,7 @@ class Tracer:
                 )
                 # Count tool_call spans per run for the summary line
                 if span_type == "tool_call" and s.run_id:
-                    self._step_counters[s.run_id] = (
-                        self._step_counters.get(s.run_id, 0) + 1
-                    )
+                    self._step_counters[s.run_id] = self._step_counters.get(s.run_id, 0) + 1
             except Exception:
                 logger.exception("tracer: failed to write span")
             _current_span_id.reset(token)

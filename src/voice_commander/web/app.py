@@ -424,12 +424,14 @@ def create_app(
 
         from ..observability.api import build_observability_router
 
-        app.include_router(build_observability_router(
-            observability_store,
-            tracer=observability_tracer,
-            bus=event_bus,
-            llm_router=llm_router,
-        ))
+        app.include_router(
+            build_observability_router(
+                observability_store,
+                tracer=observability_tracer,
+                bus=event_bus,
+                llm_router=llm_router,
+            )
+        )
 
         @app.get("/page/runs", response_class=HTMLResponse)
         async def page_runs(request: Request) -> HTMLResponse:
@@ -457,16 +459,18 @@ def create_app(
 
             tree = []
             for s in spans:
-                tree.append({
-                    **s,
-                    "_depth": _depth(s),
-                    "attrs_json": (
-                        _json.dumps(s["attrs"], indent=2, default=str) if s["attrs"] else ""
-                    ),
-                    "output_json": (
-                        _json.dumps(s["output"], indent=2, default=str) if s["output"] else ""
-                    ),
-                })
+                tree.append(
+                    {
+                        **s,
+                        "_depth": _depth(s),
+                        "attrs_json": (
+                            _json.dumps(s["attrs"], indent=2, default=str) if s["attrs"] else ""
+                        ),
+                        "output_json": (
+                            _json.dumps(s["output"], indent=2, default=str) if s["output"] else ""
+                        ),
+                    }
+                )
             return templates.TemplateResponse(
                 request, "_run_detail.html", {"run": run, "tree": tree}
             )

@@ -93,9 +93,7 @@ def _cmd_runs(args: argparse.Namespace) -> None:
         runs = s.list_runs(limit=args.limit, status=getattr(args, "status", None))
         for r in runs:
             dur = r["duration_ms"] or 0
-            print(
-                f"{r['run_id']}  {r['status']:6s}  {dur:5d}ms  {r['transcript']!r}"
-            )
+            print(f"{r['run_id']}  {r['status']:6s}  {dur:5d}ms  {r['transcript']!r}")
     finally:
         s.stop()
 
@@ -134,6 +132,7 @@ def _cmd_llm(args: argparse.Namespace) -> None:
 def _cmd_replay_llm(args: argparse.Namespace) -> None:
     try:
         import httpx
+
         base = getattr(args, "endpoint", "http://127.0.0.1:8765")
         r = httpx.post(f"{base}/api/runs/{args.run_id}/replay-llm")
         r.raise_for_status()
@@ -152,6 +151,7 @@ def _cmd_replay_full(args: argparse.Namespace) -> None:
         sys.exit(2)
     try:
         import httpx
+
         base = getattr(args, "endpoint", "http://127.0.0.1:8765")
         r = httpx.post(
             f"{base}/api/runs/{args.run_id}/replay-full",
@@ -223,8 +223,9 @@ def build_tail_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="vc tail")
     p.add_argument("--db")
     p.add_argument("--no-follow", action="store_true")
-    p.add_argument("--since", type=float, default=None,
-                   help="unix epoch seconds; only runs after this")
+    p.add_argument(
+        "--since", type=float, default=None, help="unix epoch seconds; only runs after this"
+    )
     p.add_argument("--status")
     return p
 
@@ -237,7 +238,9 @@ def run_tail(args: argparse.Namespace) -> None:
         def _emit_new() -> int:
             new = 0
             runs = s.list_runs(
-                limit=20, status=args.status, since_ts=args.since,
+                limit=20,
+                status=args.status,
+                since_ts=args.since,
             )
             runs.reverse()  # oldest first
             for r in runs:

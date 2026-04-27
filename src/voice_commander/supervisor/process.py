@@ -55,9 +55,7 @@ def _ensure_job_object() -> int | None:
     try:
         import win32job  # type: ignore[import-untyped]
     except ImportError:
-        logger.warning(
-            "pywin32 not available; child cleanup on supervisor crash not guaranteed"
-        )
+        logger.warning("pywin32 not available; child cleanup on supervisor crash not guaranteed")
         return None
 
     job = win32job.CreateJobObject(None, "")

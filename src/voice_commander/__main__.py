@@ -99,6 +99,7 @@ def _run_validate(cfg: Config) -> None:
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "debug":
         from voice_commander.observability.cli import build_debug_parser, run_debug
+
         parser = build_debug_parser()
         ns = parser.parse_args(sys.argv[2:])
         run_debug(ns)
@@ -106,6 +107,7 @@ def main() -> None:
 
     if len(sys.argv) > 1 and sys.argv[1] == "tail":
         from voice_commander.observability.cli import build_tail_parser, run_tail
+
         ns = build_tail_parser().parse_args(sys.argv[2:])
         run_tail(ns)
         return
