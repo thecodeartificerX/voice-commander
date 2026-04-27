@@ -722,8 +722,6 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
 
     event_bus = EventBus()
 
-    dispatcher = Dispatcher(feedback, event_bus=event_bus)
-
     # LLM Router — always created.
     llm_router = LLMRouter(cfg.llm, registry, reload_lock)
     if cfg.llm.warmup_on_startup:
@@ -766,8 +764,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     else:
         _obs_tracer = Tracer(store=_NoopStore(), bus=event_bus, enabled=False)
 
-    # Wire tracer into dispatcher and LLM router.
-    dispatcher._tracer = _obs_tracer
+    dispatcher = Dispatcher(feedback, event_bus=event_bus, tracer=_obs_tracer)
     llm_router.set_tracer(_obs_tracer)
 
     commands_path = repo_root / "commands.json"

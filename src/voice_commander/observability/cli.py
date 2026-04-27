@@ -16,7 +16,14 @@ from voice_commander.observability.store import Store
 def _resolve_db(args: argparse.Namespace) -> Path:
     if getattr(args, "db", None):
         return Path(args.db)
-    return Path("outputs/runs.db")
+    default = Path("outputs/runs.db")
+    if not default.exists():
+        print(
+            f"warning: db not found at {default} (cwd={Path.cwd()}); "
+            f"results will be empty. Pass --db to point at the daemon's runs.db.",
+            file=sys.stderr,
+        )
+    return default
 
 
 def _open_store(db_path: Path) -> Store:

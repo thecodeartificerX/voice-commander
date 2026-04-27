@@ -98,9 +98,11 @@ class _NullSpan:
     type = ""
     name = ""
     status = "ok"
-    attrs: dict[str, Any] = {}
     output: Any = None
     error_msg: str | None = None
+
+    def __init__(self) -> None:
+        self.attrs: dict[str, Any] = {}
 
     def set_output(self, value: Any) -> None: ...
     def set_attr(self, key: str, value: Any) -> None: ...

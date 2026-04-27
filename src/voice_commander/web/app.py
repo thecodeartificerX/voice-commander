@@ -74,6 +74,7 @@ def create_app(
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    templates.env.autoescape = True
 
     # ------------------------------------------------------------------
     # GET / — redirect to default page (Commands)

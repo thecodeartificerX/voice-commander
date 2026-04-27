@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
@@ -205,27 +206,34 @@ class LLMRouter:
             tracer is not None and getattr(tracer, "enabled", False)
         ) else None
 
-        import contextlib as _cl
-        with (_span_ctx if _span_ctx is not None else _cl.nullcontext()) as _llm_span:
+        with (_span_ctx if _span_ctx is not None else contextlib.nullcontext()) as _llm_span:
             if _llm_span is not None and hasattr(_llm_span, "set_attr"):
-                with _cl.suppress(Exception):
+                with contextlib.suppress(Exception):
                     _llm_span.set_attr("prompt_full", json.dumps(messages, default=str))
 
             start = time.perf_counter()
             try:
                 resp = self._client.post("/chat/completions", json=body)
                 resp.raise_for_status()
-            except httpx.TimeoutException:
+            except httpx.TimeoutException as e:
                 self._total_timeouts += 1
                 self._total_errors += 1
                 logger.warning("LLM router timeout for transcript=%r", transcript)
+                if _llm_span is not None and hasattr(_llm_span, "set_attr"):
+                    with contextlib.suppress(Exception):
+                        _llm_span.set_attr("error_type", "TimeoutException")
+                        _llm_span.set_attr("error_msg", str(e)[:512])
                 return None
-            except httpx.ConnectError:
+            except httpx.ConnectError as e:
                 self._total_errors += 1
                 logger.warning(
                     "LLM router connect error for transcript=%r",
                     transcript,
                 )
+                if _llm_span is not None and hasattr(_llm_span, "set_attr"):
+                    with contextlib.suppress(Exception):
+                        _llm_span.set_attr("error_type", "ConnectError")
+                        _llm_span.set_attr("error_msg", str(e)[:512])
                 return None
             except httpx.HTTPStatusError as e:
                 self._total_errors += 1
@@ -234,10 +242,18 @@ class LLMRouter:
                     e.response.status_code,
                     transcript,
                 )
+                if _llm_span is not None and hasattr(_llm_span, "set_attr"):
+                    with contextlib.suppress(Exception):
+                        _llm_span.set_attr("error_type", "HTTPStatusError")
+                        _llm_span.set_attr("error_msg", f"HTTP {e.response.status_code}")
                 return None
             except httpx.HTTPError as e:
                 self._total_errors += 1
                 logger.warning("LLM router HTTP error: %s", e)
+                if _llm_span is not None and hasattr(_llm_span, "set_attr"):
+                    with contextlib.suppress(Exception):
+                        _llm_span.set_attr("error_type", e.__class__.__name__)
+                        _llm_span.set_attr("error_msg", str(e)[:512])
                 return None
 
             elapsed_ms = (time.perf_counter() - start) * 1000
@@ -245,17 +261,21 @@ class LLMRouter:
 
             try:
                 data = resp.json()
-            except (json.JSONDecodeError, ValueError):
+            except (json.JSONDecodeError, ValueError) as e:
                 self._total_errors += 1
                 logger.warning("LLM router: malformed JSON response body=%s", resp.text[:200])
+                if _llm_span is not None and hasattr(_llm_span, "set_attr"):
+                    with contextlib.suppress(Exception):
+                        _llm_span.set_attr("error_type", e.__class__.__name__)
+                        _llm_span.set_attr("error_msg", "malformed JSON response")
                 return None
 
             if _llm_span is not None and hasattr(_llm_span, "set_attr"):
                 try:
                     _llm_span.set_attr("raw_response", json.dumps(data, default=str))
                     _llm_span.set_attr("latency_ms", int(elapsed_ms))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("llm_router: failed to set span attrs: %s", exc)
 
             logger.debug("LLM router response: %s", json.dumps(data, default=str))
             plan = self._parse_response(data)

@@ -170,6 +170,7 @@ class GraphRuntime:
                 continue
 
             # --- control.branch ---
+            # Fire only the matching outgoing port so downstream sees one path, not both.
             if node.ref == "control.branch":
                 cond_val = bool(kwargs.get("cond"))
                 if cond_val:
@@ -181,6 +182,7 @@ class GraphRuntime:
                 continue
 
             # --- control.foreach ---
+            # Body ports are cleared per iteration so prior items don't leak into the next.
             if node.ref == "control.foreach":
                 items = list(kwargs.get("list") or [])
                 cap = graph.foreach_iteration_cap
@@ -276,6 +278,7 @@ class GraphRuntime:
                 continue
 
             # --- cross-graph (command.X / workflow.X) ---
+            # Recurse with depth guard; child steps merge into parent for a flat audit trail.
             if node.ref.startswith("command.") or node.ref.startswith("workflow."):
                 child_name = node.ref.split(".", 1)[1]
                 child = self._graph_lookup(child_name)

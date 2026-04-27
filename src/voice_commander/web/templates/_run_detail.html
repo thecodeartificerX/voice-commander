@@ -5,7 +5,8 @@
     <button hx-post="/api/runs/{{ run.run_id }}/replay-llm" hx-target="#replay-out" hx-swap="innerHTML">Replay LLM</button>
     <details><summary>danger</summary>
       <button hx-post="/api/runs/{{ run.run_id }}/replay-full"
-              hx-headers='{"X-Replay-Confirm":"yes"}' hx-target="#replay-out" hx-swap="innerHTML">Replay Full (re-fires plan)</button>
+              hx-headers='{"X-Replay-Confirm":"yes"}' hx-target="#replay-out" hx-swap="innerHTML"
+              hx-confirm="Re-fire this plan? This will execute tools again.">Replay Full (re-fires plan)</button>
     </details>
   </div>
 </header>
