@@ -416,6 +416,55 @@
     return dfId;
   }
 
+  // ---------- Kwarg type coercion ----------
+  /**
+   * Coerce a raw kwarg value (stored as string from text/number <input> or
+   * boolean from checkbox) to its declared schema type. Empty string → null
+   * so optional fields don't surface as "" at runtime.
+   *
+   * @param {*} raw
+   * @param {string|undefined} type  - "int"/"integer", "float"/"number",
+   *   "bool"/"boolean", anything else → string passthrough.
+   * @returns {*}
+   */
+  function coerceKwarg(raw, type) {
+    if (raw === '' || raw == null) return null;
+    if (type === 'bool' || type === 'boolean') {
+      if (typeof raw === 'boolean') return raw;
+      return raw === 'true' || raw === '1' || raw === 'on';
+    }
+    if (type === 'int' || type === 'integer') {
+      const n = parseInt(raw, 10);
+      return Number.isNaN(n) ? raw : n;
+    }
+    if (type === 'float' || type === 'number') {
+      const n = parseFloat(raw);
+      return Number.isNaN(n) ? raw : n;
+    }
+    return String(raw);
+  }
+
+  // ---------- Port-ref string parser ----------
+  /**
+   * Parse a canonical port-ref string ``"<node_id>.<port>"`` into
+   * ``{node_id, port}``. Returns ``null`` for malformed input.
+   *
+   * Tolerates legacy object shape ``{node_id, port}`` for backwards
+   * compatibility during the wire-format transition.
+   *
+   * @param {string|{node_id: string, port: string}} raw
+   * @returns {{node_id: string, port: string} | null}
+   */
+  function parsePortRef(raw) {
+    if (raw && typeof raw === 'object' && raw.node_id && raw.port) {
+      return { node_id: raw.node_id, port: raw.port };
+    }
+    if (typeof raw !== 'string') return null;
+    const dot = raw.indexOf('.');
+    if (dot <= 0 || dot === raw.length - 1) return null;
+    return { node_id: raw.slice(0, dot), port: raw.slice(dot + 1) };
+  }
+
   // ---------- Canonical → Drawflow (hydration) ----------
   /**
    * Populate the Drawflow editor from a canonical graph.
@@ -445,8 +494,12 @@
 
     // Add connections
     for (const edge of graph.edges || []) {
-      const fromNodeDfId = idMap[edge.from.node_id];
-      const toNodeDfId = idMap[edge.to.node_id];
+      const fromRef = parsePortRef(edge.from);
+      const toRef = parsePortRef(edge.to);
+      if (!fromRef || !toRef) continue;
+
+      const fromNodeDfId = idMap[fromRef.node_id];
+      const toNodeDfId = idMap[toRef.node_id];
       if (fromNodeDfId == null || toNodeDfId == null) continue;
 
       // Find port indices
@@ -456,8 +509,8 @@
 
       const outPorts = fromNode.data._out_ports || [];
       const inPorts = toNode.data._in_ports || [];
-      const outIdx = outPorts.indexOf(edge.from.port);
-      const inIdx = inPorts.indexOf(edge.to.port);
+      const outIdx = outPorts.indexOf(fromRef.port);
+      const inIdx = inPorts.indexOf(toRef.port);
 
       if (outIdx === -1 || inIdx === -1) continue;
 
@@ -511,11 +564,21 @@
       const outPorts = d._out_ports || ['ok', 'error'];
       const inPorts = d._in_ports || ['in'];
 
-      // Extract kwargs from df-kwarg-* fields in data
+      // Extract kwargs from df-kwarg-* fields in data, coercing to declared type.
+      const desc = paletteByRef[ref];
+      const argTypes = {};
+      if (desc) {
+        for (const a of normalizeArgs(desc.args || desc.inputs || {})) {
+          argTypes[a.name] = a.type;
+        }
+      }
       const kwargs = {};
       for (const [k, v] of Object.entries(d)) {
         if (k.startsWith('kwarg-')) {
-          kwargs[k.slice(6)] = v;
+          const name = k.slice(6);
+          const coerced = coerceKwarg(v, argTypes[name]);
+          // Drop empty/null values so validator can flag missing required args.
+          if (coerced != null) kwargs[name] = coerced;
         }
       }
 
@@ -534,8 +597,13 @@
 
         for (const conn of portData.connections || []) {
           const targetDfId = String(conn.node);
-          const targetInPortName = conn.input;  // e.g. 'input_2'
+          // Drawflow source-side stores destination's input port name in `output`
+          // (and target-side stores source's output in `input`). Field names are
+          // inverted relative to the side they live on.
+          const targetInPortName = conn.output;  // e.g. 'input_2'
+          if (typeof targetInPortName !== 'string') continue;
           const targetInIdx = parseInt(targetInPortName.replace('input_', ''), 10) - 1;
+          if (Number.isNaN(targetInIdx)) continue;
 
           // Find target node's canonical id and port name
           const targetDfNode = dfData[targetDfId];
@@ -547,8 +615,8 @@
           if (canonicalInPort == null) continue;
 
           edges.push({
-            from: { node_id: canonicalId, port: canonicalOutPort },
-            to: { node_id: targetCanonicalId, port: canonicalInPort },
+            from: canonicalId + '.' + canonicalOutPort,
+            to: targetCanonicalId + '.' + canonicalInPort,
           });
         }
       }
