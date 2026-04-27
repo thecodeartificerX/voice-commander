@@ -9,10 +9,20 @@
 .vc-node .df-node-id { font-size: 9px; color: #6b7280; }
 .vc-node .df-node-kwargs { margin-top: 4px; }
 .vc-node .df-node-kwargs .df-input { width: 100%; font-size: 10px; background: #1f2937; border: 1px solid #374151; color: #e5e7eb; border-radius: 2px; padding: 1px 3px; }
-.vc-node { background: #1f2937; border: 1px solid #374151; border-radius: 6px; }
-.drawflow .drawflow-node.selected { border-color: #5eead4; }
-.vc-node-control { border-color: #7c3aed; }
-.vc-node-value { border-color: #0369a1; }
+/* Base node */
+.vc-node { background: #1f2937; border: 2px solid #374151; border-radius: 6px; }
+.drawflow .drawflow-node.selected { border-color: #f9fafb !important; }
+/* Per-category gradients */
+.vc-node-pipeline { background: linear-gradient(135deg, #0c1e28, #0f2d3d); border-color: #0e7490; }
+.vc-node-command  { background: linear-gradient(135deg, #0d1b2a, #0f2440); border-color: #1d4ed8; }
+.vc-node-workflow { background: linear-gradient(135deg, #1a0533, #2a0e4e); border-color: #7c3aed; }
+.vc-node-control  { background: linear-gradient(135deg, #1c0b30, #2e1050); border-color: #a855f7; }
+.vc-node-value    { background: linear-gradient(135deg, #0b1f10, #0f2e18); border-color: #059669; }
+/* Port semantic colors (used in config rail) */
+.vc-port-ok, .vc-port-true  { color: #4ade80; }
+.vc-port-error, .vc-port-false { color: #f87171; }
+.vc-port-in   { color: #38bdf8; }
+.vc-port-data { color: #94a3b8; }
 </style>
 <div id="builder-root"
      data-existing='{{ existing | tojson if existing else "null" }}'

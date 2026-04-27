@@ -86,6 +86,23 @@
   editor.reroute = true;
   editor.start();
 
+  // Drag-and-drop: accept palette items dropped onto the canvas.
+  // Position is translated from client coords to Drawflow canvas space
+  // accounting for pan (canvas_x/canvas_y) and zoom.
+  canvasEl.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  canvasEl.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const ref = e.dataTransfer.getData('application/vc-ref');
+    if (!ref) return;
+    const rect = canvasEl.getBoundingClientRect();
+    const x = (e.clientX - rect.left - editor.canvas_x) / editor.zoom;
+    const y = (e.clientY - rect.top  - editor.canvas_y) / editor.zoom;
+    addNodeToCanvas(ref, x, y);
+  });
+
   // ---------- Load palette ----------
   let palette = { pipeline: [], commands: [], workflows: [], control: {}, value: {} };
   try {
@@ -145,9 +162,14 @@
       const name = item.name || item;
       const ref = refPrefix + name;
       const btn = document.createElement('button');
-      btn.className = 'w-full text-left px-2 py-1 rounded text-xs text-neutral-200 hover:bg-neutral-700 hover:text-teal-300 truncate';
+      btn.className = 'w-full text-left px-2 py-1 rounded text-xs text-neutral-200 hover:bg-neutral-700 hover:text-teal-300 truncate cursor-grab';
       btn.textContent = name;
       btn.title = (item.description || '') + '\nRef: ' + ref;
+      btn.draggable = true;
+      btn.ondragstart = (e) => {
+        e.dataTransfer.setData('application/vc-ref', ref);
+        e.dataTransfer.effectAllowed = 'copy';
+      };
       btn.onclick = () => addNodeToCanvas(ref, 100 + Math.random() * 200, 100 + Math.random() * 200);
       paletteEl.appendChild(btn);
     }
@@ -208,6 +230,25 @@
   function getGraphInputs() {
     if (existing && existing.inputs) return existing.inputs;
     return [];
+  }
+
+  // ---------- Port semantic color class ----------
+  /**
+   * Return a CSS class name encoding the semantic meaning of a port.
+   *
+   * Used in the config rail to colour-code port labels so users can
+   * instantly distinguish control-flow ports (ok/error/true/false)
+   * from data/arg ports.
+   *
+   * @param {string} name - Port name, e.g. "ok", "error", "in", "combo"
+   * @returns {string} One of: "vc-port-ok", "vc-port-error",
+   *   "vc-port-in", "vc-port-data"
+   */
+  function portColorClass(name) {
+    if (name === 'ok' || name === 'true')    return 'vc-port-ok';
+    if (name === 'error' || name === 'false') return 'vc-port-error';
+    if (name === 'in')                        return 'vc-port-in';
+    return 'vc-port-data';
   }
 
   // ---------- HTML escape for attribute / text context ----------
@@ -556,7 +597,7 @@
       const row = document.createElement('div');
       row.className = 'flex items-center gap-1 text-xs py-0.5';
       const nameEl = document.createElement('span');
-      nameEl.className = direction === 'out' ? 'text-teal-400' : 'text-sky-400';
+      nameEl.className = portColorClass(name);
       nameEl.textContent = (direction === 'in' ? '→ ' : '← ') + name;
       row.appendChild(nameEl);
       configEl.appendChild(row);
