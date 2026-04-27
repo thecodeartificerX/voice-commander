@@ -454,9 +454,7 @@ def create_app(
             )
             html_parts = []
             for r in runs:
-                html_parts.append(
-                    templates.get_template("_runs_row.html").render({"r": r})
-                )
+                html_parts.append(templates.get_template("_runs_row.html").render({"r": r}))
             return HTMLResponse("".join(html_parts))
 
         @app.get("/page/runs/{run_id}", response_class=HTMLResponse)
