@@ -86,6 +86,9 @@
   editor.reroute = true;
   editor.start();
 
+  editor.on('connectionCreated', () => { queueMicrotask(tintAllConnections); });
+  editor.on('connectionRemoved', () => { queueMicrotask(tintAllConnections); });
+
   // ---------- Load palette ----------
   let palette = { pipeline: [], commands: [], workflows: [], control: {}, value: {} };
   try {
@@ -123,43 +126,99 @@
   const paletteEl = document.getElementById('builder-palette');
 
   /**
-   * Render a section of the node palette (left sidebar).
-   *
-   * Creates a heading and one draggable button per item. Each button's
-   * click handler calls {@link addNodeToCanvas} with a randomised position.
+   * Render a section of the node palette (left sidebar) as a collapsible
+   * <details> element with one draggable button per item.
    *
    * @param {string} title        - Section heading, e.g. "Pipeline"
    * @param {Array<{name: string, description?: string}>} items
    *   Palette descriptors; empty array is a no-op (early return).
    * @param {string} refPrefix    - Prefix prepended to item name to form
    *   the node ref, e.g. "pipeline." → "pipeline.fetch"
+   * @param {boolean} [defaultOpen] - Whether the section is open by default.
    * @returns {void}
    */
-  function renderPaletteSection(title, items, refPrefix) {
+  function renderPaletteSection(title, items, refPrefix, defaultOpen = true) {
     if (!items || items.length === 0) return;
-    const h = document.createElement('div');
-    h.className = 'text-xs font-semibold text-neutral-400 uppercase tracking-wider mt-2 mb-1 px-1';
-    h.textContent = title;
-    paletteEl.appendChild(h);
+    const details = document.createElement('details');
+    if (defaultOpen) details.open = true;
+    const summary = document.createElement('summary');
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'palette-section-title';
+    titleSpan.textContent = title;
+    summary.appendChild(titleSpan);
+    details.appendChild(summary);
     for (const item of items) {
       const name = item.name || item;
       const ref = refPrefix + name;
+      const categoryClass = 'palette-' + refPrefix.replace('.', '');
       const btn = document.createElement('button');
-      btn.className = 'w-full text-left px-2 py-1 rounded text-xs text-neutral-200 hover:bg-neutral-700 hover:text-teal-300 truncate';
+      btn.className = 'w-full text-left px-2 py-1 rounded text-xs text-neutral-200 hover:bg-neutral-700 hover:text-white truncate ' + categoryClass;
+      btn.dataset.paletteName = name.toLowerCase();
       btn.textContent = name;
       btn.title = (item.description || '') + '\nRef: ' + ref;
       btn.onclick = () => addNodeToCanvas(ref, 100 + Math.random() * 200, 100 + Math.random() * 200);
-      paletteEl.appendChild(btn);
+      details.appendChild(btn);
     }
+    paletteEl.appendChild(details);
   }
 
-  renderPaletteSection('Pipeline', palette.pipeline, 'pipeline.');
-  renderPaletteSection('Commands', palette.commands, 'command.');
-  renderPaletteSection('Workflows', palette.workflows, 'workflow.');
-  renderPaletteSection('Control', Object.keys(palette.control || {}).map(k => ({ name: k })), 'control.');
-  renderPaletteSection('Value', Object.keys(palette.value || {}).map(k => ({ name: k })), 'value.');
+  // Add search filter input at top of palette
+  const filterInput = document.createElement('input');
+  filterInput.type = 'search';
+  filterInput.id = 'palette-filter';
+  filterInput.placeholder = 'filter…';
+  paletteEl.appendChild(filterInput);
+
+  const pipelineCount = palette.pipeline ? palette.pipeline.length : 0;
+  const workflowCount = palette.workflows ? palette.workflows.length : 0;
+  renderPaletteSection('Pipeline', palette.pipeline, 'pipeline.', pipelineCount <= 8);
+  renderPaletteSection('Commands', palette.commands, 'command.', true);
+  renderPaletteSection('Workflows', palette.workflows, 'workflow.', workflowCount <= 8);
+  renderPaletteSection('Control', Object.keys(palette.control || {}).map(k => ({ name: k })), 'control.', true);
+  renderPaletteSection('Value', Object.keys(palette.value || {}).map(k => ({ name: k })), 'value.', true);
+
+  // Search filter handler
+  filterInput.addEventListener('input', () => {
+    const query = filterInput.value.toLowerCase().trim();
+    const allDetails = paletteEl.querySelectorAll('details');
+    allDetails.forEach(det => {
+      let anyVisible = false;
+      const buttons = det.querySelectorAll('button');
+      buttons.forEach(btn => {
+        const match = !query || (btn.dataset.paletteName || '').includes(query);
+        btn.style.display = match ? '' : 'none';
+        if (match) anyVisible = true;
+      });
+      // Hide the entire section if no buttons match, unless query is empty (show all)
+      det.style.display = anyVisible || !query ? '' : 'none';
+    });
+  });
 
   // ---------- Port resolution ----------
+  /**
+   * Normalise the raw `args` or `inputs` value from the palette descriptor
+   * to a uniform array of `{name, type, description, required}` objects.
+   *
+   * Pipeline descriptors expose `args` as a dict `{name: {type, description, required}}`.
+   * Command/workflow descriptors expose `inputs` as an array `[{name, type, required}]`.
+   * This helper converts both to the same array shape so all downstream code
+   * can iterate uniformly.
+   *
+   * @param {Object|Array} rawArgs - Either a dict or array of arg descriptors.
+   * @returns {Array<{name: string, type: string, description: string, required: boolean}>}
+   */
+  function normalizeArgs(rawArgs) {
+    if (!rawArgs) return [];
+    if (Array.isArray(rawArgs)) return rawArgs.map(a => a);  // shallow copy — matches dict-path behaviour
+    // Dict shape: {name: {type, description, required}}
+    return Object.entries(rawArgs).map(([name, meta]) => ({
+      name,
+      type: (meta && meta.type) || 'str',
+      description: (meta && meta.description) || '',
+      required: !!(meta && meta.required),
+    }));
+  }
+
   /**
    * Determine input and output port names for a node reference.
    *
@@ -195,7 +254,7 @@
     // pipeline, command, workflow
     const desc = paletteByRef[ref];
     if (desc) {
-      const args = desc.args || desc.inputs || [];
+      const args = normalizeArgs(desc.args || desc.inputs || {});
       const inPorts = ['in', ...args.map(a => a.name)];
       const returnKeys = desc.returns ? Object.keys(desc.returns) : [];
       const outPorts = ['ok', 'error', ...returnKeys.filter(k => k !== 'ok' && k !== 'error')];
@@ -221,6 +280,46 @@
       .replace(/'/g, '&#39;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
+  }
+
+  // ---------- Port color map (mirrors builder.css) ----------
+  const PORT_COLORS = {
+    in: '#9ca3af',
+    ok: '#22c55e',
+    error: '#ef4444',
+    true: '#22c55e',
+    false: '#f97316',
+    item: '#06b6d4',
+    after: '#06b6d4',
+  };
+  const PORT_COLOR_DEFAULT = '#3b82f6';
+
+  /**
+   * Tint all SVG connection paths in the editor to match their source port color.
+   * Called after connections are added (creation or hydration).
+   * @returns {void}
+   */
+  function tintAllConnections() {
+    // Each connection SVG has class e.g. "connection node_in_node-2 node_out_node-1 output_1 input_1"
+    const svgPaths = document.querySelectorAll('.drawflow svg.connection .main-path');
+    svgPaths.forEach(path => {
+      const parent = path.closest('svg.connection');
+      if (!parent) return;
+      // Extract source node id and output index from class list
+      const classes = Array.from(parent.classList);
+      const nodeOutClass = classes.find(c => c.startsWith('node_out_node-'));
+      const outputClass = classes.find(c => c.startsWith('output_'));
+      if (!nodeOutClass || !outputClass) return;
+      const srcNodeId = nodeOutClass.replace('node_out_node-', '');
+      const outIdx = parseInt(outputClass.replace('output_', ''), 10) - 1;
+      const srcDom = document.getElementById('node-' + srcNodeId);
+      if (!srcDom) return;
+      const outEl = srcDom.querySelector('.output_' + (outIdx + 1));
+      if (!outEl) return;
+      const portName = outEl.getAttribute('data-port-name') || '';
+      const color = PORT_COLORS[portName] || PORT_COLOR_DEFAULT;
+      path.style.stroke = color;
+    });
   }
 
   // ---------- Add node to canvas ----------
@@ -251,7 +350,7 @@
     const desc = paletteByRef[ref];
     let kwargsHtml = '';
     if (desc) {
-      const args = desc.args || desc.inputs || [];
+      const args = normalizeArgs(desc.args || desc.inputs || {});
       for (const arg of args) {
         const val = kwargVals[arg.name] !== undefined ? kwargVals[arg.name] : '';
         const safeName = escapeAttr(arg.name);
@@ -270,9 +369,8 @@
     const safeShortName = escapeAttr(shortName);
     const safeId = escapeAttr(id);
 
-    const html = `<div class="df-node-wrap">
+    const html = `<div class="df-node-wrap" title="${safeId}">
   <div class="df-node-title">${safeShortName}</div>
-  <div class="df-node-id">${safeId}</div>
   ${kwargsHtml ? `<div class="df-node-kwargs">${kwargsHtml}</div>` : ''}
 </div>`;
 
@@ -298,6 +396,23 @@
       nodeData,
       html,
     );
+
+    // Tag each port DOM element with data-port-name for CSS attribute selectors.
+    // Use queueMicrotask to ensure Drawflow has appended the DOM.
+    queueMicrotask(() => {
+      const dom = document.getElementById('node-' + dfId);
+      if (dom) {
+        inPorts.forEach((name, i) => {
+          const el = dom.querySelector('.input_' + (i + 1));
+          if (el) el.setAttribute('data-port-name', name);
+        });
+        outPorts.forEach((name, i) => {
+          const el = dom.querySelector('.output_' + (i + 1));
+          if (el) el.setAttribute('data-port-name', name);
+        });
+      }
+    });
+
     return dfId;
   }
 
@@ -352,6 +467,9 @@
         'input_' + (inIdx + 1),
       );
     }
+
+    // Tint connection lines after hydration
+    queueMicrotask(tintAllConnections);
   }
 
   // ---------- Drawflow → canonical (export) ----------
@@ -504,7 +622,7 @@
 
     // kwargs section
     const desc = paletteByRef[ref];
-    const args = desc ? (desc.args || desc.inputs || []) : [];
+    const args = desc ? normalizeArgs(desc.args || desc.inputs || {}) : [];
     if (args.length > 0) {
       const kh = document.createElement('div');
       kh.className = 'text-xs font-semibold text-neutral-400 uppercase tracking-wider mt-2 mb-1';
@@ -555,6 +673,10 @@
     function portRow(name, direction) {
       const row = document.createElement('div');
       row.className = 'flex items-center gap-1 text-xs py-0.5';
+      const swatch = document.createElement('span');
+      swatch.className = 'vc-port-swatch';
+      swatch.setAttribute('data-port-name', name);
+      row.appendChild(swatch);
       const nameEl = document.createElement('span');
       nameEl.className = direction === 'out' ? 'text-teal-400' : 'text-sky-400';
       nameEl.textContent = (direction === 'in' ? '→ ' : '← ') + name;

@@ -1,0 +1,365 @@
+/* builder.css — Visual styles for the Drawflow-based node graph builder.
+ * Loaded AFTER drawflow.min.css so these rules take precedence.
+ * Vanilla CSS — no toolchain. ADR 0022.
+ */
+
+/* =========================================================================
+   Node base
+   ========================================================================= */
+
+.vc-node .df-node-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f9fafb;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+  margin-bottom: 2px;
+}
+
+/* Canonical ID moved to tooltip + rail only — no visible body element */
+.vc-node .df-node-kwargs {
+  margin-top: 4px;
+}
+
+.vc-node .df-node-kwargs .df-input {
+  width: 100%;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #e5e7eb;
+  border-radius: 2px;
+  padding: 1px 3px;
+}
+
+.vc-node {
+  min-width: 160px;
+  border-radius: 6px;
+}
+
+/* =========================================================================
+   Category gradients + shapes
+   ========================================================================= */
+
+/* Pipeline — amber/bronze */
+.drawflow .drawflow-node.vc-node-pipeline {
+  background: linear-gradient(135deg, #d97706 0%, #92400e 100%);
+  border: 2px solid #92400e;
+  border-radius: 6px;
+}
+
+/* Command — teal/deep-cyan pill */
+.drawflow .drawflow-node.vc-node-command {
+  background: linear-gradient(135deg, #0d9488 0%, #134e4a 100%);
+  border: 2px solid #134e4a;
+  border-radius: 14px;
+}
+
+/* Workflow — violet/indigo with chevron banner */
+.drawflow .drawflow-node.vc-node-workflow {
+  background: linear-gradient(135deg, #7c3aed 0%, #3730a3 100%);
+  border: 2px solid #3730a3;
+  border-radius: 8px;
+  position: relative;
+  overflow: visible;
+}
+
+.drawflow .drawflow-node.vc-node-workflow::before {
+  content: '▶▶▶';
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  font-size: 7px;
+  color: rgba(255, 255, 255, 0.4);
+  pointer-events: none;
+}
+
+/* Control — rose/maroon with right-edge chevron accent */
+.drawflow .drawflow-node.vc-node-control {
+  background: linear-gradient(135deg, #e11d48 0%, #881337 100%);
+  border: 2px solid #881337;
+  border-radius: 6px;
+  position: relative;
+}
+
+.drawflow .drawflow-node.vc-node-control::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: -1px;
+  bottom: 0;
+  width: 12px;
+  background: inherit;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+  pointer-events: none;
+}
+
+/* Value — emerald/forest with parallelogram tint via pseudo */
+.drawflow .drawflow-node.vc-node-value {
+  background: linear-gradient(135deg, #059669 0%, #064e3b 100%);
+  border: 2px solid #064e3b;
+  border-radius: 6px;
+  position: relative;
+  overflow: visible;
+}
+
+.drawflow .drawflow-node.vc-node-value::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.04);
+  transform: skewX(-8deg);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/* Selected state */
+.drawflow .drawflow-node.selected {
+  border-color: #f9fafb !important;
+  box-shadow: 0 0 0 2px rgba(249, 250, 251, 0.3);
+}
+
+/* =========================================================================
+   Canvas background grid
+   ========================================================================= */
+
+#builder-canvas {
+  background-color: #0a0f1a;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* Drawflow's own background must yield to the canvas grid */
+.drawflow {
+  background: transparent !important;
+}
+
+/* =========================================================================
+   Port colors + shapes (attribute selectors)
+   NOTE: Colors here must stay in sync with PORT_COLORS in builder.js,
+   which uses the same values for SVG connection tinting (ADR 0069).
+   ========================================================================= */
+
+/* Base port override — remove Drawflow's default cyan */
+.drawflow .drawflow-node .input,
+.drawflow .drawflow-node .output {
+  background: #3b82f6;
+  border: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+/* in — neutral grey square */
+.drawflow .drawflow-node .input[data-port-name="in"],
+.drawflow .drawflow-node .output[data-port-name="in"] {
+  background: #9ca3af;
+  border-radius: 2px;
+}
+
+/* ok — green circle */
+.drawflow .drawflow-node .input[data-port-name="ok"],
+.drawflow .drawflow-node .output[data-port-name="ok"] {
+  background: #22c55e;
+  border-radius: 50%;
+}
+
+/* error — red circle */
+.drawflow .drawflow-node .input[data-port-name="error"],
+.drawflow .drawflow-node .output[data-port-name="error"] {
+  background: #ef4444;
+  border-radius: 50%;
+}
+
+/* true — green square */
+.drawflow .drawflow-node .input[data-port-name="true"],
+.drawflow .drawflow-node .output[data-port-name="true"] {
+  background: #22c55e;
+  border-radius: 2px;
+}
+
+/* false — orange square */
+.drawflow .drawflow-node .input[data-port-name="false"],
+.drawflow .drawflow-node .output[data-port-name="false"] {
+  background: #f97316;
+  border-radius: 2px;
+}
+
+/* item — cyan rhombus */
+.drawflow .drawflow-node .input[data-port-name="item"],
+.drawflow .drawflow-node .output[data-port-name="item"] {
+  background: #06b6d4;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+/* after — cyan rhombus */
+.drawflow .drawflow-node .input[data-port-name="after"],
+.drawflow .drawflow-node .output[data-port-name="after"] {
+  background: #06b6d4;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+/* cond / value / list and other data ports — blue circle (default above) */
+
+/* Port hover label */
+.drawflow .drawflow-node .input::after,
+.drawflow .drawflow-node .output::after {
+  content: attr(data-port-name);
+  position: absolute;
+  font-size: 9px;
+  color: #e5e7eb;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  background: rgba(10, 15, 26, 0.85);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.drawflow .drawflow-node .input::after {
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.drawflow .drawflow-node .output::after {
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.drawflow .drawflow-node .input:hover::after,
+.drawflow .drawflow-node .output:hover::after {
+  opacity: 1;
+}
+
+/* Counter-rotate hover labels on rhombus ports so text appears horizontal */
+.drawflow .drawflow-node .input[data-port-name="item"]::after,
+.drawflow .drawflow-node .output[data-port-name="item"]::after,
+.drawflow .drawflow-node .input[data-port-name="after"]::after,
+.drawflow .drawflow-node .output[data-port-name="after"]::after {
+  transform: rotate(-45deg) translateY(-50%);
+}
+
+/* =========================================================================
+   Port color swatches in config rail
+   ========================================================================= */
+
+.vc-port-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3b82f6;
+  vertical-align: middle;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.vc-port-swatch[data-port-name="in"] {
+  background: #9ca3af;
+  border-radius: 2px;
+}
+
+.vc-port-swatch[data-port-name="ok"] {
+  background: #22c55e;
+}
+
+.vc-port-swatch[data-port-name="error"] {
+  background: #ef4444;
+}
+
+.vc-port-swatch[data-port-name="true"] {
+  background: #22c55e;
+  border-radius: 2px;
+}
+
+.vc-port-swatch[data-port-name="false"] {
+  background: #f97316;
+  border-radius: 2px;
+}
+
+.vc-port-swatch[data-port-name="item"],
+.vc-port-swatch[data-port-name="after"] {
+  background: #06b6d4;
+  border-radius: 1px;
+  transform: rotate(45deg);
+}
+
+/* =========================================================================
+   Palette
+   ========================================================================= */
+
+#builder-palette details > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 2px 4px;
+  margin-top: 4px;
+}
+
+#builder-palette details > summary::-webkit-details-marker {
+  display: none;
+}
+
+#builder-palette details > summary .palette-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: inline-block;
+}
+
+#builder-palette details[open] > summary .palette-section-title::after {
+  content: ' ▾';
+  font-size: 9px;
+}
+
+#builder-palette details:not([open]) > summary .palette-section-title::after {
+  content: ' ▸';
+  font-size: 9px;
+}
+
+/* Palette search input */
+#palette-filter {
+  width: 100%;
+  background: #1f2937;
+  border: 1px solid #374151;
+  color: #e5e7eb;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+  margin-bottom: 4px;
+  box-sizing: border-box;
+}
+
+#palette-filter::placeholder {
+  color: #6b7280;
+}
+
+/* Category left-border indicators on palette buttons */
+#builder-palette .palette-pipeline {
+  border-left: 4px solid #d97706;
+  padding-left: 6px;
+}
+
+#builder-palette .palette-command {
+  border-left: 4px solid #0d9488;
+  padding-left: 6px;
+}
+
+#builder-palette .palette-workflow {
+  border-left: 4px solid #7c3aed;
+  padding-left: 6px;
+}
+
+#builder-palette .palette-control {
+  border-left: 4px solid #e11d48;
+  padding-left: 6px;
+}
+
+#builder-palette .palette-value {
+  border-left: 4px solid #059669;
+  padding-left: 6px;
+}

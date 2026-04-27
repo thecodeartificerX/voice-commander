@@ -42,8 +42,9 @@ def _press_args() -> dict[str, ArgMetadata]:
 
 
 def _primitive_registry() -> ToolRegistry:
+    # The fixture registers: press, focus, type, open, click
     reg = ToolRegistry()
-    for name in ("press", "focus", "type", "open"):
+    for name in ("press", "focus", "type", "open", "click"):
         reg.register(
             ToolEntry(
                 name=name,
@@ -279,6 +280,47 @@ def test_builder_js_contains_escape_attr(client: TestClient) -> None:
     assert "&gt;" in js
 
 
+def test_palette_pipeline_args_shape_is_iterable(client: TestClient) -> None:
+    """Pipeline args dict must have consistent value shape with type and description keys.
+
+    Regression test for the primitive drag bug: pipeline descriptors expose
+    ``args`` as a dict {name: {type, description, required}}.  Every value
+    must have at least ``type`` and ``description`` keys so that the frontend
+    normaliseArgs() helper can iterate them uniformly alongside commands' array-
+    shaped ``inputs``.
+    """
+    r = client.get("/graph/palette")
+    assert r.status_code == 200
+    body = r.json()
+    pipeline = body.get("pipeline", [])
+    assert len(pipeline) > 0, "palette must have at least one pipeline entry"
+    for entry in pipeline:
+        assert "args" in entry, f"pipeline entry {entry!r} missing 'args' key"
+        args = entry["args"]
+        assert isinstance(args, dict), f"pipeline args must be a dict, got {type(args)}"
+        for name, meta in args.items():
+            assert isinstance(name, str), f"arg name must be str, got {name!r}"
+            assert "type" in meta, f"arg {name!r} missing 'type' key"
+            assert "description" in meta, f"arg {name!r} missing 'description' key"
+
+
+def test_palette_includes_known_primitives(client: TestClient) -> None:
+    """Known primitive names must be present in the pipeline palette section.
+
+    Catches regressions where the registrar filter changes or a primitive
+    gets accidentally deregistered.
+    """
+    r = client.get("/graph/palette")
+    assert r.status_code == 200
+    body = r.json()
+    pipeline_names = {entry["name"] for entry in body.get("pipeline", [])}
+    # The fixture registers: press, focus, type, open, click
+    for expected in ("press", "focus", "type", "open", "click"):
+        assert expected in pipeline_names, (
+            f"primitive {expected!r} missing from palette pipeline section"
+        )
+
+
 def test_xss_arg_name_stored_verbatim(client: TestClient) -> None:
     """Server must not mangle arg names -- escaping is client-side only.
 
@@ -320,3 +362,20 @@ def test_xss_arg_name_stored_verbatim(client: TestClient) -> None:
     else:
         n1_kwargs = nodes["n1"]["kwargs"]
     assert xss_name in n1_kwargs, "Server must store arg names verbatim without HTML-escaping"
+
+
+def test_builder_js_contains_normalize_args(client: TestClient) -> None:
+    """normalizeArgs helper must exist in builder.js.
+
+    Regression guard for the pipeline primitive drag bug (ADR 0069):
+    ensures the dict→array normalisation function is present and handles
+    both dict and array shapes.  If normalizeArgs() were accidentally removed
+    or its two shape-handling branches dropped, this test will fail.
+    """
+    resp = client.get("/static/builder.js")
+    assert resp.status_code == 200
+    js = resp.text
+    assert "normalizeArgs" in js, "normalizeArgs helper must be present in builder.js"
+    # Verify it handles both dict and array shapes
+    assert "Array.isArray" in js, "Array.isArray branch must be present in normalizeArgs"
+    assert "Object.entries" in js, "Object.entries branch must be present in normalizeArgs"
