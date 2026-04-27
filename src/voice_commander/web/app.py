@@ -452,10 +452,11 @@ def create_app(
                 status=status or None,
                 transcript_like=q or None,
             )
-            html_parts = []
-            for r in runs:
-                html_parts.append(templates.get_template("_runs_row.html").render({"r": r}))
-            return HTMLResponse("".join(html_parts))
+            return HTMLResponse(
+                "".join(
+                    templates.get_template("_runs_row.html").render({"r": r}) for r in runs
+                )
+            )
 
         @app.get("/page/runs/{run_id}", response_class=HTMLResponse)
         async def page_runs_detail(request: Request, run_id: str) -> HTMLResponse:
