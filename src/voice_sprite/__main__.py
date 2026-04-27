@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 import sys
 import time
 from logging.handlers import RotatingFileHandler
@@ -257,6 +258,19 @@ def main() -> None:
     pyglet.clock.schedule_interval(update, 1 / 60.0)
 
     logger.info("Sprite window open at (%d, %d), size=%d", x, y, size)
+
+    # Wire SIGINT (Ctrl+C in foreground console) and Windows SIGBREAK
+    # (the supervisor's CTRL_BREAK_EVENT) to a clean pyglet exit. Without
+    # SIGBREAK the sprite ignores supervisor shutdown and gets force-
+    # killed by taskkill /T /F after the grace window.
+    def _request_exit(*_: Any) -> None:
+        logger.info("voice-sprite shutdown signal received")
+        pyglet.app.exit()
+
+    signal.signal(signal.SIGINT, _request_exit)
+    sigbreak = getattr(signal, "SIGBREAK", None)
+    if sigbreak is not None:
+        signal.signal(sigbreak, _request_exit)
 
     try:
         pyglet.app.run()

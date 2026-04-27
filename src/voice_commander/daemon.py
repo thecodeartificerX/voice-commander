@@ -519,6 +519,14 @@ class StreamingDaemon:
 
         if threading.current_thread() is threading.main_thread():
             signal.signal(signal.SIGINT, lambda *_: self.shutdown())
+            # Windows: the supervisor sends CTRL_BREAK_EVENT to children
+            # spawned with CREATE_NEW_PROCESS_GROUP, which raises SIGBREAK
+            # in the receiver — NOT SIGINT. Without this handler the
+            # daemon ignores supervisor shutdown requests and gets
+            # force-killed by taskkill /T /F after the grace window.
+            sigbreak = getattr(signal, "SIGBREAK", None)
+            if sigbreak is not None:
+                signal.signal(sigbreak, lambda *_: self.shutdown())
         else:
             logger.warning("run() called from a non-main thread; SIGINT handler not registered")
         logger.info("StreamingDaemon running. Press Ctrl+C to exit.")
