@@ -75,8 +75,6 @@ hold_ms = 4000
 fade_ms = 3000
 font_size = 13
 width_px = 220
-llm_summary_timeout_ms = 800
-llm_fallback_enabled = true
 
 [perception]
 ocr_engine = "auto"

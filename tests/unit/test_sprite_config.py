@@ -44,8 +44,6 @@ def test_hud_defaults(tmp_path):
     assert cfg.hud.fade_ms == 3000
     assert cfg.hud.font_size == 13
     assert cfg.hud.width_px == 220
-    assert cfg.hud.llm_summary_timeout_ms == 800
-    assert cfg.hud.llm_fallback_enabled is True
 
 
 def test_hud_override(tmp_path):
@@ -81,7 +79,6 @@ def test_sprite_follow_cursor_defaults(tmp_path):
         "[hud]\nfont_size = -5\n",
         "[hud]\nfont_size = 0\n",  # exact boundary for min=1
         "[hud]\nwidth_px = 0\n",
-        "[hud]\nllm_summary_timeout_ms = 0\n",
         "[sprite]\nbase_size_px = -10\n",
         "[sprite]\nbase_size_px = 0\n",  # exact boundary for min=1
         "[sprite]\nbubble_fade_ms = -1\n",
@@ -139,7 +136,6 @@ def test_zero_valid_values(tmp_path, toml_text, attr_path, expected):
         "[hud]\nfade_ms = true\n",
         "[hud]\nfont_size = true\n",
         "[hud]\nwidth_px = true\n",
-        "[hud]\nllm_summary_timeout_ms = true\n",
         "[sprite]\nbase_size_px = true\n",
         "[sprite]\nbubble_fade_ms = true\n",
         "[sprite]\nheartbeat_timeout_ms = true\n",
@@ -152,7 +148,6 @@ def test_zero_valid_values(tmp_path, toml_text, attr_path, expected):
         # str not valid for bool fields
         '[sprite]\nfollow_cursor = "yes"\n',
         '[hud]\nenabled = "false"\n',
-        '[hud]\nllm_fallback_enabled = "true"\n',
         # int not valid for bool fields
         "[hud]\nenabled = 1\n",
         "[sprite]\nfollow_cursor = 0\n",

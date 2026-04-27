@@ -108,7 +108,6 @@ def main() -> None:
     # Chat-log + summarizer stack
     from .chat_log import ChatLog
     from .chat_log_renderer import ChatLogRenderer
-    from .llm_summary_client import LLMSummaryClient
     from .plan_outcome_handler import handle_ask_user, handle_plan_outcome
     from .summarizer import Summarizer
     from .summary_rules import CHAIN_DETECTORS, RULES
@@ -118,19 +117,7 @@ def main() -> None:
         hold_ms=cfg.hud.hold_ms,
         fade_ms=cfg.hud.fade_ms,
     )
-    llm_client: LLMSummaryClient | None = None
-    if cfg.hud.enabled and cfg.hud.llm_fallback_enabled:
-        llm_client = LLMSummaryClient(
-            endpoint_url=cfg.llm_endpoint_url,
-            model_id=cfg.llm_model_id,
-            timeout_ms=cfg.hud.llm_summary_timeout_ms,
-        )
-    summarizer = Summarizer(
-        rules=RULES,
-        chain_detectors=CHAIN_DETECTORS,
-        llm_client=llm_client,
-        llm_fallback_enabled=cfg.hud.llm_fallback_enabled,
-    )
+    summarizer = Summarizer(rules=RULES, chain_detectors=CHAIN_DETECTORS)
 
     # Deferred pyglet import — avoids display probe at module-load time.
     # ImportError here means pyglet/GL libs missing; surface as startup
@@ -277,8 +264,6 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        if llm_client is not None:
-            llm_client.close()
         sse.stop()
         logger.info("voice-sprite exiting")
 

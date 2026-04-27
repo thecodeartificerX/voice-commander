@@ -22,6 +22,7 @@ def _typed_snip(text: str, cap: int = 30) -> str:
 
 
 RULES: dict[str, Callable[[dict[str, Any], PlanOutcome], str]] = {
+    # Nine-verb primitives (ADR 0043) + scroll + sentinel
     "focus": lambda kw, _o: f"focused {kw.get('target', 'window')}",
     "minimize": lambda _kw, _o: "minimized window",
     "maximize": lambda _kw, _o: "maximized window",
@@ -34,6 +35,32 @@ RULES: dict[str, Callable[[dict[str, Any], PlanOutcome], str]] = {
     "click": lambda _kw, _o: "clicked",
     "scroll": lambda kw, _o: f"scrolled {kw.get('direction', '')}".rstrip(),
     "no_match": lambda _kw, _o: "no match",
+    # Common user-defined commands (commands.json) — keep prose tight
+    "new_tab": lambda _kw, _o: "opened new tab",
+    "next_tab": lambda _kw, _o: "next tab",
+    "previous_tab": lambda _kw, _o: "previous tab",
+    "reopen_tab": lambda _kw, _o: "reopened tab",
+    "new_window": lambda _kw, _o: "opened new window",
+    "last_window": lambda _kw, _o: "switched to last window",
+    "copy": lambda _kw, _o: "copied",
+    "paste": lambda _kw, _o: "pasted",
+    "cut": lambda _kw, _o: "cut",
+    "undo": lambda _kw, _o: "undone",
+    "redo": lambda _kw, _o: "redone",
+    "save": lambda _kw, _o: "saved",
+    "find": lambda _kw, _o: "find",
+    "select_all": lambda _kw, _o: "selected all",
+    "refresh": lambda _kw, _o: "refreshed",
+    "address_bar": lambda _kw, _o: "focused address bar",
+    "lock_screen": lambda _kw, _o: "locked screen",
+    "screenshot": lambda _kw, _o: "screenshot",
+    "search_web": lambda kw, _o: f'searched for "{_typed_snip(str(kw.get("query", "")), cap=40)}"',
+    # Perception primitives — usually feed branches, rarely terminal,
+    # but cover them so HUD reads cleanly when they ARE the last step.
+    "read_clipboard": lambda _kw, _o: "read clipboard",
+    "get_active_window_title": lambda _kw, _o: "got active window",
+    "get_cursor_pos": lambda _kw, _o: "got cursor position",
+    "ocr_region": lambda _kw, _o: "ran OCR",
 }
 
 
