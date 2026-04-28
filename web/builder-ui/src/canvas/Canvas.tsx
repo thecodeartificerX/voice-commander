@@ -4,8 +4,6 @@ import ReactFlow, {
   MiniMap,
   ReactFlowProvider,
   addEdge,
-  applyNodeChanges,
-  applyEdgeChanges,
   type OnConnect,
   type OnNodesChange,
   type OnEdgesChange,
@@ -19,16 +17,21 @@ import { edgeTypes } from './edges'
 import { RunOverlay } from './overlays/RunOverlay'
 
 function CanvasInner() {
-  const { nodes, edges, setNodes, setEdges, selectNode } = useGraphStore()
+  const nodes = useGraphStore((s) => s.nodes)
+  const edges = useGraphStore((s) => s.edges)
+  const setEdges = useGraphStore((s) => s.setEdges)
+  const selectNode = useGraphStore((s) => s.selectNode)
+  const applyNodeChangesStore = useGraphStore((s) => s.applyNodeChanges)
+  const applyEdgeChangesStore = useGraphStore((s) => s.applyEdgeChanges)
 
   const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setNodes((current) => applyNodeChanges(changes, current)),
-    [setNodes],
+    (changes) => applyNodeChangesStore(changes),
+    [applyNodeChangesStore],
   )
 
   const onEdgesChange: OnEdgesChange = useCallback(
-    (changes) => setEdges((current) => applyEdgeChanges(changes, current)),
-    [setEdges],
+    (changes) => applyEdgeChangesStore(changes),
+    [applyEdgeChangesStore],
   )
 
   const onConnect: OnConnect = useCallback(

@@ -2,6 +2,7 @@ import { memo } from 'react'
 import { Handle, Position, type NodeProps } from 'reactflow'
 import { Eye } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { useGraphStore } from '@/store/graphStore'
 
 interface PerceptionNodeData {
   ref: string
@@ -16,16 +17,19 @@ const PERCEPTION_LABELS: Record<string, string> = {
 }
 
 export const PerceptionNode = memo(function PerceptionNode({
+  id,
   data,
   selected,
 }: NodeProps<PerceptionNodeData>) {
   const label = PERCEPTION_LABELS[data.ref] ?? data.ref.split('.').pop() ?? data.ref
+  const runStatus = useGraphStore((s) => s.runStatusByNodeId[id])
 
   return (
     <div
       className={cn(
         'min-w-[130px] rounded-md border border-emerald-600 bg-gradient-to-b from-emerald-950 to-emerald-900 px-3 py-2 shadow-md',
         selected && 'ring-2 ring-emerald-400 ring-offset-1 ring-offset-background',
+        runStatus && `run-node-${runStatus}`,
       )}
     >
       <Handle
