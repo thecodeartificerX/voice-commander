@@ -118,7 +118,6 @@ class Store:
         self._daemon_pid = daemon_pid
         self._q: queue.Queue[Any] = queue.Queue(maxsize=queue_max)
         self._writer: threading.Thread | None = None
-        self._stop = threading.Event()
         self._dropped = 0
         self._circuit_dropped = 0
         self._inserts_since_prune = 0
@@ -139,7 +138,6 @@ class Store:
         self._writer.start()
 
     def stop(self) -> None:
-        self._stop.set()
         self._q.put(_SENTINEL)
         if self._writer is not None:
             self._writer.join(timeout=5.0)

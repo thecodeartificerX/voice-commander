@@ -281,6 +281,8 @@ class StreamingDaemon:
                 break
             try:
                 self._process_utterance(utterance)
+            except MemoryError:
+                raise
             except Exception as e:
                 self._feedback.on_error("pipeline", e)
 

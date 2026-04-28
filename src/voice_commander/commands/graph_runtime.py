@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_MAX_CALL_DEPTH = 16
+_MAX_CALL_DEPTH = 16  # cross-graph (command.X / workflow.X) recursion guard
 
 _GraphLookup = Callable[[str], "Graph | None"]
 
