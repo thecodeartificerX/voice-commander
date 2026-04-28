@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -9,6 +10,8 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from voice_commander.observability.store import Store
+
+logger = logging.getLogger(__name__)
 
 
 def build_observability_router(
@@ -63,18 +66,30 @@ def build_observability_router(
         async def gen() -> AsyncGenerator[str, None]:
             import asyncio
             import json as _json
+            import queue
 
             q = bus.subscribe()
             try:
-                yield ": keepalive\n\n"  # immediate flush so client sees headers
+                # Immediate flush so client sees headers
+                yield ": keepalive\n\n"
                 while True:
                     if await request.is_disconnected():
                         break
                     try:
                         ev = await asyncio.get_event_loop().run_in_executor(None, q.get, True, 1.0)
-                    except Exception:
+                    except queue.Empty:
+                        # Timeout — no events pending; send keepalive
                         yield ": keepalive\n\n"
                         continue
+                    except (asyncio.CancelledError, ConnectionResetError):
+                        # Client disconnected — exit silently
+                        break
+                    except Exception:
+                        # Unknown error — log and exit to prevent infinite loop;
+                        # client will reconnect.
+                        logger.exception("SSE generator error")
+                        break
+                    # Only forward trace events to SSE clients
                     if not ev.type.startswith("trace."):
                         continue
                     yield f"event: {ev.type}\ndata: {_json.dumps(ev.data)}\n\n"
