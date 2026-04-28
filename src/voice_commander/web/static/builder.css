@@ -4,6 +4,23 @@
  */
 
 /* =========================================================================
+   Port color tokens — single source of truth (issue #81)
+   builder.js reads these via getComputedStyle() to tint SVG connection lines.
+   Adding a port: declare its color here, no JS change needed.
+   ========================================================================= */
+
+:root {
+  --vc-port-in: #9ca3af;
+  --vc-port-ok: #22c55e;
+  --vc-port-error: #ef4444;
+  --vc-port-true: #22c55e;
+  --vc-port-false: #f97316;
+  --vc-port-item: #06b6d4;
+  --vc-port-after: #06b6d4;
+  --vc-port-default: #3b82f6;
+}
+
+/* =========================================================================
    Node base
    ========================================================================= */
 
@@ -134,14 +151,13 @@
 
 /* =========================================================================
    Port colors + shapes (attribute selectors)
-   NOTE: Colors here must stay in sync with PORT_COLORS in builder.js,
-   which uses the same values for SVG connection tinting (ADR 0069).
+   Colors come from :root --vc-port-* tokens at top of file (issue #81).
    ========================================================================= */
 
 /* Base port override — remove Drawflow's default cyan */
 .drawflow .drawflow-node .input,
 .drawflow .drawflow-node .output {
-  background: #3b82f6;
+  background: var(--vc-port-default);
   border: none;
   width: 10px;
   height: 10px;
@@ -151,42 +167,42 @@
 /* in — neutral grey square */
 .drawflow .drawflow-node .input[data-port-name="in"],
 .drawflow .drawflow-node .output[data-port-name="in"] {
-  background: #9ca3af;
+  background: var(--vc-port-in);
   border-radius: 2px;
 }
 
 /* ok — green circle */
 .drawflow .drawflow-node .input[data-port-name="ok"],
 .drawflow .drawflow-node .output[data-port-name="ok"] {
-  background: #22c55e;
+  background: var(--vc-port-ok);
   border-radius: 50%;
 }
 
 /* error — red circle */
 .drawflow .drawflow-node .input[data-port-name="error"],
 .drawflow .drawflow-node .output[data-port-name="error"] {
-  background: #ef4444;
+  background: var(--vc-port-error);
   border-radius: 50%;
 }
 
 /* true — green square */
 .drawflow .drawflow-node .input[data-port-name="true"],
 .drawflow .drawflow-node .output[data-port-name="true"] {
-  background: #22c55e;
+  background: var(--vc-port-true);
   border-radius: 2px;
 }
 
 /* false — orange square */
 .drawflow .drawflow-node .input[data-port-name="false"],
 .drawflow .drawflow-node .output[data-port-name="false"] {
-  background: #f97316;
+  background: var(--vc-port-false);
   border-radius: 2px;
 }
 
 /* item — cyan rhombus */
 .drawflow .drawflow-node .input[data-port-name="item"],
 .drawflow .drawflow-node .output[data-port-name="item"] {
-  background: #06b6d4;
+  background: var(--vc-port-item);
   border-radius: 2px;
   transform: rotate(45deg);
 }
@@ -194,7 +210,7 @@
 /* after — cyan rhombus */
 .drawflow .drawflow-node .input[data-port-name="after"],
 .drawflow .drawflow-node .output[data-port-name="after"] {
-  background: #06b6d4;
+  background: var(--vc-port-after);
   border-radius: 2px;
   transform: rotate(45deg);
 }
@@ -251,38 +267,38 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #3b82f6;
+  background: var(--vc-port-default);
   vertical-align: middle;
   margin-right: 4px;
   flex-shrink: 0;
 }
 
 .vc-port-swatch[data-port-name="in"] {
-  background: #9ca3af;
+  background: var(--vc-port-in);
   border-radius: 2px;
 }
 
 .vc-port-swatch[data-port-name="ok"] {
-  background: #22c55e;
+  background: var(--vc-port-ok);
 }
 
 .vc-port-swatch[data-port-name="error"] {
-  background: #ef4444;
+  background: var(--vc-port-error);
 }
 
 .vc-port-swatch[data-port-name="true"] {
-  background: #22c55e;
+  background: var(--vc-port-true);
   border-radius: 2px;
 }
 
 .vc-port-swatch[data-port-name="false"] {
-  background: #f97316;
+  background: var(--vc-port-false);
   border-radius: 2px;
 }
 
 .vc-port-swatch[data-port-name="item"],
 .vc-port-swatch[data-port-name="after"] {
-  background: #06b6d4;
+  background: var(--vc-port-item);
   border-radius: 1px;
   transform: rotate(45deg);
 }

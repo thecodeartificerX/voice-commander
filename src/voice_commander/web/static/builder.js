@@ -282,17 +282,20 @@
       .replace(/>/g, '&gt;');
   }
 
-  // ---------- Port color map (mirrors builder.css) ----------
-  const PORT_COLORS = {
-    in: '#9ca3af',
-    ok: '#22c55e',
-    error: '#ef4444',
-    true: '#22c55e',
-    false: '#f97316',
-    item: '#06b6d4',
-    after: '#06b6d4',
-  };
-  const PORT_COLOR_DEFAULT = '#3b82f6';
+  // ---------- Port color lookup ----------
+  // Single source of truth lives in builder.css :root --vc-port-* tokens (issue #81).
+  const _portColorRoot = document.documentElement;
+  /**
+   * Resolve port color from CSS custom property --vc-port-{name}.
+   * Falls back to --vc-port-default when the name is unknown.
+   * @param {string} name - Port name (e.g. "ok", "error", "item").
+   * @returns {string} CSS color value.
+   */
+  function portColor(name) {
+    const cs = getComputedStyle(_portColorRoot);
+    const v = cs.getPropertyValue('--vc-port-' + name).trim();
+    return v || cs.getPropertyValue('--vc-port-default').trim() || '#3b82f6';
+  }
 
   /**
    * Tint all SVG connection paths in the editor to match their source port color.
@@ -317,8 +320,7 @@
       const outEl = srcDom.querySelector('.output_' + (outIdx + 1));
       if (!outEl) return;
       const portName = outEl.getAttribute('data-port-name') || '';
-      const color = PORT_COLORS[portName] || PORT_COLOR_DEFAULT;
-      path.style.stroke = color;
+      path.style.stroke = portColor(portName);
     });
   }
 
