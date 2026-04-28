@@ -45,7 +45,7 @@ jobs:
         run: pnpm lint
         working-directory: web/builder-ui
       - name: Unit tests
-        run: pnpm test --run
+        run: pnpm test
         working-directory: web/builder-ui
       - name: Build
         run: pnpm build
