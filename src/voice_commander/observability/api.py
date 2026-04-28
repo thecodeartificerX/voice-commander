@@ -189,7 +189,7 @@ def build_observability_router(
                     if await request.is_disconnected():
                         break
                     try:
-                        ev = await asyncio.get_event_loop().run_in_executor(None, q.get, True, 1.0)
+                        ev = await asyncio.get_running_loop().run_in_executor(None, q.get, True, 1.0)
                     except queue.Empty:
                         # Timeout — no events pending; send keepalive
                         yield ": keepalive\n\n"

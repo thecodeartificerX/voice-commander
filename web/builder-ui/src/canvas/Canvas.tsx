@@ -22,28 +22,28 @@ function CanvasInner() {
   const { nodes, edges, setNodes, setEdges, selectNode } = useGraphStore()
 
   const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setNodes(applyNodeChanges(changes, nodes)),
-    [nodes, setNodes],
+    (changes) => setNodes((current) => applyNodeChanges(changes, current)),
+    [setNodes],
   )
 
   const onEdgesChange: OnEdgesChange = useCallback(
-    (changes) => setEdges(applyEdgeChanges(changes, edges)),
-    [edges, setEdges],
+    (changes) => setEdges((current) => applyEdgeChanges(changes, current)),
+    [setEdges],
   )
 
   const onConnect: OnConnect = useCallback(
     (connection) =>
-      setEdges(
+      setEdges((current) =>
         addEdge(
           {
             ...connection,
             type: 'control',
             data: { kind: 'ok' },
           },
-          edges,
+          current,
         ),
       ),
-    [edges, setEdges],
+    [setEdges],
   )
 
   const onNodeClick = useCallback(

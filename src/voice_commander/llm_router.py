@@ -287,10 +287,21 @@ class LLMRouter:
                     _llm_span.set_attr("raw_response", json.dumps(data, default=str))
                     _llm_span.set_attr("latency_ms", int(elapsed_ms))
                 except Exception as exc:
-                    logger.debug("llm_router: failed to set span attrs: %s", exc)
+                    logger.warning("llm_router: failed to set span attrs: %s", exc)
 
             logger.debug("LLM router response: %s", json.dumps(data, default=str))
-            plan = self._parse_response(data)
+            try:
+                plan = self._parse_response(data)
+            except LLMPlanError as exc:
+                self._total_errors += 1
+                if _llm_span is not None and hasattr(_llm_span, "set_attr"):
+                    with contextlib.suppress(Exception):
+                        _llm_span.set_attr("error_type", "LLMPlanError")
+                        _llm_span.set_attr("error_msg", str(exc)[:512])
+                        if hasattr(_llm_span, "set_error_category"):
+                            _llm_span.set_error_category("llm")
+                logger.warning("llm_router: LLMPlanError: %s", exc)
+                return None
             step_count = len(plan.steps) if plan else 0
             logger.info(
                 "llm_router latency_ms=%d steps=%d transcript=%r",
@@ -310,9 +321,9 @@ class LLMRouter:
             tool_calls = message.get("tool_calls", [])
             if not tool_calls:
                 return None
-        except (KeyError, IndexError, TypeError, AttributeError):
-            logger.warning("LLM router: unexpected response structure")
-            return None
+        except (KeyError, IndexError, TypeError, AttributeError) as exc:
+            logger.warning("LLM router: unexpected response structure: %s", exc)
+            raise LLMPlanError(f"unexpected response structure: {exc}") from exc
 
         # Snapshot valid tool names under reload_lock so we can reject
         # hallucinated names (e.g. "find_focused_window_title_and_process_name",

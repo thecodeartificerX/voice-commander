@@ -39,7 +39,6 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS idx_runs_started  ON runs(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_status   ON runs(status, started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_runs_category ON runs(error_category, started_at DESC);
 
 CREATE TABLE IF NOT EXISTS spans (
     span_id         TEXT PRIMARY KEY,
@@ -167,6 +166,9 @@ class Store:
             }
             if "error_category" not in cols_runs:
                 conn.execute("ALTER TABLE runs ADD COLUMN error_category TEXT NULL")
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_runs_category ON runs(error_category, started_at DESC)"
+                )
             if "error_summary" not in cols_runs:
                 conn.execute("ALTER TABLE runs ADD COLUMN error_summary TEXT NULL")
 
@@ -309,8 +311,9 @@ class Store:
     def _insert_run_end(self, conn: sqlite3.Connection, upd: RunUpdate) -> None:
         conn.execute(
             "UPDATE runs SET ended_at=?, status=?, error_msg=?, duration_ms=?, "
-            "error_category=? WHERE run_id=?",
-            (upd.ended_at, upd.status, upd.error_msg, upd.duration_ms, upd.error_category, upd.run_id),
+            "error_category=?, error_summary=? WHERE run_id=?",
+            (upd.ended_at, upd.status, upd.error_msg, upd.duration_ms,
+             upd.error_category, upd.error_summary, upd.run_id),
         )
 
     def _insert_span(self, conn: sqlite3.Connection, span: SpanRecord) -> None:

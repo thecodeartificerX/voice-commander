@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { ChevronRight, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import type { SpanRecord } from '@/types/run'
@@ -9,14 +9,17 @@ interface SpanTreeProps {
 }
 
 export function SpanTree({ spans }: SpanTreeProps) {
-  // Build parent → children map
-  const childrenMap = new Map<string | null, SpanRecord[]>()
-  for (const s of spans) {
-    const key = s.parent_span_id ?? null
-    const arr = childrenMap.get(key) ?? []
-    arr.push(s)
-    childrenMap.set(key, arr)
-  }
+  // Build parent → children map (memoized to avoid O(n) rebuild on every render)
+  const childrenMap = useMemo(() => {
+    const map = new Map<string | null, SpanRecord[]>()
+    for (const s of spans) {
+      const key = s.parent_span_id ?? null
+      const arr = map.get(key) ?? []
+      arr.push(s)
+      map.set(key, arr)
+    }
+    return map
+  }, [spans])
 
   const roots = childrenMap.get(null) ?? []
 

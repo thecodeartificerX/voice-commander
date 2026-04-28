@@ -72,24 +72,25 @@ def test_migrate_adds_error_category_to_spans():
 
 
 def test_migrate_preserves_existing_rows():
-    """Store handles a v1 DB gracefully.
+    """Store migrates a v1 DB in-place, preserving existing rows.
 
-    The store backs up a v1 DB (missing error_category index) and recreates it
-    rather than in-place migrating — because _open_or_recreate() tries to run
-    the full _SCHEMA script (including the new index) before migrate() runs.
-    The test verifies the store starts without raising even when rows are lost.
+    The idx_runs_category index is now created inside migrate() (after the
+    error_category column is added), not in _SCHEMA. This means _open_or_recreate()
+    no longer fails on a v1 DB, and existing run history survives the upgrade.
     """
     from voice_commander.observability.store import Store
     with tempfile.TemporaryDirectory() as tmp:
         db = Path(tmp) / "runs.db"
         make_v1_db(db)
-        # Store may back up the v1 DB and recreate — that's acceptable behaviour.
         store = Store(db, keep_runs=100, queue_max=100, daemon_pid=99999)
         store.start()
         store.stop()
-        # Either the row survived (true migration) or the DB was wiped (recreate).
-        # Either way the store must be usable (no exception) and the DB must exist.
+        # The row from the v1 DB must still be present — migration is in-place.
         assert db.exists()
+        conn = sqlite3.connect(db)
+        rows = conn.execute("SELECT run_id FROM runs WHERE run_id='old-run-1'").fetchall()
+        conn.close()
+        assert len(rows) == 1, "v1 row must survive in-place migration (not backed-up/wiped)"
 
 
 def test_migrate_idempotent():

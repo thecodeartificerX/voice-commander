@@ -103,6 +103,8 @@ class Dispatcher:
                         self._publish("tool_fired", {"name": step.name})
                     except Exception as e:
                         cat = _classify_error(e, where="dispatcher")
+                        if step_span is not None and hasattr(step_span, "set_error_category"):
+                            step_span.set_error_category(cat)
                         self._feedback.on_error(f"plan:step:{step.name}", e)
                         self._publish("tool_error", {"name": step.name, "msg": str(e), "error_category": cat})
                         if failed_index is None:

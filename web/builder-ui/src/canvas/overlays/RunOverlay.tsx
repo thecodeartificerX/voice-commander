@@ -1,10 +1,15 @@
 import { useEffect } from 'react'
-import { useReactFlow } from 'reactflow'
 import { useRunsStore } from '@/store/runsStore'
+import { useGraphStore } from '@/store/graphStore'
 
+/**
+ * Applies run-status CSS classes to canvas nodes via graphStore.setNodes so
+ * that the single source of truth (graphStore) is never bypassed. Using
+ * useReactFlow().setNodes would create a second divergent state tree.
+ */
 export function RunOverlay() {
   const { selectedRunId, detailById } = useRunsStore()
-  const { setNodes } = useReactFlow()
+  const { setNodes } = useGraphStore()
 
   useEffect(() => {
     if (!selectedRunId) {

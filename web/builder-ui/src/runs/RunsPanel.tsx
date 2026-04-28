@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useRef, useMemo } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -13,11 +13,9 @@ export function RunsPanel() {
   const { drawerOpen } = useUiStore()
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    void fetchInitial()
-  }, [fetchInitial])
-
-  const visible = visibleRuns()
+  // useMemo avoids re-computing the filter on every render when runs/filters haven't changed
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const visible = useMemo(() => visibleRuns(), [runs, visibleRuns])
 
   return (
     <>

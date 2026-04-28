@@ -83,6 +83,7 @@ class Span:
         self.error_type: str | None = None
         self.error_msg: str | None = None
         self.traceback: str | None = None
+        self.error_category: str | None = None
         self.started_at = time.time()
         self._start_mono = time.monotonic()
         self.ended_at: float = 0.0
@@ -94,6 +95,10 @@ class Span:
 
     def set_attr(self, key: str, value: Any) -> None:
         self.attrs[key] = value
+
+    def set_error_category(self, category: str) -> None:
+        """Set the 4-bucket error taxonomy category on this span."""
+        self.error_category = category
 
     def mark_skipped(self) -> None:
         self.status = "skipped"
@@ -110,12 +115,14 @@ class _NullSpan:
     status = "ok"
     output: Any = None
     error_msg: str | None = None
+    error_category: str | None = None
 
     def __init__(self) -> None:
         self.attrs: dict[str, Any] = {}
 
     def set_output(self, value: Any) -> None: ...
     def set_attr(self, key: str, value: Any) -> None: ...
+    def set_error_category(self, category: str) -> None: ...
     def mark_skipped(self) -> None: ...
 
 
@@ -310,6 +317,7 @@ class Tracer:
                         error_type=s.error_type,
                         error_msg=s.error_msg,
                         traceback=s.traceback,
+                        error_category=s.error_category,
                     )
                 )
                 self._publish_safe(

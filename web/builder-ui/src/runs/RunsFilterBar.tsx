@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { Search } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useRunsStore } from '@/store/runsStore'
@@ -21,7 +21,7 @@ const CATEGORY_PILLS: Array<{ id: ErrorCategory; label: string }> = [
 export function RunsFilterBar() {
   const { filters, setFilter } = useRunsStore()
   const [search, setSearch] = useState('')
-  const [debounceTimer, setDebounceTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   function toggleStatus(id: RunStatus | 'all') {
     if (id === 'all') {
@@ -42,11 +42,10 @@ export function RunsFilterBar() {
   const handleSearch = useCallback(
     (val: string) => {
       setSearch(val)
-      if (debounceTimer) clearTimeout(debounceTimer)
-      const t = setTimeout(() => setFilter({ query: val }), 300)
-      setDebounceTimer(t)
+      if (debounceTimer.current) clearTimeout(debounceTimer.current)
+      debounceTimer.current = setTimeout(() => setFilter({ query: val }), 300)
     },
-    [debounceTimer, setFilter],
+    [setFilter],
   )
 
   const allActive = filters.statuses.length === 0 && filters.categories.length === 0

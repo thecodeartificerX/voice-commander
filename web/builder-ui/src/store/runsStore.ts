@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { toast } from 'sonner'
 import type { RunSummary, RunDetail, ErrorCategory, RunStatus } from '@/types/run'
 import { apiFetchRuns, apiFetchOlderRuns, apiFetchRunDetail } from '@/api/runs'
 
@@ -17,6 +18,7 @@ interface RunsState {
   filters: RunFilter
   sseConnected: boolean
   loading: boolean
+  error: string | null
 
   fetchInitial(): Promise<void>
   fetchOlder(): Promise<void>
@@ -53,29 +55,43 @@ export const useRunsStore = create<RunsState>((set, get) => ({
   filters: { statuses: [], categories: [], query: '' },
   sseConnected: false,
   loading: false,
+  error: null,
 
   async fetchInitial() {
-    set({ loading: true })
+    set({ loading: true, error: null })
     try {
       const runs = await apiFetchRuns({ limit: 50 })
       set({ runs, loading: false })
-    } catch {
-      set({ loading: false })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error('fetchInitial failed:', e)
+      set({ loading: false, error: msg })
     }
   },
 
   async fetchOlder() {
-    const { runs } = get()
+    const { runs, loading } = get()
+    if (loading) return
     const oldest = runs[runs.length - 1]
     if (!oldest) return
-    const older = await apiFetchOlderRuns({ limit: 50, before: oldest.started_at })
-    set((s) => ({ runs: [...s.runs, ...older] }))
+    try {
+      const older = await apiFetchOlderRuns({ limit: 50, before: oldest.started_at })
+      set((s) => ({ runs: [...s.runs, ...older].slice(0, MAX_RUNS) }))
+    } catch (e) {
+      console.error('fetchOlder failed:', e)
+      toast.error('Failed to load older runs')
+    }
   },
 
   async fetchDetail(runId) {
     if (get().detailById[runId]) return
-    const detail = await apiFetchRunDetail(runId)
-    set((s) => ({ detailById: { ...s.detailById, [runId]: detail } }))
+    try {
+      const detail = await apiFetchRunDetail(runId)
+      set((s) => ({ detailById: { ...s.detailById, [runId]: detail } }))
+    } catch (e) {
+      console.error('fetchDetail failed:', e)
+      toast.error('Failed to load run details')
+    }
   },
 
   selectRun(id) {

@@ -133,7 +133,21 @@ class GraphRuntime:
             ):
                 continue
 
-            kwargs = self._resolve_kwargs(node, graph.edges, port_values)
+            try:
+                kwargs = self._resolve_kwargs(node, graph.edges, port_values)
+            except WiringError as exc:
+                logger.warning("graph %r node %r: %s", graph.name, node.id, exc)
+                cat = "wiring"
+                with self._span("node", name=node.ref, node_id=node.id) as _wire_span:
+                    if _wire_span is not None and hasattr(_wire_span, "set_error_category"):
+                        _wire_span.set_error_category(cat)
+                if failed_idx is None:
+                    failed_idx = len(steps)
+                    error_msg = str(exc)[:256]
+                fired_err.add(node.id)
+                if graph.strict and not self._has_error_edge(node.id, graph.edges):
+                    break
+                continue
 
             # --- pipeline node ---
             if node.ref.startswith("pipeline."):
@@ -155,8 +169,8 @@ class GraphRuntime:
                             _node_span.set_output(ret)
                     except Exception as exc:  # noqa: BLE001
                         cat = _classify_error(exc, where="graph_runtime")
-                        if _node_span is not None and hasattr(_node_span, "set_attr"):
-                            _node_span.set_attr("error_category", cat)
+                        if _node_span is not None and hasattr(_node_span, "set_error_category"):
+                            _node_span.set_error_category(cat)
                         if failed_idx is None:
                             failed_idx = len(steps)
                             error_msg = str(exc)[:256]
@@ -236,7 +250,19 @@ class GraphRuntime:
                                 body_fired_branch_false,
                             ):
                                 continue
-                            bkwargs = self._resolve_kwargs(bn, graph.edges, port_values)
+                            try:
+                                bkwargs = self._resolve_kwargs(bn, graph.edges, port_values)
+                            except WiringError as exc:
+                                logger.warning(
+                                    "graph %r foreach node %r: %s", graph.name, bn.id, exc
+                                )
+                                body_fired_err.add(bn.id)
+                                if not foreach_has_error:
+                                    foreach_has_error = True
+                                    foreach_first_error = (
+                                        f"foreach iter {iter_idx}: wiring error: {exc}"
+                                    )
+                                continue
                             action, body_err_msg = self._dispatch_pipeline_node(
                                 bn,
                                 bkwargs,
@@ -370,8 +396,8 @@ class GraphRuntime:
                     _node_span.set_output(ret)
             except Exception as exc:  # noqa: BLE001
                 cat = _classify_error(exc, where="graph_runtime")
-                if _node_span is not None and hasattr(_node_span, "set_attr"):
-                    _node_span.set_attr("error_category", cat)
+                if _node_span is not None and hasattr(_node_span, "set_error_category"):
+                    _node_span.set_error_category(cat)
                 logger.warning("foreach body node %s raised: %s", node.ref, exc)
                 fired_err.add(node.id)
                 steps.append(ToolCall(name=node.ref, kwargs=kwargs))
@@ -430,6 +456,10 @@ class GraphRuntime:
         Starts from the node's static kwargs, then overlays values arriving
         on data-wire edges.  Uses the ``input.<port>`` shorthand key when the
         source is a graph-input node.
+
+        Raises ``WiringError`` if a data-wire edge's source value has not been
+        populated (source node was not executed or produced no output for that
+        port), indicating a structural graph-authoring error.
         """
         out = dict(node.kwargs)
         for e in edges:
@@ -442,6 +472,14 @@ class GraphRuntime:
             )
             if src_key in port_values:
                 out[e.dst.port] = port_values[src_key]
+            elif not e.src.is_input_shorthand:
+                # A data wire exists from a peer node whose output was never
+                # recorded — the graph is structurally broken.
+                raise WiringError(
+                    f"node {node.id!r}: data wire from {src_key!r} "
+                    f"to port {e.dst.port!r} has no value "
+                    f"(source node did not produce output)"
+                )
         return out
 
     def _record_returns(

@@ -31,8 +31,8 @@ function connect(onConnect?: (connected: boolean) => void) {
   es.onmessage = (ev) => {
     try {
       dispatch('message', JSON.parse(ev.data as string))
-    } catch {
-      // ignore malformed
+    } catch (e) {
+      console.warn('SSE: malformed event data, dropping:', ev.data, e)
     }
   }
 
@@ -47,8 +47,8 @@ function connect(onConnect?: (connected: boolean) => void) {
     es.addEventListener(type, (ev: MessageEvent) => {
       try {
         dispatch(type, JSON.parse(ev.data as string))
-      } catch {
-        // ignore malformed
+      } catch (e) {
+        console.warn('SSE: malformed event data, dropping:', ev.data, e)
       }
     })
   }
@@ -68,4 +68,13 @@ export function sseSubscribe(type: string, handler: Handler): () => void {
 
 export function sseConnect(onStatusChange?: (connected: boolean) => void) {
   connect(onStatusChange)
+}
+
+export function sseDisconnect() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  es?.close()
+  es = null
 }

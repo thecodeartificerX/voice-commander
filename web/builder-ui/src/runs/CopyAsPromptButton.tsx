@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,13 @@ interface CopyAsPromptButtonProps {
 
 export function CopyAsPromptButton({ run }: CopyAsPromptButtonProps) {
   const [copied, setCopied] = useState(false)
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current)
+    }
+  }, [])
 
   async function handleClick() {
     const md = buildMarkdownExport(run)
@@ -18,7 +25,8 @@ export function CopyAsPromptButton({ run }: CopyAsPromptButtonProps) {
       await navigator.clipboard.writeText(md)
       setCopied(true)
       toast.success('Copied to clipboard')
-      setTimeout(() => setCopied(false), 2000)
+      if (resetTimer.current) clearTimeout(resetTimer.current)
+      resetTimer.current = setTimeout(() => setCopied(false), 2000)
     } catch {
       toast.error('Failed to copy — check clipboard permissions')
     }

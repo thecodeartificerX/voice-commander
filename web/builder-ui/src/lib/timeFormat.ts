@@ -1,6 +1,7 @@
 export function relativeTime(ts: number): string {
   const diffMs = Date.now() - ts * 1000
   const diffS = Math.floor(diffMs / 1000)
+  if (diffS <= 0) return 'just now'
   if (diffS < 60) return `${diffS}s ago`
   const diffM = Math.floor(diffS / 60)
   if (diffM < 60) return `${diffM}m ago`

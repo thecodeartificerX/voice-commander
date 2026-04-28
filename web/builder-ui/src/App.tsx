@@ -5,7 +5,7 @@ import { Palette } from '@/palette/Palette'
 import { PropertiesPane } from '@/properties/PropertiesPane'
 import { RunsPanel } from '@/runs/RunsPanel'
 import { useRunsStore } from '@/store/runsStore'
-import { sseConnect, sseSubscribe } from '@/api/sse'
+import { sseConnect, sseDisconnect, sseSubscribe } from '@/api/sse'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { RunSummary } from '@/types/run'
 
@@ -20,7 +20,10 @@ export default function App() {
     const unsub = sseSubscribe('run.appended', (data) => {
       onSseEvent('run.appended', data as RunSummary)
     })
-    return unsub
+    return () => {
+      unsub()
+      sseDisconnect()
+    }
   }, [fetchInitial, onSseEvent])
 
   return (
