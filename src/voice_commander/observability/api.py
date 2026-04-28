@@ -109,8 +109,14 @@ def _build_export_md(run: dict[str, Any], spans: list[dict[str, Any]]) -> str:
                 f"This is a **{cat} error** — {fix}."
             )
 
-    now_iso = datetime.now(tz=timezone.utc).isoformat()
-    lines.append(f"\n---\n\n_Generated {now_iso} by Voice Commander Builder UI_\n")
+    # B-H1: deterministic output — derive footer timestamp from run.ended_at
+    # so two consecutive calls produce identical bytes.
+    ended_at = run.get("ended_at")
+    if ended_at is not None:
+        ended_iso = datetime.fromtimestamp(ended_at, tz=timezone.utc).isoformat()
+    else:
+        ended_iso = started_iso
+    lines.append(f"\n---\n\n_Generated {ended_iso} by Voice Commander Builder UI_\n")
     return "\n".join(lines)
 
 

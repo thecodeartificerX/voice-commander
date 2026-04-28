@@ -42,6 +42,43 @@ def test_export_md_contains_header():
         assert "## Span tree" in md
 
 
+def test_export_md_is_deterministic():
+    """B-H1: two consecutive _build_export_md calls produce identical bytes."""
+    from voice_commander.observability.store import Store, RunRecord, RunUpdate
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Store(Path(tmp) / "runs.db", keep_runs=100, queue_max=100, daemon_pid=os.getpid())
+        store.start()
+
+        run_id = "det-run-abc"
+        started = time.time()
+        store.write_run_start(RunRecord(
+            run_id=run_id,
+            started_at=started,
+            transcript="play spotify",
+            daemon_pid=os.getpid(),
+        ))
+        store.write_run_end(RunUpdate(
+            run_id=run_id,
+            ended_at=started + 1,
+            status="ok",
+            error_msg=None,
+            duration_ms=1000,
+        ))
+        store.flush()
+        store.stop()
+
+        run = store.get_run(run_id)
+        spans = store.get_spans(run_id)
+
+        from voice_commander.observability.api import _build_export_md
+        first = _build_export_md(run, spans)
+        # Sleep so a wall-clock-based footer would visibly differ.
+        time.sleep(0.05)
+        second = _build_export_md(run, spans)
+        assert first == second
+
+
 def test_export_md_error_run():
     """export.md includes failure summary for error runs."""
     from voice_commander.observability.store import Store, RunRecord, RunUpdate, SpanRecord
