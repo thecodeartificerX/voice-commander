@@ -228,3 +228,42 @@ def test_prune_runs_endpoint_uses_set_keep_runs(tmp_path):
     assert s.keep_runs == 20
 
     s.stop()
+
+
+def test_before_query_preserves_user_timezone(tmp_path: Path):
+    """B-H2: explicit tz offset in `before` must not be silently shifted to UTC."""
+    from datetime import datetime, timezone
+
+    s = Store(tmp_path / "runs.db", keep_runs=100, queue_max=64, daemon_pid=1)
+    s.start()
+
+    # Compute the expected UTC timestamp for 2026-04-29T10:00:00-04:00
+    user_iso = "2026-04-29T10:00:00-04:00"
+    expected_dt = datetime.fromisoformat(user_iso)
+    expected_ts = expected_dt.timestamp()
+
+    # Write a run with started_at slightly before the boundary (should match)
+    # and one slightly after (should be excluded).
+    s.write_run_start(RunRecord("before-run", expected_ts - 60.0, "old", 1))
+    s.write_run_end(RunUpdate("before-run", expected_ts - 30.0, "ok", None, 30000))
+    s.write_run_start(RunRecord("after-run", expected_ts + 60.0, "new", 1))
+    s.write_run_end(RunUpdate("after-run", expected_ts + 90.0, "ok", None, 30000))
+    _drain(s)
+
+    client = TestClient(_app(s))
+    r = client.get(f"/api/runs?before={user_iso}")
+    assert r.status_code == 200
+    ids = {row["run_id"] for row in r.json()["runs"]}
+    assert "before-run" in ids
+    assert "after-run" not in ids
+
+    # And: the wrong (silent-clobber) interpretation would have assumed UTC
+    # at 10:00 (i.e. shifted +4h forward), which would have included after-run.
+    # So if after-run is excluded the offset was honored.
+
+    # Naive timestamp still defaults to UTC.
+    naive_iso = datetime.fromtimestamp(expected_ts + 30.0, tz=timezone.utc).replace(tzinfo=None).isoformat()
+    r2 = client.get(f"/api/runs?before={naive_iso}")
+    assert r2.status_code == 200
+
+    s.stop()

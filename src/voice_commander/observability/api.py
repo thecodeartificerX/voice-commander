@@ -153,11 +153,14 @@ def build_observability_router(
         if before is not None:
             from datetime import datetime, timezone
             try:
-                before_ts = datetime.fromisoformat(before.replace("Z", "+00:00")).replace(
-                    tzinfo=timezone.utc
-                ).timestamp()
+                dt = datetime.fromisoformat(before.replace("Z", "+00:00"))
             except ValueError:
                 raise HTTPException(status_code=422, detail=f"invalid before timestamp: {before!r}")
+            # B-H2: only assume UTC when the user supplied a naive timestamp;
+            # never clobber an explicit offset.
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            before_ts = dt.timestamp()
         runs = store.list_runs(
             limit=limit,
             status=status,
