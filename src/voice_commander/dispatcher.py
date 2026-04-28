@@ -17,6 +17,20 @@ logger = logging.getLogger(__name__)
 
 
 class Dispatcher:
+    """Execute a Plan of ToolCalls sequentially against the tool registry.
+
+    Runs exclusively on the pipeline-worker thread (called from
+    ``StreamingDaemon._process_utterance``). Each plan step is looked up
+    in the :class:`ToolRegistry`, invoked with kwargs, and its outcome
+    published to the :class:`EventBus` as ``tool_fired`` / ``tool_error``.
+
+    When ``plan.strict`` is True (default), execution halts on the first
+    failed step and the plan outcome records the failure index. When False,
+    errors are recorded but remaining steps continue (best-effort mode).
+    The :class:`FeedbackSink` is notified on plan start, completion, and
+    per-step errors for audio/visual feedback.
+    """
+
     def __init__(
         self,
         feedback: FeedbackSink,

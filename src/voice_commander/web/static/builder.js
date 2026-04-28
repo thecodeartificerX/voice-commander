@@ -908,6 +908,13 @@
 // Runs overlay — paints node spans onto the Drawflow canvas.
 // ==========================================================================
 
+/**
+ * Fetch a completed run's spans and paint ok/error CSS classes onto the
+ * corresponding Drawflow nodes. Clears any previous overlay first.
+ *
+ * @param {string} runId - Run identifier from the observability store.
+ * @returns {void}
+ */
 window.vcBuilderApplyRunOverlay = function (runId) {
   fetch('/api/runs/' + runId)
     .then(function(r) { return r.json(); })
@@ -935,6 +942,12 @@ window.vcBuilderApplyRunOverlay = function (runId) {
     if (toggle.checked) startLive(); else stopLive();
   });
 
+    /**
+     * Open an SSE connection to ``/api/runs/stream`` and highlight Drawflow
+     * nodes in real time as ``trace.span_started`` / ``trace.span_ended``
+     * events arrive.
+     * @returns {void}
+     */
   function startLive() {
     if (liveSrc) return;
     liveSrc = new EventSource('/api/runs/stream');
@@ -962,6 +975,10 @@ window.vcBuilderApplyRunOverlay = function (runId) {
     });
   }
 
+    /**
+     * Close the live-mode SSE connection and clear tracking state.
+     * @returns {void}
+     */
   function stopLive() {
     if (!liveSrc) return;
     liveSrc.close();
