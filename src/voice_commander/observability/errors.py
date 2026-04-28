@@ -20,32 +20,38 @@ _WIRING_TYPES: tuple[str, ...] = ("WiringError",)
 # Exceptions that classify as 'llm'
 _LLM_TYPES: tuple[str, ...] = ("LLMPlanError",)
 
-# Network error type names (httpx + stdlib)
-_INFRA_TYPE_NAMES: tuple[str, ...] = (
-    "ConnectError",
-    "ConnectTimeout",
-    "ReadTimeout",
-    "RemoteProtocolError",
-    "ConnectionRefusedError",
-    "ConnectionError",
-    "TimeoutError",
-    "PortAudioError",
-    "OSError",
+# Stdlib network/audio types that *always* count as infra regardless of where
+# they were raised. ``OSError`` is intentionally excluded — most filesystem
+# errors (FileNotFoundError, PermissionError) inherit from OSError but are
+# program bugs, not infrastructure failures. (B-M1)
+_INFRA_STDLIB_TYPE_NAMES: frozenset[str] = frozenset(
+    {
+        "ConnectionRefusedError",
+        "ConnectionResetError",
+        "ConnectionAbortedError",
+        "ConnectionError",
+        "TimeoutError",
+        "PortAudioError",
+        "gaierror",  # socket.gaierror — DNS failure
+    }
 )
 
 
-def classify(exc: BaseException, *, where: str = "") -> Category:  # noqa: ARG001
+def classify(exc: BaseException, *, where: str = "") -> Category:
     """Return the error category for *exc*.
 
-    *where* is a hint string (e.g. ``"graph_runtime"``, ``"dispatcher"``, ``"llm_router"``)
-    used as a tiebreaker when the exception type alone is ambiguous.
-    It is logged for debugging but does not currently change the classification.
+    *where* is a hint string (e.g. ``"graph_runtime"``, ``"dispatcher"``,
+    ``"llm_router"``, ``"daemon"``) used as a tiebreaker. Specifically:
+    raw ``OSError`` is treated as infra only when raised from the daemon
+    audio path (``where == "daemon"``); elsewhere it is a program bug.
 
     Classification priority:
-    1. WiringError  → ``wiring``
-    2. LLMPlanError → ``llm``
-    3. Network/IO   → ``infra``
-    4. default      → ``program``
+    1. WiringError    → ``wiring``
+    2. LLMPlanError   → ``llm``
+    3. httpx errors   → ``infra``  (any ``httpx.*`` exception class)
+    4. stdlib net/audio types → ``infra``
+    5. raw OSError from daemon audio path → ``infra``
+    6. default        → ``program``
     """
     type_name = type(exc).__name__
 
@@ -55,9 +61,21 @@ def classify(exc: BaseException, *, where: str = "") -> Category:  # noqa: ARG00
     if type_name in _LLM_TYPES:
         return "llm"
 
-    # Walk the MRO for infra-ish types (covers httpx subclasses, etc.)
-    mro_names = {t.__name__ for t in type(exc).__mro__}
-    if mro_names & set(_INFRA_TYPE_NAMES):
+    # Any class defined in the httpx package is an infra error — covers
+    # ConnectError, ConnectTimeout, ReadTimeout, RemoteProtocolError, etc.
+    # We check the module path instead of walking OSError's MRO so
+    # ``FileNotFoundError`` / ``PermissionError`` stay classified as
+    # program bugs.
+    module = type(exc).__module__ or ""
+    if module == "httpx" or module.startswith("httpx."):
+        return "infra"
+
+    if type_name in _INFRA_STDLIB_TYPE_NAMES:
+        return "infra"
+
+    # Raw OSError from the daemon's audio path is infra (PortAudio device
+    # gone, mic unplugged). Anywhere else it's a program bug.
+    if where == "daemon" and type(exc) is OSError:
         return "infra"
 
     return "program"
