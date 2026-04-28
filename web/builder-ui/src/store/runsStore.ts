@@ -72,11 +72,21 @@ export const useRunsStore = create<RunsState>((set, get) => ({
   async fetchOlder() {
     const { runs, loading } = get()
     if (loading) return
+    // Oldest is the run with the smallest started_at; runs are stored newest-first
+    // so the tail is oldest. We use that timestamp as the `before` cursor.
     const oldest = runs[runs.length - 1]
     if (!oldest) return
     try {
       const older = await apiFetchOlderRuns({ limit: 50, before: oldest.started_at })
-      set((s) => ({ runs: [...s.runs, ...older].slice(0, MAX_RUNS) }))
+      set((s) => {
+        const seen = new Set(s.runs.map((r) => r.run_id))
+        const deduped = older.filter((r) => !seen.has(r.run_id))
+        // Older runs go to the TAIL (newest stays at the head)
+        const merged = [...s.runs, ...deduped]
+        // Truncation must not lose the newest — keep the head MAX_RUNS entries
+        const capped = merged.length > MAX_RUNS ? merged.slice(0, MAX_RUNS) : merged
+        return { runs: capped }
+      })
     } catch (e) {
       console.error('fetchOlder failed:', e)
       toast.error('Failed to load older runs')
