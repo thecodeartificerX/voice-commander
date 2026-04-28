@@ -20,6 +20,7 @@ A voice-driven command launcher for Windows — like Talon Voice, but you say th
 2. **Phased delivery.** Features ship behind validation gates. Automated tests green **and** a human has validated the behaviour end-to-end before a feature is "done."
 3. **Modular, swappable subsystems.** Each module has one job and a narrow interface. Any subsystem must be unit-testable without spinning up the whole daemon.
 4. **Boil the ocean.** No workarounds, no "temporarily hard-coded," no dangling threads. Done means: tests pass, docs updated, ADR filed, PR merged.
+5. **Local-only infrastructure — Windows-only project.** This is a Windows-native daemon (winsound chimes, pynput hotkeys, sounddevice via WASAPI, scroll-lock, `winrt` OCR). All CI, automation, validation, and tooling MUST run on the developer's local Windows machine or a self-hosted Windows runner. **Do not add GitHub-hosted CI runners** (`runs-on: ubuntu-latest`, `runs-on: windows-latest`, etc.) — they pollute the repo with workarounds for native deps that don't exist on the target platform. If CI is desired, register a self-hosted Windows runner and use `runs-on: [self-hosted, Windows]`.
 
 ## Architecture at a glance
 
