@@ -74,6 +74,7 @@ def test_show_commands_graph_loads(show_commands_graph):
     node = g.nodes[0]
     assert node.ref == "pipeline.open"
     assert node.kwargs.get("target") == COMMANDS_PAGE_URL
+    assert len(g.synonyms) >= 1, "show_commands must have at least one synonym for voice discovery"
 
 
 def test_show_commands_graph_runs_ok(show_commands_graph, mocked_registry):
