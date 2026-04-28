@@ -31,12 +31,15 @@ CREATE TABLE IF NOT EXISTS runs (
     transcript      TEXT NOT NULL,
     status          TEXT NOT NULL,
     error_msg       TEXT,
+    error_category  TEXT,
+    error_summary   TEXT,
     duration_ms     INTEGER,
     daemon_pid      INTEGER NOT NULL,
-    schema_version  INTEGER NOT NULL DEFAULT 1
+    schema_version  INTEGER NOT NULL DEFAULT 2
 );
-CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_runs_status  ON runs(status, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_started  ON runs(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_status   ON runs(status, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_category ON runs(error_category, started_at DESC);
 
 CREATE TABLE IF NOT EXISTS spans (
     span_id         TEXT PRIMARY KEY,
@@ -52,7 +55,8 @@ CREATE TABLE IF NOT EXISTS spans (
     output          TEXT,
     error_type      TEXT,
     error_msg       TEXT,
-    traceback       TEXT
+    traceback       TEXT,
+    error_category  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_spans_run     ON spans(run_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_spans_parent  ON spans(parent_span_id);
@@ -76,6 +80,8 @@ class RunUpdate:
     status: str
     error_msg: str | None
     duration_ms: int
+    error_category: str | None = None
+    error_summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +100,7 @@ class SpanRecord:
     error_type: str | None = None
     error_msg: str | None = None
     traceback: str | None = None
+    error_category: str | None = None
 
 
 class Store:
@@ -132,6 +139,7 @@ class Store:
     def start(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._open_or_recreate()
+        self.migrate()
         self._writer = threading.Thread(
             target=self._writer_loop, name="vc-observ-writer", daemon=True
         )
@@ -144,6 +152,38 @@ class Store:
             if self._writer.is_alive():
                 logger.warning("observability writer did not exit within 5 s")
         self._writer = None
+
+    def migrate(self) -> None:
+        """Idempotently apply schema migrations to an existing database.
+
+        v1 → v2: add error_category column to runs and spans.
+        """
+        conn = self._connect()
+        try:
+            # Check runs table for error_category
+            cols_runs = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(runs)").fetchall()
+            }
+            if "error_category" not in cols_runs:
+                conn.execute("ALTER TABLE runs ADD COLUMN error_category TEXT NULL")
+            if "error_summary" not in cols_runs:
+                conn.execute("ALTER TABLE runs ADD COLUMN error_summary TEXT NULL")
+
+            # Check spans table for error_category
+            cols_spans = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(spans)").fetchall()
+            }
+            if "error_category" not in cols_spans:
+                conn.execute("ALTER TABLE spans ADD COLUMN error_category TEXT NULL")
+
+            # Bump schema_version on existing runs that are version 1
+            conn.execute(
+                "UPDATE runs SET schema_version=2 WHERE schema_version=1"
+            )
+        finally:
+            conn.close()
 
     def _open_or_recreate(self) -> None:
         try:
@@ -262,22 +302,23 @@ class Store:
         conn.execute(
             "INSERT OR REPLACE INTO runs "
             "(run_id, started_at, transcript, status, daemon_pid, schema_version) "
-            "VALUES (?, ?, ?, 'running', ?, 1)",
+            "VALUES (?, ?, ?, 'running', ?, 2)",
             (rec.run_id, rec.started_at, rec.transcript, rec.daemon_pid),
         )
 
     def _insert_run_end(self, conn: sqlite3.Connection, upd: RunUpdate) -> None:
         conn.execute(
-            "UPDATE runs SET ended_at=?, status=?, error_msg=?, duration_ms=? WHERE run_id=?",
-            (upd.ended_at, upd.status, upd.error_msg, upd.duration_ms, upd.run_id),
+            "UPDATE runs SET ended_at=?, status=?, error_msg=?, duration_ms=?, "
+            "error_category=? WHERE run_id=?",
+            (upd.ended_at, upd.status, upd.error_msg, upd.duration_ms, upd.error_category, upd.run_id),
         )
 
     def _insert_span(self, conn: sqlite3.Connection, span: SpanRecord) -> None:
         conn.execute(
             "INSERT OR REPLACE INTO spans (span_id, run_id, parent_span_id, "
             "type, name, started_at, ended_at, duration_ms, status, attrs, "
-            "output, error_type, error_msg, traceback) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "output, error_type, error_msg, traceback, error_category) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 span.span_id,
                 span.run_id,
@@ -293,6 +334,7 @@ class Store:
                 span.error_type,
                 span.error_msg,
                 span.traceback,
+                span.error_category,
             ),
         )
 
@@ -368,8 +410,10 @@ class Store:
         limit: int = 50,
         status: str | None = None,
         since_ts: float | None = None,
+        before_ts: float | None = None,
         transcript_like: str | None = None,
         graph_name: str | None = None,
+        category: str | None = None,
     ) -> list[dict[str, Any]]:
         sql = "SELECT * FROM runs WHERE 1=1"
         params: list[Any] = []
@@ -379,6 +423,9 @@ class Store:
         if since_ts is not None:
             sql += " AND started_at >= ?"
             params.append(since_ts)
+        if before_ts is not None:
+            sql += " AND started_at < ?"
+            params.append(before_ts)
         if transcript_like:
             sql += " AND transcript LIKE ?"
             params.append(f"%{transcript_like}%")
@@ -389,6 +436,9 @@ class Store:
                 " AND spans.type = 'graph' AND spans.name = ?)"
             )
             params.append(graph_name)
+        if category:
+            sql += " AND error_category=?"
+            params.append(category)
         sql += " ORDER BY started_at DESC LIMIT ?"
         params.append(limit)
         conn = self._connect()

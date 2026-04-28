@@ -14,6 +14,106 @@ from voice_commander.observability.store import Store
 logger = logging.getLogger(__name__)
 
 
+def _build_export_md(run: dict[str, Any], spans: list[dict[str, Any]]) -> str:
+    """Build the copy-as-prompt markdown payload (matches client-side markdownExport.ts)."""
+    import json as _json
+    from datetime import datetime, timezone
+
+    run_id = run["run_id"]
+    short_id = run_id[:6]
+    started_at_s: float = run["started_at"]
+    started_iso = datetime.fromtimestamp(started_at_s, tz=timezone.utc).isoformat()
+    dur_ms: int | None = run.get("duration_ms")
+    dur_str = (
+        f"{dur_ms}ms"
+        if dur_ms is not None and dur_ms < 1000
+        else (f"{dur_ms / 1000:.1f}s" if dur_ms is not None else "—")
+    )
+    status = run["status"]
+    transcript = run["transcript"]
+    error_category = run.get("error_category")
+    error_summary = run.get("error_summary") or run.get("error_msg")
+    daemon_pid = run["daemon_pid"]
+    schema_version = run.get("schema_version", 1)
+
+    lines: list[str] = []
+    lines.append(f"# Voice Commander run {short_id} — {status}\n")
+    lines.append(f'**Transcript:** "{transcript}"')
+    lines.append(f"**Started:** {started_iso}")
+    lines.append(f"**Duration:** {dur_str}")
+    lines.append(f"**Status:** {status}")
+    if error_category:
+        lines.append(f"**Error category:** {error_category}")
+    if error_summary:
+        lines.append(f"**Error summary:** {error_summary}")
+    lines.append(f"**Daemon PID:** {daemon_pid}")
+    lines.append(f"**Schema:** runs.db v{schema_version}")
+
+    # Find LLM plan output
+    llm_span = next((s for s in spans if s["type"] == "llm_call"), None)
+    if llm_span and llm_span.get("output") is not None:
+        lines.append("\n## Plan returned by LLM\n")
+        lines.append("```json")
+        lines.append(_json.dumps(llm_span["output"], indent=2))
+        lines.append("```")
+
+    # Span tree
+    lines.append("\n## Span tree\n")
+
+    def render_spans(parent_id: str | None, depth: int) -> list[str]:
+        children = [s for s in spans if s["parent_span_id"] == parent_id]
+        out: list[str] = []
+        for s in children:
+            indent = "  " * depth
+            st = "✓" if s["status"] == "ok" else ("✗" if s["status"] == "error" else s["status"])
+            dur_s = s.get("duration_ms")
+            d = (
+                f"{dur_s}ms"
+                if dur_s is not None and dur_s < 1000
+                else (f"{dur_s / 1000:.1f}s" if dur_s is not None else "—")
+            )
+            out.append(f"{indent}- {st} {s['name']} · {d} · {s['status']}")
+            if s.get("error_type"):
+                out.append(f"{indent}  - error_type: {s['error_type']}")
+            if s.get("error_msg"):
+                out.append(f"{indent}  - error_msg: {s['error_msg']}")
+            if s.get("error_category"):
+                out.append(f"{indent}  - error_category: {s['error_category']}")
+            attrs = s.get("attrs") or {}
+            if attrs.get("node_id"):
+                out.append(f"{indent}  - canvas node id: {attrs['node_id']}")
+            out.extend(render_spans(s["span_id"], depth + 1))
+        return out
+
+    lines.extend(render_spans(None, 0))
+
+    # Failure summary
+    if status == "error":
+        error_span = next(
+            (s for s in reversed(spans) if s["status"] == "error"),
+            None,
+        )
+        if error_span:
+            cat = error_category or "unknown"
+            cat_fixes = {
+                "wiring": "fix the graph, not a tool",
+                "program": "fix the tool implementation or its dependencies",
+                "llm": "tweak prompt template, swap model, or adjust temperature",
+                "infra": "check service health, restart daemon, replug device",
+            }
+            fix = cat_fixes.get(cat, "investigate the error")
+            msg = error_span.get("error_msg", "unknown error")
+            lines.append("\n## Failure summary\n")
+            lines.append(
+                f"The graph failed at span `{error_span['name']}` because: {msg}. "
+                f"This is a **{cat} error** — {fix}."
+            )
+
+    now_iso = datetime.now(tz=timezone.utc).isoformat()
+    lines.append(f"\n---\n\n_Generated {now_iso} by Voice Commander Builder UI_\n")
+    return "\n".join(lines)
+
+
 def build_observability_router(
     store: Store,
     *,
@@ -39,14 +139,27 @@ def build_observability_router(
         status: str | None = None,
         graph: str | None = None,
         since: float | None = None,
+        before: str | None = None,
+        category: str | None = None,
         q: str | None = None,
     ) -> dict[str, Any]:
+        before_ts: float | None = None
+        if before is not None:
+            from datetime import datetime, timezone
+            try:
+                before_ts = datetime.fromisoformat(before.replace("Z", "+00:00")).replace(
+                    tzinfo=timezone.utc
+                ).timestamp()
+            except ValueError:
+                raise HTTPException(status_code=422, detail=f"invalid before timestamp: {before!r}")
         runs = store.list_runs(
             limit=limit,
             status=status,
             since_ts=since,
+            before_ts=before_ts,
             transcript_like=q,
             graph_name=graph,
+            category=category,
         )
         return {"count": len(runs), "runs": runs}
 
@@ -89,8 +202,8 @@ def build_observability_router(
                         # client will reconnect.
                         logger.exception("SSE generator error")
                         break
-                    # Only forward trace events to SSE clients
-                    if not ev.type.startswith("trace."):
+                    # Forward trace events and run.appended to SSE clients
+                    if not ev.type.startswith("trace.") and ev.type != "run.appended":
                         continue
                     yield f"event: {ev.type}\ndata: {_json.dumps(ev.data)}\n\n"
             finally:
@@ -98,6 +211,16 @@ def build_observability_router(
                     bus.unsubscribe(q)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
+
+    @router.get("/{run_id}/export.md")
+    def export_run_md(run_id: str) -> Any:
+        from fastapi.responses import Response as _Response
+        run = store.get_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+        spans = store.get_spans(run_id)
+        md = _build_export_md(run, spans)
+        return _Response(content=md, media_type="text/markdown")
 
     @router.get("/{run_id}")
     def get_run(run_id: str) -> dict[str, Any]:

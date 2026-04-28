@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from voice_commander.commands.graph import Edge, Graph, Node
 from voice_commander.commands.graph_topo import CycleError, topo_sort
+from voice_commander.observability.errors import classify as _classify_error
 from voice_commander.plan import PlanOutcome, PlanStatus, ToolCall
 from voice_commander.registry import ToolRegistry
 
@@ -24,6 +25,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MAX_CALL_DEPTH = 16  # cross-graph (command.X / workflow.X) recursion guard
+
+
+class WiringError(Exception):
+    """Raised when a graph node's required kwargs cannot be resolved from wires or literals.
+
+    This is a structural graph authoring error, not a tool bug.
+    Classified as 'wiring' by the error categorizer.
+    """
 
 _GraphLookup = Callable[[str], "Graph | None"]
 
@@ -145,6 +154,9 @@ class GraphRuntime:
                         if _node_span is not None and hasattr(_node_span, "set_output"):
                             _node_span.set_output(ret)
                     except Exception as exc:  # noqa: BLE001
+                        cat = _classify_error(exc, where="graph_runtime")
+                        if _node_span is not None and hasattr(_node_span, "set_attr"):
+                            _node_span.set_attr("error_category", cat)
                         if failed_idx is None:
                             failed_idx = len(steps)
                             error_msg = str(exc)[:256]
@@ -357,6 +369,9 @@ class GraphRuntime:
                 if _node_span is not None and hasattr(_node_span, "set_output"):
                     _node_span.set_output(ret)
             except Exception as exc:  # noqa: BLE001
+                cat = _classify_error(exc, where="graph_runtime")
+                if _node_span is not None and hasattr(_node_span, "set_attr"):
+                    _node_span.set_attr("error_category", cat)
                 logger.warning("foreach body node %s raised: %s", node.ref, exc)
                 fired_err.add(node.id)
                 steps.append(ToolCall(name=node.ref, kwargs=kwargs))

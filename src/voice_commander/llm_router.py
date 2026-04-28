@@ -13,12 +13,22 @@ from typing import Any
 import httpx
 
 from .config import LLMConfig
+from .observability.errors import classify as _classify_error
 from .plan import Plan, ToolCall
 from .registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
 _TEMPLATE_PATH = Path(__file__).resolve().parent / "prompt_template.txt"
+
+
+class LLMPlanError(Exception):
+    """Raised when the LLM router cannot produce a valid plan.
+
+    Covers: JSON parse failure, unknown tool in plan, retry budget exceeded,
+    non-200 response from LM Studio.
+    Classified as 'llm' by the error categorizer.
+    """
 
 _FALLBACK_TEMPLATE = """You are an intent matcher for a Windows voice assistant.
 

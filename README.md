@@ -88,6 +88,20 @@ uv run voice-commander
 .\start.ps1
 ```
 
+**Builder UI** (required to use `/page/builder`):
+
+```bash
+cd web/builder-ui && pnpm install && pnpm build
+```
+
+Or from the repo root using Make:
+
+```bash
+make builder-install && make builder-build
+```
+
+> The builder page serves a React SPA built to `src/voice_commander/web/static/builder/`. Without the build step, the page shows a friendly stub instead of the canvas. `pnpm` 9+ and Node 22+ are required.
+
 > **Restart daemon button.** The **Restart daemon** button in the web UI requires `start.ps1` (or `voice-commander-supervisor` directly). Running `uv run voice-commander` standalone is supported but the Restart button will return 503 in that mode.
 
 **CPU-only install.** Edit `config.toml`:

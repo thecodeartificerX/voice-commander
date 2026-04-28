@@ -16,10 +16,11 @@ import dataclasses
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from voice_commander.commands.graph import Graph
@@ -58,28 +59,32 @@ class BuilderContext:
 def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter:
     r = APIRouter()
 
-    @r.get("/page/builder", response_class=HTMLResponse)
-    def page_builder(
-        request: Request, graph: str | None = None, kind: str = "command"
-    ) -> HTMLResponse:
-        """``GET /page/builder`` — render the Drawflow graph editor.
+    _SPA_INDEX = (
+        Path(__file__).resolve().parent / "static" / "builder" / "index.html"
+    )
+    _SPA_STUB = (
+        "<html><body style='font-family:monospace;padding:2rem'>"
+        "<h2>Builder UI not built yet</h2>"
+        "<p>Run <code>pnpm install &amp;&amp; pnpm build</code> in "
+        "<code>web/builder-ui/</code>, or <code>make builder-install "
+        "&amp;&amp; make builder-build</code> from the repo root.</p>"
+        "</body></html>"
+    )
 
-        Optional query params: ``graph`` (name of existing graph to load) and
-        ``kind`` (``"command"`` or ``"workflow"``; defaults to ``"command"``).
+    @r.get("/page/builder")
+    def page_builder(
+        request: Request,  # noqa: ARG001
+        graph: str | None = None,  # noqa: ARG001
+        kind: str = "command",  # noqa: ARG001
+    ) -> FileResponse | HTMLResponse:
+        """``GET /page/builder`` — serve the React SPA (built to web/static/builder/).
+
+        If the build artefact is missing (fresh clone), returns a friendly stub HTML
+        instead of a 404 so contributors know what build step to run.
         """
-        existing = None
-        if graph is not None:
-            store = ctx.command_store if kind == "command" else ctx.workflow_store
-            graphs = store.load_all()
-            g = graphs.get(graph)
-            if g is None:
-                raise HTTPException(status_code=404, detail=f"graph {graph!r} not found")
-            existing = serialise_graph(g)
-        return templates.TemplateResponse(
-            request,
-            "page_builder.html",
-            {"existing": existing, "kind": kind},
-        )
+        if _SPA_INDEX.exists():
+            return FileResponse(_SPA_INDEX)
+        return HTMLResponse(content=_SPA_STUB, status_code=200)
 
     @r.get("/graph/palette")
     def palette() -> dict[str, Any]:
