@@ -17,9 +17,31 @@ description: |
   NOT for: Creating plans from scratch (use archon-idea-to-pr), quick fixes, standalone reviews.
 
 provider: claude
-# Queen-bee default: Opus orchestrates / decides.
-# Sonnet handles code-writing (implement-tasks, implement-fixes).
-model: opus
+# ─── MODEL STRATEGY (queen-bee division of labour) ──────────────────────────
+# Workflow default: sonnet
+#   Rationale: the heaviest loop-style work is code-writing (implement-tasks,
+#   implement-fixes) and read-heavy reasoning (confirm-plan, validate,
+#   finalize-pr). Sonnet handles all of these well at ~5× cheaper than Opus.
+#
+# Explicit Opus overrides (bounded-input, decision-heavy):
+#   code-review     — correctness review: subtle bugs, races, security
+#   error-handling  — adversarial review of error paths
+#   synthesize      — synthesis of 5 parallel review agents' findings
+#
+# Explicit Haiku overrides (extractive/mechanical):
+#   plan-setup      — read plan file, extract branch/scope (pure extraction)
+#   review-scope    — PR review-scope summary (mechanical)
+#   sync            — git sync status check (mechanical)
+#   test-coverage   — mechanical pattern matching
+#   comment-quality — mechanical pattern matching
+#   docs-impact     — mostly mechanical
+#   workflow-summary — final report-back / status summary
+#
+# No loop nodes present in this workflow, so the loop-node model-stripping
+# constraint (loop nodes inherit workflow default, per-node model: is stripped)
+# does not apply here.
+# ─────────────────────────────────────────────────────────────────────────────
+model: sonnet
 
 nodes:
   # ═══════════════════════════════════════════════════════════════════
@@ -29,6 +51,7 @@ nodes:
   - id: plan-setup
     command: archon-plan-setup
     context: fresh
+    model: haiku
 
   # ═══════════════════════════════════════════════════════════════════
   # PHASE 2: CONFIRM PLAN
@@ -38,6 +61,7 @@ nodes:
     command: archon-confirm-plan
     depends_on: [plan-setup]
     context: fresh
+    model: sonnet
 
   # ═══════════════════════════════════════════════════════════════════
   # PHASE 3: IMPLEMENT — grunt code-writing → Sonnet
@@ -57,6 +81,7 @@ nodes:
     command: archon-validate
     depends_on: [implement-tasks]
     context: fresh
+    model: sonnet
 
   # ═══════════════════════════════════════════════════════════════════
   # PHASE 5: FINALIZE PR
@@ -66,6 +91,7 @@ nodes:
     command: archon-finalize-pr
     depends_on: [validate]
     context: fresh
+    model: sonnet
 
   # ═══════════════════════════════════════════════════════════════════
   # PHASE 6: CODE REVIEW
@@ -75,42 +101,50 @@ nodes:
     command: archon-pr-review-scope
     depends_on: [finalize-pr]
     context: fresh
+    model: haiku
 
   - id: sync
     command: archon-sync-pr-with-main
     depends_on: [review-scope]
     context: fresh
+    model: haiku
 
   - id: code-review
     command: archon-code-review-agent
     depends_on: [sync]
     context: fresh
+    model: opus
 
   - id: error-handling
     command: archon-error-handling-agent
     depends_on: [sync]
     context: fresh
+    model: opus
 
   - id: test-coverage
     command: archon-test-coverage-agent
     depends_on: [sync]
     context: fresh
+    model: haiku
 
   - id: comment-quality
     command: archon-comment-quality-agent
     depends_on: [sync]
     context: fresh
+    model: haiku
 
   - id: docs-impact
     command: archon-docs-impact-agent
     depends_on: [sync]
     context: fresh
+    model: haiku
 
   - id: synthesize
     command: archon-synthesize-review
     depends_on: [code-review, error-handling, test-coverage, comment-quality, docs-impact]
     trigger_rule: one_success
     context: fresh
+    model: opus
 
   # ═══════════════════════════════════════════════════════════════════
   # PHASE 7: FIX REVIEW ISSUES — code-writing → Sonnet
@@ -130,3 +164,4 @@ nodes:
     command: archon-workflow-summary
     depends_on: [implement-fixes]
     context: fresh
+    model: haiku

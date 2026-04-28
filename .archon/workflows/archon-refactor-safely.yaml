@@ -16,9 +16,22 @@ description: |
   - Behavior verification confirms no logic changes after refactoring
 
 provider: claude
-# Queen-bee default: Opus plans / analyzes / verifies (read-only nodes inherit).
-# Sonnet does code-writing in execute-refactor.
-model: opus
+# ─── Queen-bee model strategy ────────────────────────────────────────────────
+# Default: sonnet  — covers read-heavy analysis, mechanical fixes, PR writing.
+#   analyze-impact  → sonnet: read-heavy file scanning; Opus would burn 5× tokens
+#                             per file token with no decision-quality gain.
+#   execute-refactor→ sonnet: explicit override kept — code execution from a plan.
+#   fix-failures    → sonnet: applies specific validation feedback; well-scoped.
+#   create-pr       → sonnet: writes PR description from existing artifacts.
+#
+# Explicit opus overrides on two bounded-input, decision-heavy nodes:
+#   plan-refactor   → opus:  architecture tradeoffs, module boundaries, ordering.
+#   verify-behavior → opus:  correctness-critical; wrong answer = silent regression.
+#
+# No loop nodes in this workflow, so the loop-node engine constraint (loop nodes
+# ignore per-node model: and inherit the workflow default) does not apply here.
+# ─────────────────────────────────────────────────────────────────────────────
+model: sonnet
 
 nodes:
   # ═══════════════════════════════════════════════════════════════
@@ -128,6 +141,7 @@ nodes:
   # ═══════════════════════════════════════════════════════════════
 
   - id: plan-refactor
+    model: opus
     prompt: |
       You are planning a safe refactoring. You must produce a precise, ordered plan
       that another agent will follow literally.
@@ -378,6 +392,7 @@ nodes:
   # ═══════════════════════════════════════════════════════════════
 
   - id: verify-behavior
+    model: opus
     prompt: |
       You are a code reviewer verifying that a refactoring preserved exact behavior.
       You can ONLY read files — you cannot make any changes.

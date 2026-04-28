@@ -1,0 +1,19 @@
+# MODEL TIER: sonnet (workflow default)
+# Rationale: archon-assist is the catch-all fallback for ambiguous, open-ended requests —
+# questions, debugging, exploration, one-off tasks. Sonnet handles this range well.
+# Opus is not justified here: requests are unbounded in type, casual in frequency, and
+# wrong-answer cost is low (user can re-ask). Haiku is too weak for the ambiguity.
+# Loop nodes inherit this default; bash nodes carry no model.
+
+name: archon-assist
+description: |
+  Use when: No other workflow matches the request.
+  Handles: Questions, debugging, exploration, one-off tasks, explanations, CI failures, general help.
+  Capability: Full Claude Code agent with all tools available.
+  Note: Will inform user when assist mode is used for tracking.
+
+default_model: sonnet
+
+nodes:
+  - id: assist
+    command: archon-assist

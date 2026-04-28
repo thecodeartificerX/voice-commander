@@ -1,0 +1,27 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# MODEL ASSIGNMENT STRATEGY — queen-bee division-of-labour philosophy
+#
+# This workflow delegates to the `archon-resolve-merge-conflicts` slash command
+# via a single command node. There are no model-bearing nodes in the workflow
+# itself, so per-node model overrides do not apply here — the slash command
+# implementation is what executes the actual conflict resolution work.
+#
+# If you want to change model strategy for conflict resolution, edit the
+# slash command (`archon-resolve-merge-conflicts`), not this file.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: archon-resolve-conflicts
+description: |
+  Use when: PR has merge conflicts that need resolution.
+  Triggers: "resolve conflicts", "fix merge conflicts", "rebase this PR", "resolve this",
+            "fix conflicts", "merge conflicts", "rebase and fix".
+  Does: Fetches latest base branch -> analyzes conflicts -> auto-resolves simple conflicts ->
+        presents options for complex conflicts -> commits and pushes resolution.
+  NOT for: PRs without conflicts, general rebasing without conflicts, squashing commits.
+
+  This workflow helps resolve merge conflicts by analyzing the conflicting changes,
+  automatically resolving where intent is clear, and presenting options for complex conflicts.
+
+nodes:
+  - id: resolve
+    command: archon-resolve-merge-conflicts

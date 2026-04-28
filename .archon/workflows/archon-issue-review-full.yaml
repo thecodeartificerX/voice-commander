@@ -1,0 +1,152 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# MODEL ASSIGNMENT STRATEGY — queen-bee division-of-labour philosophy
+#
+# Workflow default: sonnet  (Opus is the ESCALATION tier, not the default)
+#
+# Per-node overrides:
+#   OPUS  — code-review, error-handling, synthesize
+#           Bounded diff/report input; highest wrong-answer cost
+#           (missed bugs, races, security holes, incorrect synthesis). Opus justified.
+#
+#   SONNET (explicit) — investigate, implement, sync, test-coverage,
+#                       implement-fixes, summary
+#           investigate:     read-heavy bug RCA — read-heavy, not decision-heavy → Sonnet.
+#           implement:       grunt code-writing from investigation → Sonnet.
+#           sync:            rebase orchestration needs reasoning, not Opus depth → Sonnet.
+#           test-coverage:   pattern matching with judgment; mid-tier correct → Sonnet.
+#           implement-fixes: writing code to fix CRITICAL/HIGH findings → Sonnet.
+#           summary:         writing the final report from bounded artifacts → Sonnet.
+#
+#   HAIKU — review-scope, comment-quality, docs-impact
+#           review-scope:    PR scope summary — mechanical extraction → Haiku.
+#           comment-quality: keyword/pattern scan of comments — low cost → Haiku.
+#           docs-impact:     docs coverage check — mechanical scan → Haiku.
+#
+#   BASH  — no model (Bash nodes ignore model: entirely)
+#
+# LOOP NODE CONSTRAINT: Loop nodes IGNORE per-node model: at runtime and inherit
+# the workflow default. Do NOT add model: to loop nodes.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: archon-issue-review-full
+description: |
+  Use when: User wants a FULL, COMPREHENSIVE fix + review pipeline for a GitHub issue.
+  Triggers: "full review", "comprehensive fix", "fix with full review", "deep review", "issue review full".
+  NOT for: Simple issue fixes (use archon-fix-github-issue instead),
+           questions about issues, CI failures, PR reviews, general exploration.
+
+  Full workflow:
+  1. Investigate issue -> root cause analysis, implementation plan
+  2. Implement fix -> code changes, tests, PR creation
+  3. Comprehensive review -> 5 parallel agents with scope awareness
+  4. Fix review issues -> address CRITICAL/HIGH findings
+  5. Final summary -> decision matrix, follow-up recommendations
+
+provider: claude
+model: sonnet
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════════
+  # PHASE 1: INVESTIGATE
+  # Read-heavy bug RCA — reasoning over codebase, not bounded decision → Sonnet
+  # ═══════════════════════════════════════════════════════════════════
+
+  - id: investigate
+    command: archon-investigate-issue
+    model: sonnet
+
+  # ═══════════════════════════════════════════════════════════════════
+  # PHASE 2: IMPLEMENT
+  # Grunt code-writing from investigation plan → Sonnet
+  # NOTE: if this is a loop node at runtime, model: is ignored; default (sonnet) applies.
+  # ═══════════════════════════════════════════════════════════════════
+
+  - id: implement
+    command: archon-implement-issue
+    depends_on: [investigate]
+    context: fresh
+    model: sonnet
+
+  # ═══════════════════════════════════════════════════════════════════
+  # PHASE 3: CODE REVIEW
+  # ═══════════════════════════════════════════════════════════════════
+
+  - id: review-scope
+    command: archon-pr-review-scope
+    depends_on: [implement]
+    context: fresh
+    model: haiku
+    # Mechanical extraction: summarise what files/areas the PR touches → Haiku.
+
+  - id: sync
+    command: archon-sync-pr-with-main
+    depends_on: [review-scope]
+    context: fresh
+    model: sonnet
+    # Rebase orchestration needs reasoning; Sonnet is sufficient.
+
+  - id: code-review
+    command: archon-code-review-agent
+    depends_on: [sync]
+    context: fresh
+    model: opus
+    # Bounded diff input, highest wrong-answer cost (bugs, races, security). Opus justified.
+
+  - id: error-handling
+    command: archon-error-handling-agent
+    depends_on: [sync]
+    context: fresh
+    model: opus
+    # Bounded diff input, subtle error-path bugs can be catastrophic. Opus justified.
+
+  - id: test-coverage
+    command: archon-test-coverage-agent
+    depends_on: [sync]
+    context: fresh
+    model: sonnet
+    # Pattern matching with judgment — mid-tier is the right call.
+
+  - id: comment-quality
+    command: archon-comment-quality-agent
+    depends_on: [sync]
+    context: fresh
+    model: haiku
+    # Mechanical scan (keyword/pattern matching). Low wrong-answer cost. Haiku.
+
+  - id: docs-impact
+    command: archon-docs-impact-agent
+    depends_on: [sync]
+    context: fresh
+    model: haiku
+    # Mechanical scan (docs coverage check). Low wrong-answer cost. Haiku.
+
+  - id: synthesize
+    command: archon-synthesize-review
+    depends_on: [code-review, error-handling, test-coverage, comment-quality, docs-impact]
+    trigger_rule: one_success
+    context: fresh
+    model: opus
+    # Decision node: synthesises all 5 agent findings into a final verdict.
+    # Input is bounded (5 agent reports). Wrong-answer cost is high. Opus justified.
+
+  # ═══════════════════════════════════════════════════════════════════
+  # PHASE 4: FIX REVIEW ISSUES
+  # Auto-fix CRITICAL/HIGH issues by writing code → Sonnet
+  # ═══════════════════════════════════════════════════════════════════
+
+  - id: implement-fixes
+    command: archon-implement-review-fixes
+    depends_on: [synthesize]
+    context: fresh
+    model: sonnet
+
+  # ═══════════════════════════════════════════════════════════════════
+  # PHASE 5: FINAL SUMMARY
+  # Writing final report + go/fix call from bounded artifacts → Sonnet
+  # ═══════════════════════════════════════════════════════════════════
+
+  - id: summary
+    command: archon-workflow-summary
+    depends_on: [implement-fixes]
+    context: fresh
+    model: sonnet

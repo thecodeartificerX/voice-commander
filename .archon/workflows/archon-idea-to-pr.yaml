@@ -18,9 +18,25 @@ description: |
   NOT for: Executing existing plans (use archon-plan-to-pr), quick fixes, standalone reviews.
 
 provider: claude
-# Queen-bee default: Opus orchestrates / plans / decides.
-# Sonnet does code-writing (implement-tasks, implement-fixes).
-model: opus
+
+# ── MODEL STRATEGY (queen-bee division of labour) ──────────────────────────
+# Default: sonnet — handles all read-heavy reasoning, code-writing, validation,
+#   PR description writing, and anything well-scoped.
+#
+# Explicit overrides applied per node:
+#   opus  → create-plan (architecture tradeoffs, bounded input)
+#           code-review, error-handling (correctness/security, wrong-answer cost high)
+#           synthesize (bounded-input multi-agent synthesis)
+#   haiku → review-scope (extractive: PR scope/size)
+#           test-coverage, comment-quality, docs-impact (mechanical pattern matching)
+#           workflow-summary (status report-back)
+#   sonnet (explicit, for documentation clarity) → implement-tasks, implement-fixes
+#
+# LOOP NODE CONSTRAINT: if Archon strips model: from loop-type nodes,
+#   those nodes inherit this workflow-level default (sonnet). The heaviest
+#   loop in this workflow is implement-tasks (code-writing) — sonnet is correct.
+# ───────────────────────────────────────────────────────────────────────────
+model: sonnet
 
 nodes:
   # ═══════════════════════════════════════════════════════════════════
@@ -30,6 +46,7 @@ nodes:
   - id: create-plan
     command: archon-create-plan
     context: fresh
+    model: opus  # architecture tradeoffs, bounded input — wrong-answer cost high
 
   # ═══════════════════════════════════════════════════════════════════
   # PHASE 1: SETUP
@@ -85,6 +102,7 @@ nodes:
     command: archon-pr-review-scope
     depends_on: [finalize-pr]
     context: fresh
+    model: haiku  # extractive: classify PR scope/size, pull numbers/IDs
 
   - id: sync
     command: archon-sync-pr-with-main
@@ -95,32 +113,38 @@ nodes:
     command: archon-code-review-agent
     depends_on: [sync]
     context: fresh
+    model: opus  # correctness, subtle bugs, races, security — wrong-answer cost high
 
   - id: error-handling
     command: archon-error-handling-agent
     depends_on: [sync]
     context: fresh
+    model: opus  # safety/correctness review — wrong-answer cascades downstream
 
   - id: test-coverage
     command: archon-test-coverage-agent
     depends_on: [sync]
     context: fresh
+    model: haiku  # mechanical pattern matching — identify uncovered paths
 
   - id: comment-quality
     command: archon-comment-quality-agent
     depends_on: [sync]
     context: fresh
+    model: haiku  # mechanical scan — comment presence/clarity check
 
   - id: docs-impact
     command: archon-docs-impact-agent
     depends_on: [sync]
     context: fresh
+    model: haiku  # mechanical scan — identify docs that need updating
 
   - id: synthesize
     command: archon-synthesize-review
     depends_on: [code-review, error-handling, test-coverage, comment-quality, docs-impact]
     trigger_rule: one_success
     context: fresh
+    model: opus  # bounded-input synthesis over existing agent findings — decision-heavy
 
   # ═══════════════════════════════════════════════════════════════════
   # PHASE 7: FIX REVIEW ISSUES — code-writing → Sonnet
@@ -140,3 +164,4 @@ nodes:
     command: archon-workflow-summary
     depends_on: [implement-fixes]
     context: fresh
+    model: haiku  # status report-back / final summary — extractive, not decision-heavy

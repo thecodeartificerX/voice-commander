@@ -18,10 +18,26 @@ description: |
   9. Reports results back to the GitHub issue with follow-up suggestions
 
 provider: claude
-# Queen-bee default: Opus orchestrates / decides / plans.
-# Sonnet does grunt code-writing (implement node).
-# Haiku does classify-only nodes.
-model: opus
+# ── Queen-bee model strategy ─────────────────────────────────────────────────
+# Default: sonnet  (Opus is the ESCALATION tier, not the default)
+#
+# Per-node overrides:
+#   opus  → plan, code-review, error-handling, synthesize
+#           (bounded-input, decision-heavy: architecture, correctness, synthesis)
+#   haiku → extract-issue-number, web-research, review-scope, comment-quality,
+#           docs-impact, report
+#           (extractive / mechanical / summary tasks)
+#   sonnet (explicit or via default) → investigate, validate, create-pr,
+#           test-coverage, implement, self-fix, simplify
+#           (read-heavy reasoning, code-writing, well-scoped tasks)
+#
+# LOOP-NODE CONSTRAINT: Archon strips per-node `model:` from loop nodes at load
+# time (logged as `loop_node_ai_fields_ignored`). Loop nodes (implement, self-fix,
+# simplify) inherit the workflow-level default. With default=sonnet they get the
+# correct effective model; explicit `model: sonnet` on those nodes is left as
+# documentation but has no runtime effect.
+# ─────────────────────────────────────────────────────────────────────────────
+model: sonnet
 
 nodes:
   # ═══════════════════════════════════════════════════════════════
@@ -29,6 +45,7 @@ nodes:
   # ═══════════════════════════════════════════════════════════════
 
   - id: extract-issue-number
+    model: haiku
     prompt: |
       Find the GitHub issue number for this request.
 
@@ -94,6 +111,7 @@ nodes:
     command: archon-web-research
     depends_on: [classify]
     context: fresh
+    model: haiku
 
   # ═══════════════════════════════════════════════════════════════
   # PHASE 3: INVESTIGATE (bugs) / PLAN (features)
@@ -104,12 +122,14 @@ nodes:
     depends_on: [classify, web-research]
     when: "$classify.output.issue_type == 'bug'"
     context: fresh
+    model: sonnet
 
   - id: plan
     command: archon-create-plan
     depends_on: [classify, web-research]
     when: "$classify.output.issue_type != 'bug'"
     context: fresh
+    model: opus
 
   # Bridge: ensure investigation.md exists for the implement step
   # archon-fix-issue reads from $ARTIFACTS_DIR/investigation.md
@@ -146,6 +166,7 @@ nodes:
     command: archon-validate
     depends_on: [implement]
     context: fresh
+    model: sonnet
 
   # ═══════════════════════════════════════════════════════════════
   # PHASE 6: CREATE DRAFT PR
@@ -185,6 +206,7 @@ nodes:
          ```
     depends_on: [validate]
     context: fresh
+    model: sonnet
 
   # ═══════════════════════════════════════════════════════════════
   # PHASE 7: REVIEW
@@ -194,6 +216,7 @@ nodes:
     command: archon-pr-review-scope
     depends_on: [create-pr]
     context: fresh
+    model: haiku
 
   - id: review-classify
     prompt: |
@@ -254,30 +277,35 @@ nodes:
     command: archon-code-review-agent
     depends_on: [review-classify]
     context: fresh
+    model: opus
 
   - id: error-handling
     command: archon-error-handling-agent
     depends_on: [review-classify]
     when: "$review-classify.output.run_error_handling == 'true'"
     context: fresh
+    model: opus
 
   - id: test-coverage
     command: archon-test-coverage-agent
     depends_on: [review-classify]
     when: "$review-classify.output.run_test_coverage == 'true'"
     context: fresh
+    model: sonnet
 
   - id: comment-quality
     command: archon-comment-quality-agent
     depends_on: [review-classify]
     when: "$review-classify.output.run_comment_quality == 'true'"
     context: fresh
+    model: haiku
 
   - id: docs-impact
     command: archon-docs-impact-agent
     depends_on: [review-classify]
     when: "$review-classify.output.run_docs_impact == 'true'"
     context: fresh
+    model: haiku
 
   # ═══════════════════════════════════════════════════════════════
   # PHASE 8: SYNTHESIZE + SELF-FIX
@@ -289,6 +317,7 @@ nodes:
     depends_on: [code-review, error-handling, test-coverage, comment-quality, docs-impact]
     trigger_rule: one_success
     context: fresh
+    model: opus
 
   - id: self-fix
     command: archon-self-fix-all
@@ -314,3 +343,4 @@ nodes:
     command: archon-issue-completion-report
     depends_on: [simplify]
     context: fresh
+    model: haiku

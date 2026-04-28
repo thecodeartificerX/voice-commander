@@ -1,0 +1,93 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# MODEL ASSIGNMENT STRATEGY — queen-bee division-of-labour philosophy
+#
+# Workflow default: claude-sonnet-4-5  (safe mid-tier baseline)
+#
+# Node overrides:
+#   OPUS  — code-review, error-handling, synthesize
+#           Justification: bounded input (the diff), high wrong-answer cost
+#           (missed bugs / races / security holes). Opus is justified here.
+#
+#   SONNET — sync, test-coverage, implement-fixes
+#           sync:            rebase orchestration needs reasoning but not Opus-level depth.
+#           test-coverage:   pattern matching with judgment; mid-tier is the right call.
+#           implement-fixes: writing code for auto-fix; Sonnet writes good code fast.
+#
+#   HAIKU  — comment-quality, docs-impact
+#           Both are mechanical scans (keyword/pattern matching).
+#           Low wrong-answer cost — Haiku is the right tier.
+#
+#   BASH   — scope (no model — Bash nodes ignore model: entirely)
+#
+# LOOP NODE CONSTRAINT: Loop nodes IGNORE per-node model: and inherit the
+# workflow default. Do NOT add model: to any loop node.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: archon-comprehensive-pr-review
+description: |
+  Use when: User wants a comprehensive code review of a pull request with automatic fixes.
+  Triggers: "review this PR", "review PR #123", "comprehensive review", "full PR review",
+            "review and fix", "check this PR", "code review".
+  Does: Syncs PR with main (rebase if needed) -> runs 5 specialized review agents in parallel ->
+        synthesizes findings -> auto-fixes CRITICAL/HIGH issues -> reports remaining issues.
+  NOT for: Quick questions about a PR, checking CI status, simple "what changed" queries.
+
+  This workflow produces artifacts in $ARTIFACTS_DIR/../reviews/pr-{number}/ and posts
+  a comprehensive review comment to the GitHub PR.
+
+model: claude-sonnet-4-5
+
+nodes:
+  - id: scope
+    command: archon-pr-review-scope
+    # Bash node — no model: (Bash nodes ignore model directives)
+
+  - id: sync
+    command: archon-sync-pr-with-main
+    depends_on: [scope]
+    model: claude-sonnet-4-5
+    # Rebase orchestration needs reasoning; Sonnet is sufficient.
+
+  - id: code-review
+    command: archon-code-review-agent
+    depends_on: [sync]
+    model: claude-opus-4-5
+    # Bounded diff input, highest wrong-answer cost (bugs, races, security). Opus justified.
+
+  - id: error-handling
+    command: archon-error-handling-agent
+    depends_on: [sync]
+    model: claude-opus-4-5
+    # Bounded diff input, subtle error-path bugs can be catastrophic. Opus justified.
+
+  - id: test-coverage
+    command: archon-test-coverage-agent
+    depends_on: [sync]
+    model: claude-sonnet-4-5
+    # Pattern matching with judgment — mid-tier is the right call.
+
+  - id: comment-quality
+    command: archon-comment-quality-agent
+    depends_on: [sync]
+    model: claude-haiku-4-5
+    # Mechanical scan (keyword/pattern matching). Low wrong-answer cost. Haiku.
+
+  - id: docs-impact
+    command: archon-docs-impact-agent
+    depends_on: [sync]
+    model: claude-haiku-4-5
+    # Mechanical scan (docs coverage check). Low wrong-answer cost. Haiku.
+
+  - id: synthesize
+    command: archon-synthesize-review
+    depends_on: [code-review, error-handling, test-coverage, comment-quality, docs-impact]
+    trigger_rule: one_success
+    model: claude-opus-4-5
+    # Decision node: synthesises all 5 agent findings into final verdict.
+    # Input is bounded (5 agent reports). Wrong-answer cost is high. Opus justified.
+
+  - id: implement-fixes
+    command: archon-implement-review-fixes
+    depends_on: [synthesize]
+    model: claude-sonnet-4-5
+    # Auto-fix CRITICAL/HIGH issues by writing code. Sonnet writes good code fast.

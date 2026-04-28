@@ -6,15 +6,31 @@ description: |
   NOT for: Creating plans (plans should be created separately), bug fixes, code reviews.
 
 provider: claude
-# Queen-bee default: Opus. Code-writing nodes (implement) override to Sonnet.
-model: opus
+# ── Queen-bee model strategy ──────────────────────────────────────────────────
+# Workflow default: sonnet
+#   Rationale: the heaviest node is `implement` (code-writing from a plan).
+#   Sonnet handles well-scoped implementation correctly and is ~5× cheaper than
+#   Opus per token — critical when the implement loop pulls many file tokens.
+#
+# Loop-node constraint: Archon strips `model:` from loop nodes at load time
+#   (field tagged loop_node_ai_fields_ignored). Loop nodes inherit the workflow-
+#   level default unconditionally. `implement` is a loop node, so its effective
+#   model is this workflow default → sonnet is the right default.
+#
+# Per-node overrides:
+#   create-pr → haiku   (mechanical: template-fill PR body from existing
+#                        artifacts; no reasoning required)
+# ─────────────────────────────────────────────────────────────────────────────
+model: sonnet
 
 nodes:
   - id: implement
     command: archon-implement
-    model: sonnet
+    # Loop node — model: field is ignored by Archon loader.
+    # Effective model = workflow default (sonnet). Do NOT add model: here.
 
   - id: create-pr
     command: archon-create-pr
     depends_on: [implement]
     context: fresh
+    model: haiku  # mechanical: writes PR description from existing artifacts

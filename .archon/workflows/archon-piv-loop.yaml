@@ -17,10 +17,25 @@ description: |
   Input: A description of what to build, a path to an existing plan, or a GitHub issue number.
 
 provider: claude
-# Loop nodes ignore per-node `model:` (loader strips it as ai_fields_ignored).
-# So workflow-level model = what the implement/refine/fix-feedback LOOPS use.
-# Goal: implement loop = Sonnet (grunt code). Set workflow default = sonnet.
-# Decision-heavy non-loop nodes (create-plan, code-review, finalize) override → opus.
+# ─── Model Assignment Strategy (queen-bee tier model) ───────────────────────
+# Workflow default = sonnet. This is what ALL loop nodes run on because the
+# engine loader strips per-node `model:` from loop nodes (ai_fields_ignored).
+# Never change the workflow default — implement is the heaviest loop and
+# Sonnet is the correct tier for "write code from a plan" grunt work.
+#
+# Non-loop node assignments:
+#   create-plan   → opus   (bounded input, big architecture decision)
+#   code-review   → opus   (correctness reasoning — subtle bugs, races, security)
+#   finalize      → sonnet (mechanical: push + create PR + format summary)
+#
+# Loop nodes (engine enforces workflow default = sonnet):
+#   explore       → sonnet (loop, inherits workflow default)
+#   refine-plan   → sonnet (loop, inherits workflow default)
+#   implement     → sonnet (loop, inherits workflow default)
+#   fix-feedback  → sonnet (loop, inherits workflow default)
+#
+# Bash nodes (implement-setup): no model field — skip.
+# ─────────────────────────────────────────────────────────────────────────────
 model: sonnet
 interactive: true
 
@@ -702,7 +717,7 @@ nodes:
   # ═══════════════════════════════════════════════════════════════
 
   - id: finalize
-    model: opus
+    model: sonnet
     depends_on: [fix-feedback]
     context: fresh
     prompt: |

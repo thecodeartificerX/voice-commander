@@ -13,10 +13,27 @@ description: |
   Accepts: An idea description, a path to an existing prd.md, or a directory with prd.md + prd.json
 
 provider: claude
-# Loop nodes ignore per-node `model:` — implement loop uses workflow-level only.
-# Goal: implement loop = Sonnet (grunt code). Workflow default = sonnet.
-# Planning/decision nodes (generate-prd, report) override → opus.
-# detect-input stays haiku (classification).
+# ─── MODEL STRATEGY ────────────────────────────────────────────────────────────
+# Queen-bee philosophy: Opus = escalation tier only. Sonnet = default reasoning.
+# Haiku = extractive / mechanical / classification tasks.
+#
+# LOOP NODE CONSTRAINT: per-node `model:` is stripped on loop nodes by the
+# Archon loader. The `implement` loop always inherits the workflow-level default.
+# Workflow default = sonnet (implements one story per iteration — grunt coding).
+#
+# Node assignments:
+#   detect-input   → haiku   — pure classification + path extraction (mechanical)
+#   generate-prd   → opus    — bounded-input plan creation; architecture/story
+#                              tradeoffs where a wrong answer cascades into all
+#                              subsequent loop iterations
+#   validate-prd   → (bash)  — no model
+#   implement      → sonnet  — loop node; inherits workflow default; read-heavy
+#                              reasoning + code writing (typical bugs well within
+#                              Sonnet's capability; Opus overhead ~5× not justified)
+#   report         → haiku   — extractive: reads prd.json + progress.txt + git
+#                              log and formats a factual table; no synthesis of
+#                              competing tradeoffs required
+# ───────────────────────────────────────────────────────────────────────────────
 model: sonnet
 
 nodes:
@@ -661,7 +678,7 @@ nodes:
 
   - id: report
     depends_on: [implement]
-    model: opus
+    model: haiku
     prompt: |
       # Completion Report
 
