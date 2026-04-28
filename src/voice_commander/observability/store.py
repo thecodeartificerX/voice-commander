@@ -155,37 +155,67 @@ class Store:
     def migrate(self) -> None:
         """Idempotently apply schema migrations to an existing database.
 
-        v1 → v2: add error_category column to runs and spans.
+        v1 → v2: add ``error_category`` (runs+spans) and ``error_summary`` (runs).
+        Wrapped in an explicit transaction so a partial failure (e.g. process
+        kill mid-migration) rolls back; on the next run, ``"duplicate column"``
+        ``OperationalError`` from a previously-applied ALTER is swallowed so
+        the migration is safely retryable. (B-H4)
         """
         conn = self._connect()
         try:
-            # Check runs table for error_category
             cols_runs = {
                 row[1]
                 for row in conn.execute("PRAGMA table_info(runs)").fetchall()
             }
-            if "error_category" not in cols_runs:
-                conn.execute("ALTER TABLE runs ADD COLUMN error_category TEXT NULL")
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_runs_category ON runs(error_category, started_at DESC)"
-                )
-            if "error_summary" not in cols_runs:
-                conn.execute("ALTER TABLE runs ADD COLUMN error_summary TEXT NULL")
-
-            # Check spans table for error_category
             cols_spans = {
                 row[1]
                 for row in conn.execute("PRAGMA table_info(spans)").fetchall()
             }
-            if "error_category" not in cols_spans:
-                conn.execute("ALTER TABLE spans ADD COLUMN error_category TEXT NULL")
-
-            # Bump schema_version on existing runs that are version 1
-            conn.execute(
-                "UPDATE runs SET schema_version=2 WHERE schema_version=1"
-            )
+            conn.execute("BEGIN")
+            try:
+                if "error_category" not in cols_runs:
+                    self._safe_alter(
+                        conn,
+                        "ALTER TABLE runs ADD COLUMN error_category TEXT NULL",
+                    )
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_runs_category "
+                        "ON runs(error_category, started_at DESC)"
+                    )
+                if "error_summary" not in cols_runs:
+                    self._safe_alter(
+                        conn,
+                        "ALTER TABLE runs ADD COLUMN error_summary TEXT NULL",
+                    )
+                if "error_category" not in cols_spans:
+                    self._safe_alter(
+                        conn,
+                        "ALTER TABLE spans ADD COLUMN error_category TEXT NULL",
+                    )
+                conn.execute(
+                    "UPDATE runs SET schema_version=2 WHERE schema_version=1"
+                )
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            else:
+                conn.execute("COMMIT")
         finally:
             conn.close()
+
+    @staticmethod
+    def _safe_alter(conn: sqlite3.Connection, ddl: str) -> None:
+        """Run an ALTER, swallowing only ``duplicate column`` errors.
+
+        Lets the migration retry safely after a previous partial run that
+        committed some columns before crashing.
+        """
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" in str(exc).lower():
+                return
+            raise
 
     def _open_or_recreate(self) -> None:
         try:

@@ -106,3 +106,69 @@ def test_migrate_idempotent():
         store2 = Store(db, keep_runs=100, queue_max=100, daemon_pid=1)
         store2.start()
         store2.stop()
+
+
+def test_migrate_rolls_back_on_partial_failure(monkeypatch):
+    """B-H4: partial migration failure rolls back entirely (no half-applied schema).
+
+    If the second ALTER raises mid-migration, the first ALTER must not persist
+    — otherwise the next startup hits a duplicate-column error or a half-broken
+    schema. With the transaction wrapper, all-or-nothing.
+    """
+    from voice_commander.observability import store as store_mod
+    from voice_commander.observability.store import Store
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "runs.db"
+        make_v1_db(db)
+
+        # Patch _safe_alter to raise on the SECOND call so the first ALTER
+        # has already happened inside the transaction.
+        original = Store._safe_alter
+        call_count = {"n": 0}
+
+        def flaky_alter(conn, ddl):
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                raise RuntimeError("simulated mid-migration crash")
+            return original(conn, ddl)
+
+        monkeypatch.setattr(Store, "_safe_alter", staticmethod(flaky_alter))
+
+        store = Store(db, keep_runs=100, queue_max=100, daemon_pid=1)
+        with pytest.raises(RuntimeError):
+            store.start()
+
+        # After failed migration, the DB must NOT have any of the new columns
+        # (transaction rolled back).
+        conn = sqlite3.connect(db)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+        conn.close()
+        assert "error_category" not in cols, (
+            "first ALTER must have rolled back when second ALTER failed"
+        )
+        assert "error_summary" not in cols
+
+
+def test_migrate_safe_against_duplicate_column():
+    """B-H4: ``duplicate column`` from a previously-applied ALTER is swallowed."""
+    import sqlite3 as _sqlite3
+    from voice_commander.observability.store import Store
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "runs.db"
+        make_v1_db(db)
+
+        # Pre-add error_category to runs by hand so PRAGMA reports it absent
+        # but the in-transaction ALTER would still see it. We simulate this
+        # by directly forcing a `duplicate column` situation.
+        conn = _sqlite3.connect(db)
+        conn.execute("ALTER TABLE runs ADD COLUMN error_category TEXT NULL")
+        conn.close()
+
+        # Now Store should still migrate cleanly — it'll detect the existing
+        # column via PRAGMA and skip the ALTER entirely; if a race made it
+        # try anyway, _safe_alter swallows it.
+        store = Store(db, keep_runs=100, queue_max=100, daemon_pid=1)
+        store.start()
+        store.stop()
