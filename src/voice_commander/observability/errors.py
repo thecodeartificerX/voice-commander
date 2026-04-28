@@ -9,9 +9,21 @@ Four buckets:
 
 from __future__ import annotations
 
-from typing import Literal
+from enum import Enum
 
-Category = Literal["program", "wiring", "llm", "infra"]
+
+class Category(str, Enum):
+    """4-bucket runtime error taxonomy.
+
+    Inherits from ``str`` so ``Category.PROGRAM == "program"`` is True and
+    JSON / SQLite serialisation produces the bare lowercase strings — keeping
+    the on-disk wire format unchanged.
+    """
+
+    PROGRAM = "program"
+    WIRING = "wiring"
+    LLM = "llm"
+    INFRA = "infra"
 
 
 # Exceptions that classify as 'wiring' — imported lazily to avoid circular imports
@@ -56,10 +68,10 @@ def classify(exc: BaseException, *, where: str = "") -> Category:
     type_name = type(exc).__name__
 
     if type_name in _WIRING_TYPES:
-        return "wiring"
+        return Category.WIRING
 
     if type_name in _LLM_TYPES:
-        return "llm"
+        return Category.LLM
 
     # Any class defined in the httpx package is an infra error — covers
     # ConnectError, ConnectTimeout, ReadTimeout, RemoteProtocolError, etc.
@@ -68,14 +80,14 @@ def classify(exc: BaseException, *, where: str = "") -> Category:
     # program bugs.
     module = type(exc).__module__ or ""
     if module == "httpx" or module.startswith("httpx."):
-        return "infra"
+        return Category.INFRA
 
     if type_name in _INFRA_STDLIB_TYPE_NAMES:
-        return "infra"
+        return Category.INFRA
 
     # Raw OSError from the daemon's audio path is infra (PortAudio device
     # gone, mic unplugged). Anywhere else it's a program bug.
     if where == "daemon" and type(exc) is OSError:
-        return "infra"
+        return Category.INFRA
 
-    return "program"
+    return Category.PROGRAM

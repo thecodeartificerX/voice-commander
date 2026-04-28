@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from voice_commander.commands.graph import Edge, Graph, Node
 from voice_commander.commands.graph_topo import CycleError, topo_sort
-from voice_commander.observability.errors import classify as _classify_error
+from voice_commander.observability.errors import Category, classify as _classify_error
 from voice_commander.plan import PlanOutcome, PlanStatus, ToolCall
 from voice_commander.registry import ToolRegistry
 
@@ -141,7 +141,7 @@ class GraphRuntime:
                         kwargs = self._resolve_kwargs(node, graph.edges, port_values)
                     except WiringError as exc:
                         if _wire_span is not None and hasattr(_wire_span, "set_error_category"):
-                            _wire_span.set_error_category("wiring")
+                            _wire_span.set_error_category(Category.WIRING)
                         raise
             except WiringError as exc:
                 logger.warning("graph %r node %r: %s", graph.name, node.id, exc)

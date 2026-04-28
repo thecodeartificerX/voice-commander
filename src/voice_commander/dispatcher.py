@@ -6,7 +6,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from .feedback import FeedbackSink
-from .observability.errors import classify as _classify_error
+from .observability.errors import Category, classify as _classify_error
 from .plan import Plan, PlanOutcome, PlanStatus
 from .registry import ToolRegistry
 
@@ -75,7 +75,14 @@ class Dispatcher:
                         f"plan:unknown_tool:{step.name}",
                         ValueError(f"Tool '{step.name}' not found in registry"),
                     )
-                    self._publish("tool_error", {"name": step.name, "msg": "unknown tool", "error_category": "wiring"})
+                    self._publish(
+                        "tool_error",
+                        {
+                            "name": step.name,
+                            "msg": "unknown tool",
+                            "error_category": Category.WIRING,
+                        },
+                    )
                     if failed_index is None:
                         status = "error"
                         failed_index = i

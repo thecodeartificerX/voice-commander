@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 
 from .config import LLMConfig
-from .observability.errors import classify as _classify_error
+from .observability.errors import Category, classify as _classify_error
 from .plan import Plan, ToolCall
 from .registry import ToolRegistry
 
@@ -302,7 +302,7 @@ class LLMRouter:
                         _llm_span.set_attr("error_type", "LLMPlanError")
                         _llm_span.set_attr("error_msg", str(exc)[:512])
                         if hasattr(_llm_span, "set_error_category"):
-                            _llm_span.set_error_category("llm")
+                            _llm_span.set_error_category(Category.LLM)
                 logger.warning("llm_router: LLMPlanError: %s", exc)
                 raise
             step_count = len(plan.steps) if plan else 0
