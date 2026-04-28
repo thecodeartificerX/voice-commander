@@ -7,12 +7,12 @@ from pathlib import Path
 import pytest
 
 from voice_commander.observability.store import (
+    _CIRCUIT_COOLDOWN_S,
+    _CIRCUIT_OPEN_THRESHOLD,
     RunRecord,
     RunUpdate,
     SpanRecord,
     Store,
-    _CIRCUIT_COOLDOWN_S,
-    _CIRCUIT_OPEN_THRESHOLD,
 )
 
 

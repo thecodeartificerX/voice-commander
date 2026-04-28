@@ -453,9 +453,7 @@ def create_app(
                 transcript_like=q or None,
             )
             return HTMLResponse(
-                "".join(
-                    templates.get_template("_runs_row.html").render({"r": r}) for r in runs
-                )
+                "".join(templates.get_template("_runs_row.html").render({"r": r}) for r in runs)
             )
 
         @app.get("/page/runs/{run_id}", response_class=HTMLResponse)

@@ -191,7 +191,10 @@ def test_step_counter_per_run_handle(store: Store, bus: EventBus):
 
 
 def test_step_counter_thread_isolated(store: Store, bus: EventBus):
-    """M1: concurrent runs on separate threads get independent step counts (ContextVar isolation)."""
+    """M1: concurrent runs on separate threads get independent step counts.
+
+    Validates ContextVar isolation between threads.
+    """
     import threading
 
     tracer = Tracer(store=store, bus=bus, enabled=True)
