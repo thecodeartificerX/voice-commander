@@ -45,6 +45,15 @@ describe('runsStore', () => {
     expect(runs[1]?.transcript).toBe('first')
   })
 
+  it('dedupes run.appended on identical run_id (F-C2)', () => {
+    const r = makeRun({ run_id: 'dup-1', transcript: 'once' })
+    useRunsStore.getState().onSseEvent('run.appended', r)
+    useRunsStore.getState().onSseEvent('run.appended', { ...r })
+
+    const matches = useRunsStore.getState().runs.filter((x) => x.run_id === 'dup-1')
+    expect(matches).toHaveLength(1)
+  })
+
   it('caps runs at 200', () => {
     const runs = Array.from({ length: 200 }, () => makeRun())
     useRunsStore.setState({ runs })

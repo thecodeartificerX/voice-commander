@@ -117,6 +117,11 @@ export const useRunsStore = create<RunsState>((set, get) => ({
     if (type === 'run.appended') {
       const run = data as RunSummary
       set((s) => {
+        // SSE reconnect re-fires recent rows — drop dupes to avoid duplicate
+        // React keys and double rendering.
+        if (s.runs.some((r) => r.run_id === run.run_id)) {
+          return s
+        }
         const updated = [run, ...s.runs]
         const capped = updated.length > MAX_RUNS ? updated.slice(0, MAX_RUNS) : updated
         return { runs: capped }
