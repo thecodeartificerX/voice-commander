@@ -27,5 +27,5 @@ pre { background: #f5f5f5; padding: 6px; border-radius: 4px; max-width: 100%; ov
   .span.status-error { background: #401414; }
   .span.status-ok { background: #143a14; }
   .runs-list tr.run-error td { color: #f88; }
-  .runs-list tr.run-miss td { color: #888; }
+  .runs-list tr.run-miss td { color: #aaa; }
 }
