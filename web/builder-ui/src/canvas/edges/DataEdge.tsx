@@ -7,8 +7,9 @@ import {
 } from 'reactflow'
 
 interface DataEdgeData {
-  sourceField?: string
-  targetField?: string
+  /** Canonical name of the field the wire carries. Mirrors `GraphEdge.data_field`. */
+  data_field?: string
+  kind?: string
 }
 
 export const DataEdge = memo(function DataEdge({
@@ -31,10 +32,7 @@ export const DataEdge = memo(function DataEdge({
     targetPosition,
   })
 
-  const label =
-    data?.sourceField != null && data?.targetField != null
-      ? `${data.sourceField} → ${data.targetField}`
-      : undefined
+  const label = data?.data_field ?? undefined
 
   return (
     <>
