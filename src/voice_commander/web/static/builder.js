@@ -942,12 +942,12 @@ window.vcBuilderApplyRunOverlay = function (runId) {
     if (toggle.checked) startLive(); else stopLive();
   });
 
-    /**
-     * Open an SSE connection to ``/api/runs/stream`` and highlight Drawflow
-     * nodes in real time as ``trace.span_started`` / ``trace.span_ended``
-     * events arrive.
-     * @returns {void}
-     */
+  /**
+   * Open an SSE connection to ``/api/runs/stream`` and highlight Drawflow
+   * nodes in real time as ``trace.span_started`` / ``trace.span_ended``
+   * events arrive.
+   * @returns {void}
+   */
   function startLive() {
     if (liveSrc) return;
     liveSrc = new EventSource('/api/runs/stream');
@@ -975,10 +975,10 @@ window.vcBuilderApplyRunOverlay = function (runId) {
     });
   }
 
-    /**
-     * Close the live-mode SSE connection and clear tracking state.
-     * @returns {void}
-     */
+  /**
+   * Close the live-mode SSE connection and clear tracking state.
+   * @returns {void}
+   */
   function stopLive() {
     if (!liveSrc) return;
     liveSrc.close();

@@ -87,6 +87,8 @@ def build_observability_router(
                         # Client disconnected — exit silently
                         break
                     except Exception:
+                        # Unknown error — log and exit rather than risk
+                        # an infinite error loop; client will reconnect.
                         logger.exception("SSE generator error")
                         break
                     # Only forward trace events to SSE clients
