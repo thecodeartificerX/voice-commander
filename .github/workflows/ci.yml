@@ -9,7 +9,7 @@ on:
 jobs:
   python:
     name: Python tests
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -17,18 +17,14 @@ jobs:
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@v5
-      - name: Install system deps (X virtual framebuffer for pynput)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
       - name: Install dependencies
         run: uv sync --group dev
       - name: Run tests
-        run: xvfb-run --auto-servernum uv run python -m pytest tests/ --ignore=tests/integration -x -q --tb=short
+        run: uv run python -m pytest tests/ --ignore=tests/integration -x -q --tb=short
 
   builder-ui:
     name: Builder UI
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v3
