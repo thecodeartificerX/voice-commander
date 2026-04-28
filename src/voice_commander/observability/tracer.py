@@ -260,6 +260,20 @@ class Tracer:
                             "duration_ms": duration_ms,
                         },
                     )
+                    # B-C3: emit run.appended for SPA live-tail SSE consumers.
+                    self._publish_safe(
+                        "run.appended",
+                        {
+                            "run_id": run_id,
+                            "transcript": transcript,
+                            "status": status,
+                            "started_at": started_at,
+                            "ended_at": ended_at,
+                            "duration_ms": duration_ms,
+                            "error_category": run_error_category,
+                            "error_summary": run_error_summary,
+                        },
+                    )
                 except Exception:
                     logger.exception("tracer: failed to end run")
                 steps = handle.step_count
