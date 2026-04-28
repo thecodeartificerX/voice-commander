@@ -291,8 +291,11 @@ def test_dispatcher_emits_plan_and_tool_call_spans(tmp_path):
 
     registry = _make_registry(
         ToolEntry(
-            name="focus", phrases=("focus",), func=lambda **_k: None,
-            module="m", docstring=None,
+            name="focus",
+            phrases=("focus",),
+            func=lambda **_k: None,
+            module="m",
+            docstring=None,
         )
     )
     feedback = CapturingFeedbackSink()

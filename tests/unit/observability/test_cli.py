@@ -22,11 +22,19 @@ def _seed(tmp_path: Path) -> None:
     s = Store(tmp_path / "runs.db", keep_runs=10, queue_max=64, daemon_pid=1)
     s.start()
     s.write_run_start(RunRecord("aaa", 1000.0, "open chrome", 1))
-    s.write_span(SpanRecord(
-        span_id="root", run_id="aaa", parent_span_id=None,
-        type="run", name="run", started_at=1000.0, ended_at=1000.5,
-        duration_ms=500, status="ok",
-    ))
+    s.write_span(
+        SpanRecord(
+            span_id="root",
+            run_id="aaa",
+            parent_span_id=None,
+            type="run",
+            name="run",
+            started_at=1000.0,
+            ended_at=1000.5,
+            duration_ms=500,
+            status="ok",
+        )
+    )
     s.write_run_end(RunUpdate("aaa", 1000.5, "ok", None, 500))
     s.flush()
     s.stop()  # Release WAL lock before CLI opens its own Store on the same file
@@ -54,9 +62,7 @@ def test_vc_debug_runs_list(tmp_path, capsys):
 
 def test_vc_tail_dumps_recent_runs_when_no_follow(tmp_path, capsys):
     _seed(tmp_path)
-    args = build_tail_parser().parse_args(
-        ["--no-follow", "--db", str(tmp_path / "runs.db")]
-    )
+    args = build_tail_parser().parse_args(["--no-follow", "--db", str(tmp_path / "runs.db")])
     run_tail(args)
     out = capsys.readouterr().out
     assert "aaa" in out
@@ -87,6 +93,7 @@ def test_vc_debug_grep_no_match_produces_no_output(tmp_path, capsys):
 def test_vc_debug_replay_full_without_yes_exits():
     """replay-full without --yes must exit with code 2 (safety gate)."""
     import pytest
+
     parser = build_debug_parser()
     args = parser.parse_args(["replay-full", "aaa"])  # no --yes flag
     with pytest.raises(SystemExit) as exc_info:

@@ -953,3 +953,111 @@ Every utterance persists as a span tree to `outputs/runs.db`. Surfaces:
 - `/page/runs` HTMX web inspector
 - Builder UI overlay with live node highlighting
 - `vc debug` / `vc tail` CLIs
+
+### 4.12 `Tracer`
+
+```python
+class Tracer:
+    def __init__(
+        self,
+        *,
+        store: StoreProtocol,
+        bus: EventBus,
+        enabled: bool,
+        slow_run_ms: int = 2000,
+        daemon_pid: int = 0,
+    ) -> None: ...
+    @property
+    def enabled(self) -> bool: ...
+    @contextlib.contextmanager
+    def run(self, transcript: str) -> Iterator[RunHandle]: ...
+    @contextlib.contextmanager
+    def span(self, span_type: str, *, name: str | None = None, **attrs: Any) -> Iterator[Span]: ...
+    def update_transcript(self, run_id: str, transcript: str) -> None: ...
+```
+
+**What it does:** Brackets every utterance execution in a `run()` context and every logical operation in a `span()` context. Uses `contextvars` for automatic parent-child span nesting. Publishes `trace.*` events to `EventBus` for live streaming. Writes all records asynchronously to `Store`. Logs a one-line summary per run with status, duration, and step count.
+
+**Who calls it:** `Daemon` creates a single instance at startup. `LLMRouter.route()` opens a `run()`. `Dispatcher.run_plan()`, `GraphRuntime.run()`, and individual tool functions open `span()` contexts.
+
+**Who it calls:** `Store.write_run_start()`, `write_run_end()`, `write_span()` for persistence. `EventBus.publish()` for live trace events. No external services.
+
+**How it is tested:** Unit tests create a real `Store` (tmp_path SQLite) + `EventBus`, run spans inside `tracer.run()`, drain the writer, then assert span records in the database. Error propagation, context-var cleanup, and nested span parent-child relationships are all verified.
+
+---
+
+### 4.13 `Store`
+
+```python
+class Store:
+    def __init__(self, db_path: Path, *, keep_runs: int, queue_max: int, daemon_pid: int) -> None: ...
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+    def write_run_start(self, rec: RunRecord) -> None: ...
+    def write_run_end(self, upd: RunUpdate) -> None: ...
+    def write_span(self, span: SpanRecord) -> None: ...
+    def set_keep_runs(self, n: int) -> None: ...
+    def get_run(self, run_id: str) -> dict[str, Any] | None: ...
+    def get_spans(self, run_id: str) -> list[dict[str, Any]]: ...
+    def list_runs(self, *, limit: int = 50, status: str | None = None, since_ts: float | None = None, transcript_like: str | None = None, graph_name: str | None = None) -> list[dict[str, Any]]: ...
+    def get_last_run(self) -> dict[str, Any] | None: ...
+    def flush(self, timeout: float = 2.0) -> bool: ...
+    def recover_stale_runs(self) -> int: ...
+    @property
+    def dropped(self) -> int: ...
+    @property
+    def circuit_open(self) -> bool: ...
+```
+
+**What it does:** Single-writer SQLite store for observability data. Write methods enqueue records onto a bounded `queue.Queue`; a dedicated writer thread drains the queue and inserts rows. WAL mode allows concurrent reads from any thread. Auto-prunes old runs after each `run_end`. Handles corrupt databases by backing up and recreating. A circuit breaker trips after consecutive write failures to prevent log spam.
+
+**Who calls it:** `Tracer` enqueues all writes. `api.py` REST endpoints and `cli.py` read via `get_run`, `get_spans`, `list_runs`. `Daemon` calls `start()` / `stop()`.
+
+**Who it calls:** `sqlite3` standard library. No other Voice Commander subsystems.
+
+**How it is tested:** Unit tests use `tmp_path` for isolated SQLite files. Roundtrip tests write records, drain the queue, then read back and assert field values. Pruning, stale-run recovery, and corruption recovery are tested with synthetic scenarios.
+
+---
+
+### 4.14 `Span` / `RunHandle`
+
+```python
+class Span:
+    def __init__(self, *, span_id: str, run_id: str, parent_span_id: str | None, type: str, name: str, attrs: dict[str, Any]) -> None: ...
+    def set_output(self, value: Any) -> None: ...
+    def set_attr(self, key: str, value: Any) -> None: ...
+    def mark_skipped(self) -> None: ...
+
+@dataclass
+class RunHandle:
+    run_id: str
+    started_at: float = 0.0
+    def set_status(self, status: str) -> None: ...
+    def increment_step(self) -> None: ...
+    @property
+    def step_count(self) -> int: ...
+```
+
+**What it does:** `Span` is a mutable row object holding timing, status, error info, and attributes for a single traced operation. `RunHandle` is yielded by `Tracer.run()` and allows callers to override the run's final status or inspect the run ID for transcript updates. The step counter on `RunHandle` tracks tool-call span count per run without shared mutable state.
+
+**Who calls it:** `Tracer.span()` creates `Span` instances internally. `Tracer.run()` yields `RunHandle` to `Dispatcher` and `LLMRouter`.
+
+**Who it calls:** Nothing — pure data objects.
+
+**How it is tested:** Indirectly via `Tracer` tests. Span attributes, error fields, and status overrides are asserted after roundtrip through Store.
+
+---
+
+**Data flow:**
+```
+LLMRouter / Dispatcher / GraphRuntime
+    → Tracer.run() yields RunHandle
+        → Tracer.span() creates Span
+            → Store.write_span() (async queue)
+            → EventBus.publish("trace.span_ended", ...)
+        → Store.write_run_end() (async queue)
+        → EventBus.publish("trace.run_completed", ...)
+    → Store writer thread → SQLite (runs.db)
+    → REST /api/runs/* reads from SQLite
+    → SSE /api/runs/stream reads from EventBus
+```

@@ -18,11 +18,13 @@ def test_dummy_satisfies_protocol() -> None:
 
 def test_noop_store_satisfies_protocol() -> None:
     from voice_commander.daemon import _NoopStore
+
     assert isinstance(_NoopStore(), StoreProtocol)
 
 
 def test_real_store_satisfies_protocol() -> None:
     from voice_commander.observability.store import Store
+
     # Store has these methods, so it satisfies the protocol structurally
     assert issubclass(Store, StoreProtocol)
 

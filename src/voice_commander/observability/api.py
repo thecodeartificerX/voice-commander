@@ -43,16 +43,8 @@ def build_observability_router(
             status=status,
             since_ts=since,
             transcript_like=q,
+            graph_name=graph,
         )
-        if graph:
-            runs = [
-                r
-                for r in runs
-                if any(
-                    sp["type"] == "graph" and sp["name"] == graph
-                    for sp in store.get_spans(r["run_id"])
-                )
-            ]
         return {"count": len(runs), "runs": runs}
 
     @router.get("/last")
@@ -120,8 +112,8 @@ def build_observability_router(
     def prune_runs(body: dict[str, int]) -> dict[str, Any]:
         keep = int(body.get("keep", 0))
         if keep > 0:
-            store._keep_runs = keep
-        return {"keep_runs": store._keep_runs}
+            store.set_keep_runs(keep)
+        return {"keep_runs": store.keep_runs}
 
     @router.post("/{run_id}/replay-llm")
     def replay_llm_ep(run_id: str) -> dict[str, Any]:

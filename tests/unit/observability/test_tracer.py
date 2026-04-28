@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time as _time
 from pathlib import Path
 
 import pytest
@@ -109,10 +108,12 @@ def test_tracer_emits_oneline_summary_at_end_of_run(store, bus, caplog):
 def test_tracer_nested_spans_have_correct_parent_ids(store: Store, bus: EventBus):
     """3-level nesting: run → transcribe → tool_call. Each child must reference its parent."""
     tracer = Tracer(store=store, bus=bus, enabled=True)
-    with tracer.run("nested test") as run:
-        with tracer.span("transcribe", name="transcribe") as transcribe_span:
-            with tracer.span("tool_call", name="focus") as tool_span:
-                pass
+    with (
+        tracer.run("nested test") as run,
+        tracer.span("transcribe", name="transcribe") as transcribe_span,
+        tracer.span("tool_call", name="focus"),
+    ):
+        pass
     _drain(store)
 
     spans = store.get_spans(run.run_id)
@@ -143,16 +144,16 @@ def test_tracer_context_var_reset_after_exception_in_nested_span(store: Store, b
     tracer = Tracer(store=store, bus=bus, enabled=True)
     outer_span_id_after: list[str] = []
 
-    with tracer.run("exception test") as run:
-        with tracer.span("outer", name="outer") as outer:
-            try:
-                with tracer.span("inner", name="inner"):
-                    raise ValueError("boom")
-            except ValueError:
-                pass
-            # After inner span's context exits, current span_id should be outer
-            from voice_commander.observability.tracer import _current_span_id
-            outer_span_id_after.append(_current_span_id.get())
+    with tracer.run("exception test"), tracer.span("outer", name="outer") as outer:
+        try:
+            with tracer.span("inner", name="inner"):
+                raise ValueError("boom")
+        except ValueError:
+            pass
+        # After inner span's context exits, current span_id should be outer
+        from voice_commander.observability.tracer import _current_span_id
+
+        outer_span_id_after.append(_current_span_id.get())
     _drain(store)
 
     assert outer_span_id_after[0] == outer.span_id, (
@@ -162,19 +163,60 @@ def test_tracer_context_var_reset_after_exception_in_nested_span(store: Store, b
 
 
 def test_tracer_step_counter_increments_per_tool_call(store: Store, bus: EventBus):
-    """_step_counters increments once per tool_call span and is cleaned up after run ends."""
+    """Step counter on RunHandle increments once per tool_call span."""
     tracer = Tracer(store=store, bus=bus, enabled=True)
     with tracer.run("count steps") as run:
         with tracer.span("tool_call", name="press"):
             pass
         with tracer.span("tool_call", name="type"):
             pass
-        # step counters exist during the run
-        assert tracer._step_counters.get(run.run_id, 0) == 2, (
-            f"expected 2 steps during run, got {tracer._step_counters.get(run.run_id, 0)}"
-        )
+        assert run.step_count == 2, f"expected 2 steps during run, got {run.step_count}"
 
-    # after run exits, step_counters entry must be cleaned up to prevent memory leak
-    assert run.run_id not in tracer._step_counters, (
-        f"_step_counters still has entry for {run.run_id!r} after run ended"
-    )
+    # step_count is accessible on the handle after run ends
+    assert run.step_count == 2, f"expected step_count=2 after run ended, got {run.step_count}"
+
+
+def test_step_counter_per_run_handle(store: Store, bus: EventBus):
+    """M1: step counter lives on RunHandle, not shared dict."""
+    tracer = Tracer(store=store, bus=bus, enabled=True)
+    with tracer.run("test transcript") as handle:
+        with tracer.span("tool_call", name="focus"):
+            pass
+        with tracer.span("tool_call", name="open"):
+            pass
+        # Non-tool_call span should NOT increment
+        with tracer.span("llm_call", name="route"):
+            pass
+    assert handle.step_count == 2
+
+
+def test_step_counter_thread_isolated(store: Store, bus: EventBus):
+    """M1: concurrent runs on separate threads get independent step counts.
+
+    Validates ContextVar isolation between threads.
+    """
+    import threading
+
+    tracer = Tracer(store=store, bus=bus, enabled=True)
+    results: dict[str, int] = {}
+    barrier = threading.Barrier(2)
+
+    def worker(name: str, n_steps: int) -> None:
+        with tracer.run(f"thread-{name}") as handle:
+            barrier.wait(timeout=5)  # ensure both runs are active simultaneously
+            for _ in range(n_steps):
+                with tracer.span("tool_call", name=f"step-{name}"):
+                    pass
+        results[name] = handle.step_count
+
+    t1 = threading.Thread(target=worker, args=("A", 3))
+    t2 = threading.Thread(target=worker, args=("B", 5))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert not t1.is_alive(), "thread A did not finish"
+    assert not t2.is_alive(), "thread B did not finish"
+    assert results["A"] == 3, f"thread A: expected 3 steps, got {results['A']}"
+    assert results["B"] == 5, f"thread B: expected 5 steps, got {results['B']}"

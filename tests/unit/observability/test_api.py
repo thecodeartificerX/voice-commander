@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import pytest
@@ -25,11 +24,19 @@ def store_with_runs(tmp_path: Path):
     s = Store(tmp_path / "runs.db", keep_runs=100, queue_max=64, daemon_pid=1)
     s.start()
     s.write_run_start(RunRecord("aaa", 1000.0, "open chrome", 1))
-    s.write_span(SpanRecord(
-        span_id="root", run_id="aaa", parent_span_id=None,
-        type="run", name="run", started_at=1000.0, ended_at=1000.5,
-        duration_ms=500, status="ok",
-    ))
+    s.write_span(
+        SpanRecord(
+            span_id="root",
+            run_id="aaa",
+            parent_span_id=None,
+            type="run",
+            name="run",
+            started_at=1000.0,
+            ended_at=1000.5,
+            duration_ms=500,
+            status="ok",
+        )
+    )
     s.write_run_end(RunUpdate("aaa", 1000.5, "ok", None, 500))
     s.write_run_start(RunRecord("bbb", 1100.0, "do the thing", 1))
     s.write_run_end(RunUpdate("bbb", 1100.7, "error", "FocusWindowError", 700))
@@ -123,8 +130,7 @@ def test_runs_stream_returns_200(store_with_runs):
             if message["type"] == "http.response.start":
                 received["status"] = message["status"]
                 received["headers"] = {
-                    k.decode(): v.decode()
-                    for k, v in message.get("headers", [])
+                    k.decode(): v.decode() for k, v in message.get("headers", [])
                 }
             # Don't block on body chunks
 
@@ -165,3 +171,60 @@ def test_replay_full_requires_confirm_header(store_with_runs):
     # Without confirmation header → 412
     r = client.post("/api/runs/aaa/replay-full")
     assert r.status_code == 412
+
+
+def test_list_runs_graph_filter_endpoint(tmp_path):
+    """M9: GET /api/runs?graph=X wires graph_name to store.list_runs()."""
+    s = Store(tmp_path / "runs.db", keep_runs=100, queue_max=64, daemon_pid=1)
+    s.start()
+    # Run "aaa" has a graph span named "greet"
+    s.write_run_start(RunRecord("aaa", 1000.0, "open chrome", 1))
+    s.write_span(
+        SpanRecord(
+            span_id="g1",
+            run_id="aaa",
+            parent_span_id=None,
+            type="graph",
+            name="greet",
+            started_at=1000.0,
+            ended_at=1001.0,
+            duration_ms=1000,
+            status="ok",
+        )
+    )
+    s.write_run_end(RunUpdate("aaa", 1001.0, "ok", None, 1000))
+    # Run "bbb" has no graph span
+    s.write_run_start(RunRecord("bbb", 1100.0, "other command", 1))
+    s.write_run_end(RunUpdate("bbb", 1100.5, "ok", None, 500))
+    _drain(s)
+
+    client = TestClient(_app(s))
+    r = client.get("/api/runs?graph=greet")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 1, f"expected 1 run, got {body['count']}"
+    assert body["runs"][0]["run_id"] == "aaa"
+
+    # Non-matching graph name should return 0 runs
+    r2 = client.get("/api/runs?graph=nonexistent")
+    assert r2.status_code == 200
+    assert r2.json()["count"] == 0
+
+    s.stop()
+
+
+def test_prune_runs_endpoint_uses_set_keep_runs(tmp_path):
+    """M8: POST /api/runs/prune calls set_keep_runs() and returns updated keep_runs value."""
+    s = Store(tmp_path / "runs.db", keep_runs=50, queue_max=64, daemon_pid=1)
+    s.start()
+
+    client = TestClient(_app(s))
+
+    # Valid keep value → 200 + updated keep_runs
+    r = client.post("/api/runs/prune", json={"keep": 20})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["keep_runs"] == 20, f"expected 20, got {body['keep_runs']}"
+    assert s.keep_runs == 20
+
+    s.stop()

@@ -20,6 +20,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_CIRCUIT_OPEN_THRESHOLD = 5
+_CIRCUIT_COOLDOWN_S = 60.0
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     run_id          TEXT PRIMARY KEY,
@@ -117,7 +120,11 @@ class Store:
         self._writer: threading.Thread | None = None
         self._stop = threading.Event()
         self._dropped = 0
+        self._circuit_dropped = 0
         self._inserts_since_prune = 0
+        self._consecutive_errors = 0
+        self._circuit_open = False
+        self._circuit_open_since: float = 0.0
 
     # ------------------------------------------------------------------
     # lifecycle
@@ -204,6 +211,19 @@ class Store:
                 item = self._q.get()
                 if item is _SENTINEL:
                     return
+                # Circuit breaker: drop writes while open
+                if self._circuit_open:
+                    now = time.monotonic()
+                    if now - self._circuit_open_since < _CIRCUIT_COOLDOWN_S:
+                        self._circuit_dropped += 1
+                        logger.debug(
+                            "observability circuit open; dropped record (%d total circuit-drops)",
+                            self._circuit_dropped,
+                        )
+                        continue
+                    # Half-open: attempt one write to probe recovery
+                    self._circuit_open = False
+                    logger.info("observability writer circuit half-open, probing")
                 try:
                     kind, payload = item
                     if kind == "run_start":
@@ -224,8 +244,19 @@ class Store:
                         )
                     elif kind == "_flush":
                         payload.set()  # payload is threading.Event
+                    self._consecutive_errors = 0
                 except Exception:
-                    logger.exception("observability writer error")
+                    self._consecutive_errors += 1
+                    if self._consecutive_errors >= _CIRCUIT_OPEN_THRESHOLD:
+                        self._circuit_open = True
+                        self._circuit_open_since = time.monotonic()
+                        logger.error(
+                            "observability writer: %d consecutive errors, circuit OPEN for %ds",
+                            self._consecutive_errors,
+                            _CIRCUIT_COOLDOWN_S,
+                        )
+                    else:
+                        logger.exception("observability writer error")
         finally:
             conn.close()
 
@@ -280,6 +311,30 @@ class Store:
     def dropped(self) -> int:
         return self._dropped
 
+    @property
+    def circuit_dropped(self) -> int:
+        """Records dropped while the circuit breaker was open."""
+        return self._circuit_dropped
+
+    @property
+    def circuit_open(self) -> bool:
+        """True when the writer has tripped its circuit breaker."""
+        return self._circuit_open
+
+    @property
+    def keep_runs(self) -> int:
+        """Maximum number of runs retained after pruning."""
+        return self._keep_runs
+
+    def set_keep_runs(self, n: int) -> None:
+        """Update the maximum number of runs to retain after pruning.
+
+        Raises ``ValueError`` if *n* < 1.
+        """
+        if n < 1:
+            raise ValueError(f"keep_runs must be >= 1, got {n}")
+        self._keep_runs = n
+
     # ------------------------------------------------------------------
     # readers (any thread; WAL allows concurrent reads)
     # ------------------------------------------------------------------
@@ -316,6 +371,7 @@ class Store:
         status: str | None = None,
         since_ts: float | None = None,
         transcript_like: str | None = None,
+        graph_name: str | None = None,
     ) -> list[dict[str, Any]]:
         sql = "SELECT * FROM runs WHERE 1=1"
         params: list[Any] = []
@@ -328,6 +384,13 @@ class Store:
         if transcript_like:
             sql += " AND transcript LIKE ?"
             params.append(f"%{transcript_like}%")
+        if graph_name:
+            sql += (
+                " AND EXISTS ("
+                "SELECT 1 FROM spans WHERE spans.run_id = runs.run_id"
+                " AND spans.type = 'graph' AND spans.name = ?)"
+            )
+            params.append(graph_name)
         sql += " ORDER BY started_at DESC LIMIT ?"
         params.append(limit)
         conn = self._connect()
@@ -369,8 +432,11 @@ class Store:
 
         Enqueues a synchronisation sentinel; the writer thread signals it when
         processed. Returns True if flushed within *timeout* seconds, False if
-        the writer did not respond in time.
+        the writer did not respond in time or if the circuit breaker is open
+        (in which case preceding writes may have been dropped).
         """
+        if self._circuit_open:
+            return False
         done = threading.Event()
         self._enqueue(("_flush", done))
         return done.wait(timeout=timeout)
