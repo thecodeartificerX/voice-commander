@@ -35,17 +35,35 @@ export function toFlowNode(gn: GraphNode): Node {
   }
 }
 
+/** Default targetHandle for control-flow edges. */
+const DEFAULT_TARGET_HANDLE = 'in'
+
 /** Map canonical GraphEdge → React Flow Edge */
 export function toFlowEdge(ge: GraphEdge): Edge {
-  return {
+  // ReactFlow needs a non-null `sourceHandle` to anchor the edge to the right
+  // port. We backfill from `kind` so a control edge `kind: 'true'` lands on
+  // the `true` source handle. The original (possibly absent) sourceHandle is
+  // preserved on the edge data so `fromFlowEdge` can restore the canonical
+  // JSON exactly.
+  const backfilled = ge.sourceHandle ?? ge.kind
+  const targetBackfilled = ge.targetHandle ?? DEFAULT_TARGET_HANDLE
+  const edge: Edge = {
     id: ge.id,
     source: ge.source,
     target: ge.target,
-    sourceHandle: ge.sourceHandle ?? ge.kind,
-    targetHandle: ge.targetHandle ?? 'in',
+    sourceHandle: backfilled,
+    targetHandle: targetBackfilled,
     type: ge.kind === 'data' ? 'data' : 'control',
-    data: { kind: ge.kind, data_field: ge.data_field },
+    data: {
+      kind: ge.kind,
+      data_field: ge.data_field,
+      // Track what the canonical JSON actually contained so we can round-trip
+      // without injecting fields that weren't there originally.
+      _hasSourceHandle: ge.sourceHandle != null,
+      _hasTargetHandle: ge.targetHandle != null,
+    },
   }
+  return edge
 }
 
 /** Map React Flow Node → canonical GraphNode */
@@ -60,15 +78,37 @@ export function fromFlowNode(n: Node): GraphNode {
 
 /** Map React Flow Edge → canonical GraphEdge */
 export function fromFlowEdge(e: Edge): GraphEdge {
-  const data = e.data as { kind: string; data_field?: string } | undefined
+  const data = e.data as
+    | {
+        kind?: string
+        data_field?: string
+        _hasSourceHandle?: boolean
+        _hasTargetHandle?: boolean
+      }
+    | undefined
+  const kind = (data?.kind ?? 'ok') as GraphEdge['kind']
   const edge: GraphEdge = {
     id: e.id,
     source: e.source,
     target: e.target,
-    kind: (data?.kind ?? 'ok') as GraphEdge['kind'],
+    kind,
   }
-  if (e.sourceHandle != null) edge.sourceHandle = e.sourceHandle
-  if (e.targetHandle != null) edge.targetHandle = e.targetHandle
+  // Only persist sourceHandle when it differs from `kind` (the implicit
+  // backfill in toFlowEdge); when they match, omit the field so JSON stays
+  // minimal and round-trip is faithful.
+  const hadSourceHandle = data?._hasSourceHandle === true
+  if (hadSourceHandle && e.sourceHandle != null && e.sourceHandle !== kind) {
+    edge.sourceHandle = e.sourceHandle
+  }
+  // Same logic for targetHandle vs the default ('in').
+  const hadTargetHandle = data?._hasTargetHandle === true
+  if (
+    hadTargetHandle &&
+    e.targetHandle != null &&
+    e.targetHandle !== DEFAULT_TARGET_HANDLE
+  ) {
+    edge.targetHandle = e.targetHandle
+  }
   if (data?.data_field != null) edge.data_field = data.data_field
   return edge
 }

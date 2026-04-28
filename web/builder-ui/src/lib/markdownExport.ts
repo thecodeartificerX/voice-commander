@@ -1,3 +1,13 @@
+/**
+ * Fallback / preview-only markdown renderer.
+ *
+ * The canonical export lives server-side at `/api/runs/{id}/export.md` (see
+ * `apiFetchExportMd`); the React UI calls that endpoint via `CopyAsPromptButton`
+ * to keep parity with `vc debug` / `vc tail`. This module is retained for
+ * offline mode (no network) and unit-test parity checks. Behavior should mirror
+ * the server's error-summary fallback (`error_summary || error_msg`), but if
+ * the two ever drift, the server is authoritative.
+ */
 import type { RunDetail, SpanRecord } from '@/types/run'
 import { formatDuration } from './timeFormat'
 

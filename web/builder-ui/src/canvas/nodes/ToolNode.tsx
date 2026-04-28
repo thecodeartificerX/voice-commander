@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps } from 'reactflow'
 import { cn } from '@/lib/cn'
+import { useGraphStore } from '@/store/graphStore'
 
 interface ToolNodeData {
   ref: string
@@ -22,10 +23,11 @@ function getNodeColors(ref: string): { bg: string; border: string; dot: string }
   return { bg: 'from-slate-800 to-slate-700', border: 'border-slate-500', dot: 'bg-slate-300' }
 }
 
-export const ToolNode = memo(function ToolNode({ data, selected }: NodeProps<ToolNodeData>) {
+export const ToolNode = memo(function ToolNode({ id, data, selected }: NodeProps<ToolNodeData>) {
   const colors = getNodeColors(data.ref)
   const label = data.label ?? data.ref.split('.').pop() ?? data.ref
   const kwargsEntries = Object.entries(data.kwargs ?? {})
+  const runStatus = useGraphStore((s) => s.runStatusByNodeId[id])
 
   return (
     <div
@@ -34,6 +36,7 @@ export const ToolNode = memo(function ToolNode({ data, selected }: NodeProps<Too
         colors.bg,
         colors.border,
         selected && 'ring-2 ring-blue-400 ring-offset-1 ring-offset-background',
+        runStatus && `run-node-${runStatus}`,
       )}
     >
       <Handle
