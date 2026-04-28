@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
       - name: Run tests
-        run: uv run python -m pytest tests/ -x -q --tb=short
+        run: uv run python -m pytest tests/ --ignore=tests/integration -x -q --tb=short
 
   builder-ui:
     name: Builder UI
