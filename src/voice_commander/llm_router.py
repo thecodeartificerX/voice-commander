@@ -293,6 +293,9 @@ class LLMRouter:
             try:
                 plan = self._parse_response(data)
             except LLMPlanError as exc:
+                # B-H5: re-raise so the daemon's top-level handler can classify
+                # this as `llm` on the run row. Tag the span before re-raising
+                # so the tracer captures error_category in the rollup.
                 self._total_errors += 1
                 if _llm_span is not None and hasattr(_llm_span, "set_attr"):
                     with contextlib.suppress(Exception):
@@ -301,7 +304,7 @@ class LLMRouter:
                         if hasattr(_llm_span, "set_error_category"):
                             _llm_span.set_error_category("llm")
                 logger.warning("llm_router: LLMPlanError: %s", exc)
-                return None
+                raise
             step_count = len(plan.steps) if plan else 0
             logger.info(
                 "llm_router latency_ms=%d steps=%d transcript=%r",
