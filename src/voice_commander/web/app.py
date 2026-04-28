@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI, Form, Request, Response
+from fastapi import FastAPI, Form, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -438,6 +438,25 @@ def create_app(
             """``GET /page/runs`` — render the run inspector page."""
             runs = observability_store.list_runs(limit=50)
             return templates.TemplateResponse(request, "runs.html", {"runs": runs})
+
+        @app.get("/page/runs/list", response_class=HTMLResponse)
+        async def page_runs_list(
+            request: Request,
+            limit: int = Query(50, ge=1, le=500),
+            status: str | None = None,
+            q: str | None = None,
+        ) -> HTMLResponse:
+            """Return rendered <tr> rows for htmx swap into #runs-tbody."""
+            runs = observability_store.list_runs(
+                limit=limit,
+                status=status or None,
+                transcript_like=q or None,
+            )
+            return HTMLResponse(
+                "".join(
+                    templates.get_template("_runs_row.html").render({"r": r}) for r in runs
+                )
+            )
 
         @app.get("/page/runs/{run_id}", response_class=HTMLResponse)
         async def page_runs_detail(request: Request, run_id: str) -> HTMLResponse:
