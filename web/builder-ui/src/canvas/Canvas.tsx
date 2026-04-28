@@ -73,7 +73,7 @@ function CanvasInner() {
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
-        deleteKeyCode="Delete"
+        deleteKeyCode={['Delete', 'Backspace']}
         className="bg-background"
       >
         <Background color="#334155" gap={16} />
