@@ -68,13 +68,11 @@ def build_observability_router(
             import json as _json
             import queue
 
-            # Subscribe to event bus for real-time span events
             q = bus.subscribe()
             try:
                 # Immediate flush so client sees headers
                 yield ": keepalive\n\n"
                 while True:
-                    # Poll client connection status
                     if await request.is_disconnected():
                         break
                     try:
@@ -87,8 +85,7 @@ def build_observability_router(
                         # Client disconnected — exit silently
                         break
                     except Exception:
-                        # Unknown error — log and exit rather than risk
-                        # an infinite error loop; client will reconnect.
+                        # Unknown error — log and exit to prevent infinite loop; client will reconnect.
                         logger.exception("SSE generator error")
                         break
                     # Only forward trace events to SSE clients
@@ -96,7 +93,6 @@ def build_observability_router(
                         continue
                     yield f"event: {ev.type}\ndata: {_json.dumps(ev.data)}\n\n"
             finally:
-                # Clean up subscription on disconnect
                 if hasattr(bus, "unsubscribe"):
                     bus.unsubscribe(q)
 
