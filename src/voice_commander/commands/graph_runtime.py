@@ -133,14 +133,18 @@ class GraphRuntime:
             ):
                 continue
 
+            # B-M3: re-raise WiringError INSIDE the span context so the tracer
+            # records status="error" + traceback. Catch outside the with-block.
             try:
-                kwargs = self._resolve_kwargs(node, graph.edges, port_values)
+                with self._span("node", name=node.ref, node_id=node.id) as _wire_span:
+                    try:
+                        kwargs = self._resolve_kwargs(node, graph.edges, port_values)
+                    except WiringError as exc:
+                        if _wire_span is not None and hasattr(_wire_span, "set_error_category"):
+                            _wire_span.set_error_category("wiring")
+                        raise
             except WiringError as exc:
                 logger.warning("graph %r node %r: %s", graph.name, node.id, exc)
-                cat = "wiring"
-                with self._span("node", name=node.ref, node_id=node.id) as _wire_span:
-                    if _wire_span is not None and hasattr(_wire_span, "set_error_category"):
-                        _wire_span.set_error_category(cat)
                 if failed_idx is None:
                     failed_idx = len(steps)
                     error_msg = str(exc)[:256]
