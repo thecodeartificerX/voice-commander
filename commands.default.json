@@ -673,6 +673,39 @@
         }
       ],
       "edges": []
+    },
+    "show_commands": {
+      "schema_version": 1,
+      "name": "show_commands",
+      "kind": "command",
+      "description": "Open the Voice Commander commands page in the browser",
+      "synonyms": [
+        "show commands",
+        "list commands",
+        "what can you do",
+        "show me commands",
+        "open commands"
+      ],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 10000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "n1",
+          "ref": "pipeline.open",
+          "kwargs": {
+            "target": "http://127.0.0.1:8765/page/commands"
+          },
+          "pos": [
+            80,
+            120
+          ]
+        }
+      ],
+      "edges": []
     }
   }
 }
