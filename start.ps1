@@ -95,6 +95,53 @@ Set-Location -LiteralPath $PSScriptRoot
 $script:PhaseString = '  Phase 7: supervisor process (daemon + sprite under one parent)'
 
 # ---------------------------------------------------------------------------
+# Builder UI build helper
+# ---------------------------------------------------------------------------
+
+function Initialize-BuilderUI {
+    <#
+    .SYNOPSIS
+        Ensure web/builder-ui SPA is built; build it on first run.
+    .DESCRIPTION
+        Checks for the built index.html. If missing, runs pnpm install +
+        pnpm build inside web/builder-ui/. Failures are non-fatal — the
+        daemon will serve a friendly stub page instead.
+    #>
+    $indexPath = Join-Path $PSScriptRoot 'src/voice_commander/web/static/builder/index.html'
+    if (Test-Path -LiteralPath $indexPath) {
+        Write-Verbose "Builder UI artefact present at $indexPath"
+        return
+    }
+
+    $uiDir = Join-Path $PSScriptRoot 'web/builder-ui'
+    if (-not (Test-Path -LiteralPath $uiDir)) {
+        Write-Verbose "web/builder-ui directory missing — skipping SPA build"
+        return
+    }
+
+    Write-Host ''
+    Write-VoicePrompt 'Builder UI not built. Running pnpm install + build (one-time setup)...'
+
+    try {
+        Push-Location $uiDir
+        & pnpm install --frozen-lockfile
+        if ($LASTEXITCODE -ne 0) { throw "pnpm install failed (code $LASTEXITCODE)" }
+        & pnpm build
+        if ($LASTEXITCODE -ne 0) { throw "pnpm build failed (code $LASTEXITCODE)" }
+        Write-VoiceSuccess 'Builder UI built successfully.'
+        Write-Host ''
+    }
+    catch {
+        Write-VoiceFailure "Builder UI build failed: $_"
+        Write-VoiceSecondary '  Continuing — daemon will serve a friendly stub instead.'
+        Write-Host ''
+    }
+    finally {
+        Pop-Location
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Color helper functions
 # ---------------------------------------------------------------------------
 
@@ -486,6 +533,11 @@ function Start-VoiceWithUI {
 # ---------------------------------------------------------------------------
 
 $IsInteractive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+
+# Build the Builder SPA on first run (skip when only listing devices).
+if (-not $ListDevices) {
+    Initialize-BuilderUI
+}
 
 # ---------------------------------------------------------------------------
 # -ListDevices path
