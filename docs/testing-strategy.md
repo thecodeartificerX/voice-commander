@@ -30,18 +30,27 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
           │  Integration             │  Layer 2 — canned WAVs, no mic/hotkey
           │  (WAV → tool call)       │
           ├──────────────────────────┤
-          │  Unit                    │  Layer 1 — fast, no hardware, CI-safe
-          │  (per-subsystem, mocked) │
+          │  Component (React)       │  Layer 1b — vitest + RTL, CI-safe
+          ├──────────────────────────┤
+          │  Unit (Python)           │  Layer 1a — pytest, CI-safe
           └──────────────────────────┘
 ```
 
-### Layer 1 — Unit tests
+### Layer 1a — Unit tests (Python daemon)
 
 - **Location:** `tests/unit/`
 - **Markers:** *(no marker — runs by default)*
 - **Speed:** milliseconds per test; whole suite under 30 s.
 - **Principle:** every subsystem is independently testable. Hardware dependencies (`pynput`, `sounddevice`, `faster-whisper`, `winsound`) are mocked or replaced with fakes. No GPU required. Graph modules (`commands/graph*.py`, `store.py`, `registrar.py`) are pure-Python with no hardware dependencies — all graph tests run in Layer 1.
 - **Triggered by:** every `uv run pytest` invocation; CI on every push.
+
+### Layer 1b — Component tests (React SPA)
+
+- **Location:** `web/builder-ui/tests/unit/`
+- **Markers:** *(none — vitest discovers `*.test.tsx` automatically)*
+- **Speed:** milliseconds per test; whole suite under 10 s.
+- **Principle:** every React component and Zustand store is testable in isolation via jsdom. Uses React Testing Library for rendering, `@testing-library/user-event` for interaction, and vitest for assertions. No browser required.
+- **Triggered by:** `cd web/builder-ui && pnpm test --run`; CI runs this alongside pytest.
 
 ### Layer 2 — Integration tests (canned WAVs)
 
@@ -91,6 +100,8 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 | `GraphMigrate` | `tests/unit/test_graph_migrate.py` | Legacy `commands.json` / `workflows.json` → canonical graph schema conversion, idempotency | `tmp_path` fixture for temp JSON files; canned legacy format dicts |
 | `GraphStore` | `tests/unit/test_command_store.py` | `load()` / `save()` / `list()` / `delete()` operations, file-backed JSON persistence, `GraphStoreError` on kind mismatch | `tmp_path` fixture for temp store directory; no external deps |
 | `Registrar` | `tests/unit/test_command_registrar.py` | `register_graphs()` synthesises `ToolEntry` per graph, `reload_all()` picks up changes, `llm_visible` flag respected (ADR 0067) | Stub `GraphStore` + in-memory `ToolRegistry`; no external deps |
+
+> **Note:** React component and Zustand store unit tests live in `web/builder-ui/tests/unit/` and run via vitest (see Layer 1b above). They are not listed in this table, which covers Python daemon subsystems only.
 
 ---
 
@@ -484,3 +495,19 @@ markers = [
 ```
 
 These must be declared to avoid `PytestUnknownMarkWarning`.
+
+### Builder SPA tests (vitest)
+
+```bash
+cd web/builder-ui && pnpm test --run
+```
+
+Runs all vitest unit tests in `tests/unit/`. Use `pnpm test` (without `--run`) for watch mode during development.
+
+### Builder SPA e2e tests (playwright)
+
+```bash
+cd web/builder-ui && pnpm test:e2e
+```
+
+Requires the daemon to be running. Launches a real browser against `http://127.0.0.1:8765/page/builder`.

@@ -492,3 +492,33 @@ Nodes reachable only via the `<foreach_node>.after` output port are **NOT** part
 **Common bug:** accidentally wiring the `after` edge to a node that was intended to be inside the body. Symptom: the node executes only once regardless of list length. To fix, trace the edge path — if the node is reachable only via `after`, it is outside the body.
 
 **Validator rule 7** checks that the foreach body is non-empty (at least one node reachable from `.item`). It does not detect the misplaced-`after` variant since that is semantically valid; the author must inspect the graph visually or trace the edge walk manually.
+
+---
+
+## 29. Builder SPA Requires pnpm Build Before Serving
+
+**Problem:** Navigating to `/page/builder` on a fresh clone shows a stub page instead of the React canvas.
+
+**Explanation:** The Builder UI is a React 18.3 + Vite 5 SPA that compiles to `src/voice_commander/web/static/builder/`. Unlike the HTMX dashboard pages (which are Jinja2 templates served directly), the builder route serves pre-built static files. If the build output directory is empty, FastAPI serves a friendly stub page explaining how to build.
+
+**Mitigation:** Run the one-time build: `cd web/builder-ui && pnpm install && pnpm build` (or `make builder-install && make builder-build`). The build output is gitignored — every fresh clone needs this step. CI runs the build automatically.
+
+---
+
+## 30. Builder Build Output is Gitignored
+
+**Problem:** After building the SPA locally, `git status` does not show any new files under `src/voice_commander/web/static/builder/`.
+
+**Explanation:** The `.gitignore` includes `src/voice_commander/web/static/builder/` because build artifacts are machine-specific (hashed filenames change per build). Committing them would create merge noise on every rebuild.
+
+**Mitigation:** This is intentional. The build step is documented in README.md, CLAUDE.md, and the Makefile (`make builder-build`). CI rebuilds from source on every run. If you need to verify the build output exists, check for `src/voice_commander/web/static/builder/index.html`.
+
+---
+
+## 31. pnpm 9+ Required for Builder SPA
+
+**Problem:** Running `npm install` or `yarn install` in `web/builder-ui/` fails or produces incorrect lockfile.
+
+**Explanation:** The project uses pnpm 9+ with a `pnpm-lock.yaml` lockfile. npm and yarn cannot parse this lockfile format. pnpm's strict dependency isolation also prevents phantom dependency issues that npm allows.
+
+**Mitigation:** Install pnpm globally: `npm install -g pnpm@latest` (or `corepack enable && corepack prepare pnpm@latest --activate`). Always use `pnpm install` and `pnpm build` inside `web/builder-ui/`. The Makefile wraps these as `make builder-install` and `make builder-build`.
