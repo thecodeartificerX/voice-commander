@@ -394,7 +394,7 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 
 > **Status: Legacy.** Replaced by React Flow SPA (ADR 0071) as of PR #94. Drawflow JS/CSS are retained only for the `graph_drawflow.py` round-trip adapter used during JSON import/export. No new code should depend on Drawflow.
 
-**Purpose in this project:** Formerly powered the visual node-graph canvas at `/page/builder`. The canvas has been replaced by the React Flow SPA (ADR 0071). Drawflow JS/CSS are retained only for the `graph_drawflow.py` adapter which converts legacy Drawflow JSON to the canonical `Graph` schema.
+**Purpose in this project:** Formerly powered the visual node-graph canvas at `/page/builder`. See status note above for current role.
 
 **Why vendored:** Single-file JS + CSS bundle. No npm, no build step — consistent with ADR 0022 (no SPA build step). Upgraded by deliberate file replacement under `web/static/`.
 
