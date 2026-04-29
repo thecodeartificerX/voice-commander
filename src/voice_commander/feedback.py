@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import logging
-import winsound
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
+
+if sys.platform == "win32":
+    import winsound
+else:
+    winsound = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +93,8 @@ class WindowsFeedbackSink:
         self._miss = sounds_dir / miss_sound
 
     def _play(self, path: Path) -> None:
+        if winsound is None:
+            return
         if not path.exists():
             logger.warning("Sound file missing: %s", path)
             return

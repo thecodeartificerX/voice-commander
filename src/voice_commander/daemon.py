@@ -20,6 +20,7 @@ from silero_vad import load_silero_vad
 from . import resolver as param_resolver
 from .config import Config, log_llm_sources
 from .dispatcher import Dispatcher
+from .observability.errors import classify as _classify_error
 from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
@@ -284,6 +285,10 @@ class StreamingDaemon:
             except MemoryError:
                 raise
             except Exception as e:
+                cat = _classify_error(e, where="daemon")
+                logger.exception(
+                    "unhandled exception in utterance processing (category=%s)", cat
+                )
                 self._feedback.on_error("pipeline", e)
 
     def _process_utterance(self, utterance: npt.NDArray[np.float32]) -> None:

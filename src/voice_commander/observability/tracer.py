@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 _current_run_id: ContextVar[str] = ContextVar("vc_obs_run_id", default="")
 _current_span_id: ContextVar[str] = ContextVar("vc_obs_span_id", default="")
+_current_span_depth: ContextVar[int] = ContextVar("vc_obs_span_depth", default=0)
 _run_has_error: ContextVar[bool] = ContextVar("vc_obs_run_has_error", default=False)
 _current_run_handle: ContextVar[RunHandle | None] = ContextVar("vc_obs_run_handle", default=None)
 
@@ -47,6 +48,13 @@ class RunHandle:
     _override_status: str = ""
     _step_count: int = 0
 
+    def __post_init__(self) -> None:
+        # List of (depth, error_category, error_msg) tuples for completed
+        # error spans during the run. Used by write_run_end to roll up
+        # the run-level error_category/error_summary from the deepest
+        # span with a category set.
+        self._error_spans: list[tuple[int, str, str | None]] = []
+
     def set_status(self, status: str) -> None:
         """Override the run's final status (e.g. 'miss') from outside the tracer."""
         self._override_status = status
@@ -55,9 +63,24 @@ class RunHandle:
         """Increment the tool-call step counter for this run."""
         self._step_count += 1
 
+    def record_error_span(
+        self, depth: int, error_category: str, error_msg: str | None
+    ) -> None:
+        """Record a span that ended in error so the run-level rollup can use it."""
+        self._error_spans.append((depth, error_category, error_msg))
+
     @property
     def step_count(self) -> int:
         return self._step_count
+
+    @property
+    def deepest_error(self) -> tuple[str, str | None] | None:
+        """Return (error_category, error_msg) for the deepest categorized error span."""
+        if not self._error_spans:
+            return None
+        # Highest depth wins; ties broken by insertion order (earliest seen).
+        depth, cat, msg = max(self._error_spans, key=lambda t: t[0])
+        return cat, msg
 
 
 class Span:
@@ -83,6 +106,7 @@ class Span:
         self.error_type: str | None = None
         self.error_msg: str | None = None
         self.traceback: str | None = None
+        self.error_category: str | None = None
         self.started_at = time.time()
         self._start_mono = time.monotonic()
         self.ended_at: float = 0.0
@@ -94,6 +118,10 @@ class Span:
 
     def set_attr(self, key: str, value: Any) -> None:
         self.attrs[key] = value
+
+    def set_error_category(self, category: str) -> None:
+        """Set the 4-bucket error taxonomy category on this span."""
+        self.error_category = category
 
     def mark_skipped(self) -> None:
         self.status = "skipped"
@@ -110,12 +138,14 @@ class _NullSpan:
     status = "ok"
     output: Any = None
     error_msg: str | None = None
+    error_category: str | None = None
 
     def __init__(self) -> None:
         self.attrs: dict[str, Any] = {}
 
     def set_output(self, value: Any) -> None: ...
     def set_attr(self, key: str, value: Any) -> None: ...
+    def set_error_category(self, category: str) -> None: ...
     def mark_skipped(self) -> None: ...
 
 
@@ -204,14 +234,22 @@ class Tracer:
                 # is populated by the span() context manager's except block which runs
                 # after this finally block, so it would always be None here.
                 error_msg = str(captured_exc)[:512] if captured_exc is not None else None
+                # Roll up error_category/error_summary from the deepest
+                # categorized span (B-C1).
+                deepest = handle.deepest_error
+                run_error_category = deepest[0] if deepest is not None else None
+                run_error_summary = deepest[1] if deepest is not None else None
+                ended_at = time.time()
                 try:
                     self._store.write_run_end(
                         RunUpdate(
                             run_id=run_id,
-                            ended_at=time.time(),
+                            ended_at=ended_at,
                             status=status,
                             error_msg=error_msg,
                             duration_ms=duration_ms,
+                            error_category=run_error_category,
+                            error_summary=run_error_summary,
                         )
                     )
                     self._publish_safe(
@@ -220,6 +258,20 @@ class Tracer:
                             "run_id": run_id,
                             "status": status,
                             "duration_ms": duration_ms,
+                        },
+                    )
+                    # B-C3: emit run.appended for SPA live-tail SSE consumers.
+                    self._publish_safe(
+                        "run.appended",
+                        {
+                            "run_id": run_id,
+                            "transcript": transcript,
+                            "status": status,
+                            "started_at": started_at,
+                            "ended_at": ended_at,
+                            "duration_ms": duration_ms,
+                            "error_category": run_error_category,
+                            "error_summary": run_error_summary,
                         },
                     )
                 except Exception:
@@ -256,6 +308,7 @@ class Tracer:
         span_id = _short_id()
         run_id = _current_run_id.get()
         parent = _current_span_id.get() or None
+        depth = _current_span_depth.get()
         s = Span(
             span_id=span_id,
             run_id=run_id,
@@ -265,6 +318,7 @@ class Tracer:
             attrs=attrs,
         )
         token = _current_span_id.set(span_id)
+        depth_token = _current_span_depth.set(depth + 1)
         try:
             self._publish_safe(
                 "trace.span_started",
@@ -310,6 +364,7 @@ class Tracer:
                         error_type=s.error_type,
                         error_msg=s.error_msg,
                         traceback=s.traceback,
+                        error_category=s.error_category,
                     )
                 )
                 self._publish_safe(
@@ -330,9 +385,15 @@ class Tracer:
                     _h = _current_run_handle.get()
                     if _h is not None:
                         _h.increment_step()
+                # Record error spans for run-level rollup of error_category.
+                if s.error_category and s.run_id:
+                    _h = _current_run_handle.get()
+                    if _h is not None:
+                        _h.record_error_span(depth, s.error_category, s.error_msg)
             except Exception:
                 logger.exception("tracer: failed to write span")
             _current_span_id.reset(token)
+            _current_span_depth.reset(depth_token)
 
     def update_transcript(self, run_id: str, transcript: str) -> None:
         if not self._enabled or not run_id:

@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 47% 11%;
+    --foreground: 213 31% 91%;
+    --card: 222 47% 14%;
+    --card-foreground: 213 31% 91%;
+    --popover: 222 47% 11%;
+    --popover-foreground: 213 31% 91%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 222 47% 18%;
+    --secondary-foreground: 213 31% 91%;
+    --muted: 222 47% 18%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 222 47% 18%;
+    --accent-foreground: 213 31% 91%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 213 31% 91%;
+    --border: 222 47% 22%;
+    --input: 222 47% 18%;
+    --ring: 217 91% 60%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* =========================================================================
+   Port color tokens — mirrored from builder.css (ADR 0069)
+   ========================================================================= */
+:root {
+  --vc-port-in: #9ca3af;
+  --vc-port-ok: #22c55e;
+  --vc-port-error: #ef4444;
+  --vc-port-true: #22c55e;
+  --vc-port-false: #f97316;
+  --vc-port-item: #06b6d4;
+  --vc-port-after: #06b6d4;
+  --vc-port-default: #3b82f6;
+}
+
+/* Run overlay node status classes (ported from builder.css) */
+.run-node-ok {
+  outline: 2px solid var(--vc-port-ok);
+  outline-offset: 2px;
+}
+.run-node-error {
+  outline: 2px solid var(--vc-port-error);
+  outline-offset: 2px;
+}
+.run-node-skipped {
+  opacity: 0.4;
+}
+.run-node-pulse {
+  animation: vc-pulse 1s ease-in-out infinite;
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+@keyframes vc-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* Error category outlines on canvas nodes */
+[data-error-category="wiring"] {
+  outline: 2px dashed #f97316 !important;
+}
+[data-error-category="program"] {
+  outline: 2px solid #ef4444 !important;
+}
+[data-error-category="llm"] {
+  outline: 2px solid #a855f7 !important;
+}
+[data-error-category="infra"] {
+  outline: 2px solid #6b7280 !important;
+}

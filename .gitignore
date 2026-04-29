@@ -65,3 +65,6 @@ outputs/runs.db
 outputs/runs.db-wal
 outputs/runs.db-shm
 outputs/runs.db.corrupt-*
+
+# Builder React SPA build output (ADR 0071) — never commit built artifacts
+src/voice_commander/web/static/builder/

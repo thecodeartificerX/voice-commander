@@ -13,12 +13,22 @@ from typing import Any
 import httpx
 
 from .config import LLMConfig
+from .observability.errors import Category, classify as _classify_error
 from .plan import Plan, ToolCall
 from .registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
 _TEMPLATE_PATH = Path(__file__).resolve().parent / "prompt_template.txt"
+
+
+class LLMPlanError(Exception):
+    """Raised when the LLM router cannot produce a valid plan.
+
+    Covers: JSON parse failure, unknown tool in plan, retry budget exceeded,
+    non-200 response from LM Studio.
+    Classified as 'llm' by the error categorizer.
+    """
 
 _FALLBACK_TEMPLATE = """You are an intent matcher for a Windows voice assistant.
 
@@ -277,10 +287,24 @@ class LLMRouter:
                     _llm_span.set_attr("raw_response", json.dumps(data, default=str))
                     _llm_span.set_attr("latency_ms", int(elapsed_ms))
                 except Exception as exc:
-                    logger.debug("llm_router: failed to set span attrs: %s", exc)
+                    logger.warning("llm_router: failed to set span attrs: %s", exc)
 
             logger.debug("LLM router response: %s", json.dumps(data, default=str))
-            plan = self._parse_response(data)
+            try:
+                plan = self._parse_response(data)
+            except LLMPlanError as exc:
+                # B-H5: re-raise so the daemon's top-level handler can classify
+                # this as `llm` on the run row. Tag the span before re-raising
+                # so the tracer captures error_category in the rollup.
+                self._total_errors += 1
+                if _llm_span is not None and hasattr(_llm_span, "set_attr"):
+                    with contextlib.suppress(Exception):
+                        _llm_span.set_attr("error_type", "LLMPlanError")
+                        _llm_span.set_attr("error_msg", str(exc)[:512])
+                        if hasattr(_llm_span, "set_error_category"):
+                            _llm_span.set_error_category(Category.LLM)
+                logger.warning("llm_router: LLMPlanError: %s", exc)
+                raise
             step_count = len(plan.steps) if plan else 0
             logger.info(
                 "llm_router latency_ms=%d steps=%d transcript=%r",
@@ -300,9 +324,9 @@ class LLMRouter:
             tool_calls = message.get("tool_calls", [])
             if not tool_calls:
                 return None
-        except (KeyError, IndexError, TypeError, AttributeError):
-            logger.warning("LLM router: unexpected response structure")
-            return None
+        except (KeyError, IndexError, TypeError, AttributeError) as exc:
+            logger.warning("LLM router: unexpected response structure: %s", exc)
+            raise LLMPlanError(f"unexpected response structure: {exc}") from exc
 
         # Snapshot valid tool names under reload_lock so we can reject
         # hallucinated names (e.g. "find_focused_window_title_and_process_name",
