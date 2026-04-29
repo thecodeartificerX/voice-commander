@@ -10,17 +10,26 @@ Hardware tests (requiring a live audio + GPU stack) are marked with
 
 from __future__ import annotations
 
+import sys
 import threading
 from unittest.mock import MagicMock
 
 import numpy as np
 
-from voice_commander.daemon import StreamingDaemon
-from voice_commander.event_bus import EventBus
-from voice_commander.feedback import CapturingFeedbackSink
-from voice_commander.llm_router import LLMRouter
-from voice_commander.plan import Plan, ToolCall
-from voice_commander.transcriber import TranscriptionResult
+# ---------------------------------------------------------------------------
+# Stub heavy deps before voice_commander.daemon is imported so collection
+# succeeds in environments without silero_vad / torch / sounddevice.
+# ---------------------------------------------------------------------------
+
+for _mod in ("silero_vad", "torch", "sounddevice", "soxr"):
+    sys.modules.setdefault(_mod, MagicMock())
+
+from voice_commander.daemon import StreamingDaemon  # noqa: E402
+from voice_commander.event_bus import EventBus  # noqa: E402
+from voice_commander.feedback import CapturingFeedbackSink  # noqa: E402
+from voice_commander.llm_router import LLMRouter  # noqa: E402
+from voice_commander.plan import Plan, ToolCall  # noqa: E402
+from voice_commander.transcriber import TranscriptionResult  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helper: build a fully-mocked daemon
@@ -28,7 +37,10 @@ from voice_commander.transcriber import TranscriptionResult
 
 
 def _make_daemon(
-    *, output_dir: str = "outputs", event_bus: EventBus | None = None
+    *,
+    output_dir: str = "outputs",
+    event_bus: EventBus | None = None,
+    speak_fuzzy_threshold: int = 95,
 ) -> tuple[
     StreamingDaemon,
     CapturingFeedbackSink,
@@ -55,6 +67,7 @@ def _make_daemon(
         registry=MagicMock(),
         output_dir=output_dir,
         event_bus=event_bus,
+        speak_fuzzy_threshold=speak_fuzzy_threshold,
     )
     return daemon, feedback, recorder, transcriber, llm_router, dispatcher
 
@@ -248,132 +261,119 @@ def test_utt_q_overflow_calls_on_miss(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Mute state-transition tests
+# Speak-mode state-transition tests (ADR 0072, supersedes ADR 0025 mute tests)
+#
+# State transition table (single source of truth in ADR 0072):
+# Row 1: Scroll Lock, inactive → active, _speak_mode=F
+# Row 2: Scroll Lock, active+normal → inactive, _speak_mode=F
+# Row 3: Scroll Lock, active+speak-mode → inactive (synth Right Ctrl first)
+# Row 4: Right Ctrl, inactive → no-op
+# Row 5: Right Ctrl, active+normal → active+speak-mode
+# Row 6: Right Ctrl, active+speak-mode → active+normal
+# Row 7: (covered in pipeline tests) utterance "speak" exits speak-mode
 # ---------------------------------------------------------------------------
 
 
 def test_scroll_lock_opens_from_inactive(tmp_path):
-    """State transition: inactive + Scroll Lock → active, unmuted."""
+    """Row 1: inactive + Scroll Lock → active, _speak_mode=False."""
     daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     recorder.is_open = False
     daemon.on_scroll_lock()
     recorder.open_session.assert_called_once()
     assert daemon._session_active is True
-    assert daemon._muted is False
+    assert daemon._speak_mode is False
     assert any(c[0] == "on_recording_start" for c in feedback.calls)
 
 
-def test_scroll_lock_closes_from_active_unmuted(tmp_path):
-    """State transition: active+unmuted + Scroll Lock → inactive."""
+def test_scroll_lock_closes_from_active_normal(tmp_path):
+    """Row 2: active+normal + Scroll Lock → inactive, _speak_mode=False."""
     daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._session_active = True
-    daemon._muted = False
+    daemon._speak_mode = False
     daemon.on_scroll_lock()
     recorder.close_session.assert_called_once()
     assert daemon._session_active is False
-    assert daemon._muted is False
+    assert daemon._speak_mode is False
     assert any(c[0] == "on_recording_stop" for c in feedback.calls)
 
 
-def test_scroll_lock_closes_from_active_muted(tmp_path):
-    """State transition: active+muted + Scroll Lock → inactive."""
+def test_scroll_lock_closes_from_active_speak_mode(tmp_path):
+    """Row 3: active+speak-mode + Scroll Lock → synth Right Ctrl + close session."""
     daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._session_active = True
-    daemon._muted = True
+    daemon._speak_mode = True
+
+    # Mock the speak tool in the registry.
+    speak_func = MagicMock()
+    speak_entry = MagicMock()
+    speak_entry.func = speak_func
+    daemon._registry.by_name.return_value = speak_entry
+
     daemon.on_scroll_lock()
-    recorder.close_session.assert_not_called()  # stream already closed by mute
+
+    # Speak tool must have been called to synth Right Ctrl.
+    speak_func.assert_called_once()
+    # Stream must be closed.
+    recorder.close_session.assert_called_once()
     assert daemon._session_active is False
-    assert daemon._muted is False
+    assert daemon._speak_mode is False
     assert any(c[0] == "on_recording_stop" for c in feedback.calls)
 
 
-def test_mute_noop_when_inactive(tmp_path):
-    """State transition: inactive + Mute key → silent no-op."""
+def test_speak_toggle_noop_when_inactive(tmp_path):
+    """Row 4: inactive + Right Ctrl → silent no-op."""
     daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._session_active = False
-    daemon.on_mute_toggle()
+    daemon.on_speak_toggle()
     recorder.open_session.assert_not_called()
     recorder.close_session.assert_not_called()
     assert feedback.calls == []  # truly silent
+    assert daemon._speak_mode is False
 
 
-def test_mute_from_active_unmuted(tmp_path):
-    """State transition: active+unmuted + Mute key → active+muted."""
+def test_speak_toggle_enters_speak_mode(tmp_path):
+    """Row 5: active+normal + Right Ctrl → active+speak-mode."""
     daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._session_active = True
-    daemon._muted = False
-    daemon.on_mute_toggle()
-    recorder.close_session.assert_called_once()
+    daemon._speak_mode = False
+    daemon.on_speak_toggle()
+    # Stream must NOT be touched (stays open).
+    recorder.close_session.assert_not_called()
+    recorder.open_session.assert_not_called()
     assert daemon._session_active is True
-    assert daemon._muted is True
+    assert daemon._speak_mode is True
 
 
-def test_unmute_from_active_muted(tmp_path):
-    """State transition: active+muted + Mute key → active+unmuted."""
+def test_speak_toggle_exits_speak_mode(tmp_path):
+    """Row 6: active+speak-mode + Right Ctrl → active+normal."""
     daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._session_active = True
-    daemon._muted = True
-    daemon.on_mute_toggle()
-    recorder.open_session.assert_called_once()
+    daemon._speak_mode = True
+    daemon.on_speak_toggle()
+    # Stream must NOT be touched.
+    recorder.close_session.assert_not_called()
+    recorder.open_session.assert_not_called()
     assert daemon._session_active is True
-    assert daemon._muted is False
+    assert daemon._speak_mode is False
 
 
-def test_mute_drains_utt_q(tmp_path):
-    """Muting drains all pending utterances from the queue."""
-    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+def test_speak_toggle_stream_stays_open(tmp_path):
+    """ADR 0072: the audio stream is never touched by on_speak_toggle."""
+    daemon, _, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._session_active = True
-    daemon._muted = False
-    # Pre-fill queue
-    daemon._utt_q.put(_fake_utterance())
-    daemon._utt_q.put(_fake_utterance())
-    assert daemon._utt_q.qsize() == 2
-    daemon.on_mute_toggle()
-    assert daemon._utt_q.qsize() == 0  # drained
+    daemon._speak_mode = False
 
+    # Enter speak-mode
+    daemon.on_speak_toggle()
+    # Exit speak-mode
+    daemon.on_speak_toggle()
 
-def test_pipeline_mute_guard_drops_utterance(tmp_path):
-    """Utterance mid-transcription when mute fires must NOT dispatch."""
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
-        output_dir=str(tmp_path)
-    )
-
-    result = _fake_transcription_result("copy", confidence=0.95)
-    transcriber.transcribe.return_value = result
-
-    plan = Plan(steps=(ToolCall(name="press", kwargs={"combo": "ctrl+c"}),), raw_response={})
-    llm_router.route.return_value = plan
-
-    # Set muted BEFORE pipeline processes the utterance.
-    daemon._muted = True
-
-    pipeline_done = threading.Event()
-    original_process = daemon._process_utterance
-
-    def _patched_process(utt):
-        original_process(utt)
-        pipeline_done.set()
-
-    daemon._process_utterance = _patched_process
-
-    thread = threading.Thread(target=daemon._pipeline_loop, daemon=True)
-    thread.start()
-
-    try:
-        daemon._utt_q.put(_fake_utterance())
-        triggered = pipeline_done.wait(timeout=5.0)
-        assert triggered, "pipeline did not process utterance within 5 s"
-    finally:
-        daemon._utt_q.put(None)
-        thread.join(timeout=3.0)
-
-    assert not thread.is_alive(), "pipeline thread did not exit after poison pill"
-    transcriber.transcribe.assert_called_once()  # transcription still runs
-    dispatcher.run_plan.assert_not_called()  # but dispatch is blocked by mute guard
+    recorder.close_session.assert_not_called()
+    recorder.open_session.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# plan_outcome SSE event tests (miss paths)
+# Pipeline speak-mode branch tests (Row 7 variants)
 # ---------------------------------------------------------------------------
 
 
@@ -398,6 +398,94 @@ def _run_process_utterance(daemon: StreamingDaemon, tmp_path) -> None:
         thread.join(timeout=3.0)
 
     assert not thread.is_alive(), "pipeline thread did not exit after poison pill"
+
+
+def test_pipeline_speak_branch_fuzzy_match_calls_speak_tool(tmp_path):
+    """In speak-mode, a fuzzy-matching 'speak' transcript calls the speak tool."""
+    daemon, _, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+        output_dir=str(tmp_path), speak_fuzzy_threshold=95
+    )
+    daemon._speak_mode = True
+
+    result = _fake_transcription_result("speak", confidence=0.95)
+    transcriber.transcribe.return_value = result
+
+    speak_func = MagicMock()
+    speak_entry = MagicMock()
+    speak_entry.func = speak_func
+    daemon._registry.by_name.return_value = speak_entry
+
+    _run_process_utterance(daemon, tmp_path)
+
+    speak_func.assert_called_once()
+    llm_router.route.assert_not_called()
+    dispatcher.run_plan.assert_not_called()
+
+
+def test_pipeline_speak_branch_non_match_drops_silently(tmp_path):
+    """In speak-mode, a non-matching transcript is silently dropped — no LLM call."""
+    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+        output_dir=str(tmp_path), speak_fuzzy_threshold=95
+    )
+    daemon._speak_mode = True
+
+    result = _fake_transcription_result("hello world", confidence=0.95)
+    transcriber.transcribe.return_value = result
+
+    speak_entry = MagicMock()
+    daemon._registry.by_name.return_value = speak_entry
+
+    _run_process_utterance(daemon, tmp_path)
+
+    speak_entry.func.assert_not_called()
+    llm_router.route.assert_not_called()
+    dispatcher.run_plan.assert_not_called()
+
+
+def test_pipeline_speak_branch_multi_word_drops_silently(tmp_path):
+    """In speak-mode, 'speak louder' (multi-word) is silently dropped even if 'speak' is in it."""
+    daemon, _, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+        output_dir=str(tmp_path), speak_fuzzy_threshold=95
+    )
+    daemon._speak_mode = True
+
+    result = _fake_transcription_result("speak louder", confidence=0.95)
+    transcriber.transcribe.return_value = result
+
+    speak_entry = MagicMock()
+    daemon._registry.by_name.return_value = speak_entry
+
+    _run_process_utterance(daemon, tmp_path)
+
+    speak_entry.func.assert_not_called()
+    llm_router.route.assert_not_called()
+
+
+def test_pipeline_speak_branch_skips_confidence_gate(tmp_path):
+    """In speak-mode, confidence gate is bypassed — low-confidence 'speak' still triggers."""
+    daemon, _, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+        output_dir=str(tmp_path), speak_fuzzy_threshold=95
+    )
+    daemon._speak_mode = True
+
+    # confidence=0.05 is below the default min_confidence=0.30
+    result = _fake_transcription_result("speak", confidence=0.05)
+    transcriber.transcribe.return_value = result
+
+    speak_func = MagicMock()
+    speak_entry = MagicMock()
+    speak_entry.func = speak_func
+    daemon._registry.by_name.return_value = speak_entry
+
+    _run_process_utterance(daemon, tmp_path)
+
+    speak_func.assert_called_once()
+    llm_router.route.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# plan_outcome SSE event tests (miss paths)
+# ---------------------------------------------------------------------------
 
 
 def test_process_utterance_publishes_miss_on_route_none(tmp_path):
@@ -504,11 +592,6 @@ def test_process_utterance_publishes_error_when_registry_none(tmp_path):
     assert payload["failed_step_index"] is None
     assert payload["duration_ms"] >= 0
     dispatcher.run_plan.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# Miss path — fast-path None goes straight to feedback.on_miss (no agentic).
-# ---------------------------------------------------------------------------
 
 
 def test_process_utterance_calls_on_miss_when_plan_is_none(tmp_path):

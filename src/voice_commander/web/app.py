@@ -114,9 +114,9 @@ def create_app(
     @app.get("/page/primitives", response_class=HTMLResponse)
     async def page_primitives(request: Request) -> HTMLResponse:
         """``GET /page/primitives`` — render the tools/primitives page
-        with tools grouped by category.
+        with tools grouped by category. System tools are excluded.
         """
-        tools = registry.all()
+        tools = [t for t in registry.all() if not t.system]
         grouped: dict[str, list[object]] = {}
         for t in tools:
             grouped.setdefault(t.category, []).append(t)
@@ -124,6 +124,27 @@ def create_app(
             request,
             "page_primitives.html",
             {"groups": grouped},
+        )
+
+    @app.get("/api/tools")
+    async def api_tools() -> JSONResponse:
+        """``GET /api/tools`` — return JSON list of non-system tools for the Builder UI.
+
+        System tools (``system = true``) are excluded so infrastructure primitives
+        like ``speak`` do not appear in the React Flow palette or other UI surfaces.
+        """
+        return JSONResponse(
+            [
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "category": t.category,
+                    "enabled": t.enabled,
+                    "internal": t.internal,
+                }
+                for t in registry.all()
+                if not t.system
+            ]
         )
 
     # ------------------------------------------------------------------

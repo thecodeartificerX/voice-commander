@@ -277,13 +277,16 @@ def test_double_open_no_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 5 — mute/unmute lifecycle within an active session
+# Test 5 — speak-mode lifecycle within an active session (ADR 0072)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
-def test_mute_unmute_lifecycle(tmp_path: Any) -> None:
-    """Full mute/unmute lifecycle within an active session."""
+def test_speak_mode_lifecycle(tmp_path: Any) -> None:
+    """Full speak-mode enter/exit lifecycle within an active session.
+
+    ADR 0072 supersedes ADR 0025: stream stays open; only the LLM route is gated.
+    """
     from unittest.mock import MagicMock
 
     from voice_commander.daemon import StreamingDaemon
@@ -328,13 +331,18 @@ def test_mute_unmute_lifecycle(tmp_path: Any) -> None:
         # 1. Open session
         daemon.on_scroll_lock()
         assert daemon._session_active is True
-        assert daemon._muted is False
+        assert daemon._speak_mode is False
 
-        # 2. Mute
-        daemon.on_mute_toggle()
-        assert daemon._muted is True
+        # 2. Enter speak-mode — stream MUST stay open
+        open_calls_before = recorder.open_session.call_count
+        close_calls_before = recorder.close_session.call_count
+        daemon.on_speak_toggle()
+        assert daemon._speak_mode is True
+        # Stream untouched (ADR 0072 core invariant)
+        assert recorder.open_session.call_count == open_calls_before
+        assert recorder.close_session.call_count == close_calls_before
 
-        # 3. Inject utterance while muted — should NOT dispatch
+        # 3. Inject utterance while in speak-mode — should NOT dispatch (non-speak text)
         done1 = threading.Event()
         original = daemon._process_utterance
 
@@ -347,11 +355,13 @@ def test_mute_unmute_lifecycle(tmp_path: Any) -> None:
         assert done1.wait(timeout=5.0), "pipeline did not process utterance"
         assert dispatcher.run_plan.call_count == 0
 
-        # 4. Unmute
-        daemon.on_mute_toggle()
-        assert daemon._muted is False
+        # 4. Exit speak-mode — stream still untouched
+        daemon.on_speak_toggle()
+        assert daemon._speak_mode is False
+        assert recorder.open_session.call_count == open_calls_before
+        assert recorder.close_session.call_count == close_calls_before
 
-        # 5. Inject utterance while unmuted — SHOULD dispatch
+        # 5. Inject utterance in normal mode — SHOULD dispatch
         done2 = threading.Event()
 
         def _p2(utt: Any) -> None:
@@ -366,6 +376,51 @@ def test_mute_unmute_lifecycle(tmp_path: Any) -> None:
         # 6. Close session
         daemon.on_scroll_lock()
         assert daemon._session_active is False
+        assert daemon._speak_mode is False
     finally:
         daemon._utt_q.put(None)
         pipeline_thread.join(timeout=3.0)
+
+
+@pytest.mark.integration
+def test_scroll_lock_from_speak_mode_synths_right_ctrl(tmp_path: Any) -> None:
+    """Pressing Scroll Lock from speak-mode synthesizes Right Ctrl before closing.
+
+    The speak tool func is called once so the dictation app turns off cleanly.
+    """
+    from unittest.mock import MagicMock
+
+    from voice_commander.daemon import StreamingDaemon
+    from voice_commander.feedback import NullFeedbackSink
+
+    speak_func = MagicMock()
+    speak_entry = MagicMock()
+    speak_entry.func = speak_func
+
+    registry = MagicMock()
+    registry.by_name.side_effect = lambda name: speak_entry if name == "speak" else None
+
+    recorder = MagicMock()
+    daemon = StreamingDaemon(
+        feedback=NullFeedbackSink(),
+        recorder=recorder,
+        transcriber=MagicMock(),
+        llm_router=MagicMock(),
+        dispatcher=MagicMock(),
+        registry=registry,
+        output_dir=str(tmp_path / "outputs"),
+    )
+
+    # Open session, enter speak-mode.
+    daemon._session_active = True
+    daemon._speak_mode = True
+
+    # Scroll Lock close from speak-mode.
+    daemon.on_scroll_lock()
+
+    # speak tool must have been called to synth Right Ctrl.
+    speak_func.assert_called_once()
+    # Stream must be closed.
+    recorder.close_session.assert_called_once()
+    assert daemon._session_active is False
+    assert daemon._speak_mode is False

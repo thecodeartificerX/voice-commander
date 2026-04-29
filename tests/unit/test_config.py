@@ -98,9 +98,10 @@ def test_vad_overrides(tmp_path):
     assert cfg.vad.pre_roll_ms == 300
 
 
-def test_mute_key_defaults_to_empty(tmp_path):
+def test_mute_key_defaults_to_ctrl_r(tmp_path):
+    """ADR 0072: mute_key default flips from '' to 'ctrl_r' — on by default."""
     cfg = Config.load(tmp_path / "nope.toml")
-    assert cfg.hotkey.mute_key == ""
+    assert cfg.hotkey.mute_key == "ctrl_r"
 
 
 def test_mute_key_loads_from_toml(tmp_path):
@@ -343,3 +344,30 @@ def test_observability_section_overrides(tmp_path):
     assert cfg.observability.enabled is False
     assert cfg.observability.keep_runs == 50
     assert cfg.observability.db_path == "outputs/runs.db"  # default preserved
+
+
+# ---------------------------------------------------------------------------
+# SpeakConfig parsing (ADR 0072)
+# ---------------------------------------------------------------------------
+
+
+def test_speak_section_defaults(tmp_path):
+    """No [speak] section → fuzzy_threshold defaults to 95."""
+    cfg = Config.load(tmp_path / "nope.toml")
+    assert cfg.speak.fuzzy_threshold == 95
+
+
+def test_speak_section_overrides(tmp_path):
+    """[speak] fuzzy_threshold can be set explicitly."""
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("[speak]\nfuzzy_threshold = 80\n")
+    cfg = Config.load(cfg_path)
+    assert cfg.speak.fuzzy_threshold == 80
+
+
+def test_speak_fuzzy_threshold_invalid_type_raises(tmp_path):
+    """Non-integer fuzzy_threshold raises TypeError or ValueError."""
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[speak]\nfuzzy_threshold = "high"\n')
+    with pytest.raises((TypeError, ValueError)):
+        Config.load(cfg_path)

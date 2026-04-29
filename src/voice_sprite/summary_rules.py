@@ -55,6 +55,9 @@ RULES: dict[str, Callable[[dict[str, Any], PlanOutcome], str]] = {
     "lock_screen": lambda _kw, _o: "locked screen",
     "screenshot": lambda _kw, _o: "screenshot",
     "search_web": lambda kw, _o: f'searched for "{_typed_snip(str(kw.get("query", "")), cap=40)}"',
+    # Speak-mode (dictation toggle) — shown when the daemon enters speak-mode
+    # via the ``speak`` tool or a manual Right Ctrl press.
+    "speak": lambda _kw, _o: "Dictation mode — say 'speak' to exit",
     # Perception primitives — usually feed branches, rarely terminal,
     # but cover them so HUD reads cleanly when they ARE the last step.
     "read_clipboard": lambda _kw, _o: "read clipboard",

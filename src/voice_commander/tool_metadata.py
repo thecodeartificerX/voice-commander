@@ -39,6 +39,9 @@ class ToolMetadata:
     # Every primitive in ``primitives.toml`` sets this to True; only
     # user-defined commands/workflows should remain visible.
     internal: bool = False
+    # ``system`` tools are hidden from the web UI (/page/primitives, /api/tools,
+    # Builder palette) but remain fully dispatchable by the LLM router and daemon.
+    system: bool = False
     args: dict[str, ArgMetadata] = field(default_factory=dict)
     returns: dict[str, dict[str, str]] = field(default_factory=dict)
 
@@ -177,6 +180,8 @@ class ToolMetadataStore:
                 tool_entry["llm_only"] = md.llm_only
             if md.internal:
                 tool_entry["internal"] = md.internal
+            if md.system:
+                tool_entry["system"] = md.system
             if md.args:
                 tool_entry["args"] = {
                     arg_name: {
@@ -256,6 +261,7 @@ def _parse_tool(
         settle_ms = int(settle_ms_raw) if isinstance(settle_ms_raw, (int, float)) else 0
         llm_only = bool(raw.get("llm_only", False))
         internal = bool(raw.get("internal", False))
+        system = bool(raw.get("system", False))
 
         args: dict[str, ArgMetadata] = {}
         args_raw = raw.get("args")
@@ -293,6 +299,7 @@ def _parse_tool(
         settle_ms=settle_ms,
         llm_only=llm_only,
         internal=internal,
+        system=system,
         args=args,
         returns=returns,
     )

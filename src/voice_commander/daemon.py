@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 import numpy.typing as npt
+import rapidfuzz.fuzz
 import soundfile as sf
 from silero_vad import load_silero_vad
 
@@ -78,6 +79,7 @@ class StreamingDaemon:
         min_confidence: float = 0.30,
         min_word_count: int = 1,
         max_no_speech_prob: float = 0.6,
+        speak_fuzzy_threshold: int = 95,
         output_dir: str = "outputs",
         web_server: WebServer | None = None,
         event_bus: EventBus | None = None,
@@ -123,7 +125,7 @@ class StreamingDaemon:
             of ``_shutdown``.
             ``_wav_executor`` — single-worker :class:`~concurrent.futures.ThreadPoolExecutor`
             for fire-and-forget async WAV / JSON writes.
-            ``_session_active`` / ``_muted`` — boolean state flags (not thread-safe;
+            ``_session_active`` / ``_speak_mode`` — boolean state flags (not thread-safe;
             primarily mutated on the pynput hotkey-listener thread, also reset by
             :meth:`shutdown` during teardown).
         """
@@ -136,6 +138,7 @@ class StreamingDaemon:
         self._min_confidence = min_confidence
         self._min_word_count = min_word_count
         self._max_no_speech_prob = max_no_speech_prob
+        self._speak_fuzzy_threshold = speak_fuzzy_threshold
         self._output_dir = Path(output_dir)
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._web_server = web_server
@@ -159,7 +162,7 @@ class StreamingDaemon:
             thread_name_prefix="wav-writer",
         )
         self._session_active: bool = False
-        self._muted: bool = False
+        self._speak_mode: bool = False
 
     def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         if self._event_bus is not None:
@@ -170,7 +173,7 @@ class StreamingDaemon:
     # ------------------------------------------------------------------
 
     def on_scroll_lock(self) -> None:
-        """Toggle the voice session on/off and clear the muted flag on both transitions.
+        """Toggle the voice session on/off and clear speak-mode on both transitions.
 
         Thread context: called exclusively on the **pynput hotkey-listener thread**.
         Must not block — delegates all heavy work to other threads via queues.
@@ -178,12 +181,13 @@ class StreamingDaemon:
 
         State transitions:
 
-        * **Open → close**: calls ``recorder.close_session()`` (unless already muted,
-          in which case the stream is already closed), drains ``_utt_q``, sets
-          ``_session_active = False``, resets ``_muted = False``, publishes
+        * **Open → close**: if in speak-mode, synthesizes Right Ctrl first so the
+          external dictation app turns off cleanly; then calls
+          ``recorder.close_session()``, drains ``_utt_q``, sets
+          ``_session_active = False``, resets ``_speak_mode = False``, publishes
           ``session_stopped``.
         * **Closed → open**: calls ``recorder.open_session()`` (spawns VAD worker),
-          sets ``_session_active = True``, resets ``_muted = False``, publishes
+          sets ``_session_active = True``, resets ``_speak_mode = False``, publishes
           ``session_started``.
 
         Guard: no-op (with a warning log) if ``_recorder`` is ``None`` — i.e. the
@@ -193,13 +197,18 @@ class StreamingDaemon:
             logger.warning("on_scroll_lock called but recorder is not yet initialised; ignoring")
             return
         if self._session_active:
-            # Close session from any sub-state (muted or unmuted).
-            if not self._muted:
-                self._recorder.close_session()
-            # else: stream already closed by mute
+            # If in speak-mode, synth Right Ctrl to turn the dictation app off cleanly.
+            if self._speak_mode:
+                speak_entry = self._registry.by_name("speak") if self._registry else None
+                if speak_entry is not None:
+                    try:
+                        speak_entry.func()
+                    except Exception:
+                        logger.exception("Failed to synth Right Ctrl during Scroll Lock close")
+            self._recorder.close_session()
             self._drain_utt_q()
             self._session_active = False
-            self._muted = False
+            self._speak_mode = False
             self._feedback.on_recording_stop()
             self._publish("session_stopped")
             logger.info("Session closed")
@@ -207,57 +216,43 @@ class StreamingDaemon:
             try:
                 self._recorder.open_session()
                 self._session_active = True
-                self._muted = False
+                self._speak_mode = False
                 self._feedback.on_recording_start()
                 self._publish("session_started")
                 logger.info("Session opened")
             except Exception as e:
                 self._session_active = False
-                self._muted = False
+                self._speak_mode = False
                 self._feedback.on_error("recorder.open_session", e)
 
-    def on_mute_toggle(self) -> None:
-        """Toggle mute within an active session. No-op when session is inactive.
+    def on_speak_toggle(self) -> None:
+        """Toggle speak-mode within an active session. No-op when session is inactive.
 
-        Thread context: called exclusively on the **pynput hotkey-listener thread**.
-        Same serialisation guarantee as :meth:`on_scroll_lock` — concurrent
-        invocations cannot happen.
+        Thread context: called exclusively on the **pynput hotkey-listener thread**
+        (including when triggered by a synthesized Right Ctrl keypress from
+        :func:`voice_commander.tools._system.speak`).
+        pynput serialises key callbacks so concurrent invocations cannot happen.
 
         State transitions:
 
-        * **Unmuted → muted**: calls ``recorder.close_session()``, drains ``_utt_q``,
-          sets ``_muted = True``, publishes ``muted``.
-        * **Muted → unmuted**: calls ``recorder.open_session()``, sets
-          ``_muted = False``, publishes ``unmuted``.
+        * **Normal → speak-mode**: sets ``_speak_mode = True``, publishes ``muted``.
+          The audio stream stays open — only the LLM route is gated.
+        * **Speak-mode → normal**: sets ``_speak_mode = False``, publishes ``unmuted``.
 
-        No-op when ``_session_active`` is ``False`` — mute toggle outside a session
-        has no effect (silent return).
-        Guard: no-op if ``_recorder`` is ``None``.
+        No-op when ``_session_active`` is ``False`` — speak-mode toggle outside a
+        session has no effect (silent return). This allows the Right Ctrl key to
+        double as the external dictation app's hotkey without triggering any
+        voice-commander behaviour outside an active session.
         """
         if not self._session_active:
-            # Silent no-op — mute toggle outside session has no effect.
             return
-        if self._recorder is None:
-            return
-        if self._muted:
-            # Unmute: reopen stream
-            try:
-                self._recorder.open_session()
-                self._muted = False
-                self._publish("unmuted")
-                logger.info("Session unmuted")
-            except Exception as e:
-                self._feedback.on_error("recorder.open_session", e)
-        else:
-            # Mute: close stream, drain queue
-            try:
-                self._recorder.close_session()
-            except Exception:
-                logger.exception("close_session() failed during mute; treating as muted")
-            self._drain_utt_q()
-            self._muted = True
+        self._speak_mode = not self._speak_mode
+        if self._speak_mode:
             self._publish("muted")
-            logger.info("Session muted")
+            logger.info("Speak-mode entered")
+        else:
+            self._publish("unmuted")
+            logger.info("Speak-mode exited")
 
     def _drain_utt_q(self) -> None:
         """Discard all pending utterances from the queue."""
@@ -313,9 +308,11 @@ class StreamingDaemon:
 
         1. **word-count** — below ``_min_word_count`` → silent drop (no ``plan_outcome``).
         2. **no_speech_prob** — above ``_max_no_speech_prob`` → silent drop.
-        3. **confidence** — below ``_min_confidence`` → miss chime +
+        3. **speak-mode gate** — if ``_speak_mode``, check for wake-word "speak" via
+           ``rapidfuzz.fuzz.ratio``; fuzzy-match exits speak-mode, all else is
+           silently dropped. No LLM call in speak-mode.
+        4. **confidence** — below ``_min_confidence`` → miss chime +
            ``plan_outcome`` (status=``miss``).
-        4. **mute guard** — utterance arrived during an in-flight mute → silent drop.
         5. **LLM route** — ``LLMRouter.route()`` returns ``None`` → miss chime + ``plan_outcome``.
         6. **dispatch** — ``Dispatcher.run_plan()`` executes the plan.
 
@@ -370,19 +367,35 @@ class StreamingDaemon:
                 )
                 return
 
+            # Speak-mode gate: in speak-mode, check for the wake-word "speak"
+            # and short-circuit the rest of the pipeline.  The audio stream
+            # stays open so whisper keeps transcribing, but neither the LLM
+            # router nor the dispatcher are ever called.
+            if self._speak_mode:
+                text_norm = result.text.strip().lower().rstrip(".,!?")
+                if (
+                    len(text_norm.split()) == 1
+                    and rapidfuzz.fuzz.ratio(text_norm, "speak") >= self._speak_fuzzy_threshold
+                ):
+                    speak_entry = self._registry.by_name("speak") if self._registry else None
+                    if speak_entry is not None:
+                        try:
+                            speak_entry.func()
+                        except Exception:
+                            logger.exception("Failed to synth Right Ctrl from speak-mode wake-word")
+                    else:
+                        logger.warning("speak tool not found in registry; cannot exit speak-mode")
+                else:
+                    logger.debug(
+                        "Speak-mode: dropping '%s' (no wake-word match)", result.text
+                    )
+                return
+
             # Gate: confidence  (emits plan_outcome status=miss — user-visible)
             if result.confidence < self._min_confidence:
                 run.set_status("miss")
                 self._feedback.on_miss(result.text, ())
                 _publish_miss(result.text)
-                return
-
-            # Mute guard: utterance may have been mid-transcription when mute fired.
-            if self._muted:
-                logger.debug(
-                    "Mute guard: dropping utterance '%s' (muted during pipeline)",
-                    result.text,
-                )
                 return
 
             self._publish("llm_thinking")
@@ -500,8 +513,8 @@ class StreamingDaemon:
 
         Args:
             hotkey_key: Key name for session toggle (e.g. ``"scroll_lock"``).
-            mute_key: Key name for mute toggle.  Empty string (default) disables
-                the mute hotkey.
+            mute_key: Key name for speak-mode toggle.  Empty string (default) disables
+                the hotkey; Right Ctrl (``"ctrl_r"``) is the recommended default.
 
         Raises:
             Exception: Re-raises if :meth:`Transcriber.load` or
@@ -548,7 +561,7 @@ class StreamingDaemon:
         try:
             bindings: dict[str, Callable[[], None]] = {hotkey_key: self.on_scroll_lock}
             if mute_key:
-                bindings[mute_key] = self.on_mute_toggle
+                bindings[mute_key] = self.on_speak_toggle
             self._hotkey = HotkeyController(bindings)
             self._hotkey.start()
         except Exception as e:
@@ -618,13 +631,12 @@ class StreamingDaemon:
 
         # Close any open session.
         if self._recorder is not None and self._session_active:
-            if not self._muted:
-                try:
-                    self._recorder.close_session()
-                except Exception:
-                    logger.exception("Error closing session during shutdown")
+            try:
+                self._recorder.close_session()
+            except Exception:
+                logger.exception("Error closing session during shutdown")
             self._session_active = False
-            self._muted = False
+            self._speak_mode = False
 
         # Stop hotkey listener.
         if self._hotkey is not None:
@@ -818,6 +830,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         min_confidence=cfg.transcription.min_confidence,
         min_word_count=cfg.vad.gates.min_word_count,
         max_no_speech_prob=cfg.vad.gates.max_no_speech_prob,
+        speak_fuzzy_threshold=cfg.speak.fuzzy_threshold,
         output_dir=cfg.audio.output_dir,
         web_server=web_server,
         event_bus=event_bus,

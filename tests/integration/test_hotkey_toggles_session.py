@@ -254,3 +254,61 @@ def test_toggle_thread_safety(stub_daemon: Any) -> None:
     # Final state must be consistent: open iff more opens than closes.
     expected_is_open = (recorder.open_calls - recorder.close_calls) == 1
     assert recorder.is_open == expected_is_open
+
+
+# ---------------------------------------------------------------------------
+# Test 5 — ADR 0072: Right Ctrl in active session flips _speak_mode only.
+#           The audio stream MUST NOT be touched (stays open).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.hardware
+@pytest.mark.integration
+def test_speak_toggle_does_not_touch_recorder(stub_daemon: Any) -> None:
+    """Right Ctrl (on_speak_toggle) while session active: stream stays open.
+
+    ADR 0072 supersedes ADR 0025: the stream no longer closes on mute.
+    on_speak_toggle() only flips _speak_mode; recorder is unaffected.
+    """
+    recorder: _StubRecorder = stub_daemon._recorder  # type: ignore[assignment]
+
+    # Open a session first.
+    stub_daemon.on_scroll_lock()
+    assert recorder.is_open
+    open_calls_before = recorder.open_calls
+    close_calls_before = recorder.close_calls
+
+    # Right Ctrl → enter speak-mode.
+    stub_daemon.on_speak_toggle()
+    assert stub_daemon._speak_mode is True
+    # Stream must NOT have been touched.
+    assert recorder.open_calls == open_calls_before
+    assert recorder.close_calls == close_calls_before
+
+    # Right Ctrl again → exit speak-mode.
+    stub_daemon.on_speak_toggle()
+    assert stub_daemon._speak_mode is False
+    # Stream still untouched.
+    assert recorder.open_calls == open_calls_before
+    assert recorder.close_calls == close_calls_before
+
+
+@pytest.mark.hardware
+@pytest.mark.integration
+def test_speak_toggle_noop_when_session_inactive(stub_daemon: Any) -> None:
+    """Right Ctrl when session is inactive is a silent no-op (ADR 0072).
+
+    The mute key doubles as the external dictation app's own hotkey; any
+    feedback or state change outside a session would be disruptive.
+    """
+    recorder: _StubRecorder = stub_daemon._recorder  # type: ignore[assignment]
+
+    # Session is not open.
+    assert not recorder.is_open
+    assert stub_daemon._speak_mode is False
+
+    stub_daemon.on_speak_toggle()
+
+    assert stub_daemon._speak_mode is False
+    assert recorder.open_calls == 0
+    assert recorder.close_calls == 0

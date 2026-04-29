@@ -16,7 +16,10 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class HotkeyConfig:
     key: str = "scroll_lock"
-    mute_key: str = ""
+    # Default flips from "" to "ctrl_r" (ADR 0072): Right Ctrl is the Windows
+    # dictation hotkey, so one keypress toggles both the dictation app and
+    # voice-commander's speak-mode simultaneously. Set to "" to disable.
+    mute_key: str = "ctrl_r"
 
 
 @dataclass(frozen=True)
@@ -125,6 +128,18 @@ class PerceptionConfig:
 
 
 @dataclass(frozen=True)
+class SpeakConfig:
+    """Configuration for the speak-mode dictation toggle (ADR 0072).
+
+    ``fuzzy_threshold`` controls how closely a transcript must match the word
+    "speak" (via ``rapidfuzz.fuzz.ratio``) to trigger a speak-mode toggle.
+    Valid range: 0–100. Default 95 requires a near-exact match.
+    """
+
+    fuzzy_threshold: int = 95
+
+
+@dataclass(frozen=True)
 class ObservabilityConfig:
     enabled: bool = True
     keep_runs: int = 1000
@@ -146,6 +161,7 @@ class Config:
     sprite: SpriteConfig = field(default_factory=SpriteConfig)
     perception: PerceptionConfig = field(default_factory=PerceptionConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
+    speak: SpeakConfig = field(default_factory=SpeakConfig)
     # Per-field source strings for [llm], keyed by field name. Populated by
     # :meth:`load`; empty when the config is constructed directly. Consumed by
     # :func:`log_llm_sources` at daemon startup so every field's origin is
@@ -179,6 +195,7 @@ class Config:
             sprite=_section(SpriteConfig, raw.get("sprite", {})),
             perception=_section(PerceptionConfig, raw.get("perception", {})),
             observability=_section(ObservabilityConfig, raw.get("observability", {})),
+            speak=_section(SpeakConfig, raw.get("speak", {})),
             llm_sources=llm_sources,
         )
 
