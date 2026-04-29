@@ -205,6 +205,8 @@ class StreamingDaemon:
                         speak_entry.func()
                     except Exception:
                         logger.exception("Failed to synth Right Ctrl during Scroll Lock close")
+                else:
+                    logger.warning("speak tool not found — dictation app may remain active")
             self._recorder.close_session()
             self._drain_utt_q()
             self._session_active = False

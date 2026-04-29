@@ -141,6 +141,8 @@ def create_app(
                     "category": t.category,
                     "enabled": t.enabled,
                     "internal": t.internal,
+                    "system": t.system,
+                    "llm_only": t.llm_only,
                 }
                 for t in registry.all()
                 if not t.system

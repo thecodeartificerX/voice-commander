@@ -8,6 +8,6 @@ category = "system"
 phrases = ["speak", "start dictation", "voice typing", "begin dictating"]
 description = "Toggle Windows voice dictation on/off. Synthesizes a Right Ctrl press."
 enabled = true
-llm_only = false
+llm_only = true
 internal = false
 system = true
