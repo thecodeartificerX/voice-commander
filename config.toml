@@ -4,7 +4,7 @@ mute_key = "ctrl_r"
 
 [audio]
 channels = 1
-device = 11
+device = 8
 output_dir = "outputs"
 
 [transcription]
