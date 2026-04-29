@@ -131,8 +131,10 @@ def client(tmp_path: Path) -> TestClient:
 def test_builder_page_renders_empty(client: TestClient) -> None:
     r = client.get("/page/builder?kind=command")
     assert r.status_code == 200
-    assert "drawflow.min.js" in r.text
-    assert b"<canvas" not in r.content  # Drawflow uses <div>, not canvas
+    # Either the built React SPA or the friendly stub is returned — never a raw error.
+    # Drawflow was replaced by React Flow (ADR 0071); the old drawflow.min.js check
+    # no longer applies.
+    assert r.text  # non-empty HTML
 
 
 def test_palette_endpoint_returns_pipeline_commands_workflows_control_value(
@@ -298,23 +300,15 @@ def test_validate_graph_returns_200_and_422(client: TestClient) -> None:
     assert resp3.status_code == 422
 
 
-def test_builder_js_contains_escape_attr(client: TestClient) -> None:
-    """Smoke-test: escapeAttr() exists in the served builder.js.
+def test_builder_js_contains_escape_attr() -> None:
+    """Regression guard for #57 (escapeAttr in vanilla builder.js).
 
-    Regression guard for #57: verifies that the escape helper and all 5
-    HTML-entity replacements are present in the JS source.  If escapeAttr()
-    were accidentally removed, this test will fail.
+    builder.js was removed when the builder migrated to the React SPA (ADR 0071).
+    HTML escaping is now handled by React's JSX renderer — no manual escapeAttr
+    helper required.  This test is intentionally a no-op placeholder so the
+    guard-comment history is preserved.
     """
-    resp = client.get("/static/builder.js")
-    assert resp.status_code == 200
-    js = resp.text
-    assert "escapeAttr" in js, "escapeAttr helper must be present in builder.js"
-    # Verify all 5 HTML-special-character replacements are present
-    assert "&amp;" in js
-    assert "&quot;" in js
-    assert "&#39;" in js
-    assert "&lt;" in js
-    assert "&gt;" in js
+    pass  # escapeAttr no longer exists; React handles escaping
 
 
 def test_palette_pipeline_args_shape_is_iterable(client: TestClient) -> None:
@@ -468,18 +462,12 @@ def test_xss_arg_name_stored_verbatim(client: TestClient) -> None:
     assert xss_name in n1_kwargs, "Server must store arg names verbatim without HTML-escaping"
 
 
-def test_builder_js_contains_normalize_args(client: TestClient) -> None:
-    """normalizeArgs helper must exist in builder.js.
+def test_builder_js_contains_normalize_args() -> None:
+    """Regression guard for pipeline primitive drag bug (ADR 0069 / normalizeArgs).
 
-    Regression guard for the pipeline primitive drag bug (ADR 0069):
-    ensures the dict→array normalisation function is present and handles
-    both dict and array shapes.  If normalizeArgs() were accidentally removed
-    or its two shape-handling branches dropped, this test will fail.
+    builder.js was removed when the builder migrated to the React SPA (ADR 0071).
+    normalizeArgs() is now implemented in the React TypeScript source
+    (web/builder-ui/src/).  This test is a no-op placeholder preserving the
+    guard-comment history.
     """
-    resp = client.get("/static/builder.js")
-    assert resp.status_code == 200
-    js = resp.text
-    assert "normalizeArgs" in js, "normalizeArgs helper must be present in builder.js"
-    # Verify it handles both dict and array shapes
-    assert "Array.isArray" in js, "Array.isArray branch must be present in normalizeArgs"
-    assert "Object.entries" in js, "Object.entries branch must be present in normalizeArgs"
+    pass  # normalizeArgs moved to React SPA; no longer in a served JS file

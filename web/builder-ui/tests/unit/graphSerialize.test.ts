@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   deserializeGraph,
+  normalizeArgs,
   serializeGraph,
   fromFlowEdge,
   toFlowEdge,
@@ -126,5 +127,104 @@ describe('graphSerialize — F-M2 round-trip', () => {
     const e1 = toFlowEdge({ from: 'a.ok', to: 'b.in' })
     const e2 = toFlowEdge({ from: 'a.ok', to: 'b.in' })
     expect(e1.id).toBe(e2.id)
+  })
+
+  describe('Issue #95: SPA Builder JSON shape divergence from canonical schema', () => {
+    it('backend → SPA → backend round-trip preserves canonical edge shape for control edges', () => {
+      const backendGraph: Graph = {
+        ...meta(),
+        description: 'Test graph',
+        nodes: [
+          { id: 'a', ref: 'shell.notify', kwargs: {}, pos: [0, 0] },
+          { id: 'b', ref: 'shell.notify', kwargs: {}, pos: [100, 0] },
+        ],
+        edges: [{ from: 'a.ok', to: 'b.in' }],
+      }
+
+      const { nodes, edges } = deserializeGraph(backendGraph)
+      const savedGraph = serializeGraph(meta(), nodes, edges)
+
+      expect(savedGraph.edges).toEqual(backendGraph.edges)
+      expect(savedGraph.edges[0]).toEqual({ from: 'a.ok', to: 'b.in' })
+    })
+
+    it('backend → SPA → backend round-trip preserves canonical edge shape for data edges', () => {
+      const backendGraph: Graph = {
+        ...meta(),
+        description: 'Test graph',
+        nodes: [
+          { id: 'a', ref: 'perception.clipboard', kwargs: {}, pos: [0, 0] },
+          { id: 'b', ref: 'shell.notify', kwargs: {}, pos: [100, 0] },
+        ],
+        edges: [{ from: 'a.data', to: 'b.msg' }],
+      }
+
+      const { nodes, edges } = deserializeGraph(backendGraph)
+      const savedGraph = serializeGraph(meta(), nodes, edges)
+
+      expect(savedGraph.edges).toEqual(backendGraph.edges)
+      expect(savedGraph.edges[0]).toEqual({ from: 'a.data', to: 'b.msg' })
+    })
+
+    it('backend → SPA → backend round-trip preserves edges with default ports', () => {
+      const backendGraph: Graph = {
+        ...meta(),
+        description: 'Test graph',
+        nodes: [
+          { id: 'x', ref: 'shell.notify', kwargs: {}, pos: [0, 0] },
+          { id: 'y', ref: 'shell.notify', kwargs: {}, pos: [100, 0] },
+        ],
+        edges: [{ from: 'x.ok', to: 'y.in' }],
+      }
+
+      const { nodes, edges } = deserializeGraph(backendGraph)
+      const savedGraph = serializeGraph(meta(), nodes, edges)
+
+      expect(savedGraph.edges).toEqual(backendGraph.edges)
+    })
+
+    it('round-trip preserves non-empty inputs and llm_visible: false', () => {
+      const customMeta: Omit<Graph, 'nodes' | 'edges'> = {
+        ...meta(),
+        llm_visible: false,
+        inputs: [{ name: 'url', type: 'str' }],
+      }
+      const backendGraph: Graph = {
+        ...customMeta,
+        nodes: [
+          { id: 'a', ref: 'shell.notify', kwargs: {}, pos: [0, 0] },
+          { id: 'b', ref: 'shell.notify', kwargs: {}, pos: [100, 0] },
+        ],
+        edges: [{ from: 'a.ok', to: 'b.in' }],
+      }
+
+      const { nodes, edges } = deserializeGraph(backendGraph)
+      const savedGraph = serializeGraph(customMeta, nodes, edges)
+
+      expect(savedGraph.llm_visible).toBe(false)
+      expect(savedGraph.inputs).toEqual([{ name: 'url', type: 'str' }])
+    })
+  })
+})
+
+describe('graphSerialize — normalizeArgs', () => {
+  it('returns empty object for null/undefined', () => {
+    expect(normalizeArgs(null, [])).toEqual({})
+    expect(normalizeArgs(undefined, [])).toEqual({})
+  })
+
+  it('passes through a dict (Record) unchanged', () => {
+    const dict = { a: '1', b: 2 }
+    expect(normalizeArgs(dict, [{ name: 'a' }, { name: 'b' }])).toEqual(dict)
+  })
+
+  it('converts positional array to dict using argSchema names', () => {
+    const schema = [{ name: 'target' }, { name: 'timeout' }]
+    expect(normalizeArgs(['notepad', 5000], schema)).toEqual({ target: 'notepad', timeout: 5000 })
+  })
+
+  it('uses fallback key for array elements beyond schema length', () => {
+    const schema = [{ name: 'x' }]
+    expect(normalizeArgs(['a', 'b'], schema)).toEqual({ x: 'a', arg1: 'b' })
   })
 })

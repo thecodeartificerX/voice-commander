@@ -9,13 +9,13 @@ Four buckets:
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum  # requires Python 3.11+
 
 
-class Category(str, Enum):
+class Category(StrEnum):
     """4-bucket runtime error taxonomy.
 
-    Inherits from ``str`` so ``Category.PROGRAM == "program"`` is True and
+    Inherits from ``StrEnum`` so ``Category.PROGRAM == "program"`` is True and
     JSON / SQLite serialisation produces the bare lowercase strings — keeping
     the on-disk wire format unchanged.
     """

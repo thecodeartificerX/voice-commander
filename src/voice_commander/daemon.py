@@ -21,12 +21,12 @@ from silero_vad import load_silero_vad
 from . import resolver as param_resolver
 from .config import Config, log_llm_sources
 from .dispatcher import Dispatcher
-from .observability.errors import classify as _classify_error
 from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
 from .llm_router import LLMRouter
 from .observability import Store, Tracer
+from .observability.errors import classify as _classify_error
 from .plan import Plan, PlanOutcome
 from .registry import ToolRegistry, discover
 from .streaming_recorder import StreamingRecorder
@@ -284,9 +284,7 @@ class StreamingDaemon:
                 raise
             except Exception as e:
                 cat = _classify_error(e, where="daemon")
-                logger.exception(
-                    "unhandled exception in utterance processing (category=%s)", cat
-                )
+                logger.exception("unhandled exception in utterance processing (category=%s)", cat)
                 self._feedback.on_error("pipeline", e)
 
     def _process_utterance(self, utterance: npt.NDArray[np.float32]) -> None:
@@ -390,9 +388,7 @@ class StreamingDaemon:
                     else:
                         logger.warning("speak tool not found in registry; cannot exit speak-mode")
                 else:
-                    logger.debug(
-                        "Speak-mode: dropping '%s' (no wake-word match)", result.text
-                    )
+                    logger.debug("Speak-mode: dropping '%s' (no wake-word match)", result.text)
                 return
 
             # Gate: confidence  (emits plan_outcome status=miss — user-visible)
