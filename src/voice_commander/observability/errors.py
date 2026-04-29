@@ -9,7 +9,7 @@ Four buckets:
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import StrEnum  # requires Python 3.11+
 
 
 class Category(StrEnum):

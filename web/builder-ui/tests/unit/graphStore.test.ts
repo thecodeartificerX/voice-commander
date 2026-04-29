@@ -182,3 +182,84 @@ describe('graphStore — draft / new-graph flow', () => {
     }
   })
 })
+
+describe('graphStore — Issue #95: load() must strip nodes/edges from graphMeta', () => {
+  beforeEach(() => {
+    useGraphStore.setState({
+      graphId: null,
+      graphKind: null,
+      graphMeta: null,
+      nodes: [],
+      edges: [],
+      selectedNodeId: null,
+      dirty: false,
+      llmVisible: false,
+      draft: false,
+      runStatusByNodeId: {},
+    })
+  })
+
+  it('graphMeta does not contain nodes or edges after load()', async () => {
+    const backendGraph = {
+      schema_version: 1,
+      name: 'my_cmd',
+      kind: 'command',
+      description: '',
+      enabled: true,
+      llm_visible: true,
+      inputs: [],
+      nodes: [{ id: 'a', ref: 'shell.notify', kwargs: {}, pos: [0, 0] }],
+      edges: [{ from: 'a.ok', to: 'a.in' }],
+    }
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify(backendGraph), { status: 200 }),
+    )
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    try {
+      await useGraphStore.getState().load('command', 'my_cmd')
+      const { graphMeta } = useGraphStore.getState()
+      expect(graphMeta).not.toHaveProperty('nodes')
+      expect(graphMeta).not.toHaveProperty('edges')
+      expect(graphMeta?.name).toBe('my_cmd')
+      expect(graphMeta?.schema_version).toBe(1)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('nodes and edges in store come from deserializeGraph, not graphMeta', async () => {
+    const backendGraph = {
+      schema_version: 1,
+      name: 'my_cmd',
+      kind: 'command',
+      description: '',
+      enabled: true,
+      llm_visible: true,
+      inputs: [],
+      nodes: [{ id: 'n1', ref: 'shell.notify', kwargs: {}, pos: [10, 20] }],
+      edges: [{ from: 'n1.ok', to: 'n1.in' }],
+    }
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify(backendGraph), { status: 200 }),
+    )
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    try {
+      await useGraphStore.getState().load('command', 'my_cmd')
+      const { nodes, graphMeta } = useGraphStore.getState()
+
+      // React Flow nodes are deserialized (not backend format)
+      expect(nodes).toHaveLength(1)
+      expect(nodes[0].id).toBe('n1')
+      expect(nodes[0]).toHaveProperty('position') // React Flow shape
+      expect(nodes[0]).not.toHaveProperty('pos') // NOT backend shape
+
+      // graphMeta has no contamination
+      expect(Object.keys(graphMeta ?? {})).not.toContain('nodes')
+      expect(Object.keys(graphMeta ?? {})).not.toContain('edges')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+})

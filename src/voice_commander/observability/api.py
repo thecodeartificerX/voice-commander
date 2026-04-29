@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncGenerator
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 def _build_export_md(run: dict[str, Any], spans: list[dict[str, Any]]) -> str:
     """Build the copy-as-prompt markdown payload (matches client-side markdownExport.ts)."""
     import json as _json
-    from datetime import datetime
 
     run_id = run["run_id"]
     short_id = run_id[:6]

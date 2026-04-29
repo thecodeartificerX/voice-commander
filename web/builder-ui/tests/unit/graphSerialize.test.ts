@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   deserializeGraph,
+  normalizeArgs,
   serializeGraph,
   fromFlowEdge,
   toFlowEdge,
@@ -131,13 +132,8 @@ describe('graphSerialize — F-M2 round-trip', () => {
   describe('Issue #95: SPA Builder JSON shape divergence from canonical schema', () => {
     it('backend → SPA → backend round-trip preserves canonical edge shape for control edges', () => {
       const backendGraph: Graph = {
-        schema_version: 1,
-        name: 'test',
-        kind: 'command',
+        ...meta(),
         description: 'Test graph',
-        enabled: true,
-        llm_visible: true,
-        inputs: [],
         nodes: [
           { id: 'a', ref: 'shell.notify', kwargs: {}, pos: [0, 0] },
           { id: 'b', ref: 'shell.notify', kwargs: {}, pos: [100, 0] },
@@ -146,16 +142,7 @@ describe('graphSerialize — F-M2 round-trip', () => {
       }
 
       const { nodes, edges } = deserializeGraph(backendGraph)
-      const meta = {
-        schema_version: backendGraph.schema_version,
-        name: backendGraph.name,
-        kind: backendGraph.kind,
-        description: backendGraph.description,
-        enabled: backendGraph.enabled,
-        llm_visible: backendGraph.llm_visible,
-        inputs: backendGraph.inputs,
-      } as Omit<Graph, 'nodes' | 'edges'>
-      const savedGraph = serializeGraph(meta, nodes, edges)
+      const savedGraph = serializeGraph(meta(), nodes, edges)
 
       expect(savedGraph.edges).toEqual(backendGraph.edges)
       expect(savedGraph.edges[0]).toEqual({ from: 'a.ok', to: 'b.in' })
@@ -163,13 +150,8 @@ describe('graphSerialize — F-M2 round-trip', () => {
 
     it('backend → SPA → backend round-trip preserves canonical edge shape for data edges', () => {
       const backendGraph: Graph = {
-        schema_version: 1,
-        name: 'test',
-        kind: 'command',
+        ...meta(),
         description: 'Test graph',
-        enabled: true,
-        llm_visible: true,
-        inputs: [],
         nodes: [
           { id: 'a', ref: 'perception.clipboard', kwargs: {}, pos: [0, 0] },
           { id: 'b', ref: 'shell.notify', kwargs: {}, pos: [100, 0] },
@@ -178,16 +160,7 @@ describe('graphSerialize — F-M2 round-trip', () => {
       }
 
       const { nodes, edges } = deserializeGraph(backendGraph)
-      const meta = {
-        schema_version: backendGraph.schema_version,
-        name: backendGraph.name,
-        kind: backendGraph.kind,
-        description: backendGraph.description,
-        enabled: backendGraph.enabled,
-        llm_visible: backendGraph.llm_visible,
-        inputs: backendGraph.inputs,
-      } as Omit<Graph, 'nodes' | 'edges'>
-      const savedGraph = serializeGraph(meta, nodes, edges)
+      const savedGraph = serializeGraph(meta(), nodes, edges)
 
       expect(savedGraph.edges).toEqual(backendGraph.edges)
       expect(savedGraph.edges[0]).toEqual({ from: 'a.data', to: 'b.msg' })
@@ -195,13 +168,8 @@ describe('graphSerialize — F-M2 round-trip', () => {
 
     it('backend → SPA → backend round-trip preserves edges with default ports', () => {
       const backendGraph: Graph = {
-        schema_version: 1,
-        name: 'test',
-        kind: 'command',
+        ...meta(),
         description: 'Test graph',
-        enabled: true,
-        llm_visible: true,
-        inputs: [],
         nodes: [
           { id: 'x', ref: 'shell.notify', kwargs: {}, pos: [0, 0] },
           { id: 'y', ref: 'shell.notify', kwargs: {}, pos: [100, 0] },
@@ -210,18 +178,53 @@ describe('graphSerialize — F-M2 round-trip', () => {
       }
 
       const { nodes, edges } = deserializeGraph(backendGraph)
-      const meta = {
-        schema_version: backendGraph.schema_version,
-        name: backendGraph.name,
-        kind: backendGraph.kind,
-        description: backendGraph.description,
-        enabled: backendGraph.enabled,
-        llm_visible: backendGraph.llm_visible,
-        inputs: backendGraph.inputs,
-      } as Omit<Graph, 'nodes' | 'edges'>
-      const savedGraph = serializeGraph(meta, nodes, edges)
+      const savedGraph = serializeGraph(meta(), nodes, edges)
 
       expect(savedGraph.edges).toEqual(backendGraph.edges)
     })
+
+    it('round-trip preserves non-empty inputs and llm_visible: false', () => {
+      const customMeta: Omit<Graph, 'nodes' | 'edges'> = {
+        ...meta(),
+        llm_visible: false,
+        inputs: [{ name: 'url', type: 'str' }],
+      }
+      const backendGraph: Graph = {
+        ...customMeta,
+        nodes: [
+          { id: 'a', ref: 'shell.notify', kwargs: {}, pos: [0, 0] },
+          { id: 'b', ref: 'shell.notify', kwargs: {}, pos: [100, 0] },
+        ],
+        edges: [{ from: 'a.ok', to: 'b.in' }],
+      }
+
+      const { nodes, edges } = deserializeGraph(backendGraph)
+      const savedGraph = serializeGraph(customMeta, nodes, edges)
+
+      expect(savedGraph.llm_visible).toBe(false)
+      expect(savedGraph.inputs).toEqual([{ name: 'url', type: 'str' }])
+    })
+  })
+})
+
+describe('graphSerialize — normalizeArgs', () => {
+  it('returns empty object for null/undefined', () => {
+    expect(normalizeArgs(null, [])).toEqual({})
+    expect(normalizeArgs(undefined, [])).toEqual({})
+  })
+
+  it('passes through a dict (Record) unchanged', () => {
+    const dict = { a: '1', b: 2 }
+    expect(normalizeArgs(dict, [{ name: 'a' }, { name: 'b' }])).toEqual(dict)
+  })
+
+  it('converts positional array to dict using argSchema names', () => {
+    const schema = [{ name: 'target' }, { name: 'timeout' }]
+    expect(normalizeArgs(['notepad', 5000], schema)).toEqual({ target: 'notepad', timeout: 5000 })
+  })
+
+  it('uses fallback key for array elements beyond schema length', () => {
+    const schema = [{ name: 'x' }]
+    expect(normalizeArgs(['a', 'b'], schema)).toEqual({ x: 'a', arg1: 'b' })
   })
 })
