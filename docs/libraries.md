@@ -390,9 +390,11 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 
 ---
 
-## Drawflow 0.0.60 — Node-graph editor (vendored)
+## Drawflow 0.0.60 — Node-graph editor (vendored, legacy)
 
-**Purpose in this project:** Powers the visual node-graph canvas at `/page/builder`. Users drag tools from the palette onto the canvas and draw data edges between ports. The canvas export is submitted to `builder.py` which converts it to the canonical `Graph` schema via `graph_drawflow.py`.
+> **Status: Legacy.** Replaced by React Flow SPA (ADR 0071) as of PR #94. Drawflow JS/CSS are retained only for the `graph_drawflow.py` round-trip adapter used during JSON import/export. No new code should depend on Drawflow.
+
+**Purpose in this project:** Formerly powered the visual node-graph canvas at `/page/builder`. See status note above for current role.
 
 **Why vendored:** Single-file JS + CSS bundle. No npm, no build step — consistent with ADR 0022 (no SPA build step). Upgraded by deliberate file replacement under `web/static/`.
 
@@ -420,6 +422,152 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 
 ---
 
+## Frontend Dependencies (Builder SPA)
+
+These libraries power the React 18.3 + Vite 5 SPA at `/page/builder` (`web/builder-ui/`). All require the one-time build step (`pnpm install && pnpm build`). See ADR 0071.
+
+---
+
+## `react` & `react-dom` ^18.3.1 — UI framework
+
+**Purpose in this project:** Renders the Builder SPA canvas, panels, and runs inspector. Root component in `src/main.tsx`; React 18 concurrent features unused — standard rendering mode throughout.
+
+**Alternatives considered:** Vue 3, Svelte, vanilla JS with Drawflow.
+
+**Why `react` won:** React Flow (the graph canvas library) is React-native; using any other framework would require a wrapper or reimplementation. React 18.3 also provides first-class TypeScript types and a large ecosystem of Radix/shadcn primitives.
+
+**Pin reason:** `^18.3.1` — patch-compatible updates allowed; major version locked to avoid React 19 concurrent API changes until they stabilise.
+
+**ADR:** [`decisions/0071-builder-react-spa.md`](decisions/0071-builder-react-spa.md)
+
+---
+
+## `reactflow` ^11.11.4 — Graph canvas
+
+**Purpose in this project:** Renders the DAG node-graph canvas. Provides node/edge rendering, drag-and-drop wiring, viewport controls (zoom/pan), custom node types (`ToolNode`, `BranchNode`, `ForeachNode`), and custom edge types (`ControlEdge`, `DataEdge`). Replaces Drawflow as the canvas library.
+
+**Alternatives considered:** Drawflow (vendored, replaced), `@xyflow/react` (v12 rebrand), `react-diagrams`, `jointjs`, custom SVG canvas.
+
+**Why `reactflow` won:** Mature React-first API with strong TypeScript types, built-in minimap/controls/background components, and a large set of primitives matching the requirements of ADR 0062–0068 graph schema. `reactflow` (v11) was chosen over `@xyflow/react` (v12) to avoid the breaking API changes in the v12 rebrand until the ecosystem stabilises.
+
+**Pin reason:** `^11.11.4` — pinned to v11.x; v12 (`@xyflow/react`) has breaking API changes.
+
+**ADR:** [`decisions/0071-builder-react-spa.md`](decisions/0071-builder-react-spa.md)
+
+---
+
+## `zustand` ^5.0.1 — Client state management
+
+**Purpose in this project:** Three stores manage all SPA state: `graphStore` (current graph nodes/edges, dirty flag, save state), `runsStore` (run list, SSE live tail, selected run), `uiStore` (panel visibility, selected node, sidebar tab). Stores are plain functions — no Provider required.
+
+**Alternatives considered:** Redux Toolkit, Jotai, React Context + useReducer.
+
+**Why `zustand` won:** Minimal boilerplate, no Provider wrapping, works naturally with React Flow's controlled-mode callbacks, and integrates cleanly with TypeScript. Three small stores replace a single large Redux slice tree.
+
+**Pin reason:** `^5.0.1` — v5 is the current major; minor/patch updates allowed.
+
+**ADR:** [`decisions/0071-builder-react-spa.md`](decisions/0071-builder-react-spa.md)
+
+---
+
+## `tailwindcss` ^3.4.14 + `shadcn/ui` (Radix primitives) — Styling & UI components
+
+**Purpose in this project:** Tailwind provides utility-class styling throughout the SPA. `shadcn/ui` components (built on `@radix-ui/*` primitives) provide accessible Dialog, Select, Tabs, Switch, Tooltip, ScrollArea, and Separator components. CVA stack (`class-variance-authority`, `clsx`, `tailwind-merge`) handles variant composition.
+
+**Alternatives considered:** MUI, Ant Design, Chakra UI, plain CSS.
+
+**Why this stack won:** Tailwind + shadcn/ui gives full control over styling with zero runtime CSS-in-JS overhead. Radix primitives handle accessibility (focus traps, ARIA, keyboard navigation) without opinionated visual styling. Consistent with the project's no-runtime-overhead principle.
+
+**Pin reason:** `tailwindcss ^3.4.14` (v3.x; v4 alpha deferred), `@radix-ui/*` at `^1.1.x`.
+
+**ADR:** [`decisions/0071-builder-react-spa.md`](decisions/0071-builder-react-spa.md)
+
+---
+
+## `typescript` ^5.6.3 — Type checking (Builder SPA)
+
+**Purpose in this project:** Strict TypeScript throughout `web/builder-ui/src/`. All graph schema types (`Node`, `Edge`, `Graph`, `PortRef`), API response types, Zustand store types, and React component props are typed. `tsc -b` runs as part of `pnpm build`; `pnpm typecheck` for type-check-only.
+
+**Alternatives considered:** JSDoc annotations, Flow, no typing.
+
+**Why `typescript` won:** The graph schema is complex enough that runtime type errors would be extremely hard to debug. TypeScript's strict mode catches wiring mismatches and missing fields at compile time.
+
+**Pin reason:** `^5.6.3` — patch/minor updates allowed within v5.x.
+
+**ADR:** [`decisions/0071-builder-react-spa.md`](decisions/0071-builder-react-spa.md)
+
+---
+
+## `vite` ^5.4.10 + `@vitejs/plugin-react` — Build tool (Builder SPA)
+
+**Purpose in this project:** Bundles the React SPA to `src/voice_commander/web/static/builder/` (configured via `build.outDir` in `vite.config.ts`). Fast Refresh in dev mode; `base: '/static/builder/'` ensures assets resolve correctly when served by FastAPI. Dev server proxies `/api`, `/events`, and `/page` to the running daemon at `http://localhost:8765`.
+
+**Alternatives considered:** webpack, Parcel, esbuild (standalone), Create React App.
+
+**Why `vite` won:** Fastest HMR of any bundler, native ESM dev server, first-class TypeScript + React support via `@vitejs/plugin-react`, and minimal config. Consistent with ADR 0022's principle of simple tooling.
+
+**Pin reason:** `^5.4.10` — v5.x; v6 deferred until stable.
+
+**ADR:** [`decisions/0071-builder-react-spa.md`](decisions/0071-builder-react-spa.md)
+
+---
+
+## `vitest` ^2.1.4 + `@testing-library/react` — Component unit testing
+
+**Purpose in this project:** Unit tests for React components and Zustand stores in `web/builder-ui/tests/unit/`. Runs under jsdom. `@testing-library/react` renders components in isolation; `@testing-library/user-event` simulates pointer and keyboard events. Vitest's API is intentionally compatible with Jest to minimise learning overhead.
+
+**Alternatives considered:** Jest + React Testing Library, Cypress component mode.
+
+**Why `vitest` won:** Native Vite integration (same config, same transform pipeline), faster than Jest on TypeScript projects, and zero extra config when Vite is already the build tool.
+
+**Pin reason:** `^2.1.4` — v2.x.
+
+**ADR:** [`decisions/0071-builder-react-spa.md`](decisions/0071-builder-react-spa.md)
+
+---
+
+## `@playwright/test` ^1.48.2 — E2E testing (Builder SPA)
+
+**Purpose in this project:** End-to-end browser tests in `web/builder-ui/tests/e2e/`. Launches a real Chromium browser against `http://127.0.0.1:8765/page/builder` with the daemon running. Validates full page load, canvas render, node drag-and-drop, and save round-trip.
+
+**Alternatives considered:** Cypress, Selenium, Puppeteer.
+
+**Why `@playwright/test` won:** Cross-browser support, network interception, and robust auto-wait model. Playwright's `page.locator()` API handles async React renders without explicit waits.
+
+**Pin reason:** `^1.48.2` — minor/patch updates allowed.
+
+**ADR:** [`decisions/0071-builder-react-spa.md`](decisions/0071-builder-react-spa.md)
+
+---
+
+## `pnpm` 9+ — Node package manager (Builder SPA)
+
+**Purpose in this project:** Package manager for `web/builder-ui/`. Uses `pnpm-lock.yaml` for deterministic installs. Makefile targets (`make builder-install`, `make builder-build`) wrap `pnpm install` and `pnpm build`.
+
+**Alternatives considered:** npm, yarn, bun.
+
+**Why `pnpm` won:** Strict dependency isolation (no phantom dependencies), content-addressable store (faster installs on re-clone), and `pnpm-lock.yaml` format. npm and yarn cannot parse `pnpm-lock.yaml`.
+
+**Pin reason:** `pnpm@9+` — major version floor; exact version managed via corepack or global install.
+
+**ADR:** [`decisions/0071-builder-react-spa.md`](decisions/0071-builder-react-spa.md)
+
+---
+
+## `eslint` ^9.13.0 + `typescript-eslint` — Linting (Builder SPA)
+
+**Purpose in this project:** Lints all TypeScript and TSX files in `web/builder-ui/src/`. Config in `eslint.config.js` (flat config format). `pnpm lint` runs ESLint with `--max-warnings 0` (zero-tolerance policy).
+
+**Alternatives considered:** Biome, oxlint, TSLint (deprecated).
+
+**Why `eslint` won:** Broadest plugin ecosystem, native support for `react-hooks` lint rules (`eslint-plugin-react-hooks`), and `typescript-eslint` for type-aware rules.
+
+**Pin reason:** `^9.13.0` — v9 flat config; major version locked.
+
+**ADR:** [`decisions/0071-builder-react-spa.md`](decisions/0071-builder-react-spa.md)
+
+---
+
 ## Cross-reference index
 
 | Library | ADR |
@@ -444,3 +592,5 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 | `httpx` | No dedicated ADR yet |
 | `pyglet` | [`0046-pyglet-over-tkinter-pyqt-web-overlay.md`](decisions/0046-pyglet-over-tkinter-pyqt-web-overlay.md) |
 | `httpx-sse` | [`0048-eventbus-sse-outbound-telemetry.md`](decisions/0048-eventbus-sse-outbound-telemetry.md) |
+| `react`, `react-dom`, `reactflow`, `zustand`, `tailwindcss`, `vite`, `vitest`, `@playwright/test`, `pnpm`, `eslint` (Builder SPA) | [`0071-builder-react-spa.md`](decisions/0071-builder-react-spa.md) |
+| `Drawflow` (legacy — adapter only) | [`0062-drawflow-vendored-node-graph-editor.md`](decisions/0062-drawflow-vendored-node-graph-editor.md) |
