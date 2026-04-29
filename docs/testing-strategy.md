@@ -506,6 +506,8 @@ Runs all vitest unit tests in `tests/unit/`. Use `pnpm test` (without `--run`) f
 
 ### Builder SPA e2e tests (playwright)
 
+> **Status:** No e2e tests written yet. Infrastructure (Playwright config, `test:e2e` npm script) is in place.
+
 ```bash
 cd web/builder-ui && pnpm test:e2e
 ```

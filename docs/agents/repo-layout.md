@@ -125,8 +125,7 @@ voice-commander/
 │   │   ├── styles/                # globals.css (CSS custom properties, ADR 0069 taxonomy)
 │   │   ├── toolbar/               # canvas toolbar + PromptInspectorDialog
 │   │   └── types/                 # TypeScript types (graph.ts, run.ts)
-│   ├── tests/unit/                # Vitest unit tests
-│   └── tests/e2e/                 # Playwright e2e tests
+│   └── tests/unit/                # Vitest unit tests
 │
 ├── src/voice_sprite/                 # sprite companion process (separate from daemon)
 │   ├── __init__.py
