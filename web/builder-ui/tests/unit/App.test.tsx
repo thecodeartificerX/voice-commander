@@ -30,7 +30,7 @@ const FAKE_GRAPH = {
       id: 'n1',
       ref: 'shell.notify',
       kwargs: { msg: 'hi' },
-      position: { x: 10, y: 20 },
+      pos: [10, 20],
     },
   ],
   edges: [],

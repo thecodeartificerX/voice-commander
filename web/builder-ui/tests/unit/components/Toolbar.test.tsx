@@ -78,7 +78,7 @@ describe('Toolbar — back button + draft name', () => {
     expect(useGraphStore.getState().graphMeta?.name).toBe('my_new_command')
   })
 
-  it('shows a read-only title (no input) on saved graphs', () => {
+  it('shows an editable input on saved graphs (rename always allowed)', () => {
     useGraphStore.setState({
       graphId: 'show_commands',
       graphKind: 'command',
@@ -94,9 +94,68 @@ describe('Toolbar — back button + draft name', () => {
       draft: false,
       dirty: false,
     })
-    const { queryByLabelText, getByText } = render(<Toolbar />)
-    expect(queryByLabelText('Graph name')).toBeNull()
-    expect(getByText('show_commands')).toBeInTheDocument()
+    const { getByLabelText } = render(<Toolbar />)
+    const input = getByLabelText('Graph name') as HTMLInputElement
+    expect(input.value).toBe('show_commands')
+  })
+
+  it('calls renameSaved on blur when saved graph name changes', async () => {
+    useGraphStore.setState({
+      graphId: 'test',
+      graphKind: 'command',
+      graphMeta: {
+        schema_version: 1,
+        name: 'test',
+        kind: 'command',
+        description: '',
+        enabled: true,
+        llm_visible: true,
+        inputs: [],
+      },
+      draft: false,
+      dirty: false,
+    })
+    const renameSpy = vi
+      .spyOn(useGraphStore.getState(), 'renameSaved')
+      .mockResolvedValue()
+    // Reapply spy via setState so component reads the spy
+    useGraphStore.setState({ renameSaved: renameSpy })
+
+    const { getByLabelText } = render(<Toolbar />)
+    const input = getByLabelText('Graph name') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'open notepad' } })
+    fireEvent.blur(input)
+    // microtask drain
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(renameSpy).toHaveBeenCalledWith('open_notepad')
+  })
+
+  it('blocks rename and warns when saved graph is dirty', async () => {
+    useGraphStore.setState({
+      graphId: 'test',
+      graphKind: 'command',
+      graphMeta: {
+        schema_version: 1,
+        name: 'test',
+        kind: 'command',
+        description: '',
+        enabled: true,
+        llm_visible: true,
+        inputs: [],
+      },
+      draft: false,
+      dirty: true,
+    })
+    const renameSpy = vi.fn().mockResolvedValue(undefined)
+    useGraphStore.setState({ renameSaved: renameSpy })
+
+    const { getByLabelText } = render(<Toolbar />)
+    const input = getByLabelText('Graph name') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'new_name' } })
+    fireEvent.blur(input)
+    await Promise.resolve()
+    expect(renameSpy).not.toHaveBeenCalled()
   })
 
   it('confirms before navigating away when dirty', () => {

@@ -172,6 +172,20 @@ def test_command_toggle_flips_enabled(client: TestClient, tmp_path: Path) -> Non
     assert raw["graphs"]["copy"]["enabled"] is False
 
 
+def test_command_duplicate_creates_copy(client: TestClient, tmp_path: Path) -> None:
+    resp = client.post("/command/copy/duplicate", headers={"HX-Request": "true"})
+    assert resp.status_code == 200
+    assert "copy_copy" in resp.text  # rendered card has new name
+    raw = json.loads((tmp_path / "commands.json").read_text(encoding="utf-8"))
+    assert "copy" in raw["graphs"]
+    assert "copy_copy" in raw["graphs"]
+
+
+def test_command_duplicate_missing_returns_404(client: TestClient) -> None:
+    resp = client.post("/command/nope/duplicate", headers={"HX-Request": "true"})
+    assert resp.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # Workflows list / toggle / delete
 # ---------------------------------------------------------------------------
@@ -195,6 +209,20 @@ def test_workflow_toggle_flips_enabled(client: TestClient, tmp_path: Path) -> No
     assert resp.status_code == 200
     raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
     assert raw["graphs"]["say_hi"]["enabled"] is False
+
+
+def test_workflow_duplicate_creates_copy(client: TestClient, tmp_path: Path) -> None:
+    resp = client.post("/workflow/say_hi/duplicate", headers={"HX-Request": "true"})
+    assert resp.status_code == 200
+    assert "say_hi_copy" in resp.text
+    raw = json.loads((tmp_path / "workflows.json").read_text(encoding="utf-8"))
+    assert "say_hi" in raw["graphs"]
+    assert "say_hi_copy" in raw["graphs"]
+
+
+def test_workflow_duplicate_missing_returns_404(client: TestClient) -> None:
+    resp = client.post("/workflow/nope/duplicate", headers={"HX-Request": "true"})
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

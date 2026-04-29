@@ -24,7 +24,7 @@ export function PropertiesPane() {
         <div className="text-xs font-mono text-foreground truncate">{data.ref}</div>
         <div className="text-[10px] text-muted-foreground truncate">id: {selectedNodeId}</div>
       </div>
-      <KwargsForm nodeId={selectedNodeId} kwargs={data.kwargs} />
+      <KwargsForm nodeId={selectedNodeId} kwargs={data.kwargs} nodeRef={data.ref} />
     </div>
   )
 }

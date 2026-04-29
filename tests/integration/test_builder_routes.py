@@ -224,6 +224,43 @@ def test_toggle_graph_returns_404_for_missing(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+def test_rename_graph_succeeds_and_reloads(client: TestClient) -> None:
+    resp = client.post("/graph/copy/rename", json={"new_name": "open_notepad"})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "name": "open_notepad"}
+    # old name gone, new name retrievable
+    assert client.get("/graph/copy").status_code == 404
+    assert client.get("/graph/open_notepad").status_code == 200
+
+
+def test_rename_graph_returns_404_for_missing(client: TestClient) -> None:
+    resp = client.post("/graph/nope/rename", json={"new_name": "anything"})
+    assert resp.status_code == 404
+
+
+def test_rename_graph_returns_422_on_collision(client: TestClient) -> None:
+    # workflow named say_hi already seeded; renaming command copy → say_hi blocked
+    resp = client.post("/graph/copy/rename", json={"new_name": "say_hi"})
+    assert resp.status_code == 422
+    assert "already exists" in resp.json()["errors"][0]["message"]
+
+
+def test_rename_graph_returns_422_on_invalid_name(client: TestClient) -> None:
+    resp = client.post("/graph/copy/rename", json={"new_name": "Has Spaces"})
+    assert resp.status_code == 422
+
+
+def test_rename_graph_returns_422_on_missing_body(client: TestClient) -> None:
+    resp = client.post("/graph/copy/rename", json={})
+    assert resp.status_code == 422
+
+
+def test_rename_graph_same_name_noop(client: TestClient) -> None:
+    resp = client.post("/graph/copy/rename", json={"new_name": "copy"})
+    assert resp.status_code == 200
+    assert client.get("/graph/copy").status_code == 200
+
+
 def test_validate_graph_returns_200_and_422(client: TestClient) -> None:
     # 200: valid schema, no graph errors
     valid_payload = {

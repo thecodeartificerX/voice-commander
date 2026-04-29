@@ -94,6 +94,20 @@ def attach_admin_routes(
         _publish("command_deleted", {"name": name})
         return HTMLResponse(content="", status_code=200)
 
+    @app.post("/command/{name}/duplicate", response_class=HTMLResponse)
+    async def command_duplicate(request: Request, name: str) -> HTMLResponse:
+        """``POST /command/{name}/duplicate`` — clone command under
+        ``<name>_copy[<n>]`` and return the new card partial for HTMX
+        ``afterend`` insertion.
+        """
+        try:
+            new_cmd = command_store.duplicate(name)
+        except GraphStoreError as exc:
+            return HTMLResponse(content=str(exc), status_code=404)
+        _reload()
+        _publish("command_saved", {"name": new_cmd.name})
+        return templates.TemplateResponse(request, "_command_card.html", {"cmd": new_cmd})
+
     # ------------------------------------------------------------------
     # Workflows
     # ------------------------------------------------------------------
@@ -133,6 +147,19 @@ def attach_admin_routes(
         _reload()
         _publish("workflow_deleted", {"name": name})
         return HTMLResponse(content="", status_code=200)
+
+    @app.post("/workflow/{name}/duplicate", response_class=HTMLResponse)
+    async def workflow_duplicate(request: Request, name: str) -> HTMLResponse:
+        """``POST /workflow/{name}/duplicate`` — clone workflow and return the
+        new card partial for HTMX ``afterend`` insertion.
+        """
+        try:
+            new_wf = workflow_store.duplicate(name)
+        except GraphStoreError as exc:
+            return HTMLResponse(content=str(exc), status_code=404)
+        _reload()
+        _publish("workflow_saved", {"name": new_wf.name})
+        return templates.TemplateResponse(request, "_workflow_card.html", {"wf": new_wf})
 
     # ------------------------------------------------------------------
     # Config

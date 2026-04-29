@@ -3,7 +3,7 @@ import type { Node, Edge, NodeChange, EdgeChange } from 'reactflow'
 import { applyNodeChanges, applyEdgeChanges } from 'reactflow'
 import type { Graph, GraphKind } from '@/types/graph'
 import { deserializeGraph, serializeGraph } from '@/lib/graphSerialize'
-import { apiGetGraph, apiSaveGraph } from '@/api/graphs'
+import { apiGetGraph, apiRenameGraph, apiSaveGraph } from '@/api/graphs'
 
 /**
  * Change types that should NOT mark the graph dirty. These are transient
@@ -46,6 +46,13 @@ interface GraphState {
    * Rename a draft graph. No-ops (with a console.warn) on saved graphs.
    */
   renameDraft(name: string): void
+  /**
+   * Rename an already-saved graph. Calls the backend ``/graph/{old}/rename``
+   * endpoint, which renames the on-disk record and triggers a registrar
+   * reload so the LLM tool name follows. Local nodes/edges are preserved.
+   * Throws on collision, invalid name, or network failure.
+   */
+  renameSaved(name: string): Promise<void>
   save(): Promise<void>
   setNodes(updater: Node[] | ((nodes: Node[]) => Node[])): void
   setEdges(updater: Edge[] | ((edges: Edge[]) => Edge[])): void
@@ -131,8 +138,6 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   renameDraft(name) {
     const state = get()
     if (!state.draft) {
-      // Renaming a saved graph would orphan the old file on disk. Out of
-      // scope for the new-graph flow.
       console.warn('renameDraft called on a non-draft graph; ignoring')
       return
     }
@@ -142,6 +147,20 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       graphMeta: { ...state.graphMeta, name },
       dirty: true,
     })
+  },
+
+  async renameSaved(name) {
+    const state = get()
+    if (state.draft) {
+      throw new Error('renameSaved called on a draft graph; use renameDraft')
+    }
+    if (!state.graphId || !state.graphMeta) return
+    if (name === state.graphId) return
+    await apiRenameGraph(state.graphId, name)
+    set((s) => ({
+      graphId: name,
+      graphMeta: s.graphMeta ? { ...s.graphMeta, name } : s.graphMeta,
+    }))
   },
 
   async save() {

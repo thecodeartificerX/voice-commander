@@ -176,6 +176,63 @@ class GraphStore:
             _write_json_atomic(self._path, raw)
             return True
 
+    def duplicate(self, name: str) -> Graph:
+        """Duplicate ``name`` under an auto-suffixed slot and return the new Graph.
+
+        Suffix progression: ``<name>_copy``, ``<name>_copy2``, ``_copy3``, ...
+        Picks the first free slot. Atomic single-file write.
+        Raises :class:`GraphStoreError` on missing source.
+        """
+        with _file_lock(self._path):
+            raw = _read_json(self._path)
+            if raw:
+                self._reject_legacy(raw)
+            graphs_raw = raw.get("graphs", {})
+            if not isinstance(graphs_raw, dict):
+                raise GraphStoreError(f"{self._path}: 'graphs' must be an object")
+            if name not in graphs_raw:
+                raise GraphStoreError(f"graph {name!r} not found")
+            existing = set(graphs_raw.keys())
+            new_name = f"{name}_copy"
+            n = 2
+            while new_name in existing:
+                new_name = f"{name}_copy{n}"
+                n += 1
+            _validate_name(self._kind, new_name)
+            body = json.loads(json.dumps(graphs_raw[name]))
+            body["name"] = new_name
+            graphs_raw[new_name] = body
+            raw["schema_version"] = CURRENT_SCHEMA_VERSION
+            _write_json_atomic(self._path, raw)
+            return parse_graph(body)
+
+    def rename(self, old: str, new: str) -> None:
+        """Rename a saved graph from ``old`` to ``new`` atomically.
+
+        Raises :class:`GraphStoreError` on missing source, name collision, or
+        invalid new name (per :func:`_validate_name`).
+        """
+        if old == new:
+            return
+        _validate_name(self._kind, new)
+        with _file_lock(self._path):
+            raw = _read_json(self._path)
+            if raw:
+                self._reject_legacy(raw)
+            graphs_raw = raw.get("graphs", {})
+            if not isinstance(graphs_raw, dict):
+                raise GraphStoreError(f"{self._path}: 'graphs' must be an object")
+            if old not in graphs_raw:
+                raise GraphStoreError(f"graph {old!r} not found")
+            if new in graphs_raw:
+                raise GraphStoreError(f"graph {new!r} already exists")
+            body = dict(graphs_raw[old])
+            body["name"] = new
+            graphs_raw[new] = body
+            del graphs_raw[old]
+            raw["schema_version"] = CURRENT_SCHEMA_VERSION
+            _write_json_atomic(self._path, raw)
+
     def _reject_legacy(self, raw: dict[str, Any]) -> None:
         """Detect and reject legacy schema (pre-DAG)."""
         if "schema_version" in raw and "graphs" in raw:

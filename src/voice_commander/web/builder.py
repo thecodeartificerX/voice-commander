@@ -37,8 +37,14 @@ from voice_commander.registry import ToolRegistry
 
 
 def _describe_graph(g: Graph) -> dict[str, Any]:
-    """Return a summary dict (name, description, inputs) for a graph."""
+    """Return a summary dict (ref, name, description, inputs) for a graph.
+
+    ``ref`` is ``command.<name>`` or ``workflow.<name>`` — matching the runtime
+    convention used by ``GraphRuntime`` for cross-graph calls so the frontend
+    palette can drag the canonical ref directly.
+    """
     return {
+        "ref": f"{g.kind}.{g.name}",
         "name": g.name,
         "description": g.description,
         "inputs": [
@@ -221,6 +227,51 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
                 if found:
                     ctx.reload_all_fn()
                     return {"ok": True}
+        raise HTTPException(status_code=404, detail=f"graph {name!r} not found")
+
+    @r.post("/graph/{name}/rename")
+    async def rename_graph(name: str, request: Request) -> JSONResponse:
+        """``POST /graph/{name}/rename`` — rename a saved graph and hot-reload.
+
+        Body: ``{"new_name": "<slug>"}``. Returns 422 on invalid/colliding name,
+        404 if source absent, 200 with ``{"ok": true, "name": new_name}`` on success.
+        After reload, the LLM router exposes the graph under the new tool name.
+        """
+        body = await request.json()
+        new_name = body.get("new_name") if isinstance(body, dict) else None
+        if not isinstance(new_name, str) or not new_name:
+            return JSONResponse(
+                status_code=422,
+                content={"errors": [{"message": "new_name must be a non-empty string"}]},
+            )
+        if new_name == name:
+            return JSONResponse(
+                status_code=200, content={"ok": True, "name": name}
+            )
+        # Cross-store collision check (workflow named foo blocks command rename to foo)
+        all_names = {
+            *ctx.command_store.load_all().keys(),
+            *ctx.workflow_store.load_all().keys(),
+        }
+        if new_name in all_names:
+            return JSONResponse(
+                status_code=422,
+                content={"errors": [{"message": f"graph {new_name!r} already exists"}]},
+            )
+        with ctx.reload_lock:
+            for store in (ctx.command_store, ctx.workflow_store):
+                graphs = store.load_all()
+                if name in graphs:
+                    try:
+                        store.rename(name, new_name)
+                    except GraphStoreError as exc:
+                        return JSONResponse(
+                            status_code=422, content={"errors": [{"message": str(exc)}]}
+                        )
+                    ctx.reload_all_fn()
+                    return JSONResponse(
+                        status_code=200, content={"ok": True, "name": new_name}
+                    )
         raise HTTPException(status_code=404, detail=f"graph {name!r} not found")
 
     @r.post("/graph/{name}/toggle")

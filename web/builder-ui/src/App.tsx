@@ -23,7 +23,10 @@ function readGraphFromUrl(): { kind: GraphKind; name: string } | null {
   if (typeof window === 'undefined') return null
   const params = new URLSearchParams(window.location.search)
   const kind = params.get('kind')
-  const name = params.get('name')
+  // Backend templates link `/page/builder?kind=...&graph=<name>` (see
+  // _command_card.html, _workflow_card.html). Accept `name` too as a
+  // forgiving alias for direct-link sharing.
+  const name = params.get('graph') ?? params.get('name')
   if ((kind === 'command' || kind === 'workflow') && name) {
     return { kind, name }
   }
@@ -34,7 +37,7 @@ function readGraphFromUrl(): { kind: GraphKind; name: string } | null {
  * Detect the "+ New command/workflow" entry point.
  *
  * The list pages link to `/page/builder?kind=command|workflow` with no
- * `name` param. Treat that as an explicit request for a fresh, blank
+ * `graph` param. Treat that as an explicit request for a fresh, blank
  * graph — bypass localStorage + palette discovery so the user is not
  * dropped into someone else's graph by accident.
  */
@@ -42,7 +45,7 @@ function readNewIntentFromUrl(): GraphKind | null {
   if (typeof window === 'undefined') return null
   const params = new URLSearchParams(window.location.search)
   const kind = params.get('kind')
-  const name = params.get('name')
+  const name = params.get('graph') ?? params.get('name')
   if ((kind === 'command' || kind === 'workflow') && !name) {
     return kind
   }

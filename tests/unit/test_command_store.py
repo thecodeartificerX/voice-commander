@@ -76,3 +76,85 @@ def test_kind_mismatch_rejected(tmp_path: Path) -> None:
     store = GraphStore(p, kind="command")
     with pytest.raises(GraphStoreError):
         store.save_one(_make_graph("a", kind="workflow"))
+
+
+def test_rename_swaps_key_and_updates_name_field(tmp_path: Path) -> None:
+    p = tmp_path / "commands.json"
+    store = GraphStore(p, kind="command")
+    store.save_one(_make_graph("test"))
+
+    store.rename("test", "open_notepad")
+
+    loaded = store.load_all()
+    assert "test" not in loaded
+    assert "open_notepad" in loaded
+    assert loaded["open_notepad"].name == "open_notepad"
+
+
+def test_rename_missing_source_raises(tmp_path: Path) -> None:
+    p = tmp_path / "commands.json"
+    store = GraphStore(p, kind="command")
+    with pytest.raises(GraphStoreError, match="not found"):
+        store.rename("missing", "anything")
+
+
+def test_rename_collision_raises(tmp_path: Path) -> None:
+    p = tmp_path / "commands.json"
+    store = GraphStore(p, kind="command")
+    store.save_one(_make_graph("a"))
+    store.save_one(_make_graph("b"))
+    with pytest.raises(GraphStoreError, match="already exists"):
+        store.rename("a", "b")
+
+
+def test_rename_invalid_new_name_raises(tmp_path: Path) -> None:
+    p = tmp_path / "commands.json"
+    store = GraphStore(p, kind="command")
+    store.save_one(_make_graph("a"))
+    with pytest.raises(GraphStoreError):
+        store.rename("a", "Has Spaces")
+
+
+def test_rename_same_name_is_noop(tmp_path: Path) -> None:
+    p = tmp_path / "commands.json"
+    store = GraphStore(p, kind="command")
+    store.save_one(_make_graph("a"))
+    store.rename("a", "a")
+    assert "a" in store.load_all()
+
+
+def test_duplicate_creates_copy_suffix(tmp_path: Path) -> None:
+    p = tmp_path / "commands.json"
+    store = GraphStore(p, kind="command")
+    store.save_one(_make_graph("reopen_tab"))
+
+    new_graph = store.duplicate("reopen_tab")
+
+    assert new_graph.name == "reopen_tab_copy"
+    loaded = store.load_all()
+    assert "reopen_tab" in loaded
+    assert "reopen_tab_copy" in loaded
+    # full body preserved (synonyms, nodes, etc.)
+    assert loaded["reopen_tab_copy"].synonyms == loaded["reopen_tab"].synonyms
+    assert loaded["reopen_tab_copy"].nodes == loaded["reopen_tab"].nodes
+
+
+def test_duplicate_increments_suffix_on_collision(tmp_path: Path) -> None:
+    p = tmp_path / "commands.json"
+    store = GraphStore(p, kind="command")
+    store.save_one(_make_graph("a"))
+    store.duplicate("a")  # → a_copy
+    g2 = store.duplicate("a")  # → a_copy2
+    g3 = store.duplicate("a")  # → a_copy3
+
+    assert g2.name == "a_copy2"
+    assert g3.name == "a_copy3"
+    loaded = store.load_all()
+    assert {"a", "a_copy", "a_copy2", "a_copy3"} <= loaded.keys()
+
+
+def test_duplicate_missing_source_raises(tmp_path: Path) -> None:
+    p = tmp_path / "commands.json"
+    store = GraphStore(p, kind="command")
+    with pytest.raises(GraphStoreError, match="not found"):
+        store.duplicate("missing")

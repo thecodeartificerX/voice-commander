@@ -1,10 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronLeft, Save, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useGraphStore } from '@/store/graphStore'
 import { useUiStore } from '@/store/uiStore'
 import { PromptInspectorDialog } from './PromptInspectorDialog'
+
+function slugifyName(input: string): string {
+  return input.trim().toLowerCase().replace(/\s+/g, '_')
+}
 
 export function Toolbar() {
   const {
@@ -14,11 +18,17 @@ export function Toolbar() {
     draft,
     save,
     renameDraft,
+    renameSaved,
     llmVisible,
     toggleLlmVisible,
   } = useGraphStore()
   const { promptInspectorOpen, setPromptInspectorOpen } = useUiStore()
   const [saving, setSaving] = useState(false)
+  const [localName, setLocalName] = useState(graphId ?? '')
+
+  useEffect(() => {
+    setLocalName(graphId ?? '')
+  }, [graphId])
 
   const backHref = graphKind === 'workflow' ? '/page/workflows' : '/page/commands'
 
@@ -31,6 +41,31 @@ export function Toolbar() {
       toast.error(`Save failed: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function commitName() {
+    const slug = slugifyName(localName)
+    if (!slug || slug === graphId) {
+      setLocalName(graphId ?? '')
+      return
+    }
+    if (draft) {
+      renameDraft(slug)
+      setLocalName(slug)
+      return
+    }
+    if (dirty) {
+      toast.error('Save changes before renaming')
+      setLocalName(graphId ?? '')
+      return
+    }
+    try {
+      await renameSaved(slug)
+      toast.success(`Renamed to ${slug}`)
+    } catch (e) {
+      toast.error(`Rename failed: ${e instanceof Error ? e.message : String(e)}`)
+      setLocalName(graphId ?? '')
     }
   }
 
@@ -49,21 +84,28 @@ export function Toolbar() {
         </Button>
       </a>
 
-      {draft ? (
-        <input
-          type="text"
-          value={graphId ?? ''}
-          onChange={(e) => renameDraft(e.target.value)}
-          className="text-sm font-semibold text-foreground mr-2 bg-transparent border-b border-border focus:outline-none focus:border-primary px-1 min-w-0 w-48"
-          placeholder="name your command…"
-          spellCheck={false}
-          aria-label="Graph name"
-        />
-      ) : (
-        <span className="text-sm font-semibold text-foreground mr-2">
-          {graphId ?? 'Voice Commander — Builder'}
-        </span>
-      )}
+      <input
+        type="text"
+        value={localName}
+        onChange={(e) => {
+          setLocalName(e.target.value)
+          if (draft) renameDraft(e.target.value)
+        }}
+        onBlur={() => void commitName()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            ;(e.target as HTMLInputElement).blur()
+          } else if (e.key === 'Escape') {
+            setLocalName(graphId ?? '')
+            ;(e.target as HTMLInputElement).blur()
+          }
+        }}
+        className="text-sm font-semibold text-foreground mr-2 bg-transparent border-b border-border focus:outline-none focus:border-primary px-1 min-w-0 w-48"
+        placeholder={draft ? 'name your command…' : 'graph name'}
+        spellCheck={false}
+        aria-label="Graph name"
+        title={dirty && !draft ? 'Save changes before renaming' : 'Click to rename'}
+      />
       {dirty && <span className="text-[10px] text-yellow-400">●</span>}
 
       <div className="flex-1" />

@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from '@/api/client'
+import type { ToolArgMeta, ToolSchema } from '@/types/graph'
+import { useSchemaStore } from '@/store/schemaStore'
 import { PaletteItem } from './PaletteItem'
 
 interface PaletteEntry {
   name: string
   description?: string
   ref?: string
+  args?: Record<string, ToolArgMeta>
 }
 
 interface PaletteData {
@@ -14,11 +17,100 @@ interface PaletteData {
   workflows: PaletteEntry[]
 }
 
+/**
+ * Hardcoded schemas for sections the backend doesn't enumerate
+ * (control + perception). Pipeline / commands / workflows come from
+ * `/graph/palette` directly. Kept in this module so the Palette is the
+ * single source of truth that primes the schema store.
+ */
+const CONTROL_SCHEMAS: ToolSchema[] = [
+  {
+    ref: 'control.branch',
+    name: 'branch',
+    description: 'Conditional branch (if/else)',
+    args: { cond: { type: 'boolean', required: true } },
+  },
+  {
+    ref: 'control.foreach',
+    name: 'foreach',
+    description: 'Loop over a list',
+    args: { list: { type: 'array', required: true } },
+  },
+]
+
+const PERCEPTION_SCHEMAS: ToolSchema[] = [
+  {
+    ref: 'perception.clipboard',
+    name: 'clipboard',
+    description: 'Read clipboard text',
+    args: {},
+  },
+  {
+    ref: 'perception.window',
+    name: 'window',
+    description: 'Get active window title',
+    args: {},
+  },
+  {
+    ref: 'perception.cursor',
+    name: 'cursor',
+    description: 'Get cursor position',
+    args: {},
+  },
+  {
+    ref: 'perception.ocr',
+    name: 'ocr',
+    description: 'OCR a screen region',
+    args: {
+      x: { type: 'int', required: true },
+      y: { type: 'int', required: true },
+      w: { type: 'int', required: true },
+      h: { type: 'int', required: true },
+    },
+  },
+]
+
+function buildSchemas(data: PaletteData): ToolSchema[] {
+  const schemas: ToolSchema[] = []
+
+  for (const item of data.pipeline) {
+    schemas.push({
+      ref: item.ref ?? `pipeline.${item.name}`,
+      name: item.name,
+      ...(item.description !== undefined ? { description: item.description } : {}),
+      args: item.args ?? {},
+    })
+  }
+  for (const item of data.commands) {
+    schemas.push({
+      ref: item.ref ?? `command.${item.name}`,
+      name: item.name,
+      ...(item.description !== undefined ? { description: item.description } : {}),
+      args: item.args ?? {},
+    })
+  }
+  for (const item of data.workflows) {
+    schemas.push({
+      ref: item.ref ?? `workflow.${item.name}`,
+      name: item.name,
+      ...(item.description !== undefined ? { description: item.description } : {}),
+      args: item.args ?? {},
+    })
+  }
+  schemas.push(...CONTROL_SCHEMAS, ...PERCEPTION_SCHEMAS)
+  return schemas
+}
+
 export function Palette() {
   const [data, setData] = useState<PaletteData | null>(null)
 
   useEffect(() => {
-    apiFetch<PaletteData>('/graph/palette').then(setData).catch(console.error)
+    apiFetch<PaletteData>('/graph/palette')
+      .then((d) => {
+        setData(d)
+        useSchemaStore.getState().setSchemas(buildSchemas(d))
+      })
+      .catch(console.error)
   }, [])
 
   if (!data) {

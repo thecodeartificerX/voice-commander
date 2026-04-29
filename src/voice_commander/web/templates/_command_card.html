@@ -13,6 +13,10 @@
         <div class="flex gap-2">
             <a href="/page/builder?kind=command&graph={{ cmd.name }}"
                class="text-sm px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300">Open in Builder</a>
+            <button hx-post="/command/{{ cmd.name }}/duplicate"
+                    hx-target="#command-{{ cmd.name }}" hx-swap="afterend"
+                    class="text-sm px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300"
+                    title="Duplicate as {{ cmd.name }}_copy">Duplicate</button>
             <button hx-post="/command/{{ cmd.name }}/toggle" hx-target="#command-{{ cmd.name }}" hx-swap="outerHTML"
                 class="text-sm px-3 py-1 rounded {{ 'bg-red-900 hover:bg-red-800 text-red-300' if cmd.enabled else 'bg-emerald-900 hover:bg-emerald-800 text-emerald-300' }}">
                 {{ "Disable" if cmd.enabled else "Enable" }}

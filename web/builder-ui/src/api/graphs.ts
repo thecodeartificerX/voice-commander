@@ -16,6 +16,16 @@ export async function apiGetPalette(): Promise<unknown> {
   return apiFetch('/graph/palette')
 }
 
+export async function apiRenameGraph(oldName: string, newName: string): Promise<void> {
+  await apiFetch<{ ok: boolean; name: string }>(
+    `/graph/${encodeURIComponent(oldName)}/rename`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ new_name: newName }),
+    },
+  )
+}
+
 export async function apiValidateGraph(graph: Graph): Promise<{ errors: unknown[] }> {
   return apiFetch('/graph/validate', { method: 'POST', body: JSON.stringify(graph) })
 }

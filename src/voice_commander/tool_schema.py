@@ -47,6 +47,7 @@ def describe_tool_for_builder(entry: ToolEntry) -> dict[str, Any]:
         }
     """
     return {
+        "ref": f"pipeline.{entry.name}",
         "name": entry.name,
         "description": entry.docstring or "",
         "args": {
