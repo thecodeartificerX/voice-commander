@@ -91,6 +91,46 @@ $ErrorActionPreference = 'Stop'
 
 Set-Location -LiteralPath $PSScriptRoot
 
+# ---------------------------------------------------------------------------
+# Ctrl+C tree-kill guard
+# ---------------------------------------------------------------------------
+#
+# PowerShell's default Ctrl+C handler can abort the script before any
+# `finally` block runs — particularly when `uv run` is the foreground
+# child and swallows the CTRL_C_EVENT before forwarding it to the
+# Python supervisor. Without this guard, the supervisor never gets a
+# clean shutdown signal and the daemon + sprite stay alive in the
+# background.
+#
+# Registering a [Console]::CancelKeyPress handler hooks the .NET-level
+# console-control event, which fires *before* PS aborts. The handler
+# tree-kills the supervisor PID via taskkill /T /F so the daemon, sprite,
+# and any uv intermediary all die together. Setting `Cancel = $true`
+# also tells .NET to swallow the original Ctrl+C so the script's own
+# `finally` blocks still get a chance to run.
+$script:SupervisorProc = $null
+$script:CancelHandler = {
+    param($eventSender, $eventArgs)
+    # Default: let .NET terminate the script (preserves the old behaviour
+    # at the TUI prompt where Ctrl+C should quit).
+    $eventArgs.Cancel = $false
+    try {
+        $proc = $script:SupervisorProc
+        if ($null -ne $proc -and -not $proc.HasExited) {
+            [Console]::Error.WriteLine('')
+            [Console]::Error.WriteLine('Ctrl+C received - tearing down voice-commander tree...')
+            & taskkill.exe /PID $proc.Id /T /F 2>&1 | Out-Null
+            # Suppress the default abort so try/finally runs and the
+            # script reports the supervisor's exit code cleanly.
+            $eventArgs.Cancel = $true
+        }
+    }
+    catch {
+        # Best-effort: never let this handler throw and crash the host.
+    }
+}
+[Console]::add_CancelKeyPress($script:CancelHandler)
+
 # Phase banner shown in Show-VoiceBanner. Extracted so phase bumps touch one place.
 $script:PhaseString = '  Phase 7: supervisor process (daemon + sprite under one parent)'
 
@@ -484,15 +524,79 @@ function Start-VoiceSupervisor {
         Launch `uv run voice-commander-supervisor` and return its exit code.
 
     .DESCRIPTION
-        The supervisor owns the daemon and sprite lifecycle. Stdin/stdout are
-        not redirected so Ctrl+C reaches the supervisor (which propagates to
-        its children). Returns the supervisor exit code as [int].
+        The supervisor owns the daemon and sprite lifecycle. We spawn it via
+        Start-Process -PassThru -NoNewWindow so we can capture its PID and
+        guarantee tree-kill on script exit — Ctrl+C, exception, or PowerShell
+        window close.
+
+        Three layers of cleanup, ordered most-graceful → most-forceful:
+
+          1. The supervisor's own Win32 Job Object (KILL_ON_JOB_CLOSE) reaps
+             the daemon + sprite when it exits normally.
+          2. A [Console]::CancelKeyPress handler runs `taskkill /T /F` on the
+             supervisor PID *before* PowerShell aborts the script — the most
+             reliable hook on Windows when `uv` swallows the CTRL_C_EVENT.
+          3. The try/finally below force-kills the tree on any exit path the
+             CancelKeyPress handler missed.
     #>
-    $supArgs = @()
+    $supArgs = @('run', 'voice-commander-supervisor')
     if ($NoSprite) { $supArgs += '--no-sprite' }
-    Write-Verbose "Launching supervisor: uv run voice-commander-supervisor $($supArgs -join ' ')"
-    uv run voice-commander-supervisor @supArgs
-    return $LASTEXITCODE
+    Write-Verbose "Launching supervisor: uv $($supArgs -join ' ')"
+
+    $proc = Start-Process -FilePath 'uv' -ArgumentList $supArgs `
+        -NoNewWindow -PassThru
+    $script:SupervisorProc = $proc
+
+    try {
+        $proc.WaitForExit()
+        return $proc.ExitCode
+    }
+    finally {
+        Stop-VoiceSupervisorTree -Process $proc
+        $script:SupervisorProc = $null
+    }
+}
+
+function Stop-VoiceSupervisorTree {
+    <#
+    .SYNOPSIS
+        Force-kill the supervisor process tree if still alive.
+
+    .DESCRIPTION
+        Idempotent. Called from both the try/finally cleanup path and the
+        [Console]::CancelKeyPress handler. `taskkill /T /F` walks the
+        process tree so the daemon + sprite + any uv intermediary all die
+        together — covers the case where the Job Object did not fire
+        (pywin32 unavailable, supervisor crashed before assigning children).
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [System.Diagnostics.Process]$Process
+    )
+
+    if ($null -eq $Process) { return }
+    try {
+        if ($Process.HasExited) { return }
+    }
+    catch {
+        return
+    }
+
+    Write-Host ''
+    Write-VoicePrompt 'Shutting down voice-commander process tree...'
+    try {
+        & taskkill.exe /PID $Process.Id /T /F 2>&1 | Out-Null
+    }
+    catch {
+        Write-Verbose "taskkill failed: $_"
+    }
+
+    try {
+        $Process.WaitForExit(3000) | Out-Null
+    }
+    catch {
+        # Process already gone or handle invalid — both fine.
+    }
 }
 
 function Start-VoiceWithUI {
