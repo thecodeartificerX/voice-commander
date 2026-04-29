@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -15,20 +16,23 @@ from voice_commander.observability.store import Store
 logger = logging.getLogger(__name__)
 
 
+def _ms_to_str(ms: int | None) -> str:
+    """Format a millisecond duration as a human-readable string."""
+    if ms is None:
+        return "—"
+    if ms < 1000:
+        return f"{ms}ms"
+    return f"{ms / 1000:.1f}s"
+
+
 def _build_export_md(run: dict[str, Any], spans: list[dict[str, Any]]) -> str:
     """Build the copy-as-prompt markdown payload (matches client-side markdownExport.ts)."""
-    import json as _json
-
     run_id = run["run_id"]
     short_id = run_id[:6]
     started_at_s: float = run["started_at"]
     started_iso = datetime.fromtimestamp(started_at_s, tz=UTC).isoformat()
     dur_ms: int | None = run.get("duration_ms")
-    dur_str = (
-        f"{dur_ms}ms"
-        if dur_ms is not None and dur_ms < 1000
-        else (f"{dur_ms / 1000:.1f}s" if dur_ms is not None else "—")
-    )
+    dur_str = _ms_to_str(dur_ms)
     status = run["status"]
     transcript = run["transcript"]
     error_category = run.get("error_category")
@@ -54,7 +58,7 @@ def _build_export_md(run: dict[str, Any], spans: list[dict[str, Any]]) -> str:
     if llm_span and llm_span.get("output") is not None:
         lines.append("\n## Plan returned by LLM\n")
         lines.append("```json")
-        lines.append(_json.dumps(llm_span["output"], indent=2))
+        lines.append(json.dumps(llm_span["output"], indent=2))
         lines.append("```")
 
     # Span tree
@@ -67,11 +71,7 @@ def _build_export_md(run: dict[str, Any], spans: list[dict[str, Any]]) -> str:
             indent = "  " * depth
             st = "✓" if s["status"] == "ok" else ("✗" if s["status"] == "error" else s["status"])
             dur_s = s.get("duration_ms")
-            d = (
-                f"{dur_s}ms"
-                if dur_s is not None and dur_s < 1000
-                else (f"{dur_s / 1000:.1f}s" if dur_s is not None else "—")
-            )
+            d = _ms_to_str(dur_s)
             out.append(f"{indent}- {st} {s['name']} · {d} · {s['status']}")
             if s.get("error_type"):
                 out.append(f"{indent}  - error_type: {s['error_type']}")
@@ -190,7 +190,6 @@ def build_observability_router(
 
         async def gen() -> AsyncGenerator[str, None]:
             import asyncio
-            import json as _json
             import queue
 
             q = bus.subscribe()
@@ -219,7 +218,7 @@ def build_observability_router(
                     # Forward trace events and run.appended to SSE clients
                     if not ev.type.startswith("trace.") and ev.type != "run.appended":
                         continue
-                    yield f"event: {ev.type}\ndata: {_json.dumps(ev.data)}\n\n"
+                    yield f"event: {ev.type}\ndata: {json.dumps(ev.data)}\n\n"
             finally:
                 if hasattr(bus, "unsubscribe"):
                     bus.unsubscribe(q)
