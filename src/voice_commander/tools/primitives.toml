@@ -1,12 +1,14 @@
 category = "primitives"
 
 # Primitive verbs dispatch to the OS (keystrokes, window focus, app launch).
-# They are marked ``internal = true`` so the LLM never sees them directly —
+# Most are marked ``internal = true`` so the LLM never sees them directly —
 # user-defined commands and workflows in commands.json / workflows.json are
-# the only surface the LLM routes against.
+# the primary surface the LLM routes against.
 #
-# ``no_match`` is the exception: it stays LLM-visible as the "nothing matched"
-# escape hatch. It maps to a no-op Python function.
+# Exceptions kept LLM-visible (internal=false):
+#   - ``press``: raw keystroke escape hatch for bare key-name utterances
+#     ("control T", "scroll lock", "enter") that no command covers.
+#   - ``no_match``: the "nothing matched" escape hatch. No-op Python function.
 #
 # Tools kept enabled=true (still dispatchable via commands/workflows):
 #   focus, type, open, press, wait, click, scroll, no_match
@@ -67,11 +69,11 @@ description = "Win32 window handle of the verified-launched window, or 0 if veri
 
 [tools.press]
 phrases = []
-description = "Press a key combination like 'ctrl+c', 'alt+tab', 'win+l'."
+description = "Press a raw key combination on the focused window. Use this when the transcript is bare key names — modifiers (ctrl/alt/shift/win), named keys (enter, tab, esc, scrolllock, space, backspace, delete, arrows, f1-f12), a single letter, or a single digit. Examples: 'control t' → press('ctrl+t'); 'scroll lock' → press('scrolllock'); 'enter shift control' → press('ctrl+shift+enter'); 'a' → press('a'); '5' → press('5')."
 enabled = true
 settle_ms = 50
 llm_only = true
-internal = true
+internal = false
 
 [tools.press.args.combo]
 description = "Key combination string with '+' separator (e.g. 'ctrl+c', 'alt+tab', 'win+shift+s')."
