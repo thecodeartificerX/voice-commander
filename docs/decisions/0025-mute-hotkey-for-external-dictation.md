@@ -1,6 +1,6 @@
 # ADR 0025: Mute Hotkey for External Dictation Coexistence
 
-**Status:** Accepted
+**Status:** Superseded by [ADR 0072](0072-speak-dictation-toggle.md)
 **Date:** 2026-04-21
 
 ## Context

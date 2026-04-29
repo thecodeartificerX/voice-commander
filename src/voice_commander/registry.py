@@ -41,6 +41,10 @@ class ToolEntry:
     # dispatch them, but they are hidden from the LLM's tool list — the
     # LLM only ever sees user-curated commands + workflows.
     internal: bool = False
+    # ``system`` tools are hidden from web UI surfaces (primitives page,
+    # /api/tools endpoint, Builder palette) but remain dispatchable by the
+    # LLM router and daemon. Orthogonal to ``internal``.
+    system: bool = False
     origin: Origin = "primitive"
     args_meta: dict[str, ArgMetadata] = field(default_factory=dict)  # web UI kwargs form schema
     returns_meta: dict[str, dict[str, str]] = field(default_factory=dict)  # output port schema
@@ -128,6 +132,7 @@ class ToolRegistry:
             entry.settle_ms = md.settle_ms
             entry.llm_only = md.llm_only
             entry.internal = md.internal
+            entry.system = md.system
             entry.args_meta = dict(md.args)
             entry.returns_meta = dict(md.returns)
 
@@ -150,6 +155,7 @@ class ToolRegistry:
             entry.settle_ms = md.settle_ms
             entry.llm_only = md.llm_only
             entry.internal = md.internal
+            entry.system = md.system
             entry.args_meta = dict(md.args)
             entry.returns_meta = dict(md.returns)
 

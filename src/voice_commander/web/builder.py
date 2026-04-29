@@ -104,7 +104,7 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
         pipeline = [
             describe_tool_for_builder(e)
             for e in ctx.registry.all()
-            if e.internal and e.origin == "primitive" and e.enabled
+            if e.internal and e.origin == "primitive" and e.enabled and not e.system
         ]
         commands = [_describe_graph(g) for g in ctx.command_store.load_all().values()]
         workflows = [_describe_graph(g) for g in ctx.workflow_store.load_all().values()]

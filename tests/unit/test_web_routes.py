@@ -152,3 +152,81 @@ def test_edit_nonexistent_tool(app_env):
     client, _, _ = app_env
     resp = client.get("/tool/nonexistent/edit")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# system = true filtering (ADR 0072)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def app_env_with_system_tool(tmp_path):
+    """Set up registry with a system=True tool and verify filtering."""
+    # Write a TOML with alpha (normal) and speak (system=true).
+    toml_content = """\
+category = "test"
+
+[tools.alpha]
+phrases = ["alpha one"]
+description = "Normal tool."
+enabled = true
+
+[tools.speak]
+phrases = ["speak"]
+description = "Toggle Windows voice dictation on/off."
+enabled = true
+system = true
+"""
+    toml_path = tmp_path / "tools.toml"
+    toml_path.write_text(toml_content)
+
+    store = ToolMetadataStore(tmp_path)
+    registry = ToolRegistry()
+    for name in ("alpha", "speak"):
+        registry.register(
+            ToolEntry(
+                name=name,
+                phrases=(),
+                func=lambda: None,
+                module="test",
+                docstring=None,
+            )
+        )
+    registry.bind_metadata(store)
+
+    reload_lock = threading.Lock()
+    app = create_app(registry, store, reload_lock)
+    client = TestClient(app)
+    return client, registry, store
+
+
+def test_primitives_page_excludes_system_tool(app_env_with_system_tool):
+    """GET /page/primitives must not contain system tools (speak)."""
+    client, _, _ = app_env_with_system_tool
+    resp = client.get("/page/primitives")
+    assert resp.status_code == 200
+    assert "alpha" in resp.text
+    assert "speak" not in resp.text
+
+
+def test_api_tools_excludes_system_tool(app_env_with_system_tool):
+    """GET /api/tools must not include system tools."""
+    client, _, _ = app_env_with_system_tool
+    resp = client.get("/api/tools")
+    assert resp.status_code == 200
+    data = resp.json()
+    names = [t["name"] for t in data]
+    assert "alpha" in names
+    assert "speak" not in names
+
+
+def test_api_tools_returns_json_list(app_env_with_system_tool):
+    """GET /api/tools returns a JSON array of tool objects."""
+    client, _, _ = app_env_with_system_tool
+    resp = client.get("/api/tools")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    for tool in data:
+        assert "name" in tool
+        assert "description" in tool
