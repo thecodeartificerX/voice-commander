@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Save, Eye, EyeOff, RefreshCw } from 'lucide-react'
+import { ChevronLeft, Save, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useGraphStore } from '@/store/graphStore'
@@ -7,9 +7,20 @@ import { useUiStore } from '@/store/uiStore'
 import { PromptInspectorDialog } from './PromptInspectorDialog'
 
 export function Toolbar() {
-  const { graphId, dirty, save, llmVisible, toggleLlmVisible } = useGraphStore()
+  const {
+    graphId,
+    graphKind,
+    dirty,
+    draft,
+    save,
+    renameDraft,
+    llmVisible,
+    toggleLlmVisible,
+  } = useGraphStore()
   const { promptInspectorOpen, setPromptInspectorOpen } = useUiStore()
   const [saving, setSaving] = useState(false)
+
+  const backHref = graphKind === 'workflow' ? '/page/workflows' : '/page/commands'
 
   async function handleSave() {
     setSaving(true)
@@ -23,11 +34,36 @@ export function Toolbar() {
     }
   }
 
+  function handleBackClick(e: React.MouseEvent<HTMLAnchorElement>) {
+    if (!useGraphStore.getState().dirty) return
+    const ok = window.confirm('Discard unsaved changes?')
+    if (!ok) e.preventDefault()
+  }
+
   return (
     <header className="h-10 border-b border-border flex items-center px-3 gap-2 shrink-0 bg-card">
-      <span className="text-sm font-semibold text-foreground mr-2">
-        {graphId ?? 'Voice Commander — Builder'}
-      </span>
+      <a href={backHref} onClick={handleBackClick} aria-label="Back" title="Back">
+        <Button size="sm" variant="ghost" className="gap-1 text-xs px-2">
+          <ChevronLeft className="h-3 w-3" />
+          Back
+        </Button>
+      </a>
+
+      {draft ? (
+        <input
+          type="text"
+          value={graphId ?? ''}
+          onChange={(e) => renameDraft(e.target.value)}
+          className="text-sm font-semibold text-foreground mr-2 bg-transparent border-b border-border focus:outline-none focus:border-primary px-1 min-w-0 w-48"
+          placeholder="name your command…"
+          spellCheck={false}
+          aria-label="Graph name"
+        />
+      ) : (
+        <span className="text-sm font-semibold text-foreground mr-2">
+          {graphId ?? 'Voice Commander — Builder'}
+        </span>
+      )}
       {dirty && <span className="text-[10px] text-yellow-400">●</span>}
 
       <div className="flex-1" />

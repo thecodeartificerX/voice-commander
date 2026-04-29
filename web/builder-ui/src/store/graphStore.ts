@@ -25,10 +25,27 @@ interface GraphState {
   selectedNodeId: string | null
   dirty: boolean
   llmVisible: boolean
+  /**
+   * True when the graph has never been saved (created via `initBlank`).
+   * The toolbar uses this to expose an editable name input and to gate
+   * the rename action. Cleared on a successful `save()`.
+   */
+  draft: boolean
   /** Per-node run status overlay; not persisted, does NOT mark graph dirty. */
   runStatusByNodeId: Record<string, 'ok' | 'error' | 'skipped'>
 
   load(kind: GraphKind, name: string): Promise<void>
+  /**
+   * Initialise the store with a brand-new, unsaved graph. Used by the "+
+   * New command" flow so the canvas opens blank instead of falling through
+   * to `discoverFirstGraph()`. No API call is made — the graph only hits
+   * the server on first `save()`.
+   */
+  initBlank(kind: GraphKind, name: string): void
+  /**
+   * Rename a draft graph. No-ops (with a console.warn) on saved graphs.
+   */
+  renameDraft(name: string): void
   save(): Promise<void>
   setNodes(updater: Node[] | ((nodes: Node[]) => Node[])): void
   setEdges(updater: Edge[] | ((edges: Edge[]) => Edge[])): void
@@ -45,6 +62,25 @@ interface GraphState {
   setNodeRunStatus(map: Record<string, 'ok' | 'error' | 'skipped'>): void
 }
 
+// Mirrors src/voice_commander/commands/graph_schema.py::CURRENT_SCHEMA_VERSION.
+// Bump in lock-step with the backend constant when the schema evolves.
+const BLANK_SCHEMA_VERSION = 1
+
+function makeBlankGraphMeta(
+  kind: GraphKind,
+  name: string,
+): Omit<Graph, 'nodes' | 'edges'> {
+  return {
+    schema_version: BLANK_SCHEMA_VERSION,
+    name,
+    kind,
+    description: '',
+    enabled: true,
+    llm_visible: true,
+    inputs: [],
+  }
+}
+
 export const useGraphStore = create<GraphState>((set, get) => ({
   graphId: null,
   graphKind: null,
@@ -54,6 +90,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   selectedNodeId: null,
   dirty: false,
   llmVisible: false,
+  draft: false,
   runStatusByNodeId: {},
 
   async load(kind, name) {
@@ -68,7 +105,42 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       selectedNodeId: null,
       dirty: false,
       llmVisible: graph.llm_visible,
+      draft: false,
       runStatusByNodeId: {},
+    })
+  },
+
+  initBlank(kind, name) {
+    const meta = makeBlankGraphMeta(kind, name)
+    set({
+      graphId: name,
+      graphKind: kind,
+      graphMeta: meta,
+      nodes: [],
+      edges: [],
+      selectedNodeId: null,
+      // Mark dirty so Save is enabled immediately — the user usually wants
+      // to rename + save, not edit the canvas first.
+      dirty: true,
+      llmVisible: meta.llm_visible,
+      draft: true,
+      runStatusByNodeId: {},
+    })
+  },
+
+  renameDraft(name) {
+    const state = get()
+    if (!state.draft) {
+      // Renaming a saved graph would orphan the old file on disk. Out of
+      // scope for the new-graph flow.
+      console.warn('renameDraft called on a non-draft graph; ignoring')
+      return
+    }
+    if (!state.graphMeta) return
+    set({
+      graphId: name,
+      graphMeta: { ...state.graphMeta, name },
+      dirty: true,
     })
   },
 
@@ -77,7 +149,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     if (!graphId || !graphKind || !graphMeta) return
     const canonical = serializeGraph(graphMeta, nodes, edges)
     await apiSaveGraph(graphId, canonical)
-    set({ dirty: false })
+    set({ dirty: false, draft: false })
   },
 
   setNodes(updater) {

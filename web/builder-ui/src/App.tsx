@@ -30,6 +30,37 @@ function readGraphFromUrl(): { kind: GraphKind; name: string } | null {
   return null
 }
 
+/**
+ * Detect the "+ New command/workflow" entry point.
+ *
+ * The list pages link to `/page/builder?kind=command|workflow` with no
+ * `name` param. Treat that as an explicit request for a fresh, blank
+ * graph — bypass localStorage + palette discovery so the user is not
+ * dropped into someone else's graph by accident.
+ */
+function readNewIntentFromUrl(): GraphKind | null {
+  if (typeof window === 'undefined') return null
+  const params = new URLSearchParams(window.location.search)
+  const kind = params.get('kind')
+  const name = params.get('name')
+  if ((kind === 'command' || kind === 'workflow') && !name) {
+    return kind
+  }
+  return null
+}
+
+function generatePlaceholderName(kind: GraphKind): string {
+  let suffix = ''
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    suffix = crypto.randomUUID().slice(0, 4)
+  } else {
+    suffix = Math.floor(Math.random() * 0xffff)
+      .toString(16)
+      .padStart(4, '0')
+  }
+  return `untitled_${kind}_${suffix}`
+}
+
 function readGraphFromStorage(): { kind: GraphKind; name: string } | null {
   if (typeof window === 'undefined' || !window.localStorage) return null
   try {
@@ -82,6 +113,7 @@ async function discoverFirstGraph(): Promise<{ kind: GraphKind; name: string } |
 export default function App() {
   const { fetchInitial, onSseEvent } = useRunsStore()
   const loadGraph = useGraphStore((s) => s.load)
+  const initBlankGraph = useGraphStore((s) => s.initBlank)
 
   useEffect(() => {
     void fetchInitial()
@@ -100,6 +132,16 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     async function bootstrap() {
+      // "+ New command/workflow" — bypass storage + discovery so the
+      // canvas opens blank. Do NOT persistLastGraph — the placeholder
+      // name should not leak into the next session's last-graph slot.
+      const newKind = readNewIntentFromUrl()
+      if (newKind) {
+        if (cancelled) return
+        initBlankGraph(newKind, generatePlaceholderName(newKind))
+        return
+      }
+
       const target =
         readGraphFromUrl() ?? readGraphFromStorage() ?? (await discoverFirstGraph())
       if (cancelled || !target) return
@@ -114,7 +156,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [loadGraph])
+  }, [loadGraph, initBlankGraph])
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground overflow-hidden">

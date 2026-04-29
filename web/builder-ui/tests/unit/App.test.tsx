@@ -150,4 +150,38 @@ describe('App bootstrap — F-C3', () => {
       expect(state.graphId).toBe('show_commands')
     })
   })
+
+  it('opens a blank draft when ?kind=command and no name (new-command flow)', async () => {
+    window.history.replaceState({}, '', '/?kind=command')
+    // Pre-seed localStorage with a stale graph to verify it's bypassed.
+    window.localStorage.setItem(
+      'builder.lastGraph',
+      JSON.stringify({ kind: 'command', name: 'show_commands' }),
+    )
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/runs')) {
+        return new Response(JSON.stringify({ runs: [] }), { status: 200 })
+      }
+      return new Response(JSON.stringify({}), { status: 200 })
+    }) as unknown as typeof fetch
+    globalThis.fetch = fetchMock
+
+    const { default: App } = await import('@/App')
+    render(<App />)
+
+    await waitFor(() => {
+      const state = useGraphStore.getState()
+      expect(state.draft).toBe(true)
+      expect(state.graphKind).toBe('command')
+      expect(state.graphId).toMatch(/^untitled_command_/)
+      expect(state.nodes).toEqual([])
+      expect(state.edges).toEqual([])
+    })
+    // Crucially: no /graph/<name> request should have fired.
+    const calls = (fetchMock as unknown as { mock: { calls: unknown[][] } }).mock.calls
+    const urls = calls.map((args) => String(args[0]))
+    expect(urls.some((u) => u.includes('/graph/show_commands'))).toBe(false)
+    expect(urls.some((u) => u.includes('/graph/palette'))).toBe(false)
+  })
 })
