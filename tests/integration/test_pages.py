@@ -220,21 +220,24 @@ def test_restart_button_targets_restart_endpoint(client: TestClient, url: str) -
 
 
 def test_builder_page_contains_drawflow_assets(client: TestClient) -> None:
-    resp = client.get("/page/builder?kind=command")
-    assert resp.status_code == 200
-    assert "drawflow.min.js" in resp.text
-    assert "drawflow.min.css" in resp.text
+    """Drawflow assets test — replaced by React SPA (ADR 0071).
 
-
-def test_builder_page_links_builder_css(client: TestClient) -> None:
-    """builder.css stylesheet must be referenced in the builder page.
-
-    Regression guard: if builder.css is accidentally deleted or removed from
-    the template, the entire visual taxonomy (ADR 0069) disappears silently.
+    Drawflow was removed in ADR 0071; /page/builder now serves the React SPA
+    or a friendly stub. This test confirms the route returns 200 (not 404/500).
     """
     resp = client.get("/page/builder?kind=command")
     assert resp.status_code == 200
-    assert "builder.css" in resp.text
+    assert resp.text  # non-empty HTML — either SPA or stub
+
+
+def test_builder_page_links_builder_css(client: TestClient) -> None:
+    """builder.css stylesheet link test — replaced by React SPA (ADR 0071).
+
+    The builder template was replaced by the React SPA; CSS is bundled into the
+    SPA build.  This test now just confirms the route returns 200.
+    """
+    resp = client.get("/page/builder?kind=command")
+    assert resp.status_code == 200
 
 
 def test_command_list_has_open_in_builder(client: TestClient) -> None:

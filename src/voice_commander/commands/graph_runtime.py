@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 from voice_commander.commands.graph import Edge, Graph, Node
 from voice_commander.commands.graph_topo import CycleError, topo_sort
-from voice_commander.observability.errors import Category, classify as _classify_error
+from voice_commander.observability.errors import Category
+from voice_commander.observability.errors import classify as _classify_error
 from voice_commander.plan import PlanOutcome, PlanStatus, ToolCall
 from voice_commander.registry import ToolRegistry
 
@@ -33,6 +34,7 @@ class WiringError(Exception):
     This is a structural graph authoring error, not a tool bug.
     Classified as 'wiring' by the error categorizer.
     """
+
 
 _GraphLookup = Callable[[str], "Graph | None"]
 
@@ -139,7 +141,7 @@ class GraphRuntime:
                 with self._span("node", name=node.ref, node_id=node.id) as _wire_span:
                     try:
                         kwargs = self._resolve_kwargs(node, graph.edges, port_values)
-                    except WiringError as exc:
+                    except WiringError:
                         if _wire_span is not None and hasattr(_wire_span, "set_error_category"):
                             _wire_span.set_error_category(Category.WIRING)
                         raise

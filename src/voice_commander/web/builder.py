@@ -65,9 +65,7 @@ class BuilderContext:
 def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter:
     r = APIRouter()
 
-    _SPA_INDEX = (
-        Path(__file__).resolve().parent / "static" / "builder" / "index.html"
-    )
+    _SPA_INDEX = Path(__file__).resolve().parent / "static" / "builder" / "index.html"
     _SPA_STUB = (
         "<html><body style='font-family:monospace;padding:2rem'>"
         "<h2>Builder UI not built yet</h2>"
@@ -245,9 +243,7 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
                 content={"errors": [{"message": "new_name must be a non-empty string"}]},
             )
         if new_name == name:
-            return JSONResponse(
-                status_code=200, content={"ok": True, "name": name}
-            )
+            return JSONResponse(status_code=200, content={"ok": True, "name": name})
         # Cross-store collision check (workflow named foo blocks command rename to foo)
         all_names = {
             *ctx.command_store.load_all().keys(),
@@ -269,9 +265,7 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
                             status_code=422, content={"errors": [{"message": str(exc)}]}
                         )
                     ctx.reload_all_fn()
-                    return JSONResponse(
-                        status_code=200, content={"ok": True, "name": new_name}
-                    )
+                    return JSONResponse(status_code=200, content={"ok": True, "name": new_name})
         raise HTTPException(status_code=404, detail=f"graph {name!r} not found")
 
     @r.post("/graph/{name}/toggle")

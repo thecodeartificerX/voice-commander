@@ -63,9 +63,7 @@ class RunHandle:
         """Increment the tool-call step counter for this run."""
         self._step_count += 1
 
-    def record_error_span(
-        self, depth: int, error_category: str, error_msg: str | None
-    ) -> None:
+    def record_error_span(self, depth: int, error_category: str, error_msg: str | None) -> None:
         """Record a span that ended in error so the run-level rollup can use it."""
         self._error_spans.append((depth, error_category, error_msg))
 

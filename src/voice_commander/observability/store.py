@@ -163,14 +163,8 @@ class Store:
         """
         conn = self._connect()
         try:
-            cols_runs = {
-                row[1]
-                for row in conn.execute("PRAGMA table_info(runs)").fetchall()
-            }
-            cols_spans = {
-                row[1]
-                for row in conn.execute("PRAGMA table_info(spans)").fetchall()
-            }
+            cols_runs = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+            cols_spans = {row[1] for row in conn.execute("PRAGMA table_info(spans)").fetchall()}
             conn.execute("BEGIN")
             try:
                 if "error_category" not in cols_runs:
@@ -192,9 +186,7 @@ class Store:
                         conn,
                         "ALTER TABLE spans ADD COLUMN error_category TEXT NULL",
                     )
-                conn.execute(
-                    "UPDATE runs SET schema_version=2 WHERE schema_version=1"
-                )
+                conn.execute("UPDATE runs SET schema_version=2 WHERE schema_version=1")
             except Exception:
                 conn.execute("ROLLBACK")
                 raise
@@ -342,8 +334,15 @@ class Store:
         conn.execute(
             "UPDATE runs SET ended_at=?, status=?, error_msg=?, duration_ms=?, "
             "error_category=?, error_summary=? WHERE run_id=?",
-            (upd.ended_at, upd.status, upd.error_msg, upd.duration_ms,
-             upd.error_category, upd.error_summary, upd.run_id),
+            (
+                upd.ended_at,
+                upd.status,
+                upd.error_msg,
+                upd.duration_ms,
+                upd.error_category,
+                upd.error_summary,
+                upd.run_id,
+            ),
         )
 
     def _insert_span(self, conn: sqlite3.Connection, span: SpanRecord) -> None:

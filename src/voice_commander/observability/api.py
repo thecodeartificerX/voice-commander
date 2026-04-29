@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncGenerator
+from datetime import UTC
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -17,12 +18,12 @@ logger = logging.getLogger(__name__)
 def _build_export_md(run: dict[str, Any], spans: list[dict[str, Any]]) -> str:
     """Build the copy-as-prompt markdown payload (matches client-side markdownExport.ts)."""
     import json as _json
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     run_id = run["run_id"]
     short_id = run_id[:6]
     started_at_s: float = run["started_at"]
-    started_iso = datetime.fromtimestamp(started_at_s, tz=timezone.utc).isoformat()
+    started_iso = datetime.fromtimestamp(started_at_s, tz=UTC).isoformat()
     dur_ms: int | None = run.get("duration_ms")
     dur_str = (
         f"{dur_ms}ms"
@@ -113,7 +114,7 @@ def _build_export_md(run: dict[str, Any], spans: list[dict[str, Any]]) -> str:
     # so two consecutive calls produce identical bytes.
     ended_at = run.get("ended_at")
     if ended_at is not None:
-        ended_iso = datetime.fromtimestamp(ended_at, tz=timezone.utc).isoformat()
+        ended_iso = datetime.fromtimestamp(ended_at, tz=UTC).isoformat()
     else:
         ended_iso = started_iso
     lines.append(f"\n---\n\n_Generated {ended_iso} by Voice Commander Builder UI_\n")
@@ -151,15 +152,18 @@ def build_observability_router(
     ) -> dict[str, Any]:
         before_ts: float | None = None
         if before is not None:
-            from datetime import datetime, timezone
+            from datetime import datetime
+
             try:
                 dt = datetime.fromisoformat(before.replace("Z", "+00:00"))
-            except ValueError:
-                raise HTTPException(status_code=422, detail=f"invalid before timestamp: {before!r}")
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422, detail=f"invalid before timestamp: {before!r}"
+                ) from exc
             # B-H2: only assume UTC when the user supplied a naive timestamp;
             # never clobber an explicit offset.
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.replace(tzinfo=UTC)
             before_ts = dt.timestamp()
         runs = store.list_runs(
             limit=limit,
@@ -198,7 +202,9 @@ def build_observability_router(
                     if await request.is_disconnected():
                         break
                     try:
-                        ev = await asyncio.get_running_loop().run_in_executor(None, q.get, True, 1.0)
+                        ev = await asyncio.get_running_loop().run_in_executor(
+                            None, q.get, True, 1.0
+                        )
                     except queue.Empty:
                         # Timeout — no events pending; send keepalive
                         yield ": keepalive\n\n"
@@ -224,6 +230,7 @@ def build_observability_router(
     @router.get("/{run_id}/export.md")
     def export_run_md(run_id: str) -> Any:
         from fastapi.responses import Response as _Response
+
         run = store.get_run(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")

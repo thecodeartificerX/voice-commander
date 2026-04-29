@@ -24,9 +24,9 @@ Rules
   "win"), named keys ("enter", "tab", "esc", "scroll lock", "space",
   "backspace", "delete", "up", "down", "left", "right", "f1"-"f12"), a
   single letter, or a single digit — the user wants those keys pressed.
-  Call `press(combo)` joining them with '+' (e.g. "control t" →
-  press(combo="ctrl+t"); "scroll lock" → press(combo="scrolllock");
-  "enter shift control" → press(combo="ctrl+shift+enter"); "a" →
+  Call `press(combo)` joining them with '+' (e.g. "enter" →
+  press(combo="enter"); "scroll lock" → press(combo="scrolllock");
+  "shift control s" → press(combo="ctrl+shift+s"); "a" →
   press(combo="a"); "5" → press(combo="5")). Normalize "control"→"ctrl",
   "windows"→"win". Order modifiers first.
 - If NO tool matches the intent — greetings, chit-chat, unrelated
