@@ -95,41 +95,75 @@ Set-Location -LiteralPath $PSScriptRoot
 # Ctrl+C tree-kill guard
 # ---------------------------------------------------------------------------
 #
-# PowerShell's default Ctrl+C handler can abort the script before any
-# `finally` block runs — particularly when `uv run` is the foreground
-# child and swallows the CTRL_C_EVENT before forwarding it to the
-# Python supervisor. Without this guard, the supervisor never gets a
-# clean shutdown signal and the daemon + sprite stay alive in the
-# background.
+# PowerShell's default Ctrl+C handler can abort the script before the
+# Python supervisor gets a clean shutdown signal — particularly when
+# `uv run` is the foreground child and swallows the CTRL_C_EVENT.
+# Without this guard, the daemon + sprite stay alive in the background.
 #
-# Registering a [Console]::CancelKeyPress handler hooks the .NET-level
-# console-control event, which fires *before* PS aborts. The handler
-# tree-kills the supervisor PID via taskkill /T /F so the daemon, sprite,
-# and any uv intermediary all die together. Setting `Cancel = $true`
-# also tells .NET to swallow the original Ctrl+C so the script's own
-# `finally` blocks still get a chance to run.
+# We hook the .NET-level [Console]::CancelKeyPress event, which fires
+# *before* PowerShell aborts. The handler tree-kills the supervisor PID
+# via taskkill /T /F so the daemon, sprite, and any uv intermediary all
+# die together. Setting `Cancel = $true` also tells .NET to swallow the
+# original Ctrl+C so the script's try/finally still runs.
+#
+# IMPORTANT: the handler MUST be implemented in pure .NET (Add-Type) and
+# not as a PowerShell ScriptBlock. Console.CancelKeyPress fires on a
+# threadpool thread that has no PowerShell Runspace; invoking a script
+# block from there throws PSInvalidOperationException ("There is no
+# Runspace available") and crashes the host before taskkill ever runs.
 $script:SupervisorProc = $null
-$script:CancelHandler = {
-    param($eventSender, $eventArgs)
-    # Default: let .NET terminate the script (preserves the old behaviour
-    # at the TUI prompt where Ctrl+C should quit).
-    $eventArgs.Cancel = $false
-    try {
-        $proc = $script:SupervisorProc
-        if ($null -ne $proc -and -not $proc.HasExited) {
-            [Console]::Error.WriteLine('')
-            [Console]::Error.WriteLine('Ctrl+C received - tearing down voice-commander tree...')
-            & taskkill.exe /PID $proc.Id /T /F 2>&1 | Out-Null
-            # Suppress the default abort so try/finally runs and the
-            # script reports the supervisor's exit code cleanly.
-            $eventArgs.Cancel = $true
+
+if (-not ('VoiceCommander.CancelGuard' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+
+namespace VoiceCommander {
+    public static class CancelGuard {
+        public static int SupervisorPid;
+
+        public static void Install() {
+            Console.CancelKeyPress += OnCancelKeyPress;
+        }
+
+        private static void OnCancelKeyPress(object sender, ConsoleCancelEventArgs args) {
+            int pid = SupervisorPid;
+            if (pid <= 0) {
+                return; // No supervisor running — let PS abort the TUI normally.
+            }
+            try {
+                Process target = null;
+                try {
+                    target = Process.GetProcessById(pid);
+                } catch (ArgumentException) {
+                    return; // Already gone.
+                }
+                if (target.HasExited) {
+                    return;
+                }
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("Ctrl+C received - tearing down voice-commander tree...");
+                Process killer = new Process();
+                killer.StartInfo.FileName = "taskkill.exe";
+                killer.StartInfo.Arguments = "/PID " + pid + " /T /F";
+                killer.StartInfo.UseShellExecute = false;
+                killer.StartInfo.CreateNoWindow = true;
+                killer.StartInfo.RedirectStandardOutput = true;
+                killer.StartInfo.RedirectStandardError = true;
+                killer.Start();
+                killer.WaitForExit(3000);
+                // Suppress the default abort so the PS try/finally runs and
+                // the script reports the supervisor exit code cleanly.
+                args.Cancel = true;
+            } catch {
+                // Best-effort: never let this handler throw.
+            }
         }
     }
-    catch {
-        # Best-effort: never let this handler throw and crash the host.
-    }
 }
-[Console]::add_CancelKeyPress($script:CancelHandler)
+'@
+}
+[VoiceCommander.CancelGuard]::Install()
 
 # Phase banner shown in Show-VoiceBanner. Extracted so phase bumps touch one place.
 $script:PhaseString = '  Phase 7: supervisor process (daemon + sprite under one parent)'
@@ -546,6 +580,7 @@ function Start-VoiceSupervisor {
     $proc = Start-Process -FilePath 'uv' -ArgumentList $supArgs `
         -NoNewWindow -PassThru
     $script:SupervisorProc = $proc
+    [VoiceCommander.CancelGuard]::SupervisorPid = $proc.Id
 
     try {
         $proc.WaitForExit()
@@ -554,6 +589,7 @@ function Start-VoiceSupervisor {
     finally {
         Stop-VoiceSupervisorTree -Process $proc
         $script:SupervisorProc = $null
+        [VoiceCommander.CancelGuard]::SupervisorPid = 0
     }
 }
 
