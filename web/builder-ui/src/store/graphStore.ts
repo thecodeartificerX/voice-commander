@@ -103,10 +103,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   async load(kind, name) {
     const graph = await apiGetGraph(name)
     const { nodes, edges } = deserializeGraph(graph)
+    // Extract graph metadata excluding nodes/edges (canonical shape from backend)
+    const { nodes: _n, edges: _e, ...graphMeta } = graph
     set({
       graphId: name,
       graphKind: kind,
-      graphMeta: { ...graph },
+      graphMeta,
       nodes,
       edges,
       selectedNodeId: null,
