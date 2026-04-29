@@ -71,7 +71,7 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
         "</body></html>"
     )
 
-    @r.get("/page/builder")
+    @r.get("/page/builder", response_model=None)
     def page_builder(
         request: Request,  # noqa: ARG001
         graph: str | None = None,  # noqa: ARG001
