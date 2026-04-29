@@ -424,3 +424,77 @@ def test_scroll_lock_from_speak_mode_synths_right_ctrl(tmp_path: Any) -> None:
     recorder.close_session.assert_called_once()
     assert daemon._session_active is False
     assert daemon._speak_mode is False
+
+
+@pytest.mark.integration
+def test_scroll_lock_from_speak_mode_warns_if_tool_not_found(tmp_path: Any) -> None:
+    """If speak tool lookup fails during Scroll Lock close, warning logged."""
+    from unittest.mock import MagicMock
+
+    from voice_commander.daemon import StreamingDaemon
+    from voice_commander.feedback import NullFeedbackSink
+
+    registry = MagicMock()
+    registry.by_name.return_value = None  # speak tool not found
+
+    recorder = MagicMock()
+    daemon = StreamingDaemon(
+        feedback=NullFeedbackSink(),
+        recorder=recorder,
+        transcriber=MagicMock(),
+        llm_router=MagicMock(),
+        dispatcher=MagicMock(),
+        registry=registry,
+        output_dir=str(tmp_path / "outputs"),
+    )
+
+    daemon._session_active = True
+    daemon._speak_mode = True
+
+    # Scroll Lock close from speak-mode with missing tool
+    daemon.on_scroll_lock()
+
+    # Session must still close
+    recorder.close_session.assert_called_once()
+    assert daemon._session_active is False
+    assert daemon._speak_mode is False
+    # registry.by_name was called but returned None — warning logged
+    registry.by_name.assert_called_once_with("speak")
+
+
+@pytest.mark.integration
+def test_scroll_lock_from_speak_mode_logs_exception_if_tool_raises(tmp_path: Any) -> None:
+    """If speak tool func() raises during Scroll Lock close, exception logged."""
+    from unittest.mock import MagicMock
+
+    from voice_commander.daemon import StreamingDaemon
+    from voice_commander.feedback import NullFeedbackSink
+
+    speak_func = MagicMock(side_effect=RuntimeError("pynput died"))
+    speak_entry = MagicMock()
+    speak_entry.func = speak_func
+
+    registry = MagicMock()
+    registry.by_name.return_value = speak_entry
+
+    recorder = MagicMock()
+    daemon = StreamingDaemon(
+        feedback=NullFeedbackSink(),
+        recorder=recorder,
+        transcriber=MagicMock(),
+        llm_router=MagicMock(),
+        dispatcher=MagicMock(),
+        registry=registry,
+        output_dir=str(tmp_path / "outputs"),
+    )
+
+    daemon._session_active = True
+    daemon._speak_mode = True
+
+    daemon.on_scroll_lock()
+
+    # Session must still close even if speak tool raised
+    speak_func.assert_called_once()
+    recorder.close_session.assert_called_once()
+    assert daemon._session_active is False
+    assert daemon._speak_mode is False

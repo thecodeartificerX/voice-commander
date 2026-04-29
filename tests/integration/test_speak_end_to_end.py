@@ -188,3 +188,81 @@ def test_speak_mode_does_not_fire_miss_chime(tmp_path):
     assert not any(c[0] == "on_miss" for c in feedback.calls), (
         "speak-mode drops must not produce a miss chime"
     )
+
+
+@pytest.mark.integration
+def test_speak_mode_exit_fails_if_tool_not_found(tmp_path):
+    """If 'speak' tool lookup fails, user stays in speak-mode with warning."""
+    daemon, feedback, transcriber, llm_router, dispatcher, _ = _make_daemon(tmp_path)
+    daemon._session_active = True
+    daemon._speak_mode = True
+
+    # Mock registry.by_name to return None (tool not found)
+    daemon._registry.by_name.return_value = None
+
+    transcriber.transcribe.return_value = _make_result("speak", confidence=0.95)
+
+    _run_utterance(daemon)
+
+    # User must still be in speak-mode (exit failed)
+    assert daemon._speak_mode is True
+    # llm_router and dispatcher must NOT be called
+    llm_router.route.assert_not_called()
+    dispatcher.run_plan.assert_not_called()
+
+
+@pytest.mark.integration
+def test_speak_mode_exit_fails_if_tool_raises(tmp_path):
+    """If 'speak' tool func() raises, user stays in speak-mode with exception logged."""
+    daemon, feedback, transcriber, llm_router, dispatcher, _ = _make_daemon(tmp_path)
+    daemon._session_active = True
+    daemon._speak_mode = True
+
+    speak_func = MagicMock(side_effect=RuntimeError("pynput died"))
+    speak_entry = MagicMock()
+    speak_entry.func = speak_func
+    daemon._registry.by_name.side_effect = lambda name: speak_entry if name == "speak" else None
+
+    transcriber.transcribe.return_value = _make_result("speak", confidence=0.95)
+
+    _run_utterance(daemon)
+
+    # User stuck in speak-mode
+    assert daemon._speak_mode is True
+    speak_func.assert_called_once()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "transcript,should_exit",
+    [
+        ("speak", True),  # exact match
+        ("speak.", True),  # trailing period (normalized)
+        ("speak!", True),  # trailing exclamation
+        ("speak?", True),  # trailing question
+        ("speak,", True),  # trailing comma
+        ("speak...", True),  # multiple trailing punctuation
+        ("Speak", True),  # capitalization (normalized to lowercase)
+        ("SPEAK", True),  # all caps
+        ("speke", False),  # homophone (ratio ~83 < 95)
+        ("speek", False),  # typo (ratio ~67 < 95)
+        ("speak louder", False),  # multi-word (word_count guard)
+    ],
+)
+def test_speak_mode_wake_word_normalization(tmp_path, transcript, should_exit):
+    """Speak-mode wake-word fuzzy-match handles normalization edge cases."""
+    daemon, feedback, transcriber, llm_router, dispatcher, speak_count = _make_daemon(
+        tmp_path, speak_fuzzy_threshold=95
+    )
+    daemon._session_active = True
+    daemon._speak_mode = True
+
+    transcriber.transcribe.return_value = _make_result(transcript, confidence=0.95)
+
+    _run_utterance(daemon)
+
+    if should_exit:
+        assert speak_count[0] == 1, f"'{transcript}' should exit speak-mode"
+    else:
+        assert speak_count[0] == 0, f"'{transcript}' should NOT exit speak-mode"
+    llm_router.route.assert_not_called()

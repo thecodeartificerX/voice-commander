@@ -203,8 +203,9 @@ class StreamingDaemon:
                 if speak_entry is not None:
                     try:
                         speak_entry.func()
-                    except Exception:
+                    except Exception as e:
                         logger.exception("Failed to synth Right Ctrl during Scroll Lock close")
+                        self._feedback.on_error("speak.toggle", e)
                 else:
                     logger.warning("speak tool not found — dictation app may remain active")
             self._recorder.close_session()
@@ -383,8 +384,9 @@ class StreamingDaemon:
                     if speak_entry is not None:
                         try:
                             speak_entry.func()
-                        except Exception:
+                        except Exception as e:
                             logger.exception("Failed to synth Right Ctrl from speak-mode wake-word")
+                            self._feedback.on_error("speak.toggle", e)
                     else:
                         logger.warning("speak tool not found in registry; cannot exit speak-mode")
                 else:

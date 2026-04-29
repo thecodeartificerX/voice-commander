@@ -358,6 +358,73 @@ def test_palette_includes_known_primitives(client: TestClient) -> None:
         )
 
 
+def test_palette_excludes_system_tools(tmp_path: Path) -> None:
+    """Builder palette() must exclude tools with system=True.
+
+    Regression test for ADR 0072: system tools (e.g. speak) must not appear
+    in the Builder UI palette, preventing users from dragging them into graphs.
+    """
+    reg = ToolRegistry()
+    # Normal tool
+    reg.register(
+        ToolEntry(
+            name="focus",
+            phrases=(),
+            func=lambda **_: None,
+            module="test",
+            docstring=None,
+            enabled=True,
+            llm_only=True,
+            internal=True,
+            origin="primitive",
+            args_meta={},
+            system=False,
+        )
+    )
+    # System tool (should be excluded)
+    reg.register(
+        ToolEntry(
+            name="speak",
+            phrases=(),
+            func=lambda **_: None,
+            module="test",
+            docstring=None,
+            enabled=True,
+            llm_only=True,
+            internal=True,
+            origin="primitive",
+            args_meta={},
+            system=True,
+        )
+    )
+
+    cs, ws, config_path = _seed_stores(tmp_path)
+    tool_toml_dir = tmp_path / "tools_meta"
+    tool_toml_dir.mkdir(exist_ok=True)
+    tool_store = ToolMetadataStore(tool_toml_dir)
+
+    app = create_app(
+        reg,
+        tool_store,
+        threading.Lock(),
+        event_bus=EventBus(),
+        command_store=cs,
+        workflow_store=ws,
+        config_path=config_path,
+    )
+    client = TestClient(app)
+
+    r = client.get("/graph/palette")
+    assert r.status_code == 200
+    body = r.json()
+    pipeline_names = {entry["name"] for entry in body.get("pipeline", [])}
+
+    # focus must be in palette (normal tool)
+    assert "focus" in pipeline_names, "normal tool 'focus' must be in palette"
+    # speak must NOT be in palette (system tool)
+    assert "speak" not in pipeline_names, "system tool 'speak' must be excluded from palette"
+
+
 def test_xss_arg_name_stored_verbatim(client: TestClient) -> None:
     """Server must not mangle arg names -- escaping is client-side only.
 
