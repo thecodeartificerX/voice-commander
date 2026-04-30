@@ -38,12 +38,12 @@ class VerbRouter:
                 self._alias_map[alias] = rule.name
 
     def route(self, transcript: str) -> Plan | None:
-        text = transcript.strip()
+        text = transcript.strip().rstrip(".,!?")
         if not text:
             return None
         head, _, tail = text.partition(" ")
         head = head.strip().lower()
-        tail = tail.strip()
+        tail = tail.strip().rstrip(".,!?")
 
         verb_name = self._alias_map.get(head)
         if verb_name is None:
@@ -84,7 +84,7 @@ def build_default_rules() -> tuple[VerbRule, ...]:
         VerbRule("refresh", ("refresh", "reload"), default_target=RouteTarget("press", {"combo": "ctrl+r"})),
         VerbRule("minimize", ("minimize",), default_target=RouteTarget("press", {"combo": "win+down"})),
         VerbRule("maximize", ("maximize",), default_target=RouteTarget("press", {"combo": "win+up"})),
-        VerbRule("close", ("close",), default_target=RouteTarget("press", {"combo": "ctrl+w"}), subcommands=(SubcommandRule(("window",), RouteTarget("press", {"combo": "alt+f4"})),)),
+        VerbRule("close", ("close",), default_target=RouteTarget("press", {"combo": "ctrl+w"}), subcommands=(SubcommandRule(("tab",), RouteTarget("press", {"combo": "ctrl+w"})), SubcommandRule(("window",), RouteTarget("press", {"combo": "alt+f4"})),)),
         VerbRule("new", ("new",), subcommands=(SubcommandRule(("tab",), RouteTarget("press", {"combo": "ctrl+t"})), SubcommandRule(("window",), RouteTarget("press", {"combo": "ctrl+n"})))),
         VerbRule("type", ("type",), raw_tail_tool="type", raw_tail_arg="text"),
         VerbRule("open", ("open",), raw_tail_tool="open", raw_tail_arg="target"),
