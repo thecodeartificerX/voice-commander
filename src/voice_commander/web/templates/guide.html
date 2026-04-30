@@ -20,7 +20,7 @@
 Scroll Lock ──► StreamingRecorder ──► Silero VAD ──► faster-whisper
                                                          │
                                                          ▼ transcript
-                                                    LLMRouter.route()
+                                                    VerbRouter | LLMRouter.route()
                                                          │
                                            match ◄───────┤────► no match
                                              │                    │
@@ -34,8 +34,12 @@ Scroll Lock ──► StreamingRecorder ──► Silero VAD ──► faster-wh
                                    win32 focus, etc.)</pre>
         <p class="text-sm text-neutral-400">
             Source: <code class="text-neutral-200">src/voice_commander/daemon.py</code> → <code class="text-neutral-200">_process_utterance()</code>.
-            If <code class="text-neutral-200">LLMRouter.route()</code> returns <code>None</code>, the daemon plays the miss chime and stops.
+            Normal mode uses <code class="text-neutral-200">VerbRouter.route()</code>; say <code class="text-neutral-200">Merlin</code> to toggle LLM mode. If the active router returns <code>None</code>, the daemon plays the miss chime and stops.
             There is no retry loop.
+        </p>
+        <p class="text-sm text-neutral-400">
+            Normal mode uses a deterministic verb router. Merlin mode is a session-scoped
+            spoken toggle that re-enables <code>LLMRouter.route()</code> for open-ended requests.
         </p>
     </section>
 

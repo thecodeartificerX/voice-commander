@@ -25,7 +25,7 @@ Voice Commander is the boring middle ground. Push-to-talk, speak plain English, 
 
 - **Push-to-talk session model.** Tap Scroll Lock to open a session → speak one or many commands back-to-back → tap again to close. Silero VAD auto-segments utterances on silence, so you never press a key between commands.
 - **Sub-second latency.** [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper) running `small.en` on CUDA, with an ndarray hand-off (no temp-file I/O on the hot path), puts the speech-end → keystroke budget at ~700 ms.
-- **LLM-powered routing.** Every utterance is dispatched through a local LLM (LM Studio, default model: Gemma 4 E4B) which returns a typed, ordered plan of tool calls. Chained commands like *"new tab then paste"* work out of the box. If LM Studio is offline the daemon degrades to a miss chime and keeps running.
+- **Deterministic normal-mode routing.** Core commands (`copy`, `paste`, `new tab`, `close window`, etc.) route through a fast deterministic verb router (~1 ms, no LLM needed). Say `Merlin` during a session to temporarily enable LLM-powered open-ended planning.
 - **Mute hotkey for dictation coexistence.** Secondary key (default Right Ctrl) suspends the mic so Voice Commander does not fight your other dictation software. See [ADR 0025](docs/decisions/0025-mute-hotkey-for-external-dictation.md).
 - **Web UI.** Open `http://127.0.0.1:8765` while the daemon runs to edit phrases, toggle tools, and hot-reload without restarting. HTMX + FastAPI. The `/page/builder` route is a React SPA — run `cd web/builder-ui && pnpm install && pnpm build` once before serving it. See [ADR 0022](docs/decisions/0022-htmx-over-spa.md) and [ADR 0071](docs/decisions/0071-builder-react-spa.md).
 - **Sidecar TOML metadata.** Phrases and descriptions live in `.toml` files beside each tool module, so config and code evolve independently. See [ADR 0021](docs/decisions/0021-sidecar-toml-per-tool.md).
@@ -49,7 +49,7 @@ Voice Commander is the boring middle ground. Push-to-talk, speak plain English, 
 | System | `lock screen`, `take screenshot`, `cancel` |
 | Mouse | `click`, `right click` |
 
-Every phrase is editable in the web UI or the sidecar TOML next to the tool.
+Core commands route deterministically via the verb router; say `Merlin` to unlock LLM-powered open-ended requests.
 
 > **Note.** The browser-focus group currently targets [Comet](https://comet.perplexity.ai) specifically (my daily driver). If you use a different browser, change two lines in `src/voice_commander/tools/_win32.py` or open an issue and we will land a config-driven lookup.
 
