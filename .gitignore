@@ -69,5 +69,5 @@ outputs/runs.db.corrupt-*
 # Builder React SPA build output (ADR 0071) — never commit built artifacts
 src/voice_commander/web/static/builder/
 
-# Archon git worktrees (parallel agent workspaces)
-pi-worktrees/
+# Worktrees
+.worktrees/
