@@ -33,7 +33,12 @@ from .streaming_recorder import StreamingRecorder
 from .tool_metadata import ToolMetadataStore
 from .tool_schema import sig_to_json_schema
 from .tools import primitives as tool_primitives
-from .transcriber import Transcriber, TranscriptionResult
+from .transcriber import (
+    RemoteTranscriber,
+    Transcriber,
+    TranscriberProtocol,
+    TranscriptionResult,
+)
 from .vad_gate import VADGate
 from .validator import validate_config_or_die, validate_or_die
 from .web.app import create_app
@@ -71,7 +76,7 @@ class StreamingDaemon:
         self,
         feedback: FeedbackSink,
         recorder: StreamingRecorder | None,
-        transcriber: Transcriber,
+        transcriber: TranscriberProtocol,
         llm_router: LLMRouter,
         dispatcher: Dispatcher,
         *,
@@ -704,11 +709,28 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         miss_sound=cfg.feedback.miss_sound,
     )
 
-    transcriber = Transcriber(
-        model_size=cfg.transcription.model_size,
-        device=cfg.transcription.device,
-        compute_type=cfg.transcription.compute_type,
-    )
+    transcriber: TranscriberProtocol
+    if cfg.transcription.backend == "remote":
+        transcriber = RemoteTranscriber(
+            endpoint_url=cfg.transcription.remote_endpoint_url,
+            timeout_ms=cfg.transcription.remote_timeout_ms,
+        )
+        logger.info(
+            "Transcription backend: remote @ %s (timeout=%dms)",
+            cfg.transcription.remote_endpoint_url,
+            cfg.transcription.remote_timeout_ms,
+        )
+    else:
+        transcriber = Transcriber(
+            model_size=cfg.transcription.model_size,
+            device=cfg.transcription.device,
+            compute_type=cfg.transcription.compute_type,
+        )
+        logger.info(
+            "Transcription backend: local (model=%s device=%s)",
+            cfg.transcription.model_size,
+            cfg.transcription.device,
+        )
 
     # Metadata store + reload lock shared between registry, LLM router, and web server.
     tools_dir = Path(__file__).resolve().parent / "tools"

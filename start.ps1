@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 
 <#
 .SYNOPSIS
@@ -83,7 +83,46 @@ param(
     [Parameter(ParameterSetName = 'Interactive')]
     [Parameter(ParameterSetName = 'NoMenu')]
     [Parameter(ParameterSetName = 'DirectDevice')]
-    [switch]$NoSprite
+    [switch]$NoSprite,
+
+    [Parameter(ParameterSetName = 'Interactive')]
+    [Parameter(ParameterSetName = 'NoMenu')]
+    [Parameter(ParameterSetName = 'DirectDevice')]
+    [ValidateSet('local', 'remote')]
+    [string]$Backend = '',
+
+    [Parameter(ParameterSetName = 'Interactive')]
+    [Parameter(ParameterSetName = 'NoMenu')]
+    [Parameter(ParameterSetName = 'DirectDevice')]
+    [string]$RemoteUrl = '',
+
+    [Parameter(ParameterSetName = 'Interactive')]
+    [Parameter(ParameterSetName = 'NoMenu')]
+    [Parameter(ParameterSetName = 'DirectDevice')]
+    [string]$LlmEndpoint = '',
+
+    [Parameter(ParameterSetName = 'Interactive')]
+    [Parameter(ParameterSetName = 'NoMenu')]
+    [Parameter(ParameterSetName = 'DirectDevice')]
+    [string]$LlmModel = ''
+)
+
+# LLM endpoint presets shared between TUI + flag-based persistence.
+$script:LlmPresets = @(
+    [PSCustomObject]@{
+        Key      = 'L'
+        Label    = 'LM Studio (local)'
+        Endpoint = 'http://localhost:1234/v1'
+        Model    = 'google/gemma-4-e4b'
+        Hint     = 'localhost:1234 / google/gemma-4-e4b'
+    },
+    [PSCustomObject]@{
+        Key      = 'O'
+        Label    = 'Ollama (remote 192.168.4.200:5050)'
+        Endpoint = 'http://192.168.4.200:5050/v1'
+        Model    = 'gemma4:e4b'
+        Hint     = '192.168.4.200:5050/v1 / gemma4:e4b'
+    }
 )
 
 Set-StrictMode -Version Latest
@@ -557,6 +596,489 @@ function Save-VoiceDeviceChoice {
     }
 }
 
+function Get-VoiceConfigTranscription {
+    <#
+    .SYNOPSIS
+        Returns @{ Backend; RemoteUrl } from config.toml, or $null on failure.
+    #>
+    Write-Verbose 'Reading transcription config via Config.load'
+    try {
+        $py = @"
+from pathlib import Path
+from voice_commander.config import Config
+c = Config.load(Path('config.toml')).transcription
+print(c.backend)
+print(c.remote_endpoint_url)
+"@
+        $raw = uv run python -c $py 2>$null
+        if ($null -eq $raw) { return $null }
+        $parts = $raw -split "`r?`n" | Where-Object { $_ -ne '' }
+        if ($parts.Count -lt 1) { return $null }
+        $url = if ($parts.Count -ge 2) { $parts[1] } else { '' }
+        return [PSCustomObject]@{
+            Backend   = $parts[0].Trim()
+            RemoteUrl = $url.Trim()
+        }
+    }
+    catch {
+        Write-Verbose "transcription config read failed: $_"
+        return $null
+    }
+}
+
+function Save-VoiceTranscriptionChoice {
+    <#
+    .SYNOPSIS
+        Persist transcription backend (and optional URL) via set-transcription-backend.py.
+
+    .OUTPUTS
+        [bool] $true on success, $false on failure.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('local', 'remote')]
+        [string]$Backend,
+
+        [string]$RemoteUrl = ''
+    )
+
+    Write-Verbose "Persisting transcription.backend = $Backend (url=$RemoteUrl)"
+    try {
+        $cmdArgs = @('run', 'python', 'scripts/set-transcription-backend.py', $Backend)
+        if ($RemoteUrl) { $cmdArgs += $RemoteUrl }
+        & uv @cmdArgs
+        if ($LASTEXITCODE -ne 0) {
+            Write-Verbose "set-transcription-backend.py exited with code $LASTEXITCODE"
+            return $false
+        }
+        return $true
+    }
+    catch {
+        Write-Verbose "Save-VoiceTranscriptionChoice failed: $_"
+        return $false
+    }
+}
+
+function Read-VoiceTranscriptionBackend {
+    <#
+    .SYNOPSIS
+        Interactive picker for transcription backend (Local | Remote + URL).
+
+    .DESCRIPTION
+        Mirrors the audio device picker's Use-last / Choose-new flow. Shows
+        the saved backend (and URL if remote), then offers [1] Use last /
+        [2] Choose new / [Q] Quit. Choose-new opens a sub-menu [L] Local /
+        [R] Remote. Remote prompts for the endpoint URL with the existing
+        URL pre-filled as a default.
+
+    .PARAMETER Current
+        The current transcription config (from Get-VoiceConfigTranscription)
+        or $null if unavailable.
+
+    .OUTPUTS
+        [PSCustomObject]@{ Backend; RemoteUrl } picked by the user, or $null
+        if the user pressed Q (the caller should exit).
+    #>
+    param(
+        [PSCustomObject]$Current
+    )
+
+    $hasCurrent = $null -ne $Current -and $Current.Backend -in @('local', 'remote')
+
+    if ($hasCurrent) {
+        Write-Host ''
+        Write-VoiceHeader 'Last transcription backend:'
+        if ($Current.Backend -eq 'remote') {
+            Write-VoiceSuccess ("  [remote] {0}" -f $Current.RemoteUrl)
+        }
+        else {
+            Write-VoiceSuccess '  [local] faster-whisper on CUDA'
+        }
+        Write-Host ''
+        Write-VoicePrompt '  [1] Use last'
+        Write-VoicePrompt '  [2] Choose new'
+        Write-VoicePrompt '  [Q] Quit'
+        Write-Host ''
+
+        $top = Read-VoiceMenuChoice -ValidKeys @('1', '2', 'Q') -Prompt '> '
+
+        if ($top -eq 'Q') {
+            Write-Host ''
+            Write-VoiceSecondary 'Goodbye.'
+            return $null
+        }
+
+        if ($top -eq '1') {
+            return [PSCustomObject]@{
+                Backend   = $Current.Backend
+                RemoteUrl = $Current.RemoteUrl
+            }
+        }
+        # '2' falls through to choose-new
+    }
+
+    while ($true) {
+        Write-Host ''
+        Write-VoiceHeader 'Choose transcription backend:'
+        Write-VoicePrompt '  [L] Local   (faster-whisper on CUDA)'
+        Write-VoicePrompt '  [R] Remote  (whisper.cpp server over HTTP)'
+        if ($hasCurrent) {
+            Write-VoicePrompt '  [B] Back'
+        }
+        Write-VoicePrompt '  [Q] Quit'
+        Write-Host ''
+
+        $validKeys = if ($hasCurrent) { @('L', 'R', 'B', 'Q') } else { @('L', 'R', 'Q') }
+        $choice = Read-VoiceMenuChoice -ValidKeys $validKeys -Prompt '> '
+
+        if ($choice -eq 'Q') {
+            Write-Host ''
+            Write-VoiceSecondary 'Goodbye.'
+            return $null
+        }
+
+        if ($choice -eq 'B') {
+            return Read-VoiceTranscriptionBackend -Current $Current
+        }
+
+        if ($choice -eq 'L') {
+            return [PSCustomObject]@{ Backend = 'local'; RemoteUrl = '' }
+        }
+
+        # 'R' — prompt for URL
+        $defaultUrl = if ($hasCurrent -and $Current.Backend -eq 'remote') { $Current.RemoteUrl } else { '' }
+        Write-Host ''
+        if ($defaultUrl) {
+            Write-VoicePrompt ("  Endpoint URL [{0}]:" -f $defaultUrl) -NoNewline
+        }
+        else {
+            Write-VoicePrompt '  Endpoint URL (e.g. http://192.168.4.200:8765/inference):' -NoNewline
+        }
+        Write-Host ' ' -NoNewline
+        $entered = (Read-Host).Trim()
+        if (-not $entered -and $defaultUrl) {
+            $entered = $defaultUrl
+        }
+        if (-not $entered) {
+            Write-VoiceFailure '  Remote backend requires a non-empty URL.'
+            continue
+        }
+        return [PSCustomObject]@{ Backend = 'remote'; RemoteUrl = $entered }
+    }
+}
+
+function Resolve-VoiceTranscriptionChoice {
+    <#
+    .SYNOPSIS
+        Decide + persist the transcription backend for this launch.
+
+    .DESCRIPTION
+        Three paths:
+          1. -Backend param supplied → persist directly, skip menu.
+          2. Non-interactive / -NoMenu → reuse saved config, no prompts.
+          3. Interactive → show Use-last / Choose-new menu.
+
+        On any persist failure, prints a warning and continues with whatever
+        is currently in config.toml — never blocks daemon launch.
+    #>
+    param(
+        [bool]$IsInteractiveSession,
+        [bool]$SkipMenu
+    )
+
+    $current = Get-VoiceConfigTranscription
+
+    # -Backend / -RemoteUrl explicit path
+    if ($Backend) {
+        $url = if ($RemoteUrl) { $RemoteUrl } elseif ($null -ne $current) { $current.RemoteUrl } else { '' }
+        if ($Backend -eq 'remote' -and -not $url) {
+            Write-VoiceFailure 'Backend "remote" requires -RemoteUrl (or a saved URL in config.toml).'
+            exit 1
+        }
+        if (-not (Save-VoiceTranscriptionChoice -Backend $Backend -RemoteUrl $url)) {
+            Write-VoiceFailure 'Failed to persist transcription backend.'
+            exit 1
+        }
+        return
+    }
+
+    if ($SkipMenu -or -not $IsInteractiveSession) {
+        if ($null -eq $current -or -not $current.Backend) {
+            Write-Verbose 'No saved transcription config; daemon will use defaults (local).'
+        }
+        else {
+            Write-VoiceSuccess ("Transcription backend: {0}{1}." -f `
+                $current.Backend, `
+                $(if ($current.Backend -eq 'remote') { " @ $($current.RemoteUrl)" } else { '' }))
+        }
+        return
+    }
+
+    # Interactive menu
+    $picked = Read-VoiceTranscriptionBackend -Current $current
+    if ($null -eq $picked) {
+        # Q pressed
+        exit 0
+    }
+
+    # Skip the persist round-trip if the choice exactly matches what's saved.
+    $unchanged = $null -ne $current `
+        -and $current.Backend -eq $picked.Backend `
+        -and $current.RemoteUrl -eq $picked.RemoteUrl
+    if (-not $unchanged) {
+        if (-not (Save-VoiceTranscriptionChoice -Backend $picked.Backend -RemoteUrl $picked.RemoteUrl)) {
+            Write-VoiceFailure '  Failed to save transcription backend.'
+            Write-VoiceSecondary '  Continuing with whatever is currently in config.toml.'
+        }
+    }
+
+    Write-Host ''
+    if ($picked.Backend -eq 'remote') {
+        Write-VoiceSuccess ("Transcription backend: remote @ {0}." -f $picked.RemoteUrl)
+    }
+    else {
+        Write-VoiceSuccess 'Transcription backend: local.'
+    }
+}
+
+function Get-VoiceConfigLlm {
+    <#
+    .SYNOPSIS
+        Returns @{ EndpointUrl; ModelId } from config.toml, or $null on failure.
+    #>
+    Write-Verbose 'Reading [llm] config via Config.load'
+    try {
+        $py = @"
+from pathlib import Path
+from voice_commander.config import Config
+c = Config.load(Path('config.toml')).llm
+print(c.endpoint_url)
+print(c.model_id)
+"@
+        $raw = uv run python -c $py 2>$null
+        if ($null -eq $raw) { return $null }
+        $parts = $raw -split "`r?`n" | Where-Object { $_ -ne '' }
+        if ($parts.Count -lt 2) { return $null }
+        return [PSCustomObject]@{
+            EndpointUrl = $parts[0].Trim()
+            ModelId     = $parts[1].Trim()
+        }
+    }
+    catch {
+        Write-Verbose "[llm] config read failed: $_"
+        return $null
+    }
+}
+
+function Save-VoiceLlmChoice {
+    <#
+    .SYNOPSIS
+        Persist [llm] endpoint_url + model_id via set-llm-endpoint.py.
+    #>
+    param(
+        [Parameter(Mandatory)] [string]$EndpointUrl,
+        [Parameter(Mandatory)] [string]$ModelId
+    )
+
+    Write-Verbose "Persisting llm.endpoint_url=$EndpointUrl model_id=$ModelId"
+    try {
+        & uv 'run' 'python' 'scripts/set-llm-endpoint.py' $EndpointUrl $ModelId
+        if ($LASTEXITCODE -ne 0) {
+            Write-Verbose "set-llm-endpoint.py exited with code $LASTEXITCODE"
+            return $false
+        }
+        return $true
+    }
+    catch {
+        Write-Verbose "Save-VoiceLlmChoice failed: $_"
+        return $false
+    }
+}
+
+function Read-VoiceLlmEndpoint {
+    <#
+    .SYNOPSIS
+        Use-last / Choose-new menu for the LLM endpoint + model.
+
+    .DESCRIPTION
+        Mirrors the audio device + transcription menus. Choose-new offers the
+        named presets ($script:LlmPresets), a [C] Custom path that prompts for
+        endpoint_url + model_id, plus [B] Back / [Q] Quit.
+
+    .OUTPUTS
+        [PSCustomObject]@{ EndpointUrl; ModelId } picked, or $null on quit.
+    #>
+    param(
+        [PSCustomObject]$Current
+    )
+
+    $hasCurrent = $null -ne $Current -and $Current.EndpointUrl -and $Current.ModelId
+
+    if ($hasCurrent) {
+        Write-Host ''
+        Write-VoiceHeader 'Last LLM endpoint:'
+        Write-VoiceSuccess ("  {0}" -f $Current.EndpointUrl)
+        Write-VoiceSecondary ("       (model: {0})" -f $Current.ModelId)
+        Write-Host ''
+        Write-VoicePrompt '  [1] Use last'
+        Write-VoicePrompt '  [2] Choose new'
+        Write-VoicePrompt '  [Q] Quit'
+        Write-Host ''
+
+        $top = Read-VoiceMenuChoice -ValidKeys @('1', '2', 'Q') -Prompt '> '
+
+        if ($top -eq 'Q') {
+            Write-Host ''
+            Write-VoiceSecondary 'Goodbye.'
+            return $null
+        }
+
+        if ($top -eq '1') {
+            return [PSCustomObject]@{
+                EndpointUrl = $Current.EndpointUrl
+                ModelId     = $Current.ModelId
+            }
+        }
+        # '2' falls through
+    }
+
+    while ($true) {
+        Write-Host ''
+        Write-VoiceHeader 'Choose LLM endpoint:'
+        foreach ($p in $script:LlmPresets) {
+            Write-VoicePrompt ("  [{0}] {1}" -f $p.Key, $p.Label)
+            Write-VoiceSecondary ("       {0}" -f $p.Hint)
+        }
+        Write-VoicePrompt '  [C] Custom (enter URL + model)'
+        if ($hasCurrent) { Write-VoicePrompt '  [B] Back' }
+        Write-VoicePrompt '  [Q] Quit'
+        Write-Host ''
+
+        $valid = @('C', 'Q') + ($script:LlmPresets | ForEach-Object { $_.Key })
+        if ($hasCurrent) { $valid += 'B' }
+
+        $choice = Read-VoiceMenuChoice -ValidKeys $valid -Prompt '> '
+
+        if ($choice -eq 'Q') {
+            Write-Host ''
+            Write-VoiceSecondary 'Goodbye.'
+            return $null
+        }
+
+        if ($choice -eq 'B') {
+            return Read-VoiceLlmEndpoint -Current $Current
+        }
+
+        if ($choice -eq 'C') {
+            $defaultUrl = if ($hasCurrent) { $Current.EndpointUrl } else { '' }
+            $defaultModel = if ($hasCurrent) { $Current.ModelId } else { '' }
+
+            Write-Host ''
+            if ($defaultUrl) {
+                Write-VoicePrompt ("  Endpoint URL [{0}]:" -f $defaultUrl) -NoNewline
+            }
+            else {
+                Write-VoicePrompt '  Endpoint URL (e.g. http://host:port/v1):' -NoNewline
+            }
+            Write-Host ' ' -NoNewline
+            $url = (Read-Host).Trim()
+            if (-not $url -and $defaultUrl) { $url = $defaultUrl }
+            if (-not $url) {
+                Write-VoiceFailure '  Endpoint URL required.'
+                continue
+            }
+
+            if ($defaultModel) {
+                Write-VoicePrompt ("  Model ID [{0}]:" -f $defaultModel) -NoNewline
+            }
+            else {
+                Write-VoicePrompt '  Model ID (e.g. gemma4:e4b):' -NoNewline
+            }
+            Write-Host ' ' -NoNewline
+            $model = (Read-Host).Trim()
+            if (-not $model -and $defaultModel) { $model = $defaultModel }
+            if (-not $model) {
+                Write-VoiceFailure '  Model ID required.'
+                continue
+            }
+
+            return [PSCustomObject]@{ EndpointUrl = $url; ModelId = $model }
+        }
+
+        # Preset key
+        $preset = $script:LlmPresets | Where-Object { $_.Key -eq $choice } | Select-Object -First 1
+        if ($null -ne $preset) {
+            return [PSCustomObject]@{
+                EndpointUrl = $preset.Endpoint
+                ModelId     = $preset.Model
+            }
+        }
+    }
+}
+
+function Resolve-VoiceLlmChoice {
+    <#
+    .SYNOPSIS
+        Decide + persist the LLM endpoint for this launch.
+
+    .DESCRIPTION
+        Three paths matching Resolve-VoiceTranscriptionChoice:
+          1. -LlmEndpoint (and optional -LlmModel) → persist directly.
+          2. Non-interactive / -NoMenu → reuse saved config silently.
+          3. Interactive → Use-last / Choose-new menu.
+    #>
+    param(
+        [bool]$IsInteractiveSession,
+        [bool]$SkipMenu
+    )
+
+    $current = Get-VoiceConfigLlm
+
+    if ($LlmEndpoint) {
+        $model = if ($LlmModel) {
+            $LlmModel
+        }
+        elseif ($null -ne $current -and $current.ModelId) {
+            $current.ModelId
+        }
+        else {
+            ''
+        }
+        if (-not $model) {
+            Write-VoiceFailure '-LlmEndpoint supplied without -LlmModel and no saved model_id; need both.'
+            exit 1
+        }
+        if (-not (Save-VoiceLlmChoice -EndpointUrl $LlmEndpoint -ModelId $model)) {
+            Write-VoiceFailure 'Failed to persist LLM endpoint.'
+            exit 1
+        }
+        return
+    }
+
+    if ($SkipMenu -or -not $IsInteractiveSession) {
+        if ($null -ne $current) {
+            Write-VoiceSuccess ("LLM endpoint: {0} (model {1})." -f $current.EndpointUrl, $current.ModelId)
+        }
+        return
+    }
+
+    $picked = Read-VoiceLlmEndpoint -Current $current
+    if ($null -eq $picked) { exit 0 }
+
+    $unchanged = $null -ne $current `
+        -and $current.EndpointUrl -eq $picked.EndpointUrl `
+        -and $current.ModelId -eq $picked.ModelId
+    if (-not $unchanged) {
+        if (-not (Save-VoiceLlmChoice -EndpointUrl $picked.EndpointUrl -ModelId $picked.ModelId)) {
+            Write-VoiceFailure '  Failed to save LLM endpoint.'
+            Write-VoiceSecondary '  Continuing with whatever is currently in config.toml.'
+        }
+    }
+
+    Write-Host ''
+    Write-VoiceSuccess ("LLM endpoint: {0} (model {1})." -f $picked.EndpointUrl, $picked.ModelId)
+}
+
 function Start-VoiceSupervisor {
     <#
     .SYNOPSIS
@@ -728,6 +1250,8 @@ if ($PSCmdlet.ParameterSetName -eq 'DirectDevice') {
     else {
         Write-VoiceSuccess "Using device [$Device]."
     }
+    Resolve-VoiceTranscriptionChoice -IsInteractiveSession $false -SkipMenu $true
+    Resolve-VoiceLlmChoice -IsInteractiveSession $false -SkipMenu $true
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander...'
     $ExitCode = Start-VoiceWithUI
@@ -756,6 +1280,8 @@ if ($NoMenu) {
     }
     Write-Verbose "Non-interactive: using saved device [$SavedNoMenu]"
     Write-VoiceSuccess "Using saved device [$SavedNoMenu]."
+    Resolve-VoiceTranscriptionChoice -IsInteractiveSession $false -SkipMenu $true
+    Resolve-VoiceLlmChoice -IsInteractiveSession $false -SkipMenu $true
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander...'
     $ExitCode = Start-VoiceWithUI
@@ -783,6 +1309,8 @@ if (-not $IsInteractive) {
         exit 1
     }
     Write-VoiceSuccess "Non-interactive session -- using saved device [$SavedAuto]."
+    Resolve-VoiceTranscriptionChoice -IsInteractiveSession $false -SkipMenu $true
+    Resolve-VoiceLlmChoice -IsInteractiveSession $false -SkipMenu $true
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander...'
     $ExitCode = Start-VoiceWithUI
@@ -918,6 +1446,10 @@ if ($null -ne $FinalDevice) {
 else {
     Write-VoiceSuccess "Using device [$PickedIndex]."
 }
+
+Resolve-VoiceTranscriptionChoice -IsInteractiveSession $true -SkipMenu $false
+Resolve-VoiceLlmChoice -IsInteractiveSession $true -SkipMenu $false
+
 Write-Host ''
 Write-VoicePrompt 'Starting Voice Commander...'
 

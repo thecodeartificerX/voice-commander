@@ -35,6 +35,25 @@ class TranscriptionConfig:
     device: str = "cuda"
     compute_type: str = "float16"
     min_confidence: float = 0.30
+    # ADR 0073: backend selector. "local" → faster-whisper on CUDA (existing
+    # behaviour). "remote" → POST utterance WAV to a whisper.cpp server.
+    backend: str = "local"
+    remote_endpoint_url: str = ""
+    remote_timeout_ms: int = 5000
+
+    def __post_init__(self) -> None:
+        if self.backend not in ("local", "remote"):
+            raise ValueError(
+                f"transcription.backend must be 'local' or 'remote', got {self.backend!r}"
+            )
+        if self.backend == "remote" and not self.remote_endpoint_url:
+            raise ValueError(
+                "transcription.backend='remote' requires non-empty remote_endpoint_url"
+            )
+        if self.remote_timeout_ms <= 0:
+            raise ValueError(
+                f"transcription.remote_timeout_ms must be > 0, got {self.remote_timeout_ms}"
+            )
 
 
 @dataclass(frozen=True)
@@ -362,7 +381,15 @@ _USER_EDITABLE_SECTIONS: dict[str, set[str]] = {
         "open_fuzzy_threshold",
     },
     "audio": {"channels", "device", "output_dir"},
-    "transcription": {"model_size", "device", "compute_type", "min_confidence"},
+    "transcription": {
+        "model_size",
+        "device",
+        "compute_type",
+        "min_confidence",
+        "backend",
+        "remote_endpoint_url",
+        "remote_timeout_ms",
+    },
 }
 
 

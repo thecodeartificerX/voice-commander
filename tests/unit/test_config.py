@@ -371,3 +371,71 @@ def test_speak_fuzzy_threshold_invalid_type_raises(tmp_path):
     cfg_path.write_text('[speak]\nfuzzy_threshold = "high"\n')
     with pytest.raises((TypeError, ValueError)):
         Config.load(cfg_path)
+
+
+# ---------------------------------------------------------------------------
+# TranscriptionConfig backend selector (ADR 0073)
+# ---------------------------------------------------------------------------
+
+
+def test_transcription_backend_defaults_to_local(tmp_path):
+    cfg = Config.load(tmp_path / "nope.toml")
+    assert cfg.transcription.backend == "local"
+    assert cfg.transcription.remote_endpoint_url == ""
+    assert cfg.transcription.remote_timeout_ms == 5000
+
+
+def test_transcription_backend_remote_with_url_loads(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        textwrap.dedent("""
+        [transcription]
+        backend = "remote"
+        remote_endpoint_url = "http://192.168.4.200:8765/inference"
+        remote_timeout_ms = 8000
+    """)
+    )
+    cfg = Config.load(cfg_path)
+    assert cfg.transcription.backend == "remote"
+    assert cfg.transcription.remote_endpoint_url == "http://192.168.4.200:8765/inference"
+    assert cfg.transcription.remote_timeout_ms == 8000
+
+
+def test_transcription_backend_remote_without_url_raises(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        textwrap.dedent("""
+        [transcription]
+        backend = "remote"
+    """)
+    )
+    with pytest.raises(ValueError, match="remote_endpoint_url"):
+        Config.load(cfg_path)
+
+
+def test_transcription_backend_invalid_value_raises(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[transcription]\nbackend = "moon"\n')
+    with pytest.raises(ValueError, match="local.*remote"):
+        Config.load(cfg_path)
+
+
+def test_transcription_remote_timeout_ms_must_be_positive(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        textwrap.dedent("""
+        [transcription]
+        backend = "local"
+        remote_timeout_ms = 0
+    """)
+    )
+    with pytest.raises(ValueError, match="remote_timeout_ms"):
+        Config.load(cfg_path)
+
+
+def test_transcription_local_backend_ignores_empty_remote_url(tmp_path):
+    """Default backend='local' must not require remote_endpoint_url."""
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[transcription]\nbackend = "local"\nremote_endpoint_url = ""\n')
+    cfg = Config.load(cfg_path)
+    assert cfg.transcription.backend == "local"

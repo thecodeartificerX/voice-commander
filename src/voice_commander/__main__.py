@@ -54,13 +54,21 @@ def _enable_crash_reporting(cfg: Config) -> None:
     logger.info("faulthandler enabled, native crashes will be dumped to %s", crash_log_path)
 
 
-def _log_environment() -> None:
+def _log_environment(cfg: Config) -> None:
     logger.info(
         "python=%s platform=%s executable=%s",
         sys.version.split()[0],
         platform.platform(),
         sys.executable,
     )
+    if cfg.transcription.backend == "remote":
+        # Skip CTranslate2 / faster-whisper probes — remote-mode daemons must
+        # not import either library or preload CUDA DLLs.
+        logger.info(
+            "transcription backend=remote endpoint=%s — skipping local-Whisper diagnostics",
+            cfg.transcription.remote_endpoint_url,
+        )
+        return
     try:
         import ctranslate2
 
@@ -133,7 +141,7 @@ def main() -> None:
         return
 
     _enable_crash_reporting(cfg)
-    _log_environment()
+    _log_environment(cfg)
     lock = SingleInstanceLock(Path("outputs/.daemon.lock"))
     try:
         lock.acquire()

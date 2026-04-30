@@ -204,7 +204,7 @@ The sample rate is queried via `sounddevice.query_devices()` at `open_session()`
 
 ---
 
-### 4.3 `Transcriber`
+### 4.3 `Transcriber` / `RemoteTranscriber`
 
 ```python
 @dataclass(frozen=True)
@@ -214,7 +214,13 @@ class TranscriptionResult:
     duration_ms: int
     confidence: float   # normalized avg segment logprob, [0, 1]
 
+class TranscriberProtocol(Protocol):
+    def load(self) -> None: ...
+    def unload(self) -> None: ...
+    def transcribe(self, source: Path | np.ndarray) -> TranscriptionResult: ...
+
 class Transcriber:
+    """Local backend (default). faster-whisper on CUDA."""
     def __init__(
         self,
         model_size: str = "small.en",
@@ -222,9 +228,15 @@ class Transcriber:
         compute_type: str = "float16",
     ) -> None: ...
 
-    def load(self) -> None: ...   # blocks; called once at daemon start
-    def transcribe(self, audio: Path | np.ndarray) -> TranscriptionResult: ...
+class RemoteTranscriber:
+    """Remote backend (ADR 0073). POSTs WAV to whisper.cpp /inference."""
+    def __init__(self, endpoint_url: str, timeout_ms: int = 5000) -> None: ...
 ```
+
+`build_streaming_daemon` selects the implementation from
+`cfg.transcription.backend` (`"local"` | `"remote"`). The pipeline worker holds
+a `TranscriberProtocol` reference; downstream subsystems are unaware of which
+backend runs.
 
 **What it does:** Wraps `faster_whisper.WhisperModel`. `load()` is a blocking call that downloads/caches and loads the model weights into GPU VRAM — it is called once at daemon startup so `transcribe()` never incurs cold-start latency. `transcribe()` runs inference on the supplied audio (either a WAV `Path` or a 1-D float32 ndarray at 16 kHz) and returns a `TranscriptionResult`. In VAD streaming mode an ndarray is passed directly to avoid temp-file I/O on the hot path (see ADR 0018). Language is pinned to English (`small.en` is English-only so no language detection overhead). `confidence` is computed as the mean of each segment's `avg_logprob`, clamped to `[0, 1]` via `max(0.0, min(1.0, (mean_logprob + 1.0)))` — values below `config.transcription.min_confidence` (default `0.30`) are treated as misses by `StreamingDaemon`'s pipeline gate.
 
