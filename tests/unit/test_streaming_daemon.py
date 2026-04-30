@@ -76,6 +76,8 @@ def _make_daemon(
         event_bus=event_bus,
         speak_fuzzy_threshold=speak_fuzzy_threshold,
     )
+    # Mock transcribers are always "ready" — simulate a completed background load.
+    daemon._transcriber_ready.set()
     return daemon, feedback, recorder, transcriber, llm_router, dispatcher
 
 

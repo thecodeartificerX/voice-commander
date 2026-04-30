@@ -58,6 +58,8 @@ def _build_test_daemon(tmp_path):
         max_no_speech_prob=0.6,
         output_dir=str(tmp_path / "outputs"),
     )
+    # Mock transcribers are always "ready" — simulate a completed background load.
+    daemon._transcriber_ready.set()
     return daemon, llm_router, verb_router, dispatcher, transcriber
 
 

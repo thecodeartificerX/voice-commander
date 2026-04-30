@@ -172,6 +172,9 @@ class StreamingDaemon:
         self._speak_mode: bool = False
         self._merlin_mode = False
         self._verb_router = verb_router
+        # Set when Transcriber.load() completes successfully in the background thread.
+        # Pipeline worker waits on this before calling transcribe().
+        self._transcriber_ready: threading.Event = threading.Event()
 
     def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         if self._event_bus is not None:
@@ -342,6 +345,13 @@ class StreamingDaemon:
         """
         # Async write for post-mortem debugging
         self._write_utterance_async(utterance)
+
+        # Gate: wait for transcriber model to finish loading.  On timeout (30 s)
+        # the utterance is dropped with a miss chime — the daemon stays up.
+        if not self._transcriber_ready.wait(timeout=30):
+            logger.warning("Transcriber not ready within 30 s; dropping utterance")
+            self._feedback.on_miss("(transcriber not ready)", ())
+            return
 
         with self._tracer.run("") as run:
             start_s = time.perf_counter()
@@ -527,16 +537,21 @@ class StreamingDaemon:
 
         Threads started:
 
+        * ``vc-transcriber-load`` — background daemon thread that calls
+          :meth:`Transcriber.load`; sets ``_transcriber_ready`` on success.
+          On failure, logs and calls ``feedback.on_error("transcriber.load", ...)``
+          without aborting the daemon.
         * ``vc-pipeline`` — runs :meth:`_pipeline_loop` (transcribe/gate/route/dispatch).
+          Waits on ``_transcriber_ready`` before the first :meth:`transcribe` call.
         * ``vc-heartbeat`` — runs :meth:`_heartbeat_loop` at 1 Hz.
 
         Side effects:
 
-        * Calls :meth:`Transcriber.load` to warm up the whisper model before
-          accepting hotkey presses.
         * Starts :attr:`_web_server` (if configured) before the hotkey listener
-          so the UI is ready when the daemon accepts input.
+          so the UI is responsive as soon as the daemon is ready for input.
         * Starts :class:`HotkeyController` with the provided key bindings.
+        * Transcriber model load happens in a background thread — the web UI
+          and hotkey listener are available immediately.
 
         Args:
             hotkey_key: Key name for session toggle (e.g. ``"scroll_lock"``).
@@ -544,19 +559,30 @@ class StreamingDaemon:
                 the hotkey; Right Ctrl (``"ctrl_r"``) is the recommended default.
 
         Raises:
-            Exception: Re-raises if :meth:`Transcriber.load` or
-                :meth:`HotkeyController.start` fails (after logging the error
-                and calling ``feedback.on_error``).
+            Exception: Re-raises only if :meth:`HotkeyController.start` fails
+                (after logging the error and calling ``feedback.on_error``).
+                Transcriber load failures are non-fatal — the daemon stays up.
         """
-        # Load models before accepting hotkey presses.
+        # Load transcriber model in the background so web UI + hotkey listener
+        # come up immediately.  The pipeline worker blocks on _transcriber_ready
+        # before its first transcribe() call; if load fails the daemon stays up.
         self._publish("warmup_start")
-        try:
-            self._transcriber.load()
-        except Exception as e:
-            logger.exception("Transcriber.load() failed; aborting startup")
-            self._feedback.on_error("transcriber.load", e)
-            raise
-        self._publish("warmup_done")
+
+        def _load_transcriber() -> None:
+            try:
+                self._transcriber.load()
+                self._transcriber_ready.set()
+                self._publish("warmup_done")
+                logger.info("Transcriber loaded successfully (background)")
+            except Exception as e:
+                logger.exception("Transcriber.load() failed in background; daemon stays up")
+                self._feedback.on_error("transcriber.load", e)
+
+        threading.Thread(
+            target=_load_transcriber,
+            name="vc-transcriber-load",
+            daemon=True,
+        ).start()
 
         # Start pipeline worker thread.
         self._pipeline_thread = threading.Thread(
@@ -790,10 +816,13 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     # LLM Router — always created.
     llm_router = LLMRouter(cfg.llm, registry, reload_lock)
     if cfg.llm.warmup_on_startup:
-        if llm_router.warmup():
-            logger.info("LLM router warmup succeeded")
-        else:
-            logger.warning("LLM router warmup failed — LM Studio may be offline")
+        def _llm_warmup() -> None:
+            if llm_router.warmup():
+                logger.info("LLM router warmup succeeded")
+            else:
+                logger.warning("LLM router warmup failed — LM Studio may be offline")
+
+        threading.Thread(target=_llm_warmup, name="vc-llm-warmup", daemon=True).start()
 
     # Load user-defined commands + workflows (first-run seeding + registration).
     from voice_commander.commands import GraphStore, seed_if_missing
