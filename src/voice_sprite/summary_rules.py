@@ -21,36 +21,44 @@ def _typed_snip(text: str, cap: int = 30) -> str:
     return text[: cap - 1] + "\u2026"
 
 
+_PRESS_SUMMARIES: dict[str, str] = {
+    "ctrl+c": "copied",
+    "ctrl+x": "cut",
+    "ctrl+v": "pasted",
+    "ctrl+z": "undone",
+    "ctrl+y": "redone",
+    "ctrl+s": "saved",
+    "ctrl+r": "refreshed",
+    "ctrl+t": "opened new tab",
+    "ctrl+n": "opened new window",
+    "ctrl+w": "closed tab",
+    "alt+f4": "closed window",
+    "win+down": "minimized window",
+    "win+up": "maximized window",
+}
+
+
 RULES: dict[str, Callable[[dict[str, Any], PlanOutcome], str]] = {
     # Nine-verb primitives (ADR 0043) + scroll + sentinel
     "focus": lambda kw, _o: f"focused {kw.get('target', 'window')}",
-    "minimize": lambda _kw, _o: "minimized window",
-    "maximize": lambda _kw, _o: "maximized window",
     "close": lambda _kw, _o: "closed tab",
-    "close_window": lambda _kw, _o: "closed window",
     "open": lambda kw, _o: f"opened {kw.get('target', 'app')}",
     "type": lambda kw, _o: f'typed "{_typed_snip(str(kw.get("text", "")))}"',
-    "press": lambda kw, _o: f"pressed {kw.get('combo', '')}".rstrip(),
+    "press": lambda kw, _o: _PRESS_SUMMARIES.get(
+        str(kw.get("combo", "")).lower(),
+        f"pressed {kw.get('combo', '')}".rstrip(),
+    ),
     "wait": lambda kw, _o: f"waited {kw.get('ms', 0)}ms",
     "click": lambda _kw, _o: "clicked",
     "scroll": lambda kw, _o: f"scrolled {kw.get('direction', '')}".rstrip(),
     "no_match": lambda _kw, _o: "no match",
     # Common user-defined commands (commands.json) — keep prose tight
-    "new_tab": lambda _kw, _o: "opened new tab",
     "next_tab": lambda _kw, _o: "next tab",
     "previous_tab": lambda _kw, _o: "previous tab",
     "reopen_tab": lambda _kw, _o: "reopened tab",
-    "new_window": lambda _kw, _o: "opened new window",
     "last_window": lambda _kw, _o: "switched to last window",
-    "copy": lambda _kw, _o: "copied",
-    "paste": lambda _kw, _o: "pasted",
-    "cut": lambda _kw, _o: "cut",
-    "undo": lambda _kw, _o: "undone",
-    "redo": lambda _kw, _o: "redone",
-    "save": lambda _kw, _o: "saved",
     "find": lambda _kw, _o: "find",
     "select_all": lambda _kw, _o: "selected all",
-    "refresh": lambda _kw, _o: "refreshed",
     "address_bar": lambda _kw, _o: "focused address bar",
     "lock_screen": lambda _kw, _o: "locked screen",
     "screenshot": lambda _kw, _o: "screenshot",

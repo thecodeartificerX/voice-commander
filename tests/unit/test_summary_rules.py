@@ -20,10 +20,7 @@ def _outcome(steps: tuple[ToolCall, ...], status: str = "ok") -> PlanOutcome:
 def test_every_catalog_verb_has_rule():
     required = {
         "focus",
-        "minimize",
-        "maximize",
         "close",
-        "close_window",
         "open",
         "type",
         "press",
@@ -38,10 +35,7 @@ def test_every_catalog_verb_has_rule():
 def test_rules_emit_nonempty_strings():
     samples = {
         "focus": {"target": "chrome"},
-        "minimize": {},
-        "maximize": {},
         "close": {},
-        "close_window": {},
         "open": {"target": "spotify"},
         "type": {"text": "hello world"},
         "press": {"combo": "ctrl+t"},
@@ -80,6 +74,26 @@ def test_detect_search_chain_ignores_near_miss():
         ToolCall("type", {"text": "foo"}),  # missing ctrl+l
     )
     assert detect_search_chain(steps) is None
+
+
+def test_press_ctrl_c_reads_as_copied():
+    out = _outcome((ToolCall("press", {"combo": "ctrl+c"}),))
+    assert RULES["press"]({"combo": "ctrl+c"}, out) == "copied"
+
+
+def test_press_ctrl_t_reads_as_opened_new_tab():
+    out = _outcome((ToolCall("press", {"combo": "ctrl+t"}),))
+    assert RULES["press"]({"combo": "ctrl+t"}, out) == "opened new tab"
+
+
+def test_press_ctrl_w_reads_as_closed_tab():
+    out = _outcome((ToolCall("press", {"combo": "ctrl+w"}),))
+    assert RULES["press"]({"combo": "ctrl+w"}, out) == "closed tab"
+
+
+def test_press_unknown_combo_falls_back():
+    out = _outcome((ToolCall("press", {"combo": "ctrl+q"}),))
+    assert RULES["press"]({"combo": "ctrl+q"}, out) == "pressed ctrl+q"
 
 
 def test_chain_detectors_is_a_list():
