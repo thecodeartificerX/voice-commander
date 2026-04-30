@@ -52,17 +52,6 @@ RULES: dict[str, Callable[[dict[str, Any], PlanOutcome], str]] = {
     "click": lambda _kw, _o: "clicked",
     "scroll": lambda kw, _o: f"scrolled {kw.get('direction', '')}".rstrip(),
     "no_match": lambda _kw, _o: "no match",
-    # Common user-defined commands (commands.json) — keep prose tight
-    "next_tab": lambda _kw, _o: "next tab",
-    "previous_tab": lambda _kw, _o: "previous tab",
-    "reopen_tab": lambda _kw, _o: "reopened tab",
-    "last_window": lambda _kw, _o: "switched to last window",
-    "find": lambda _kw, _o: "find",
-    "select_all": lambda _kw, _o: "selected all",
-    "address_bar": lambda _kw, _o: "focused address bar",
-    "lock_screen": lambda _kw, _o: "locked screen",
-    "screenshot": lambda _kw, _o: "screenshot",
-    "search_web": lambda kw, _o: f'searched for "{_typed_snip(str(kw.get("query", "")), cap=40)}"',
     # Speak-mode (dictation toggle) — shown when the daemon enters speak-mode
     # via the ``speak`` tool or a manual Right Ctrl press.
     "speak": lambda _kw, _o: "Dictation mode — say 'speak' to exit",
