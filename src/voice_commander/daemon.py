@@ -26,6 +26,7 @@ from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
 from .llm_router import LLMRouter
 from .observability import Store, Tracer
+from .verb_router import VerbRouter, build_default_rules
 from .observability.errors import classify as _classify_error
 from .plan import Plan, PlanOutcome
 from .registry import ToolRegistry, discover
@@ -79,6 +80,7 @@ class StreamingDaemon:
         transcriber: TranscriberProtocol,
         llm_router: LLMRouter,
         dispatcher: Dispatcher,
+        verb_router: VerbRouter,
         *,
         registry: ToolRegistry | None = None,
         min_confidence: float = 0.30,
@@ -168,6 +170,8 @@ class StreamingDaemon:
         )
         self._session_active: bool = False
         self._speak_mode: bool = False
+        self._merlin_mode = False
+        self._verb_router = verb_router
 
     def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         if self._event_bus is not None:
@@ -217,6 +221,7 @@ class StreamingDaemon:
             self._drain_utt_q()
             self._session_active = False
             self._speak_mode = False
+            self._merlin_mode = False
             self._feedback.on_recording_stop()
             self._publish("session_stopped")
             logger.info("Session closed")
@@ -225,12 +230,14 @@ class StreamingDaemon:
                 self._recorder.open_session()
                 self._session_active = True
                 self._speak_mode = False
+                self._merlin_mode = False
                 self._feedback.on_recording_start()
                 self._publish("session_started")
                 logger.info("Session opened")
             except Exception as e:
                 self._session_active = False
                 self._speak_mode = False
+                self._merlin_mode = False
                 self._feedback.on_error("recorder.open_session", e)
 
     def on_speak_toggle(self) -> None:
@@ -261,6 +268,10 @@ class StreamingDaemon:
         else:
             self._publish("unmuted")
             logger.info("Speak-mode exited")
+
+    def _is_merlin_toggle(self, transcript: str) -> bool:
+        text_norm = transcript.strip().lower().rstrip(".,!?")
+        return text_norm == "merlin"
 
     def _drain_utt_q(self) -> None:
         """Discard all pending utterances from the queue."""
@@ -403,8 +414,19 @@ class StreamingDaemon:
                 _publish_miss(result.text)
                 return
 
-            self._publish("llm_thinking")
-            plan = self._llm_router.route(result.text)
+            # Merlin mode toggle
+            if self._is_merlin_toggle(result.text):
+                self._merlin_mode = not self._merlin_mode
+                logger.info("Merlin mode %s", "entered" if self._merlin_mode else "exited")
+                self._publish("merlin_toggled", {"merlin_mode": self._merlin_mode})
+                return
+
+            if self._merlin_mode:
+                self._publish("llm_thinking")
+                plan = self._llm_router.route(result.text)
+            else:
+                plan = self._verb_router.route(result.text)
+
             if plan is None:
                 # No match in the command/workflow catalog. Chime once and stop —
                 # no agentic retry, no env-seeded second call. The user can either
@@ -848,6 +870,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         transcriber=transcriber,
         llm_router=llm_router,
         dispatcher=dispatcher,
+        verb_router=VerbRouter(build_default_rules()),
         registry=registry,
         min_confidence=cfg.transcription.min_confidence,
         min_word_count=cfg.vad.gates.min_word_count,
