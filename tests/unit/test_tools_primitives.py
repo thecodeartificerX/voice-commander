@@ -51,6 +51,62 @@ def test_press_strips_whitespace() -> None:
     mock_hotkey.assert_called_once_with("ctrl", "c")
 
 
+def test_press_splits_on_whitespace_only() -> None:
+    """LLM / VerbRouter often emits 'Ctrl V' (no plus). Must still fire."""
+    with patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey:
+        press("Ctrl V")
+    mock_hotkey.assert_called_once_with("ctrl", "v")
+
+
+def test_press_aliases_control_to_ctrl() -> None:
+    with patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey:
+        press("control v")
+    mock_hotkey.assert_called_once_with("ctrl", "v")
+
+
+def test_press_aliases_full_words() -> None:
+    with patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey:
+        press("windows option escape")
+    mock_hotkey.assert_called_once_with("win", "alt", "esc")
+
+
+def test_press_splits_on_and() -> None:
+    with patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey:
+        press("ctrl and shift and t")
+    mock_hotkey.assert_called_once_with("ctrl", "shift", "t")
+
+
+def test_press_splits_on_comma() -> None:
+    with patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey:
+        press("ctrl, c")
+    mock_hotkey.assert_called_once_with("ctrl", "c")
+
+
+def test_press_splits_on_hyphen() -> None:
+    """Whisper transcribes 'Ctrl C' as 'Ctrl-C' often. Must still fire."""
+    with patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey:
+        press("Ctrl-C")
+    mock_hotkey.assert_called_once_with("ctrl", "c")
+
+
+def test_press_unknown_key_is_noop(caplog: pytest.LogCaptureFixture) -> None:
+    """Reject combos containing keys pyautogui won't recognize, so a typo
+    surfaces as a WARNING rather than a silent no-op."""
+    with patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey:
+        with caplog.at_level(logging.WARNING, logger="voice_commander.tools.primitives"):
+            press("ctrl xyzzy")
+    mock_hotkey.assert_not_called()
+    assert any("unknown key" in r.message for r in caplog.records)
+
+
+def test_press_empty_combo_is_noop(caplog: pytest.LogCaptureFixture) -> None:
+    with patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey:
+        with caplog.at_level(logging.WARNING, logger="voice_commander.tools.primitives"):
+            press("   ")
+    mock_hotkey.assert_not_called()
+    assert any("empty combo" in r.message for r in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # type
 # ---------------------------------------------------------------------------

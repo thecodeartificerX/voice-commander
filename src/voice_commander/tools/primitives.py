@@ -82,6 +82,27 @@ _PRESS_BLOCKLIST: set[frozenset[str]] = {
     frozenset({"win", "r"}),  # Run dialog — script / command entry
 }
 
+# Whisper / LLM emit human spellings; pyautogui expects short keynames.
+_PRESS_ALIASES: dict[str, str] = {
+    "control": "ctrl",
+    "windows": "win",
+    "windowskey": "win",
+    "winkey": "win",
+    "option": "alt",
+    "return": "enter",
+    "escape": "esc",
+    "del": "delete",
+    "ins": "insert",
+    "pgup": "pageup",
+    "pgdn": "pagedown",
+    "spacebar": "space",
+}
+
+# Splits combo on '+', '-', whitespace, commas, or 'and' between tokens.
+# Whisper often transcribes "Ctrl-C" with a hyphen, hence '-' is treated
+# as a separator rather than part of a key name.
+_PRESS_SPLIT_RE = re.compile(r"\s*(?:\+|,|-|\band\b|\s)\s*", re.IGNORECASE)
+
 # How long to poll EnumWindows after an open() before giving up.
 _OPEN_VERIFY_TIMEOUT_MS = 500
 _OPEN_VERIFY_POLL_INTERVAL_MS = 50
@@ -301,11 +322,32 @@ def _verify_open(target: str) -> int:
 def press(combo: str) -> None:
     """Press a key combination like 'ctrl+c', 'alt+tab', 'win+l'.
 
+    Accepts ``+``, whitespace, commas, or ``and`` as separators so that
+    transcripts like ``"Ctrl V"`` or ``"control and shift t"`` route
+    correctly. Aliases ``control``/``command``/``windows``/``option``/
+    ``return``/``escape``/``spacebar``/``pgup``/``pgdn`` to pyautogui's
+    canonical keynames.
+
     Blocks known-destructive chords (Shift+Delete, Win+R, …). Logs
     WARNING and no-ops instead of raising — the dispatcher continues
     with the rest of the plan if any.
     """
-    keys = [k.strip().lower() for k in combo.split("+") if k.strip()]
+    raw_tokens = [t for t in _PRESS_SPLIT_RE.split(combo.strip()) if t]
+    keys = [_PRESS_ALIASES.get(t.lower(), t.lower()) for t in raw_tokens]
+    if not keys:
+        logger.warning("press: empty combo %r; no-op", combo)
+        return
+    valid_keys = getattr(pyautogui, "KEYBOARD_KEYS", None)
+    if valid_keys is not None:
+        unknown = [k for k in keys if k not in valid_keys]
+        if unknown:
+            logger.warning(
+                "press: unknown key(s) %s in combo=%r (normalized=%s); no-op",
+                unknown,
+                combo,
+                "+".join(keys),
+            )
+            return
     key_set = frozenset(keys)
     if key_set in _PRESS_BLOCKLIST:
         logger.warning(
