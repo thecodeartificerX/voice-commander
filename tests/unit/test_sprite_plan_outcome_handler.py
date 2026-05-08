@@ -1,188 +1,75 @@
-"""Unit tests for handle_plan_outcome (issue #25)."""
+"""Unit tests for the trimmed sprite plan_outcome / tool_fired handlers."""
 
 from __future__ import annotations
-
-import logging
-import threading
-from unittest.mock import MagicMock
 
 import pytest
 
 from voice_sprite.chat_log import ChatLog
-from voice_sprite.plan_outcome_handler import handle_plan_outcome
+from voice_sprite.plan_outcome_handler import handle_plan_outcome, handle_tool_fired
 
 
-def _chat_log() -> ChatLog:
-    return ChatLog(max_lines=10, hold_ms=3000, fade_ms=1000)
+@pytest.fixture()
+def chat_log() -> ChatLog:
+    return ChatLog(max_lines=5, hold_ms=4000, fade_ms=3000)
 
 
-def _valid_data(status: str = "ok", summary_steps: bool = True) -> dict:
+def _make_outcome(status: str, *, steps=(), failed_step_index=None) -> dict:
     return {
-        "transcript": "open spotify",
-        "steps": [{"name": "open", "kwargs": {"target": "spotify"}}] if summary_steps else [],
+        "transcript": "anything",
+        "steps": list(steps),
         "status": status,
-        "failed_step_index": None,
+        "failed_step_index": failed_step_index,
         "error_msg": None,
-        "duration_ms": 120,
+        "duration_ms": 12,
     }
 
 
-# --- happy path ---
+def _entries(chat_log: ChatLog):
+    """Return current chat-log entries via whatever accessor the class exposes."""
+    # ChatLog.entries() is a method (returns newest-first list)
+    if callable(getattr(chat_log, "entries", None)):
+        return chat_log.entries()
+    if hasattr(chat_log, "snapshot"):
+        return chat_log.snapshot()
+    return list(chat_log)
 
 
-def test_happy_path_appends_entry():
-    """Successful parse + non-empty summary → entry appears in chat_log."""
-    summarizer = MagicMock()
-    summarizer.summarize.return_value = "opened spotify"
-    log = _chat_log()
-    fixed_time = 42.0
-
-    handle_plan_outcome(_valid_data(), summarizer, log, now_provider=lambda: fixed_time)
-
-    entries = log.entries()
+def test_plan_outcome_miss_appends_no_match(chat_log: ChatLog) -> None:
+    handle_plan_outcome(_make_outcome("miss"), chat_log, now_provider=lambda: 1.0)
+    entries = _entries(chat_log)
     assert len(entries) == 1
-    assert entries[0].text == "opened spotify"
-    assert entries[0].status == "ok"
-    assert entries[0].born_at_s == fixed_time
+    assert entries[0].text == "no match"
+    assert entries[0].status == "miss"
 
 
-# --- malformed dict ---
+def test_plan_outcome_ok_appends_nothing(chat_log: ChatLog) -> None:
+    handle_plan_outcome(_make_outcome("ok"), chat_log, now_provider=lambda: 1.0)
+    assert len(_entries(chat_log)) == 0
 
 
-def test_malformed_dict_swallowed_with_warning(caplog):
-    """KeyError during parse is swallowed; a warning is logged; nothing raises."""
-    summarizer = MagicMock()
-    log = _chat_log()
-    # all required PlanOutcome fields absent → KeyError in from_event_dict
-    # no transcript → no fallback entry
-    bad_data: dict = {"not_transcript": "x"}
-
-    with caplog.at_level(logging.WARNING, logger="voice_sprite.plan_outcome_handler"):
-        handle_plan_outcome(bad_data, summarizer, log)  # must not raise
-
-    summarizer.summarize.assert_not_called()
-    assert log.entries() == []
-    assert any(
-        "swallowed" in r.message.lower()
-        or "parse" in r.message.lower()
-        or "falling back" in r.message.lower()
-        for r in caplog.records
+def test_plan_outcome_error_with_index(chat_log: ChatLog) -> None:
+    handle_plan_outcome(
+        _make_outcome("error", steps=[{"name": "press", "kwargs": {"combo": "ctrl+c"}}], failed_step_index=0),
+        chat_log,
+        now_provider=lambda: 1.0,
     )
+    entries = _entries(chat_log)
+    assert entries[0].text == "press failed"
 
 
-def test_malformed_dict_with_raw_text_appends_error_entry():
-    """When parse fails AND transcript present, raw transcript appended as error."""
-    summarizer = MagicMock()
-    log = _chat_log()
-    # "steps" contains dicts missing "name" key → KeyError inside from_event_dict
-    bad_data = {"transcript": "copy that", "steps": [{"bad": "data"}]}
-
-    handle_plan_outcome(bad_data, summarizer, log)
-
-    entries = log.entries()
-    assert len(entries) == 1
-    assert entries[0].text == "copy that"
-    assert entries[0].status == "error"
+def test_plan_outcome_error_no_index(chat_log: ChatLog) -> None:
+    handle_plan_outcome(_make_outcome("error"), chat_log, now_provider=lambda: 1.0)
+    entries = _entries(chat_log)
+    assert entries[0].text == "command failed"
 
 
-# --- empty summary ---
-
-
-def test_empty_summary_does_not_append():
-    """summarizer.summarize() returning '' must not append any entry."""
-    summarizer = MagicMock()
-    summarizer.summarize.return_value = ""
-    log = _chat_log()
-
-    handle_plan_outcome(_valid_data(), summarizer, log)
-
-    assert log.entries() == []
-
-
-# --- now_provider ---
-
-
-def test_now_provider_controls_born_at_s():
-    """born_at_s of appended entry equals now_provider() result, not wall time."""
-    summarizer = MagicMock()
-    summarizer.summarize.return_value = "did the thing"
-    log = _chat_log()
-    sentinel = 999.5
-
-    handle_plan_outcome(_valid_data(), summarizer, log, now_provider=lambda: sentinel)
-
-    assert log.entries()[0].born_at_s == sentinel
-
-
-# --- summarizer exception ---
-
-
-def test_summarizer_exception_falls_back_to_raw_text(caplog):
-    """If summarizer.summarize() raises, raw transcript used as fallback."""
-    summarizer = MagicMock()
-    summarizer.summarize.side_effect = RuntimeError("LM Studio timeout")
-    log = _chat_log()
-
-    with caplog.at_level(logging.ERROR, logger="voice_sprite.plan_outcome_handler"):
-        handle_plan_outcome(_valid_data(), summarizer, log)
-
-    entries = log.entries()
-    assert len(entries) == 1
-    assert entries[0].text == "open spotify"  # raw transcript from _valid_data
+def test_tool_fired_appends_raw_name(chat_log: ChatLog) -> None:
+    handle_tool_fired({"name": "click"}, chat_log, now_provider=lambda: 1.0)
+    entries = _entries(chat_log)
+    assert entries[0].text == "click"
     assert entries[0].status == "ok"
-    assert any("fallback" in r.message.lower() for r in caplog.records)
 
 
-# --- parse exception variants ---
-
-
-@pytest.mark.parametrize(
-    "bad_data,exc_type_label",
-    [
-        # KeyError — missing "name" in steps dict
-        ({"transcript": "copy that", "steps": [{"bad": "data"}]}, "KeyError"),
-        # TypeError — steps is not iterable as expected (wrong type)
-        ({"transcript": "copy that", "steps": "not_a_list"}, "TypeError"),
-    ],
-)
-def test_parse_exception_variants_append_raw_text(bad_data: dict, exc_type_label: str) -> None:
-    """KeyError, TypeError during parse each fall back to raw-transcript error entry."""
-    summarizer = MagicMock()
-    log = _chat_log()
-
-    handle_plan_outcome(bad_data, summarizer, log)
-
-    entries = log.entries()
-    assert len(entries) == 1, f"Expected 1 error entry for {exc_type_label}"
-    assert entries[0].text == "copy that"
-    assert entries[0].status == "error"
-
-
-# --- thread safety ---
-
-
-def test_handle_plan_outcome_thread_safe_appends() -> None:
-    """Concurrent calls from N threads each produce exactly one entry (no race)."""
-    n = 20
-    log = ChatLog(max_lines=n + 5, hold_ms=3000, fade_ms=1000)
-    errors: list[Exception] = []
-    barrier = threading.Barrier(n)
-
-    def worker(i: int) -> None:
-        summarizer = MagicMock()
-        summarizer.summarize.return_value = f"step {i}"
-        data = _valid_data()
-        barrier.wait()
-        try:
-            handle_plan_outcome(data, summarizer, log)
-        except Exception as exc:  # noqa: BLE001
-            errors.append(exc)
-
-    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    assert errors == [], f"Exceptions raised during concurrent calls: {errors}"
-    assert len(log.entries()) == n
+def test_tool_fired_no_name_is_noop(chat_log: ChatLog) -> None:
+    handle_tool_fired({}, chat_log, now_provider=lambda: 1.0)
+    assert len(_entries(chat_log)) == 0
