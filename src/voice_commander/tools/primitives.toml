@@ -9,16 +9,6 @@ category = "primitives"
 #   - ``press``: raw keystroke escape hatch for bare key-name utterances
 #     ("control T", "scroll lock", "enter") that no command covers.
 #   - ``no_match``: the "nothing matched" escape hatch. No-op Python function.
-#
-# Tools kept enabled=true (still dispatchable via commands/workflows):
-#   focus, type, open, press, wait, click, scroll, no_match
-#
-# Legacy semantic verbs (close, close_window, minimize, maximize, last,
-# summon_commander, mute, done, ask_user) are retained in the registry so
-# their Python functions stay importable, but they are disabled — invisible
-# to every caller. Equivalent behaviour is now expressed as user commands
-# (close_tab → press(ctrl+w), close_window → press(alt+f4), minimize →
-# press(win+down), etc.).
 
 [tools.focus]
 phrases = []
@@ -125,119 +115,6 @@ description = "Number of scroll clicks."
 required = false
 type = "integer"
 default = 3
-
-# --- Legacy semantic verbs (disabled — superseded by user commands) -----------
-
-[tools.close]
-phrases = []
-description = "[disabled] Use a close_tab command instead (press ctrl+w)."
-enabled = false
-settle_ms = 100
-llm_only = true
-internal = true
-
-[tools.close_window]
-phrases = []
-description = "[disabled] Use a close_window command instead (press alt+f4)."
-enabled = false
-settle_ms = 100
-llm_only = true
-internal = true
-
-[tools.minimize]
-phrases = []
-description = "[disabled] Use a minimize command instead (press win+down)."
-enabled = false
-settle_ms = 100
-llm_only = true
-internal = true
-
-[tools.minimize.args.target]
-description = "Optional process name or window title."
-required = false
-type = "string"
-
-[tools.maximize]
-phrases = []
-description = "[disabled] Use a maximize command instead (press win+up)."
-enabled = false
-settle_ms = 100
-llm_only = true
-internal = true
-
-[tools.maximize.args.target]
-description = "Optional process name or window title."
-required = false
-type = "string"
-
-[tools.last]
-phrases = []
-description = "[disabled] Use a last_window / last_tab command instead."
-enabled = false
-settle_ms = 100
-llm_only = true
-internal = true
-
-[tools.last.args.tab]
-description = "When true, switch tab via Ctrl+Tab. Default false → Alt+Tab."
-required = false
-type = "boolean"
-default = false
-
-[tools.last.returns.hwnd]
-type = "integer"
-description = "Win32 window handle of the new foreground window (0 for Ctrl+Tab path)."
-
-[tools.summon_commander]
-phrases = []
-description = "[disabled] Spawn a PowerShell window. Repurpose as a command if still needed."
-enabled = false
-settle_ms = 500
-llm_only = true
-internal = true
-
-[tools.mute]
-phrases = []
-description = "[disabled] End the voice session. Scroll Lock still works as the hardware mute."
-enabled = false
-settle_ms = 0
-llm_only = true
-internal = true
-
-[tools.done]
-phrases = []
-description = "[disabled] Legacy agentic-loop terminator. No longer used."
-enabled = false
-settle_ms = 0
-llm_only = true
-internal = true
-
-[tools.done.args.success]
-description = "Whether the goal was achieved."
-type = "boolean"
-default = true
-
-[tools.done.args.summary]
-description = "Optional one-line summary."
-type = "string"
-default = ""
-
-[tools.ask_user]
-phrases = []
-description = "[disabled] Legacy HUD clarifying question. Not wired in the command/workflow architecture."
-enabled = false
-settle_ms = 0
-llm_only = true
-internal = true
-
-[tools.ask_user.args.question]
-description = "The question to display to the user."
-type = "string"
-
-[tools.ask_user.args.options]
-description = "Comma-separated numbered options."
-type = "string"
-default = ""
 
 # --- LLM escape hatch ---------------------------------------------------------
 
