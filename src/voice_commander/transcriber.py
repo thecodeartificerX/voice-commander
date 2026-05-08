@@ -14,7 +14,7 @@ import numpy.typing as npt
 # in the daemon factory) maps its own cuBLAS, and CTranslate2 then resolves
 # whichever was registered first. Keeping the preload at module-load preserves
 # the historical ordering. The expensive `from faster_whisper import ...` is
-# still deferred to `Transcriber.load()` so remote-mode daemons skip it.
+# deferred to `Transcriber.load()` to keep import-time cost low.
 from . import _cuda_setup
 
 _cuda_setup.register()
@@ -54,9 +54,8 @@ class Transcriber:
     def load(self) -> None:
         if self._model is not None:
             return
-        # Lazy: pull faster_whisper into the process only when the local
-        # backend is actually selected. Remote-mode daemons skip the import
-        # entirely (and the model download / VRAM allocation that follows).
+        # Lazy import: defer the model download / VRAM allocation that
+        # `from faster_whisper import ...` triggers until first transcribe.
         from faster_whisper import WhisperModel
 
         logger.info(
