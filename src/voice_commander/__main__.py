@@ -61,14 +61,6 @@ def _log_environment(cfg: Config) -> None:
         platform.platform(),
         sys.executable,
     )
-    if cfg.transcription.backend == "remote":
-        # Skip CTranslate2 / faster-whisper probes — remote-mode daemons must
-        # not import either library or preload CUDA DLLs.
-        logger.info(
-            "transcription backend=remote endpoint=%s — skipping local-Whisper diagnostics",
-            cfg.transcription.remote_endpoint_url,
-        )
-        return
     try:
         import ctranslate2
 
@@ -149,7 +141,7 @@ def main() -> None:
         logger.error("Voice Commander already running: %s", e)
         sys.exit(1)
     try:
-        build_streaming_daemon(cfg).run(cfg.hotkey.key, mute_key=cfg.hotkey.mute_key)
+        build_streaming_daemon(cfg).run(cfg.hotkey.key)
     finally:
         lock.release()
 
