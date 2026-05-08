@@ -63,7 +63,7 @@ _DAEMON_MOD = "voice_commander.daemon"
 def base_cfg(tmp_path: Path) -> Config:
     """Minimal Config that avoids CUDA, audio devices, and network calls."""
     return Config(
-        hotkey=HotkeyConfig(key="scroll_lock", mute_key=""),
+        hotkey=HotkeyConfig(key="scroll_lock"),
         audio=AudioConfig(device=-1, channels=1, output_dir=str(tmp_path / "outputs")),
         transcription=TranscriptionConfig(
             model_size="tiny.en",
