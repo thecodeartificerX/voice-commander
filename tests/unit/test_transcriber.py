@@ -223,5 +223,3 @@ def test_transcribe_silence_returns_low_confidence_or_empty(transcriber):
     result = transcriber.transcribe(FIX / "silence.wav")
     # Either empty text, or a hallucination with low confidence
     assert result.text.strip() == "" or result.confidence < 0.5
-
-# RemoteTranscriber tests removed in P2.4; cleanup deferred to P5.6
