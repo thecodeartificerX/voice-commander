@@ -26,7 +26,6 @@ Voice Commander is the boring middle ground. Push-to-talk, speak plain English, 
 - **Push-to-talk session model.** Tap Scroll Lock to open a session → speak one or many commands back-to-back → tap again to close. Silero VAD auto-segments utterances on silence, so you never press a key between commands.
 - **Sub-second latency.** [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper) running `small.en` on CUDA, with an ndarray hand-off (no temp-file I/O on the hot path), puts the speech-end → keystroke budget at ~700 ms.
 - **Deterministic normal-mode routing.** Core commands (`copy`, `paste`, `new tab`, `close window`, etc.) route through a fast deterministic verb router (~1 ms, no LLM needed). Say `Merlin` during a session to temporarily enable LLM-powered open-ended planning.
-- **Mute hotkey for dictation coexistence.** Secondary key (default Right Ctrl) suspends the mic so Voice Commander does not fight your other dictation software. See [ADR 0025](docs/decisions/0025-mute-hotkey-for-external-dictation.md).
 - **Web UI.** Open `http://127.0.0.1:8765` while the daemon runs to edit phrases, toggle tools, and hot-reload without restarting. HTMX + FastAPI. The `/page/builder` route is a React SPA — run `cd web/builder-ui && pnpm install && pnpm build` once before serving it. See [ADR 0022](docs/decisions/0022-htmx-over-spa.md) and [ADR 0071](docs/decisions/0071-builder-react-spa.md).
 - **Sidecar TOML metadata.** Phrases and descriptions live in `.toml` files beside each tool module, so config and code evolve independently. See [ADR 0021](docs/decisions/0021-sidecar-toml-per-tool.md).
 - **Audio + visual feedback.** A miss chime on low confidence, silence on success ([ADR 0014](docs/decisions/0014-miss-only-chimes.md)). The sprite companion provides continuous visual state ([ADR 0049](docs/decisions/0049-miss-chimes-retained.md)). No toast notifications.
@@ -164,7 +163,7 @@ Once `uv run voice-commander` prints `Model loaded on cuda` and you get a succes
 4. Press **Scroll Lock** again to close the session.
 5. You only hear audio when something goes wrong — a miss chime on low-confidence transcripts or no-match phrases. Success is silent.
 
-**Optional mute:** press **Right Ctrl** during a session to suspend the mic without ending the session. Press again to resume. Useful when another app (Windows Voice Access, browser dictation) also wants Right Ctrl.
+**Hotkey:** Scroll Lock toggles a voice session. Press once to start; press again to end.
 
 ---
 
@@ -175,7 +174,6 @@ All runtime settings live in [`config.toml`](config.toml) — single source of t
 | Section | Key | Default | Purpose |
 |---|---|---|---|
 | `[hotkey]` | `key` | `"scroll_lock"` | Session toggle. Any `pynput.keyboard.Key` name. |
-| `[hotkey]` | `mute_key` | `"ctrl_r"` | Mute-within-session toggle. Set `""` to disable. |
 | `[audio]` | `device` | `-1` | PortAudio device index. `-1` = system default. |
 | `[transcription]` | `model_size` | `"small.en"` | `tiny.en` / `base.en` / `small.en` / `medium.en`. |
 | `[transcription]` | `device` | `"cuda"` | `"cuda"` or `"cpu"`. |
