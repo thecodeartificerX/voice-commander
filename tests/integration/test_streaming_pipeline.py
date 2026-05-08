@@ -336,6 +336,8 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
     )
 
     # -- Daemon wiring -------------------------------------------------------
+    from voice_commander.verb_router import VerbRouter, build_default_rules
+
     feedback = CapturingFeedbackSink()
     dispatcher = Dispatcher(feedback)
     daemon = StreamingDaemon(
@@ -344,6 +346,7 @@ def test_gibberish_triggers_miss(silero_model, real_transcriber, tmp_path):
         transcriber=real_transcriber,
         llm_router=router,
         dispatcher=dispatcher,
+        verb_router=VerbRouter(build_default_rules()),
         registry=registry,
         output_dir=str(tmp_path),
     )
