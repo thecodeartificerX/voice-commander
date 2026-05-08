@@ -8,13 +8,11 @@ import queue
 import signal
 import threading
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
-import rapidfuzz.fuzz
 import soundfile as sf
 from silero_vad import load_silero_vad
 
@@ -33,11 +31,8 @@ from .registry import ToolRegistry, discover
 from .streaming_recorder import StreamingRecorder
 from .tool_metadata import ToolMetadataStore
 from .tool_schema import sig_to_json_schema
-from .tools import primitives as tool_primitives
 from .transcriber import (
-    RemoteTranscriber,
     Transcriber,
-    TranscriberProtocol,
     TranscriptionResult,
 )
 from .vad_gate import VADGate
@@ -77,7 +72,7 @@ class StreamingDaemon:
         self,
         feedback: FeedbackSink,
         recorder: StreamingRecorder | None,
-        transcriber: TranscriberProtocol,
+        transcriber: Transcriber,
         llm_router: LLMRouter,
         dispatcher: Dispatcher,
         verb_router: VerbRouter,
@@ -86,7 +81,6 @@ class StreamingDaemon:
         min_confidence: float = 0.30,
         min_word_count: int = 1,
         max_no_speech_prob: float = 0.6,
-        speak_fuzzy_threshold: int = 95,
         output_dir: str = "outputs",
         web_server: WebServer | None = None,
         event_bus: EventBus | None = None,
@@ -132,9 +126,8 @@ class StreamingDaemon:
             of ``_shutdown``.
             ``_wav_executor`` — single-worker :class:`~concurrent.futures.ThreadPoolExecutor`
             for fire-and-forget async WAV / JSON writes.
-            ``_session_active`` / ``_speak_mode`` — boolean state flags (not thread-safe;
-            primarily mutated on the pynput hotkey-listener thread, also reset by
-            :meth:`shutdown` during teardown).
+            ``_session_active`` — boolean state flag (mutated only on the pynput hotkey-listener
+            thread, also reset by :meth:`shutdown` during teardown).
         """
         self._feedback = feedback
         self._recorder = recorder
@@ -145,7 +138,6 @@ class StreamingDaemon:
         self._min_confidence = min_confidence
         self._min_word_count = min_word_count
         self._max_no_speech_prob = max_no_speech_prob
-        self._speak_fuzzy_threshold = speak_fuzzy_threshold
         self._output_dir = Path(output_dir)
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._web_server = web_server
@@ -169,7 +161,6 @@ class StreamingDaemon:
             thread_name_prefix="wav-writer",
         )
         self._session_active: bool = False
-        self._speak_mode: bool = False
         self._merlin_mode = False
         self._verb_router = verb_router
         # Set when Transcriber.load() completes successfully in the background thread.
@@ -185,7 +176,7 @@ class StreamingDaemon:
     # ------------------------------------------------------------------
 
     def on_scroll_lock(self) -> None:
-        """Toggle the voice session on/off and clear speak-mode on both transitions.
+        """Toggle the voice session on/off.
 
         Thread context: called exclusively on the **pynput hotkey-listener thread**.
         Must not block — delegates all heavy work to other threads via queues.
@@ -193,14 +184,10 @@ class StreamingDaemon:
 
         State transitions:
 
-        * **Open → close**: if in speak-mode, synthesizes Right Ctrl first so the
-          external dictation app turns off cleanly; then calls
-          ``recorder.close_session()``, drains ``_utt_q``, sets
-          ``_session_active = False``, resets ``_speak_mode = False``, publishes
-          ``session_stopped``.
+        * **Open → close**: calls ``recorder.close_session()``, drains ``_utt_q``,
+          sets ``_session_active = False``, publishes ``session_stopped``.
         * **Closed → open**: calls ``recorder.open_session()`` (spawns VAD worker),
-          sets ``_session_active = True``, resets ``_speak_mode = False``, publishes
-          ``session_started``.
+          sets ``_session_active = True``, publishes ``session_started``.
 
         Guard: no-op (with a warning log) if ``_recorder`` is ``None`` — i.e. the
         daemon was constructed but the recorder has not yet been wired in.
@@ -209,21 +196,9 @@ class StreamingDaemon:
             logger.warning("on_scroll_lock called but recorder is not yet initialised; ignoring")
             return
         if self._session_active:
-            # If in speak-mode, synth Right Ctrl to turn the dictation app off cleanly.
-            if self._speak_mode:
-                speak_entry = self._registry.by_name("speak") if self._registry else None
-                if speak_entry is not None:
-                    try:
-                        speak_entry.func()
-                    except Exception as e:
-                        logger.exception("Failed to synth Right Ctrl during Scroll Lock close")
-                        self._feedback.on_error("speak.toggle", e)
-                else:
-                    logger.warning("speak tool not found — dictation app may remain active")
             self._recorder.close_session()
             self._drain_utt_q()
             self._session_active = False
-            self._speak_mode = False
             self._merlin_mode = False
             self._feedback.on_recording_stop()
             self._publish("session_stopped")
@@ -232,45 +207,14 @@ class StreamingDaemon:
             try:
                 self._recorder.open_session()
                 self._session_active = True
-                self._speak_mode = False
                 self._merlin_mode = False
                 self._feedback.on_recording_start()
                 self._publish("session_started")
                 logger.info("Session opened")
             except Exception as e:
                 self._session_active = False
-                self._speak_mode = False
                 self._merlin_mode = False
                 self._feedback.on_error("recorder.open_session", e)
-
-    def on_speak_toggle(self) -> None:
-        """Toggle speak-mode within an active session. No-op when session is inactive.
-
-        Thread context: called exclusively on the **pynput hotkey-listener thread**
-        (including when triggered by a synthesized Right Ctrl keypress from
-        :func:`voice_commander.tools._system.speak`).
-        pynput serialises key callbacks so concurrent invocations cannot happen.
-
-        State transitions:
-
-        * **Normal → speak-mode**: sets ``_speak_mode = True``, publishes ``muted``.
-          The audio stream stays open — only the LLM route is gated.
-        * **Speak-mode → normal**: sets ``_speak_mode = False``, publishes ``unmuted``.
-
-        No-op when ``_session_active`` is ``False`` — speak-mode toggle outside a
-        session has no effect (silent return). This allows the Right Ctrl key to
-        double as the external dictation app's hotkey without triggering any
-        voice-commander behaviour outside an active session.
-        """
-        if not self._session_active:
-            return
-        self._speak_mode = not self._speak_mode
-        if self._speak_mode:
-            self._publish("muted")
-            logger.info("Speak-mode entered")
-        else:
-            self._publish("unmuted")
-            logger.info("Speak-mode exited")
 
     def _is_merlin_toggle(self, transcript: str) -> bool:
         text_norm = transcript.strip().lower().rstrip(".,!?")
@@ -328,13 +272,10 @@ class StreamingDaemon:
 
         1. **word-count** — below ``_min_word_count`` → silent drop (no ``plan_outcome``).
         2. **no_speech_prob** — above ``_max_no_speech_prob`` → silent drop.
-        3. **speak-mode gate** — if ``_speak_mode``, check for wake-word "speak" via
-           ``rapidfuzz.fuzz.ratio``; fuzzy-match exits speak-mode, all else is
-           silently dropped. No LLM call in speak-mode.
-        4. **confidence** — below ``_min_confidence`` → miss chime +
+        3. **confidence** — below ``_min_confidence`` → miss chime +
            ``plan_outcome`` (status=``miss``).
-        5. **LLM route** — ``LLMRouter.route()`` returns ``None`` → miss chime + ``plan_outcome``.
-        6. **dispatch** — ``Dispatcher.run_plan()`` executes the plan.
+        4. **LLM route** — ``LLMRouter.route()`` returns ``None`` → miss chime + ``plan_outcome``.
+        5. **dispatch** — ``Dispatcher.run_plan()`` executes the plan.
 
         Args:
             utterance: 1-D float32 ndarray at 16 kHz representing the complete
@@ -392,29 +333,6 @@ class StreamingDaemon:
                     result.no_speech_prob,
                     self._max_no_speech_prob,
                 )
-                return
-
-            # Speak-mode gate: in speak-mode, check for the wake-word "speak"
-            # and short-circuit the rest of the pipeline.  The audio stream
-            # stays open so whisper keeps transcribing, but neither the LLM
-            # router nor the dispatcher are ever called.
-            if self._speak_mode:
-                text_norm = result.text.strip().lower().rstrip(".,!?")
-                if (
-                    len(text_norm.split()) == 1
-                    and rapidfuzz.fuzz.ratio(text_norm, "speak") >= self._speak_fuzzy_threshold
-                ):
-                    speak_entry = self._registry.by_name("speak") if self._registry else None
-                    if speak_entry is not None:
-                        try:
-                            speak_entry.func()
-                        except Exception as e:
-                            logger.exception("Failed to synth Right Ctrl from speak-mode wake-word")
-                            self._feedback.on_error("speak.toggle", e)
-                    else:
-                        logger.warning("speak tool not found in registry; cannot exit speak-mode")
-                else:
-                    logger.debug("Speak-mode: dropping '%s' (no wake-word match)", result.text)
                 return
 
             # Gate: confidence  (emits plan_outcome status=miss — user-visible)
@@ -525,7 +443,7 @@ class StreamingDaemon:
     # Run / shutdown
     # ------------------------------------------------------------------
 
-    def run(self, hotkey_key: str, mute_key: str = "") -> None:
+    def run(self, hotkey_key: str) -> None:
         """Blocking entry point — warm up models, start all threads, block until shutdown.
 
         Thread context: **must be called from the main thread** so that the
@@ -555,8 +473,6 @@ class StreamingDaemon:
 
         Args:
             hotkey_key: Key name for session toggle (e.g. ``"scroll_lock"``).
-            mute_key: Key name for speak-mode toggle.  Empty string (default) disables
-                the hotkey; Right Ctrl (``"ctrl_r"``) is the recommended default.
 
         Raises:
             Exception: Re-raises only if :meth:`HotkeyController.start` fails
@@ -612,10 +528,7 @@ class StreamingDaemon:
 
         # Start hotkey listener.
         try:
-            bindings: dict[str, Callable[[], None]] = {hotkey_key: self.on_scroll_lock}
-            if mute_key:
-                bindings[mute_key] = self.on_speak_toggle
-            self._hotkey = HotkeyController(bindings)
+            self._hotkey = HotkeyController({hotkey_key: self.on_scroll_lock})
             self._hotkey.start()
         except Exception as e:
             logger.exception("HotkeyController.start() failed; aborting startup")
@@ -647,8 +560,7 @@ class StreamingDaemon:
         """Idempotent teardown — safe to call multiple times from any thread.
 
         Thread context: normally called from the main thread (end of :meth:`run`
-        or the SIGINT handler), but may also be called from the pynput
-        hotkey-listener thread via the mute primitive's scroll-lock callback.
+        or the SIGINT handler).
         Multiple concurrent callers are safe — the first caller acquires
         ``_shutdown_lock``, sets the ``_shutdown`` event, and performs teardown;
         subsequent callers return immediately on the ``_shutdown.is_set()`` check.
@@ -659,8 +571,8 @@ class StreamingDaemon:
         Teardown order:
 
         1. Stop the web server (no late UI requests land on a half-dead registry).
-        2. Close any open recording session (calls ``recorder.close_session()`` unless
-           already muted, in which case the stream was closed by the mute handler).
+        2. Close any open recording session (calls ``recorder.close_session()`` if
+           ``_session_active`` is still set).
         3. Stop the hotkey listener.
         4. Poison ``_utt_q`` with a ``None`` sentinel → join ``vc-pipeline`` thread
            (5 s timeout, logs warning on timeout).
@@ -689,7 +601,6 @@ class StreamingDaemon:
             except Exception:
                 logger.exception("Error closing session during shutdown")
             self._session_active = False
-            self._speak_mode = False
 
         # Stop hotkey listener.
         if self._hotkey is not None:
@@ -757,28 +668,16 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         miss_sound=cfg.feedback.miss_sound,
     )
 
-    transcriber: TranscriberProtocol
-    if cfg.transcription.backend == "remote":
-        transcriber = RemoteTranscriber(
-            endpoint_url=cfg.transcription.remote_endpoint_url,
-            timeout_ms=cfg.transcription.remote_timeout_ms,
-        )
-        logger.info(
-            "Transcription backend: remote @ %s (timeout=%dms)",
-            cfg.transcription.remote_endpoint_url,
-            cfg.transcription.remote_timeout_ms,
-        )
-    else:
-        transcriber = Transcriber(
-            model_size=cfg.transcription.model_size,
-            device=cfg.transcription.device,
-            compute_type=cfg.transcription.compute_type,
-        )
-        logger.info(
-            "Transcription backend: local (model=%s device=%s)",
-            cfg.transcription.model_size,
-            cfg.transcription.device,
-        )
+    transcriber = Transcriber(
+        model_size=cfg.transcription.model_size,
+        device=cfg.transcription.device,
+        compute_type=cfg.transcription.compute_type,
+    )
+    logger.info(
+        "Transcription backend: local (model=%s device=%s)",
+        cfg.transcription.model_size,
+        cfg.transcription.device,
+    )
 
     # Metadata store + reload lock shared between registry, LLM router, and web server.
     tools_dir = Path(__file__).resolve().parent / "tools"
@@ -904,7 +803,6 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         min_confidence=cfg.transcription.min_confidence,
         min_word_count=cfg.vad.gates.min_word_count,
         max_no_speech_prob=cfg.vad.gates.max_no_speech_prob,
-        speak_fuzzy_threshold=cfg.speak.fuzzy_threshold,
         output_dir=cfg.audio.output_dir,
         web_server=web_server,
         event_bus=event_bus,
@@ -916,11 +814,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         channels=cfg.audio.channels,
         vad_gate=vad_gate,
         utterance_sink=daemon._on_utterance,
+        device_name=cfg.audio.device_name,
     )
-
-    # Wire the mute() primitive to the daemon's scroll-lock handler so a
-    # voice-driven "mute" utterance ends the session exactly like pressing
-    # the Scroll Lock hotkey.
-    tool_primitives._set_mute_callback(daemon.on_scroll_lock)
 
     return daemon
