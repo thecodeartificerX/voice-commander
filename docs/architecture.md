@@ -44,7 +44,7 @@ This document is the canonical reference for Voice Commander's subsystem design 
 | VAD worker thread | `Resampler` + `VADGate` | Drains `raw_q`; resamples 48k→16k; runs silero-vad; emits complete utterances to `utt_q` |
 | Pipeline worker thread | `Transcriber` + `LLMRouter` + `Dispatcher` | Drains `utt_q`; runs transcribe → gates → `LLMRouter.route()` → `Dispatcher.run_plan()` |
 
-**Session model:** Scroll Lock opens a session; a second press closes it. An optional mute key (configurable, disabled by default) suspends the audio stream within a session without ending it — two independent flags (`session_active`, `muted`). See ADR 0025. While a session is open, VAD auto-segments the audio stream. Each detected utterance fires the pipeline worker immediately — no keypresses required between commands.
+**Session model:** Scroll Lock opens a session; a second press closes it. While a session is open, VAD auto-segments the audio stream. Each detected utterance fires the pipeline worker immediately — no keypresses required between commands.
 
 ---
 
@@ -86,7 +86,7 @@ The supervisor owns both children. The daemon's `/restart` web route triggers `o
 Four long-lived threads plus the main thread:
 
 1. **Main thread** — starts the daemon, installs signal handlers, blocks on `shutdown_event`. Does no real work.
-2. **Hotkey listener thread** — owned by `pynput`. Fires `on_scroll_lock()` or `on_mute_toggle()` as callbacks on this thread. Callbacks only call `StreamingRecorder.open_session()` or `close_session()` — no blocking work.
+2. **Hotkey listener thread** — owned by `pynput`. Fires `on_scroll_lock()` as a callback on this thread. The callback only calls `StreamingRecorder.open_session()` or `close_session()` — no blocking work.
 3. **PortAudio callback thread** — owned by `sounddevice`. The `sd.InputStream` callback does `indata.copy()` + `raw_q.put_nowait()` only. No allocation, no blocking, no GIL-contested work. See `gotchas.md` §11.
 4. **VAD worker thread** — drains `raw_q`; passes each chunk through `Resampler.process()` (48k→16k); slices into 512-sample frames; feeds each frame to `VADGate.process()`; when `VADGate` returns a complete utterance ndarray, calls `utterance_sink` which enqueues it on `utt_q`.
 5. **Pipeline worker thread** — drains `queue.Queue[ndarray]` (`utt_q`), runs `Transcriber.transcribe() → confidence/word-count gates → LLMRouter.route() → Dispatcher.run_plan()` sequentially. One utterance at a time; if the VAD worker emits the next utterance before the previous pipeline run finishes, it queues up. A `None` return from `LLMRouter.route()` (timeout, connection error, malformed response, or `no_match` sentinel) fires `FeedbackSink.on_miss()` directly and loops back.
@@ -118,7 +118,7 @@ class HotkeyController:
 
 **Who calls it:** `Daemon.__init__` constructs it; `Daemon.run()` calls `start()`; `Daemon.shutdown()` calls `stop()`.
 
-**Who it calls:** `on_scroll_lock` callback (injected by `Daemon`). That callback does nothing heavy — it just checks `StreamingRecorder._session_active` and delegates to `StreamingRecorder.open_session()` or `close_session()`.
+**Who it calls:** `on_scroll_lock` callback (injected by `Daemon`). That callback does nothing heavy — it just checks `StreamingRecorder._session_active` and delegates to `StreamingRecorder.open_session()` or `close_session()`. Scroll Lock is the sole hotkey.
 
 **How it is tested:** A fake `on_scroll_lock` callable is injected. Key events are driven via `pynput.keyboard.Controller` in a test thread. Tests assert the toggle fired the expected number of times and that the callback is never invoked concurrently with itself (re-entrant safety).
 
@@ -204,7 +204,7 @@ The sample rate is queried via `sounddevice.query_devices()` at `open_session()`
 
 ---
 
-### 4.3 `Transcriber` / `RemoteTranscriber`
+### 4.3 `Transcriber`
 
 ```python
 @dataclass(frozen=True)
@@ -214,29 +214,15 @@ class TranscriptionResult:
     duration_ms: int
     confidence: float   # normalized avg segment logprob, [0, 1]
 
-class TranscriberProtocol(Protocol):
-    def load(self) -> None: ...
-    def unload(self) -> None: ...
-    def transcribe(self, source: Path | np.ndarray) -> TranscriptionResult: ...
-
 class Transcriber:
-    """Local backend (default). faster-whisper on CUDA."""
+    """Local backend. faster-whisper on CUDA."""
     def __init__(
         self,
         model_size: str = "small.en",
         device: str = "cuda",
         compute_type: str = "float16",
     ) -> None: ...
-
-class RemoteTranscriber:
-    """Remote backend (ADR 0073). POSTs WAV to whisper.cpp /inference."""
-    def __init__(self, endpoint_url: str, timeout_ms: int = 5000) -> None: ...
 ```
-
-`build_streaming_daemon` selects the implementation from
-`cfg.transcription.backend` (`"local"` | `"remote"`). The pipeline worker holds
-a `TranscriberProtocol` reference; downstream subsystems are unaware of which
-backend runs.
 
 **What it does:** Wraps `faster_whisper.WhisperModel`. `load()` is a blocking call that downloads/caches and loads the model weights into GPU VRAM — it is called once at daemon startup so `transcribe()` never incurs cold-start latency. `transcribe()` runs inference on the supplied audio (either a WAV `Path` or a 1-D float32 ndarray at 16 kHz) and returns a `TranscriptionResult`. In VAD streaming mode an ndarray is passed directly to avoid temp-file I/O on the hot path (see ADR 0018). Language is pinned to English (`small.en` is English-only so no language detection overhead). `confidence` is computed as the mean of each segment's `avg_logprob`, clamped to `[0, 1]` via `max(0.0, min(1.0, (mean_logprob + 1.0)))` — values below `config.transcription.min_confidence` (default `0.30`) are treated as misses by `StreamingDaemon`'s pipeline gate.
 
@@ -387,15 +373,14 @@ class StreamingDaemon:
         output_dir: str = "outputs",
         web_server: WebServer | None = None,
     ) -> None: ...
-    def run(self, hotkey_key: str, mute_key: str = "") -> None: ...  # blocks until shutdown
+    def run(self, hotkey_key: str) -> None: ...  # blocks until shutdown
     def shutdown(self) -> None: ...
     def on_scroll_lock(self) -> None: ...        # scroll-lock hotkey callback
-    def on_mute_toggle(self) -> None: ...        # mute-key hotkey callback
 ```
 
-**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems, including a one-shot `resolver._set_config(cfg.llm)` to inject fuzzy-threshold config into the parameter resolver. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_scroll_lock()` is the scroll-lock hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. `on_mute_toggle()` is the mute-key callback: suspends or resumes the audio stream within an open session. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → LLMRouter.route() → Dispatcher.run_plan()`. Async WAV write (`outputs/last_utterance.wav`) and JSON plan dump (`outputs/last_plan.json`) are submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` handles `--validate` mode (runs `validate_or_die()` then exits), acquires a single-instance OS-level lock to prevent duplicate daemon processes, configures logging, logs environment diagnostics, installs a crash reporter, and then calls `build_streaming_daemon(Config.load()).run(cfg.hotkey.key, cfg.hotkey.mute_key)`. The pipeline worker first checks if the transcript is exactly `Merlin` (case-insensitive, stripped punctuation). If so, it toggles `_merlin_mode` and returns. Otherwise, if `_merlin_mode` is True, it calls `LLMRouter.route(transcript)`. If False, it calls `VerbRouter.route(transcript)`. Both return `Plan | None`; a None result fires `FeedbackSink.on_miss()`.
+**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems, including a one-shot `resolver._set_config(cfg.llm)` to inject fuzzy-threshold config into the parameter resolver. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_scroll_lock()` is the scroll-lock hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → VerbRouter.route() | LLMRouter.route() → Dispatcher.run_plan()`. Async WAV write (`outputs/last_utterance.wav`) and JSON plan dump (`outputs/last_plan.json`) are submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` handles `--validate` mode (runs `validate_or_die()` then exits), acquires a single-instance OS-level lock to prevent duplicate daemon processes, configures logging, logs environment diagnostics, installs a crash reporter, and then calls `build_streaming_daemon(Config.load()).run(cfg.hotkey.key)`. The pipeline worker first checks if the transcript is exactly `Merlin` (case-insensitive, stripped punctuation). If so, it toggles `_merlin_mode` and returns. Otherwise, if `_merlin_mode` is True, it calls `LLMRouter.route(transcript)`. If False, it calls `VerbRouter.route(transcript)`. Both return `Plan | None`; a None result fires `FeedbackSink.on_miss()`.
 
-**Who calls it:** `__main__.py` (the process entry point), signal handlers, and `on_scroll_lock` / `on_mute_toggle` (hotkey-listener thread).
+**Who calls it:** `__main__.py` (the process entry point), signal handlers, and `on_scroll_lock` (hotkey-listener thread).
 
 **Who it calls:** All other subsystems. It is the only place where concrete implementations are wired to interfaces.
 
