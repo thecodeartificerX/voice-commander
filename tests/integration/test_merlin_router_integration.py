@@ -63,11 +63,11 @@ def _build_test_daemon(tmp_path):
     return daemon, llm_router, verb_router, dispatcher, transcriber
 
 
-def test_merlin_session_routes_copy_then_llm_then_copy_again(tmp_path):
+def test_merlin_session_routes_verb_then_llm_then_verb_again(tmp_path):
     daemon, llm_router, _, dispatcher, transcriber = _build_test_daemon(tmp_path)
 
-    # 1. Normal mode: "copy" → verb router
-    transcriber.transcribe.return_value = _fake_result("copy", confidence=0.95)
+    # 1. Normal mode: "press ctrl+c" → verb router
+    transcriber.transcribe.return_value = _fake_result("press ctrl+c", confidence=0.95)
     daemon._process_utterance(_DUMMY_AUDIO)
     assert daemon._merlin_mode is False
     assert dispatcher.run_plan.call_count == 1
@@ -99,8 +99,8 @@ def test_merlin_session_routes_copy_then_llm_then_copy_again(tmp_path):
     assert daemon._merlin_mode is False
     assert dispatcher.run_plan.call_count == 2  # no new plan
 
-    # 5. Normal mode again: "copy" → verb router
-    transcriber.transcribe.return_value = _fake_result("copy", confidence=0.95)
+    # 5. Normal mode again: "press ctrl+c" → verb router
+    transcriber.transcribe.return_value = _fake_result("press ctrl+c", confidence=0.95)
     daemon._process_utterance(_DUMMY_AUDIO)
     assert daemon._merlin_mode is False
     assert dispatcher.run_plan.call_count == 3
