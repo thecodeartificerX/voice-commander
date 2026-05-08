@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from .plan import Plan, ToolCall
@@ -27,6 +28,7 @@ class VerbRule:
     subcommands: tuple[SubcommandRule, ...] = ()
     raw_tail_tool: str | None = None
     raw_tail_arg: str | None = None
+    tail_coerce: Callable[[str], object] | None = None
 
 
 class VerbRouter:
@@ -59,8 +61,14 @@ class VerbRouter:
                     return self._plan_for(sub.target, verb.name, tail)
 
         if tail and verb.raw_tail_tool and verb.raw_tail_arg:
+            arg_value: object = tail
+            if verb.tail_coerce is not None:
+                try:
+                    arg_value = verb.tail_coerce(tail)
+                except (ValueError, TypeError):
+                    return None
             return Plan(
-                steps=(ToolCall(name=verb.raw_tail_tool, kwargs={verb.raw_tail_arg: tail}),),
+                steps=(ToolCall(name=verb.raw_tail_tool, kwargs={verb.raw_tail_arg: arg_value}),),
                 raw_response={"router": "verb", "verb": verb.name, "tail": tail},
             )
 
@@ -73,20 +81,33 @@ class VerbRouter:
         )
 
 
+def _coerce_wait_ms(tail: str) -> int:
+    """Permissive int parser: '500' / '500 ms' / '500 milliseconds' → 500."""
+    head_token = tail.split()[0]
+    return int(head_token)
+
+
 def build_default_rules() -> tuple[VerbRule, ...]:
     return (
-        VerbRule("copy", ("copy",), default_target=RouteTarget("press", {"combo": "ctrl+c"})),
-        VerbRule("cut", ("cut",), default_target=RouteTarget("press", {"combo": "ctrl+x"})),
-        VerbRule("paste", ("paste",), default_target=RouteTarget("press", {"combo": "ctrl+v"})),
-        VerbRule("undo", ("undo",), default_target=RouteTarget("press", {"combo": "ctrl+z"})),
-        VerbRule("redo", ("redo",), default_target=RouteTarget("press", {"combo": "ctrl+y"})),
-        VerbRule("save", ("save",), default_target=RouteTarget("press", {"combo": "ctrl+s"})),
-        VerbRule("refresh", ("refresh", "reload"), default_target=RouteTarget("press", {"combo": "ctrl+r"})),
-        VerbRule("minimize", ("minimize",), default_target=RouteTarget("press", {"combo": "win+down"})),
-        VerbRule("maximize", ("maximize",), default_target=RouteTarget("press", {"combo": "win+up"})),
-        VerbRule("close", ("close",), default_target=RouteTarget("press", {"combo": "ctrl+w"}), subcommands=(SubcommandRule(("tab",), RouteTarget("press", {"combo": "ctrl+w"})), SubcommandRule(("window",), RouteTarget("press", {"combo": "alt+f4"})),)),
-        VerbRule("new", ("new",), subcommands=(SubcommandRule(("tab",), RouteTarget("press", {"combo": "ctrl+t"})), SubcommandRule(("window",), RouteTarget("press", {"combo": "ctrl+n"})))),
-        VerbRule("type", ("type",), raw_tail_tool="type", raw_tail_arg="text"),
-        VerbRule("open", ("open",), raw_tail_tool="open", raw_tail_arg="target"),
+        VerbRule("click", ("click",), default_target=RouteTarget("click", {})),
+        VerbRule(
+            "scroll",
+            ("scroll",),
+            default_target=RouteTarget("scroll", {"direction": "down"}),
+            subcommands=(
+                SubcommandRule(("up",), RouteTarget("scroll", {"direction": "up"})),
+                SubcommandRule(("down",), RouteTarget("scroll", {"direction": "down"})),
+            ),
+        ),
         VerbRule("focus", ("focus",), raw_tail_tool="focus", raw_tail_arg="target"),
+        VerbRule("open", ("open",), raw_tail_tool="open", raw_tail_arg="target"),
+        VerbRule("type", ("type",), raw_tail_tool="type", raw_tail_arg="text"),
+        VerbRule("press", ("press",), raw_tail_tool="press", raw_tail_arg="combo"),
+        VerbRule(
+            "wait",
+            ("wait",),
+            raw_tail_tool="wait",
+            raw_tail_arg="ms",
+            tail_coerce=_coerce_wait_ms,
+        ),
     )
