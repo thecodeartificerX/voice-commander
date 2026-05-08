@@ -15,15 +15,10 @@ from voice_commander.resolver import OpenResolveError
 from voice_commander.tools._win32 import FocusWindowError
 from voice_commander.tools.primitives import (
     click,
-    close,
-    close_window,
-    last,
-    mute,
     no_match,
     open_target,
     press,
     scroll,
-    summon_commander,
     type_text,
     wait,
 )
@@ -248,117 +243,6 @@ def test_open_self_verify_best_effort_logs_on_timeout(
 
 
 # ---------------------------------------------------------------------------
-# close / close_window
-# ---------------------------------------------------------------------------
-
-
-def test_close_sends_ctrl_w(monkeypatch: pytest.MonkeyPatch) -> None:
-    mock_win32gui = MagicMock()
-    # GetForegroundWindow: first returns 11 (before), then 22 (after) so verify passes.
-    mock_win32gui.GetForegroundWindow.side_effect = [11, 22]
-    mock_win32gui.IsWindow.return_value = True
-
-    with (
-        patch.dict("sys.modules", {"win32gui": mock_win32gui}),
-        patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey,
-    ):
-        close()
-    mock_hotkey.assert_called_once_with("ctrl", "w")
-
-
-def test_close_window_sends_alt_f4(monkeypatch: pytest.MonkeyPatch) -> None:
-    mock_win32gui = MagicMock()
-    mock_win32gui.GetForegroundWindow.side_effect = [11, 22]
-    mock_win32gui.IsWindow.return_value = True
-
-    with (
-        patch.dict("sys.modules", {"win32gui": mock_win32gui}),
-        patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey,
-    ):
-        close_window()
-    mock_hotkey.assert_called_once_with("alt", "f4")
-
-
-def test_close_self_verify_logs_when_fg_unchanged(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """GetForegroundWindow returns same hwnd before and after → WARNING, no raise."""
-    mock_win32gui = MagicMock()
-    mock_win32gui.GetForegroundWindow.return_value = 77  # unchanged
-    mock_win32gui.IsWindow.return_value = True
-
-    monkeypatch.setattr("voice_commander.tools.primitives._CLOSE_VERIFY_TIMEOUT_MS", 10)
-    monkeypatch.setattr("voice_commander.tools.primitives._CLOSE_VERIFY_POLL_INTERVAL_MS", 5)
-
-    with (
-        patch.dict("sys.modules", {"win32gui": mock_win32gui}),
-        patch("voice_commander.tools.primitives.pyautogui.hotkey"),
-        caplog.at_level(logging.WARNING, logger="voice_commander.tools.primitives"),
-    ):
-        close()
-    assert "verify timeout" in caplog.text
-
-
-# ---------------------------------------------------------------------------
-# last
-# ---------------------------------------------------------------------------
-
-
-def test_last_default_sends_alt_tab() -> None:
-    """Bare last() → Alt+Tab; _close_with_verify snapshots fg and polls for change."""
-    mock_win32gui = MagicMock()
-    # 3 calls: before_hwnd in _close_with_verify, current_hwnd poll, return value fetch
-    mock_win32gui.GetForegroundWindow.side_effect = [11, 22, 22]
-    mock_win32gui.IsWindow.return_value = True
-
-    with (
-        patch.dict("sys.modules", {"win32gui": mock_win32gui}),
-        patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey,
-    ):
-        last()
-    mock_hotkey.assert_called_once_with("alt", "tab")
-
-
-def test_last_tab_true_sends_ctrl_tab() -> None:
-    """last(tab=True) → Ctrl+Tab, no self-verify (no fg change expected)."""
-    with patch("voice_commander.tools.primitives.pyautogui.hotkey") as mock_hotkey:
-        last(tab=True)
-    mock_hotkey.assert_called_once_with("ctrl", "tab")
-
-
-def test_last_default_verify_logs_when_fg_unchanged(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Alt+Tab that leaves fg hwnd unchanged → WARNING, no raise."""
-    mock_win32gui = MagicMock()
-    mock_win32gui.GetForegroundWindow.return_value = 77  # unchanged
-    mock_win32gui.IsWindow.return_value = True
-
-    monkeypatch.setattr("voice_commander.tools.primitives._CLOSE_VERIFY_TIMEOUT_MS", 10)
-    monkeypatch.setattr("voice_commander.tools.primitives._CLOSE_VERIFY_POLL_INTERVAL_MS", 5)
-
-    with (
-        patch.dict("sys.modules", {"win32gui": mock_win32gui}),
-        patch("voice_commander.tools.primitives.pyautogui.hotkey"),
-        caplog.at_level(logging.WARNING, logger="voice_commander.tools.primitives"),
-    ):
-        last()
-    assert "verify timeout" in caplog.text
-    assert "last" in caplog.text
-
-
-def test_last_signature() -> None:
-    import inspect
-
-    from voice_commander.tools import primitives
-
-    sig = inspect.signature(primitives.last)
-    assert "tab" in sig.parameters
-    assert sig.parameters["tab"].annotation == "bool"
-    assert sig.parameters["tab"].default is False
-
-
-# ---------------------------------------------------------------------------
 # click
 # ---------------------------------------------------------------------------
 
@@ -414,65 +298,12 @@ def test_scroll_unknown_direction_logs_warning(caplog: pytest.LogCaptureFixture)
 
 
 # ---------------------------------------------------------------------------
-# summon_commander
-# ---------------------------------------------------------------------------
-
-
-def test_summon_commander_spawns_powershell_in_repo() -> None:
-    import subprocess as _subprocess
-
-    from voice_commander.tools.primitives import _COMMANDER_CWD
-
-    with patch("subprocess.Popen") as mock_popen:
-        summon_commander()
-
-    mock_popen.assert_called_once_with(
-        ["pwsh.exe", "-NoExit", "-Command", "ccd"],
-        cwd=_COMMANDER_CWD,
-        creationflags=_subprocess.CREATE_NEW_CONSOLE,
-    )
-
-
-def test_summon_commander_takes_no_args() -> None:
-    import inspect
-
-    sig = inspect.signature(summon_commander)
-    assert len(sig.parameters) == 0
-
-
-# ---------------------------------------------------------------------------
 # no_match
 # ---------------------------------------------------------------------------
 
 
 def test_no_match_is_noop() -> None:
     assert no_match("casual chit-chat") is None
-
-
-# ---------------------------------------------------------------------------
-# mute
-# ---------------------------------------------------------------------------
-
-
-def test_mute_invokes_injected_callback() -> None:
-    from voice_commander.tools import primitives as _p
-
-    fake = MagicMock()
-    _p._set_mute_callback(fake)
-    try:
-        mute()
-    finally:
-        _p._set_mute_callback(None)
-    fake.assert_called_once_with()
-
-
-def test_mute_noop_when_callback_unset(caplog: pytest.LogCaptureFixture) -> None:
-    from voice_commander.tools import primitives as _p
-
-    _p._set_mute_callback(None)
-    with caplog.at_level(logging.WARNING, logger="voice_commander.tools.primitives"):
-        mute()
-    assert any("no daemon callback wired" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -483,18 +314,13 @@ def test_mute_noop_when_callback_unset(caplog: pytest.LogCaptureFixture) -> None
 def test_imports_expose_expected_symbols() -> None:
     from voice_commander.tools import primitives as _p
 
-    # Each verb present with the Python symbol declared in the module.
     for name in (
         "click",
-        "close",
-        "close_window",
-        "last",
-        "mute",
+        "focus",
         "no_match",
         "open_target",
         "press",
         "scroll",
-        "summon_commander",
         "type_text",
         "wait",
     ):
