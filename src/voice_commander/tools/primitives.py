@@ -1,13 +1,13 @@
-"""LLM-only primitive verbs — the 9-tool catalog the LLM chains (spec Section 2).
+"""LLM-only primitive verbs — the 7-tool catalog the LLM/VerbRouter dispatch.
 
-This module is the sole source of LLM-visible tools. Every verb here is
-``llm_only = true`` with ``phrases = []``. Names are chosen to be short for
-minimal prefill: ``focus``, ``type``, ``open``, ``close``, ``close_window``,
-``press``, ``wait``, ``click``, ``no_match`` (plus ``scroll`` as a bonus).
+This module is the sole source of LLM-visible action primitives. Every verb
+here is ``llm_only = true`` with ``phrases = []``. Two verbs shadow Python
+builtins — ``type`` and ``open``. Their Python symbols are ``type_text`` and
+``open_target``; the registry exposes them under the short LLM-visible names
+via ``@tool(name=...)``.
 
-Two verbs shadow Python builtins — ``type`` and ``open``. Their Python symbols
-are ``type_text`` and ``open_target``; the registry exposes them under the
-short LLM-visible names via ``@tool(name=...)``.
+Surviving verbs: ``focus``, ``type``, ``open``, ``press``, ``wait``,
+``click``, ``scroll``, plus the LLM escape hatch ``no_match``.
 """
 
 from __future__ import annotations
@@ -16,8 +16,6 @@ import logging
 import os
 import re
 import time
-from collections.abc import Callable
-from pathlib import Path
 from typing import Any, cast
 
 import pyautogui
@@ -31,18 +29,6 @@ from ._win32 import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Daemon-injected callback that mutes the active voice session. Wired at
-# startup by :func:`voice_commander.daemon.build_streaming_daemon` to the
-# daemon's own ``on_mute_toggle``. None in tests / early import.
-_mute_callback: Callable[[], None] | None = None
-
-
-def _set_mute_callback(fn: Callable[[], None] | None) -> None:
-    """Inject the daemon's mute callback. Called once at daemon startup."""
-    global _mute_callback
-    _mute_callback = fn
-
 
 _MAX_TYPE_TEXT_LEN = 500
 
@@ -100,10 +86,6 @@ _PRESS_BLOCKLIST: set[frozenset[str]] = {
 _OPEN_VERIFY_TIMEOUT_MS = 500
 _OPEN_VERIFY_POLL_INTERVAL_MS = 50
 _OPEN_VERIFY_FUZZY_THRESHOLD = 60
-
-# How long to poll GetForegroundWindow after close()/close_window() before giving up.
-_CLOSE_VERIFY_TIMEOUT_MS = 100
-_CLOSE_VERIFY_POLL_INTERVAL_MS = 20
 
 
 # ---------------------------------------------------------------------------
@@ -311,139 +293,6 @@ def _verify_open(target: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# close / close_window
-# ---------------------------------------------------------------------------
-
-
-@tool
-def close() -> None:
-    """Close the current tab/document in the focused window via Ctrl+W."""
-    _close_with_verify(("ctrl", "w"), verb="close")
-
-
-@tool
-def close_window() -> None:
-    """Close the currently focused window via Alt+F4."""
-    _close_with_verify(("alt", "f4"), verb="close_window")
-
-
-@tool
-def minimize(target: str | None = None) -> None:
-    """Minimize a single window. Defaults to the currently focused window.
-
-    Never minimizes all windows. Do NOT emit ``press(combo="win+d")`` or
-    ``press(combo="win+m")`` for "minimize" utterances — use this tool.
-
-    Parameters
-    ----------
-    target:
-        Optional process name or window title (fuzzy-matched via
-        :func:`resolver.resolve_window`). Omit to minimize the focused
-        window.
-    """
-    _show_window(target, action="minimize")
-
-
-@tool
-def maximize(target: str | None = None) -> None:
-    """Maximize a single window. Defaults to the currently focused window.
-
-    Do NOT emit ``press(combo="win+up")`` for "maximize" utterances —
-    use this tool.
-
-    Parameters
-    ----------
-    target:
-        Optional process name or window title (fuzzy-matched via
-        :func:`resolver.resolve_window`). Omit to maximize the focused
-        window.
-    """
-    _show_window(target, action="maximize")
-
-
-def _show_window(target: str | None, *, action: str) -> None:
-    try:
-        import win32con
-        import win32gui
-    except ImportError:
-        logger.warning("pywin32 not available, cannot %s window", action)
-        return
-
-    if target is None:
-        hwnd = win32gui.GetForegroundWindow()
-        if not hwnd:
-            logger.warning("%s: no foreground window", action)
-            return
-    else:
-        hwnd = resolver.resolve_window(target)
-
-    sw_cmd = win32con.SW_MINIMIZE if action == "minimize" else win32con.SW_MAXIMIZE
-    win32gui.ShowWindow(hwnd, sw_cmd)
-
-
-def _close_with_verify(combo: tuple[str, ...], *, verb: str) -> None:
-    """Issue *combo*, then poll ``GetForegroundWindow`` for a change."""
-    try:
-        import win32gui
-    except ImportError:
-        pyautogui.hotkey(*combo)
-        return
-
-    before_hwnd = win32gui.GetForegroundWindow()
-    pyautogui.hotkey(*combo)
-
-    deadline = time.monotonic() + _CLOSE_VERIFY_TIMEOUT_MS / 1000.0
-    poll_s = _CLOSE_VERIFY_POLL_INTERVAL_MS / 1000.0
-    while time.monotonic() < deadline:
-        current_hwnd = win32gui.GetForegroundWindow()
-        if current_hwnd != before_hwnd or not win32gui.IsWindow(before_hwnd):
-            return
-        time.sleep(poll_s)
-
-    logger.warning(
-        "%s verify timeout: foreground hwnd unchanged (hwnd=%d) after %d ms",
-        verb,
-        before_hwnd,
-        _CLOSE_VERIFY_TIMEOUT_MS,
-    )
-
-
-# ---------------------------------------------------------------------------
-# last
-# ---------------------------------------------------------------------------
-
-
-@tool
-def last(tab: bool = False) -> int:
-    """Switch back to the previous window (Alt+Tab), or to another tab (Ctrl+Tab).
-
-    Default (``tab=False``) issues Alt+Tab and verifies the foreground hwnd
-    changed — mirrors the "go back to what I was just on" semantic.
-
-    ``tab=True`` issues Ctrl+Tab, which cycles to the next tab inside the
-    currently focused app (browsers, editors, terminals). No self-verify —
-    tab switches stay inside the same process and do not change foreground
-    hwnd.
-
-    Returns
-    -------
-    int
-        The Win32 window handle of the new foreground window after Alt+Tab,
-        or 0 for the Ctrl+Tab path (tab switch stays in same process).
-    """
-    if tab:
-        pyautogui.hotkey("ctrl", "tab")
-        return 0
-    _close_with_verify(("alt", "tab"), verb="last")
-    try:
-        import win32gui
-
-        return win32gui.GetForegroundWindow()  # type: ignore[no-any-return]
-    except ImportError:
-        return 0
-
-
-# ---------------------------------------------------------------------------
 # press
 # ---------------------------------------------------------------------------
 
@@ -501,7 +350,7 @@ def click(button: str = "left") -> None:
 
 
 # ---------------------------------------------------------------------------
-# scroll  (bonus verb — not in the spec's 9, but harmless and already here)
+# scroll
 # ---------------------------------------------------------------------------
 
 
@@ -520,49 +369,6 @@ def scroll(direction: str, amount: int = 3) -> None:
 
 
 # ---------------------------------------------------------------------------
-# summon_commander
-# ---------------------------------------------------------------------------
-
-
-_COMMANDER_CWD = Path(__file__).resolve().parents[3]
-_COMMANDER_CMD = "ccd"
-
-
-@tool
-def summon_commander() -> None:
-    """Spawn a visible PowerShell window in the voice-commander repo and run ``ccd``.
-
-    Dev shortcut. Uses ``-NoExit`` so the window stays open after ``ccd`` returns.
-    ``ccd`` must be on PATH (user's PS profile registers it).
-    """
-    import subprocess
-
-    subprocess.Popen(
-        ["pwsh.exe", "-NoExit", "-Command", _COMMANDER_CMD],
-        cwd=_COMMANDER_CWD,
-        creationflags=subprocess.CREATE_NEW_CONSOLE,
-    )
-
-
-# ---------------------------------------------------------------------------
-# mute
-# ---------------------------------------------------------------------------
-
-
-@tool
-def mute() -> None:
-    """End the active voice session by firing the Scroll Lock handler.
-
-    Equivalent to the user pressing Scroll Lock — closes the session. The
-    user reopens a new session with the Scroll Lock hotkey.
-    """
-    if _mute_callback is None:
-        logger.warning("mute: no daemon callback wired; ignoring")
-        return
-    _mute_callback()
-
-
-# ---------------------------------------------------------------------------
 # no_match
 # ---------------------------------------------------------------------------
 
@@ -574,36 +380,4 @@ def no_match(reason: str) -> None:
     The router intercepts ``no_match`` before dispatch — the body is a no-op.
     """
     # Body intentionally empty — router treats no_match as the "None plan" signal.
-    return
-
-
-# ---------------------------------------------------------------------------
-# done
-# ---------------------------------------------------------------------------
-
-
-@tool
-def done(success: bool = True, summary: str = "") -> None:
-    """Signal that the agentic loop has completed its goal.
-
-    Intercepted by :class:`AgenticRouter` — body is a no-op.
-    ``success=False`` triggers a miss chime.
-    """
-    # Body intentionally empty — AgenticRouter intercepts done before dispatch.
-    return
-
-
-# ---------------------------------------------------------------------------
-# ask_user
-# ---------------------------------------------------------------------------
-
-
-@tool
-def ask_user(question: str, options: str = "") -> None:
-    """Ask the user a clarifying question via HUD overlay.
-
-    Intercepted by :class:`AgenticRouter` — body is a no-op.
-    The question and numbered options are rendered in the sprite overlay.
-    """
-    # Body intentionally empty — AgenticRouter intercepts ask_user before dispatch.
     return
