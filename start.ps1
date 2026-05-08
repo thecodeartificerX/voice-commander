@@ -88,17 +88,6 @@ param(
     [Parameter(ParameterSetName = 'Interactive')]
     [Parameter(ParameterSetName = 'NoMenu')]
     [Parameter(ParameterSetName = 'DirectDevice')]
-    [ValidateSet('local', 'remote')]
-    [string]$Backend = '',
-
-    [Parameter(ParameterSetName = 'Interactive')]
-    [Parameter(ParameterSetName = 'NoMenu')]
-    [Parameter(ParameterSetName = 'DirectDevice')]
-    [string]$RemoteUrl = '',
-
-    [Parameter(ParameterSetName = 'Interactive')]
-    [Parameter(ParameterSetName = 'NoMenu')]
-    [Parameter(ParameterSetName = 'DirectDevice')]
     [string]$LlmEndpoint = '',
 
     [Parameter(ParameterSetName = 'Interactive')]
@@ -214,14 +203,23 @@ $script:PhaseString = '  Phase 7: supervisor process (daemon + sprite under one 
 function Initialize-BuilderUI {
     <#
     .SYNOPSIS
-        Always rebuild the web/builder-ui SPA before launching the daemon.
+        Build the web/builder-ui SPA only when sources are newer than the last build.
     .DESCRIPTION
-        Runs pnpm build inside web/builder-ui/ on every start so source edits
-        ship without manual rebuild. Runs pnpm install only when node_modules
-        is missing. Failures are non-fatal — the daemon will serve a friendly
-        stub page instead.
+        Compares the newest mtime under web/builder-ui/src/ (and index.html /
+        vite.config.ts) against the newest mtime in the built output directory.
+        Skips the build entirely when the output is up-to-date, so normal
+        daemon restarts pay zero SPA build cost.
+
+        Forces a full build when:
+          - node_modules is missing (install + build)
+          - built output directory is missing
+          - any source file is newer than the newest built file
+
+        Failures are non-fatal — the daemon will serve a friendly stub page.
     #>
-    $uiDir = Join-Path $PSScriptRoot 'web/builder-ui'
+    $uiDir     = Join-Path $PSScriptRoot 'web/builder-ui'
+    $outDir    = Join-Path $PSScriptRoot 'src/voice_commander/web/static/builder'
+
     if (-not (Test-Path -LiteralPath $uiDir)) {
         Write-Verbose "web/builder-ui directory missing — skipping SPA build"
         return
@@ -230,12 +228,63 @@ function Initialize-BuilderUI {
     $nodeModules = Join-Path $uiDir 'node_modules'
     $needsInstall = -not (Test-Path -LiteralPath $nodeModules)
 
+    # Determine whether sources are newer than the built output.
+    $needsBuild = $needsInstall -or (-not (Test-Path -LiteralPath $outDir))
+
+    if (-not $needsBuild) {
+        # Newest mtime across source files that affect the output.
+        $srcDirs = @(
+            (Join-Path $uiDir 'src'),
+            (Join-Path $uiDir 'public')
+        )
+        $srcRoots = @(
+            (Join-Path $uiDir 'index.html'),
+            (Join-Path $uiDir 'vite.config.ts'),
+            (Join-Path $uiDir 'tsconfig.json'),
+            (Join-Path $uiDir 'package.json')
+        )
+
+        $newestSrc = $null
+
+        foreach ($root in $srcRoots) {
+            if (Test-Path -LiteralPath $root) {
+                $t = (Get-Item -LiteralPath $root).LastWriteTimeUtc
+                if ($null -eq $newestSrc -or $t -gt $newestSrc) { $newestSrc = $t }
+            }
+        }
+        foreach ($dir in $srcDirs) {
+            if (Test-Path -LiteralPath $dir) {
+                $items = Get-ChildItem -LiteralPath $dir -Recurse -File -ErrorAction SilentlyContinue
+                foreach ($f in $items) {
+                    if ($null -eq $newestSrc -or $f.LastWriteTimeUtc -gt $newestSrc) {
+                        $newestSrc = $f.LastWriteTimeUtc
+                    }
+                }
+            }
+        }
+
+        $newestOut = $null
+        $outItems = Get-ChildItem -LiteralPath $outDir -Recurse -File -ErrorAction SilentlyContinue
+        foreach ($f in $outItems) {
+            if ($null -eq $newestOut -or $f.LastWriteTimeUtc -gt $newestOut) {
+                $newestOut = $f.LastWriteTimeUtc
+            }
+        }
+
+        if ($null -ne $newestSrc -and $null -ne $newestOut -and $newestSrc -le $newestOut) {
+            Write-Verbose "Builder UI up-to-date (src $newestSrc <= out $newestOut) — skipping build"
+            return
+        }
+
+        $needsBuild = $true
+    }
+
     Write-Host ''
     if ($needsInstall) {
         Write-VoicePrompt 'Builder UI dependencies missing. Running pnpm install + build...'
     }
     else {
-        Write-VoicePrompt 'Rebuilding Builder UI SPA...'
+        Write-VoicePrompt 'Builder UI sources changed — rebuilding SPA...'
     }
 
     try {
@@ -569,17 +618,23 @@ function Save-VoiceDeviceChoice {
     .PARAMETER Index
         The PortAudio device index to save.
 
+    .PARAMETER Name
+        Optional human-readable device name to pass to set-audio-device.py.
+
     .OUTPUTS
         [bool] $true on success, $false on failure.
     #>
     param(
         [Parameter(Mandatory)]
-        [int]$Index
+        [int]$Index,
+        [string]$Name = ''
     )
 
-    Write-Verbose "Persisting audio.device = $Index to config.toml"
+    Write-Verbose "Persisting audio.device = $Index (name='$Name') to config.toml"
     try {
-        uv run python scripts/set-audio-device.py $Index
+        $cmdArgs = @('run', 'python', 'scripts/set-audio-device.py', $Index)
+        if ($Name) { $cmdArgs += $Name }
+        & uv @cmdArgs
         if ($LASTEXITCODE -ne 0) {
             Write-Verbose "set-audio-device.py exited with code $LASTEXITCODE"
             return $false
@@ -593,251 +648,6 @@ function Save-VoiceDeviceChoice {
     catch {
         Write-Verbose "Save-VoiceDeviceChoice failed: $_"
         return $false
-    }
-}
-
-function Get-VoiceConfigTranscription {
-    <#
-    .SYNOPSIS
-        Returns @{ Backend; RemoteUrl } from config.toml, or $null on failure.
-    #>
-    Write-Verbose 'Reading transcription config via Config.load'
-    try {
-        $py = @"
-from pathlib import Path
-from voice_commander.config import Config
-c = Config.load(Path('config.toml')).transcription
-print(c.backend)
-print(c.remote_endpoint_url)
-"@
-        $raw = uv run python -c $py 2>$null
-        if ($null -eq $raw) { return $null }
-        $parts = $raw -split "`r?`n" | Where-Object { $_ -ne '' }
-        if ($parts.Count -lt 1) { return $null }
-        $url = if ($parts.Count -ge 2) { $parts[1] } else { '' }
-        return [PSCustomObject]@{
-            Backend   = $parts[0].Trim()
-            RemoteUrl = $url.Trim()
-        }
-    }
-    catch {
-        Write-Verbose "transcription config read failed: $_"
-        return $null
-    }
-}
-
-function Save-VoiceTranscriptionChoice {
-    <#
-    .SYNOPSIS
-        Persist transcription backend (and optional URL) via set-transcription-backend.py.
-
-    .OUTPUTS
-        [bool] $true on success, $false on failure.
-    #>
-    param(
-        [Parameter(Mandatory)]
-        [ValidateSet('local', 'remote')]
-        [string]$Backend,
-
-        [string]$RemoteUrl = ''
-    )
-
-    Write-Verbose "Persisting transcription.backend = $Backend (url=$RemoteUrl)"
-    try {
-        $cmdArgs = @('run', 'python', 'scripts/set-transcription-backend.py', $Backend)
-        if ($RemoteUrl) { $cmdArgs += $RemoteUrl }
-        & uv @cmdArgs
-        if ($LASTEXITCODE -ne 0) {
-            Write-Verbose "set-transcription-backend.py exited with code $LASTEXITCODE"
-            return $false
-        }
-        return $true
-    }
-    catch {
-        Write-Verbose "Save-VoiceTranscriptionChoice failed: $_"
-        return $false
-    }
-}
-
-function Read-VoiceTranscriptionBackend {
-    <#
-    .SYNOPSIS
-        Interactive picker for transcription backend (Local | Remote + URL).
-
-    .DESCRIPTION
-        Mirrors the audio device picker's Use-last / Choose-new flow. Shows
-        the saved backend (and URL if remote), then offers [1] Use last /
-        [2] Choose new / [Q] Quit. Choose-new opens a sub-menu [L] Local /
-        [R] Remote. Remote prompts for the endpoint URL with the existing
-        URL pre-filled as a default.
-
-    .PARAMETER Current
-        The current transcription config (from Get-VoiceConfigTranscription)
-        or $null if unavailable.
-
-    .OUTPUTS
-        [PSCustomObject]@{ Backend; RemoteUrl } picked by the user, or $null
-        if the user pressed Q (the caller should exit).
-    #>
-    param(
-        [PSCustomObject]$Current
-    )
-
-    $hasCurrent = $null -ne $Current -and $Current.Backend -in @('local', 'remote')
-
-    if ($hasCurrent) {
-        Write-Host ''
-        Write-VoiceHeader 'Last transcription backend:'
-        if ($Current.Backend -eq 'remote') {
-            Write-VoiceSuccess ("  [remote] {0}" -f $Current.RemoteUrl)
-        }
-        else {
-            Write-VoiceSuccess '  [local] faster-whisper on CUDA'
-        }
-        Write-Host ''
-        Write-VoicePrompt '  [1] Use last'
-        Write-VoicePrompt '  [2] Choose new'
-        Write-VoicePrompt '  [Q] Quit'
-        Write-Host ''
-
-        $top = Read-VoiceMenuChoice -ValidKeys @('1', '2', 'Q') -Prompt '> '
-
-        if ($top -eq 'Q') {
-            Write-Host ''
-            Write-VoiceSecondary 'Goodbye.'
-            return $null
-        }
-
-        if ($top -eq '1') {
-            return [PSCustomObject]@{
-                Backend   = $Current.Backend
-                RemoteUrl = $Current.RemoteUrl
-            }
-        }
-        # '2' falls through to choose-new
-    }
-
-    while ($true) {
-        Write-Host ''
-        Write-VoiceHeader 'Choose transcription backend:'
-        Write-VoicePrompt '  [L] Local   (faster-whisper on CUDA)'
-        Write-VoicePrompt '  [R] Remote  (whisper.cpp server over HTTP)'
-        if ($hasCurrent) {
-            Write-VoicePrompt '  [B] Back'
-        }
-        Write-VoicePrompt '  [Q] Quit'
-        Write-Host ''
-
-        $validKeys = if ($hasCurrent) { @('L', 'R', 'B', 'Q') } else { @('L', 'R', 'Q') }
-        $choice = Read-VoiceMenuChoice -ValidKeys $validKeys -Prompt '> '
-
-        if ($choice -eq 'Q') {
-            Write-Host ''
-            Write-VoiceSecondary 'Goodbye.'
-            return $null
-        }
-
-        if ($choice -eq 'B') {
-            return Read-VoiceTranscriptionBackend -Current $Current
-        }
-
-        if ($choice -eq 'L') {
-            return [PSCustomObject]@{ Backend = 'local'; RemoteUrl = '' }
-        }
-
-        # 'R' — prompt for URL
-        $defaultUrl = if ($hasCurrent -and $Current.Backend -eq 'remote') { $Current.RemoteUrl } else { '' }
-        Write-Host ''
-        if ($defaultUrl) {
-            Write-VoicePrompt ("  Endpoint URL [{0}]:" -f $defaultUrl) -NoNewline
-        }
-        else {
-            Write-VoicePrompt '  Endpoint URL (e.g. http://192.168.4.200:8765/inference):' -NoNewline
-        }
-        Write-Host ' ' -NoNewline
-        $entered = (Read-Host).Trim()
-        if (-not $entered -and $defaultUrl) {
-            $entered = $defaultUrl
-        }
-        if (-not $entered) {
-            Write-VoiceFailure '  Remote backend requires a non-empty URL.'
-            continue
-        }
-        return [PSCustomObject]@{ Backend = 'remote'; RemoteUrl = $entered }
-    }
-}
-
-function Resolve-VoiceTranscriptionChoice {
-    <#
-    .SYNOPSIS
-        Decide + persist the transcription backend for this launch.
-
-    .DESCRIPTION
-        Three paths:
-          1. -Backend param supplied → persist directly, skip menu.
-          2. Non-interactive / -NoMenu → reuse saved config, no prompts.
-          3. Interactive → show Use-last / Choose-new menu.
-
-        On any persist failure, prints a warning and continues with whatever
-        is currently in config.toml — never blocks daemon launch.
-    #>
-    param(
-        [bool]$IsInteractiveSession,
-        [bool]$SkipMenu
-    )
-
-    $current = Get-VoiceConfigTranscription
-
-    # -Backend / -RemoteUrl explicit path
-    if ($Backend) {
-        $url = if ($RemoteUrl) { $RemoteUrl } elseif ($null -ne $current) { $current.RemoteUrl } else { '' }
-        if ($Backend -eq 'remote' -and -not $url) {
-            Write-VoiceFailure 'Backend "remote" requires -RemoteUrl (or a saved URL in config.toml).'
-            exit 1
-        }
-        if (-not (Save-VoiceTranscriptionChoice -Backend $Backend -RemoteUrl $url)) {
-            Write-VoiceFailure 'Failed to persist transcription backend.'
-            exit 1
-        }
-        return
-    }
-
-    if ($SkipMenu -or -not $IsInteractiveSession) {
-        if ($null -eq $current -or -not $current.Backend) {
-            Write-Verbose 'No saved transcription config; daemon will use defaults (local).'
-        }
-        else {
-            Write-VoiceSuccess ("Transcription backend: {0}{1}." -f `
-                $current.Backend, `
-                $(if ($current.Backend -eq 'remote') { " @ $($current.RemoteUrl)" } else { '' }))
-        }
-        return
-    }
-
-    # Interactive menu
-    $picked = Read-VoiceTranscriptionBackend -Current $current
-    if ($null -eq $picked) {
-        # Q pressed
-        exit 0
-    }
-
-    # Skip the persist round-trip if the choice exactly matches what's saved.
-    $unchanged = $null -ne $current `
-        -and $current.Backend -eq $picked.Backend `
-        -and $current.RemoteUrl -eq $picked.RemoteUrl
-    if (-not $unchanged) {
-        if (-not (Save-VoiceTranscriptionChoice -Backend $picked.Backend -RemoteUrl $picked.RemoteUrl)) {
-            Write-VoiceFailure '  Failed to save transcription backend.'
-            Write-VoiceSecondary '  Continuing with whatever is currently in config.toml.'
-        }
-    }
-
-    Write-Host ''
-    if ($picked.Backend -eq 'remote') {
-        Write-VoiceSuccess ("Transcription backend: remote @ {0}." -f $picked.RemoteUrl)
-    }
-    else {
-        Write-VoiceSuccess 'Transcription backend: local.'
     }
 }
 
@@ -901,7 +711,7 @@ function Read-VoiceLlmEndpoint {
         Use-last / Choose-new menu for the LLM endpoint + model.
 
     .DESCRIPTION
-        Mirrors the audio device + transcription menus. Choose-new offers the
+        Mirrors the audio device menu. Choose-new offers the
         named presets ($script:LlmPresets), a [C] Custom path that prompts for
         endpoint_url + model_id, plus [B] Back / [Q] Quit.
 
@@ -1233,16 +1043,16 @@ if ($ListDevices) {
 
 if ($PSCmdlet.ParameterSetName -eq 'DirectDevice') {
     Write-Verbose "-Device $Device specified; skipping TUI"
-    $SaveResult = Save-VoiceDeviceChoice -Index $Device
+    $DevicesForDirect = Get-VoiceInputDevice
+    $ChosenDirect = if ($null -ne $DevicesForDirect) {
+        $DevicesForDirect | Where-Object { $_.Index -eq $Device } | Select-Object -First 1
+    } else { $null }
+    $DirectName = if ($null -ne $ChosenDirect) { $ChosenDirect.Name } else { '' }
+    $SaveResult = Save-VoiceDeviceChoice -Index $Device -Name $DirectName
     if (-not $SaveResult) {
         Write-Error "Failed to persist device $Device to config.toml."
         exit 1
     }
-    $DevicesForDirect = Get-VoiceInputDevice
-    $ChosenDirect = if ($null -ne $DevicesForDirect) {
-        $DevicesForDirect | Where-Object { $_.Index -eq $Device } | Select-Object -First 1
-    }
-    else { $null }
 
     if ($null -ne $ChosenDirect) {
         Write-VoiceSuccess ("Using device [{0}]: {1}." -f $Device, $ChosenDirect.Name)
@@ -1250,7 +1060,6 @@ if ($PSCmdlet.ParameterSetName -eq 'DirectDevice') {
     else {
         Write-VoiceSuccess "Using device [$Device]."
     }
-    Resolve-VoiceTranscriptionChoice -IsInteractiveSession $false -SkipMenu $true
     Resolve-VoiceLlmChoice -IsInteractiveSession $false -SkipMenu $true
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander...'
@@ -1280,7 +1089,6 @@ if ($NoMenu) {
     }
     Write-Verbose "Non-interactive: using saved device [$SavedNoMenu]"
     Write-VoiceSuccess "Using saved device [$SavedNoMenu]."
-    Resolve-VoiceTranscriptionChoice -IsInteractiveSession $false -SkipMenu $true
     Resolve-VoiceLlmChoice -IsInteractiveSession $false -SkipMenu $true
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander...'
@@ -1309,7 +1117,6 @@ if (-not $IsInteractive) {
         exit 1
     }
     Write-VoiceSuccess "Non-interactive session -- using saved device [$SavedAuto]."
-    Resolve-VoiceTranscriptionChoice -IsInteractiveSession $false -SkipMenu $true
     Resolve-VoiceLlmChoice -IsInteractiveSession $false -SkipMenu $true
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander...'
@@ -1421,7 +1228,9 @@ if ($null -eq $PickedIndex) {
         }
 
         # Valid index chosen -- persist it
-        $SaveOk = Save-VoiceDeviceChoice -Index $Chosen
+        $ChosenDevice = $Devices | Where-Object { $_.Index -eq $Chosen } | Select-Object -First 1
+        $DeviceName   = if ($null -ne $ChosenDevice) { $ChosenDevice.Name } else { '' }
+        $SaveOk = Save-VoiceDeviceChoice -Index $Chosen -Name $DeviceName
         if (-not $SaveOk) {
             Write-VoiceFailure "  Failed to save device $Chosen to config.toml."
             Write-VoiceSecondary '  Check that config.toml exists and is writable, then try again.'
@@ -1447,7 +1256,6 @@ else {
     Write-VoiceSuccess "Using device [$PickedIndex]."
 }
 
-Resolve-VoiceTranscriptionChoice -IsInteractiveSession $true -SkipMenu $false
 Resolve-VoiceLlmChoice -IsInteractiveSession $true -SkipMenu $false
 
 Write-Host ''
