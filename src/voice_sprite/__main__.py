@@ -108,16 +108,13 @@ def main() -> None:
     # Chat-log + summarizer stack
     from .chat_log import ChatLog
     from .chat_log_renderer import ChatLogRenderer
-    from .plan_outcome_handler import handle_ask_user, handle_plan_outcome
-    from .summarizer import Summarizer
-    from .summary_rules import CHAIN_DETECTORS, RULES
+    from .plan_outcome_handler import handle_plan_outcome, handle_tool_fired
 
     chat_log = ChatLog(
         max_lines=cfg.hud.max_lines,
         hold_ms=cfg.hud.hold_ms,
         fade_ms=cfg.hud.fade_ms,
     )
-    summarizer = Summarizer(rules=RULES, chain_detectors=CHAIN_DETECTORS)
 
     # Deferred pyglet import — avoids display probe at module-load time.
     # ImportError here means pyglet/GL libs missing; surface as startup
@@ -213,12 +210,12 @@ def main() -> None:
             logger.info("State → %s", result.value)
         window.set_muted(sm.muted)
         renderer.set_muted(sm.muted)
-        if event_type == "plan_outcome":
-            handle_plan_outcome(data, summarizer, chat_log)
-        if event_type == "ask_user":
-            handle_ask_user(data, chat_log)
-        if event_type == "tool_fired" and "name" in data:
-            bubble.show(data["name"])
+        if event_type == "tool_fired":
+            handle_tool_fired(data, chat_log)
+            if "name" in data:
+                bubble.show(data["name"])
+        elif event_type == "plan_outcome":
+            handle_plan_outcome(data, chat_log)
 
     def on_disconnect() -> None:
         sm.force_crashed()
