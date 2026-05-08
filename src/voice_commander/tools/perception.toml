@@ -1,42 +1,8 @@
 category = "perception"
 
-# Perception tools were used by the old agentic loop. They are disabled
-# under the command/workflow architecture — the LLM never observes state
-# directly; user commands run deterministic plans based on the transcript
-# alone. The Python functions remain importable for future reuse but their
-# registry entries are inert (enabled=false).
-
-[tools.get_focused_window]
-description = "[disabled] Return the focused window title + process."
-phrases = []
-enabled = false
-llm_only = true
-internal = true
-settle_ms = 0
-
-[tools.list_windows]
-description = "[disabled] List visible non-minimized windows."
-phrases = []
-enabled = false
-llm_only = true
-internal = true
-settle_ms = 0
-
-[tools.get_clipboard]
-description = "[disabled] Return current clipboard text."
-phrases = []
-enabled = false
-llm_only = true
-internal = true
-settle_ms = 0
-
-[tools.list_processes]
-description = "[disabled] List running processes with visible windows."
-phrases = []
-enabled = false
-llm_only = true
-internal = true
-settle_ms = 0
+# Perception tools are side-effect-free observers used as branch inputs in
+# user-authored graphs. The LLM router rarely calls them in normal mode; they
+# come into play when a graph node consumes their return value.
 
 [tools.read_clipboard]
 phrases = []
