@@ -54,7 +54,6 @@ def test_build_streaming_daemon_constructs_tracer(monkeypatch, tmp_path):
         patch("voice_commander.commands.registrar.reload_all", return_value=([], [])),
         patch("voice_commander.commands.GraphStore"),
         patch("voice_commander.commands.seed_if_missing"),
-        patch("voice_commander.tools.primitives._set_mute_callback"),
     ):
         # LLMRouter mock needs set_tracer and warmup
         mock_router = MagicMock()

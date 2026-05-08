@@ -33,6 +33,8 @@ def test_process_utterance_emits_run_with_transcribe_span_on_miss(tmp_path: Path
     )
     llm_router = MagicMock()
     llm_router.route.return_value = None  # no plan → miss
+    verb_router = MagicMock()
+    verb_router.route.return_value = None  # no plan → miss
     feedback = CapturingFeedbackSink()
     dispatcher = MagicMock()
 
@@ -41,6 +43,7 @@ def test_process_utterance_emits_run_with_transcribe_span_on_miss(tmp_path: Path
         recorder=None,
         transcriber=transcriber,
         llm_router=llm_router,
+        verb_router=verb_router,
         dispatcher=dispatcher,
         registry=None,
         min_confidence=0.0,
@@ -53,6 +56,7 @@ def test_process_utterance_emits_run_with_transcribe_span_on_miss(tmp_path: Path
         store=store,
     )
 
+    daemon._transcriber_ready.set()
     daemon._process_utterance(np.zeros(16000, dtype=np.float32))
     _drain_store(store)
 

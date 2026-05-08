@@ -271,53 +271,6 @@ def test_rule_c1_timeout_ms_above_minimum_is_valid():
     assert errors == [], f"Expected no errors at timeout_ms=600, got: {errors}"
 
 
-# ---------------------------------------------------------------------------
-# Rule C2: speak.fuzzy_threshold range [0, 100] (ADR 0072)
-# ---------------------------------------------------------------------------
-
-
-def _cfg_with_speak_threshold(threshold: int) -> "Config":
-    from voice_commander.config import SpeakConfig
-
-    return replace(Config(), speak=SpeakConfig(fuzzy_threshold=threshold))
-
-
-def test_rule_c2_fuzzy_threshold_below_zero_is_invalid():
-    """fuzzy_threshold=-1 is below valid range → [rule_c2] error."""
-    cfg = _cfg_with_speak_threshold(-1)
-
-    errors = validate_config(cfg)
-
-    assert any("[rule_c2]" in e for e in errors), f"Expected [rule_c2] error, got: {errors}"
-    assert any("fuzzy_threshold" in e for e in errors), (
-        f"Expected 'fuzzy_threshold' in error, got: {errors}"
-    )
-
-
-def test_rule_c2_fuzzy_threshold_above_100_is_invalid():
-    """fuzzy_threshold=101 exceeds valid range → [rule_c2] error."""
-    cfg = _cfg_with_speak_threshold(101)
-
-    errors = validate_config(cfg)
-
-    assert any("[rule_c2]" in e for e in errors), f"Expected [rule_c2] error, got: {errors}"
-
-
-def test_rule_c2_fuzzy_threshold_at_boundaries_is_valid():
-    """fuzzy_threshold=0 and fuzzy_threshold=100 are both valid."""
-    for boundary in (0, 100):
-        cfg = _cfg_with_speak_threshold(boundary)
-        errors = validate_config(cfg)
-        assert errors == [], f"Expected no errors at fuzzy_threshold={boundary}, got: {errors}"
-
-
-def test_rule_c2_fuzzy_threshold_default_95_is_valid():
-    """Default fuzzy_threshold=95 passes validation."""
-    cfg = Config()
-    errors = validate_config(cfg)
-    assert not any("[rule_c2]" in e for e in errors), (
-        f"Default config should not trigger [rule_c2], got: {errors}"
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -29,8 +29,8 @@ def test_miss_returns_no_match():
 
 def test_single_step_ok_uses_rule():
     s = _summarizer()
-    out = _outcome([ToolCall("minimize", {})])
-    assert s.summarize(out) == "minimized window"
+    out = _outcome([ToolCall("press", {"combo": "ctrl+c"})])
+    assert s.summarize(out) == "copied"
 
 
 def test_chain_detector_wins_over_last_step_rule():
@@ -48,10 +48,10 @@ def test_chain_detector_wins_over_last_step_rule():
 def test_multi_step_all_in_rules_uses_last_step():
     steps = [
         ToolCall("focus", {"target": "notepad"}),
-        ToolCall("press", {"combo": "ctrl+v"}),
+        ToolCall("click", {}),
     ]
     s = _summarizer()
-    assert s.summarize(_outcome(steps)) == "pressed ctrl+v"
+    assert s.summarize(_outcome(steps)) == "clicked"
 
 
 def test_unknown_verb_uses_default_rule():
@@ -62,19 +62,19 @@ def test_unknown_verb_uses_default_rule():
 
 def test_user_command_in_rules():
     s = _summarizer()
-    assert s.summarize(_outcome([ToolCall("new_tab", {})])) == "opened new tab"
-    assert s.summarize(_outcome([ToolCall("copy", {})])) == "copied"
+    assert s.summarize(_outcome([ToolCall("scroll", {"direction": "up"})])) == "scrolled up"
+    assert s.summarize(_outcome([ToolCall("wait", {"ms": 500})])) == "waited 500ms"
 
 
 def test_error_returns_failed_step_name():
     s = _summarizer()
     out = _outcome(
-        [ToolCall("minimize", {})],
+        [ToolCall("focus", {"target": "notepad"})],
         status="error",
         failed_index=0,
         error_msg="FocusWindowError",
     )
-    assert s.summarize(out) == "minimize failed"
+    assert s.summarize(out) == "focus failed"
 
 
 def test_error_with_unknown_failed_step():
@@ -85,5 +85,5 @@ def test_error_with_unknown_failed_step():
 
 def test_error_with_no_failed_index_returns_generic():
     s = _summarizer()
-    out = _outcome([ToolCall("minimize", {})], status="error")
+    out = _outcome([ToolCall("focus", {"target": "notepad"})], status="error")
     assert s.summarize(out) == "command failed"

@@ -93,6 +93,8 @@ def _make_daemon(
         max_no_speech_prob=max_no_speech_prob,
         output_dir=output_dir,
     )
+    # Mock transcribers are always "ready" — simulate a completed background load.
+    daemon._transcriber_ready.set()
     return daemon, transcriber, llm_router, dispatcher, fb, verb_router
 
 
@@ -226,6 +228,7 @@ def test_llm_returns_none_triggers_miss(tmp_path):
         max_no_speech_prob=0.6,
         output_dir=str(tmp_path),
     )
+    daemon._transcriber_ready.set()
     daemon._merlin_mode = True  # force LLM path
 
     daemon._process_utterance(_DUMMY_AUDIO)
