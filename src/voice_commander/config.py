@@ -16,16 +16,13 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class HotkeyConfig:
     key: str = "scroll_lock"
-    # Default flips from "" to "ctrl_r" (ADR 0072): Right Ctrl is the Windows
-    # dictation hotkey, so one keypress toggles both the dictation app and
-    # voice-commander's speak-mode simultaneously. Set to "" to disable.
-    mute_key: str = "ctrl_r"
 
 
 @dataclass(frozen=True)
 class AudioConfig:
     channels: int = 1
     device: int = -1
+    device_name: str = ""  # stable identity for name-based re-resolution on index drift
     output_dir: str = "outputs"
 
 
@@ -35,25 +32,6 @@ class TranscriptionConfig:
     device: str = "cuda"
     compute_type: str = "float16"
     min_confidence: float = 0.30
-    # ADR 0073: backend selector. "local" → faster-whisper on CUDA (existing
-    # behaviour). "remote" → POST utterance WAV to a whisper.cpp server.
-    backend: str = "local"
-    remote_endpoint_url: str = ""
-    remote_timeout_ms: int = 5000
-
-    def __post_init__(self) -> None:
-        if self.backend not in ("local", "remote"):
-            raise ValueError(
-                f"transcription.backend must be 'local' or 'remote', got {self.backend!r}"
-            )
-        if self.backend == "remote" and not self.remote_endpoint_url:
-            raise ValueError(
-                "transcription.backend='remote' requires non-empty remote_endpoint_url"
-            )
-        if self.remote_timeout_ms <= 0:
-            raise ValueError(
-                f"transcription.remote_timeout_ms must be > 0, got {self.remote_timeout_ms}"
-            )
 
 
 @dataclass(frozen=True)
@@ -147,18 +125,6 @@ class PerceptionConfig:
 
 
 @dataclass(frozen=True)
-class SpeakConfig:
-    """Configuration for the speak-mode dictation toggle (ADR 0072).
-
-    ``fuzzy_threshold`` controls how closely a transcript must match the word
-    "speak" (via ``rapidfuzz.fuzz.ratio``) to trigger a speak-mode toggle.
-    Valid range: 0–100. Default 95 requires a near-exact match.
-    """
-
-    fuzzy_threshold: int = 95
-
-
-@dataclass(frozen=True)
 class ObservabilityConfig:
     enabled: bool = True
     keep_runs: int = 1000
@@ -180,7 +146,6 @@ class Config:
     sprite: SpriteConfig = field(default_factory=SpriteConfig)
     perception: PerceptionConfig = field(default_factory=PerceptionConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
-    speak: SpeakConfig = field(default_factory=SpeakConfig)
     # Per-field source strings for [llm], keyed by field name. Populated by
     # :meth:`load`; empty when the config is constructed directly. Consumed by
     # :func:`log_llm_sources` at daemon startup so every field's origin is
@@ -214,7 +179,6 @@ class Config:
             sprite=_section(SpriteConfig, raw.get("sprite", {})),
             perception=_section(PerceptionConfig, raw.get("perception", {})),
             observability=_section(ObservabilityConfig, raw.get("observability", {})),
-            speak=_section(SpeakConfig, raw.get("speak", {})),
             llm_sources=llm_sources,
         )
 
@@ -380,15 +344,12 @@ _USER_EDITABLE_SECTIONS: dict[str, set[str]] = {
         "focus_fuzzy_threshold",
         "open_fuzzy_threshold",
     },
-    "audio": {"channels", "device", "output_dir"},
+    "audio": {"channels", "device", "device_name", "output_dir"},
     "transcription": {
         "model_size",
         "device",
         "compute_type",
         "min_confidence",
-        "backend",
-        "remote_endpoint_url",
-        "remote_timeout_ms",
     },
 }
 
