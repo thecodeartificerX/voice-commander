@@ -135,13 +135,6 @@ def validate_config(cfg: Config) -> list[str]:
             f"the minimum allowed value of {_LLM_TIMEOUT_MIN_MS} ms"
         )
 
-    # Rule C2: speak.fuzzy_threshold must be in [0, 100].
-    if not (0 <= cfg.speak.fuzzy_threshold <= 100):
-        errors.append(
-            f"[rule_c2] speak.fuzzy_threshold={cfg.speak.fuzzy_threshold} is outside "
-            f"the valid range [0, 100]"
-        )
-
     return errors
 
 
