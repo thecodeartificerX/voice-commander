@@ -119,8 +119,180 @@ def test_empty_returns_none():
 
 
 def test_legacy_copy_no_longer_routes():
-    """Semantic verbs are deleted — user must author them as graphs."""
+    """Without a registry, no fallback path matches user-authored commands."""
     assert _router().route("copy") is None
+
+
+# ---------------------------------------------------------------------------
+# Registry-backed command routing
+# ---------------------------------------------------------------------------
+
+
+def _registry_with(name: str, *, origin: str = "command", enabled: bool = True):
+    from voice_commander.registry import ToolEntry, ToolRegistry
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolEntry(
+            name=name,
+            phrases=(),
+            func=lambda: None,
+            module="test",
+            docstring=None,
+            enabled=enabled,
+            origin=origin,
+        )
+    )
+    return reg
+
+
+def test_authored_command_routes_by_name():
+    reg = _registry_with("copy")
+    router = VerbRouter(build_default_rules(), registry=reg)
+    plan = router.route("copy")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="copy", kwargs={}),)
+
+
+def test_authored_workflow_routes_by_name():
+    reg = _registry_with("morning_routine", origin="workflow")
+    router = VerbRouter(build_default_rules(), registry=reg)
+    plan = router.route("morning routine")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="morning_routine", kwargs={}),)
+
+
+def test_disabled_command_does_not_route():
+    reg = _registry_with("copy", enabled=False)
+    router = VerbRouter(build_default_rules(), registry=reg)
+    assert router.route("copy") is None
+
+
+def test_primitive_origin_does_not_match_command_fallback():
+    """Primitives must continue going through the verb-rule path, not the
+    command-name fallback, so kwargs-from-tail behaviour is preserved."""
+    reg = _registry_with("press", origin="primitive")
+    router = VerbRouter(build_default_rules(), registry=reg)
+    plan = router.route("press ctrl+c")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="press", kwargs={"combo": "ctrl+c"}),)
+
+
+def test_unknown_word_still_returns_none_with_registry():
+    reg = _registry_with("copy")
+    router = VerbRouter(build_default_rules(), registry=reg)
+    assert router.route("xyzzy") is None
+
+
+def _registry_with_many(*names_and_origins: tuple[str, str]):
+    from voice_commander.registry import ToolEntry, ToolRegistry
+
+    reg = ToolRegistry()
+    for name, origin in names_and_origins:
+        reg.register(
+            ToolEntry(
+                name=name,
+                phrases=(),
+                func=lambda: None,
+                module="test",
+                docstring=None,
+                enabled=True,
+                origin=origin,  # type: ignore[arg-type]
+            )
+        )
+    return reg
+
+
+def test_multiword_command_routes_exactly():
+    reg = _registry_with_many(("close window", "command"))
+    router = VerbRouter(build_default_rules(), registry=reg)
+    plan = router.route("close window")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="close window", kwargs={}),)
+
+
+def test_longest_match_wins_over_bare_verb():
+    """Both 'close' and 'close window' registered. Saying 'close window'
+    must fire the more specific variant, not the bare default."""
+    reg = _registry_with_many(("close", "command"), ("close window", "command"))
+    router = VerbRouter(build_default_rules(), registry=reg)
+    plan = router.route("close window")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="close window", kwargs={}),)
+
+
+def test_bare_verb_routes_when_no_tail():
+    reg = _registry_with_many(("close", "command"), ("close window", "command"))
+    router = VerbRouter(build_default_rules(), registry=reg)
+    plan = router.route("close")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="close", kwargs={}),)
+
+
+def test_unknown_tail_does_not_fire_default():
+    """User said 'close tab' but only 'close' + 'close window' exist —
+    must miss, not fire bare 'close' with surprise extra tokens."""
+    reg = _registry_with_many(("close", "command"), ("close window", "command"))
+    router = VerbRouter(build_default_rules(), registry=reg)
+    assert router.route("close tab") is None
+
+
+def test_command_match_is_case_insensitive():
+    reg = _registry_with_many(("close window", "command"))
+    router = VerbRouter(build_default_rules(), registry=reg)
+    plan = router.route("Close Window.")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="close window", kwargs={}),)
+
+
+def test_underscore_in_name_matches_spoken_words():
+    """Storage names use underscores (a-z0-9_); voice arrives as words.
+    'close_window' must match the spoken transcript 'close window'."""
+    reg = _registry_with_many(("close_window", "command"))
+    router = VerbRouter(build_default_rules(), registry=reg)
+    plan = router.route("close window")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="close_window", kwargs={}),)
+
+
+def test_underscore_longest_match_beats_bare():
+    reg = _registry_with_many(("close", "command"), ("close_window", "command"))
+    router = VerbRouter(build_default_rules(), registry=reg)
+    plan = router.route("close window")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="close_window", kwargs={}),)
+
+
+def test_synonym_routes_to_command():
+    """Authors can register Whisper-friendly spellings via phrases/synonyms
+    so noisy transcripts route correctly."""
+    from voice_commander.registry import ToolEntry, ToolRegistry
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolEntry(
+            name="paste",
+            phrases=("p a c t",),
+            func=lambda: None,
+            module="test",
+            docstring=None,
+            enabled=True,
+            origin="command",
+        )
+    )
+    router = VerbRouter(build_default_rules(), registry=reg)
+    plan = router.route("P.A.C.T.")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="paste", kwargs={}),)
+
+
+def test_punctuation_in_command_name_match():
+    """Trailing/internal punct from Whisper must not block exact match."""
+    reg = _registry_with_many(("copy", "command"))
+    router = VerbRouter(build_default_rules(), registry=reg)
+    plan = router.route("Copy.")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="copy", kwargs={}),)
 
 
 def test_legacy_close_no_longer_routes():

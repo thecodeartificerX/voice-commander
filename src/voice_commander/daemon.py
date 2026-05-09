@@ -319,6 +319,10 @@ class StreamingDaemon:
 
             self._tracer.update_transcript(run.run_id, result.text)
             self._feedback.on_transcript(result.text, result.confidence)
+            self._publish(
+                "transcript",
+                {"text": result.text, "confidence": result.confidence},
+            )
 
             # Gate: word-count  (infrastructure noise — no plan_outcome)
             word_count = len(result.text.split())
@@ -798,7 +802,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         transcriber=transcriber,
         llm_router=llm_router,
         dispatcher=dispatcher,
-        verb_router=VerbRouter(build_default_rules()),
+        verb_router=VerbRouter(build_default_rules(), registry=registry),
         registry=registry,
         min_confidence=cfg.transcription.min_confidence,
         min_word_count=cfg.vad.gates.min_word_count,

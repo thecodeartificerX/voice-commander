@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .plan import Plan, ToolCall
+
+# Whisper occasionally renders short spoken words as initialisms with
+# embedded periods (e.g. "paste" → "P.A.C.T."). Normalise transcripts by
+# dropping every non-alphanumeric run so command lookup is tolerant of
+# punctuation noise.
+_PUNCT_RE = re.compile(r"[^a-z0-9 ]+")
+
+
+def _normalize_spoken(text: str) -> str:
+    cleaned = _PUNCT_RE.sub(" ", text.lower())
+    return " ".join(cleaned.split())
+
+if TYPE_CHECKING:
+    from .registry import ToolRegistry
 
 
 @dataclass(frozen=True)
@@ -32,17 +48,35 @@ class VerbRule:
 
 
 class VerbRouter:
-    def __init__(self, rules: tuple[VerbRule, ...]) -> None:
+    def __init__(
+        self,
+        rules: tuple[VerbRule, ...],
+        registry: "ToolRegistry | None" = None,
+    ) -> None:
         self._rules = {rule.name: rule for rule in rules}
         self._alias_map: dict[str, str] = {}
         for rule in rules:
             for alias in rule.aliases:
                 self._alias_map[alias] = rule.name
+        # Optional registry lookup so user-authored commands and workflows
+        # are routable by their first word without going through the LLM.
+        # The registry is mutable (hot-reload), so we hold a reference and
+        # query lazily on each utterance rather than snapshotting at init.
+        self._registry = registry
 
     def route(self, transcript: str) -> Plan | None:
         text = transcript.strip().rstrip(".,!?")
         if not text:
             return None
+
+        # 1. Try registered command / workflow names (multi-word allowed,
+        #    longest match wins). Lets the user author a "close" command
+        #    plus a "close window" variant and have voice route to the
+        #    correct graph deterministically.
+        registered = self._match_registered_command(text)
+        if registered is not None:
+            return registered
+
         head, _, tail = text.partition(" ")
         head = head.strip().lower()
         tail = tail.strip().rstrip(".,!?")
@@ -79,6 +113,59 @@ class VerbRouter:
             steps=(ToolCall(name=target.tool, kwargs=dict(target.kwargs)),),
             raw_response={"router": "verb", "verb": verb_name, "tail": tail},
         )
+
+    def _match_registered_command(self, text: str) -> Plan | None:
+        """Exact-match *text* against user-authored command / workflow names
+        (and their synonyms / phrases).
+
+        Names may contain spaces (``"close window"``). We try longest names
+        first so a more specific variant ("close window") wins over the bare
+        verb ("close") when the user said the longer form. Comparison is
+        case-insensitive on whitespace-collapsed, punctuation-stripped
+        tokens, so noisy Whisper outputs like "Copy." still match.
+
+        ``entry.phrases`` (graph synonyms) are matched too so authors can
+        register alternative spellings for words Whisper consistently
+        mistranscribes (e.g. ``synonyms = ["paste", "P.A.C.T."]``).
+
+        Returns ``None`` when no candidate matches — the caller falls
+        through to primitive verb routing.
+        """
+        if self._registry is None or not text:
+            return None
+        normalized = _normalize_spoken(text)
+        if not normalized:
+            return None
+        candidates = [
+            e
+            for e in self._registry.all()
+            if e.enabled and e.origin in ("command", "workflow")
+        ]
+        # Command names persist with underscores ("close_window") because the
+        # store enforces a-z0-9_ identifiers, but voice transcripts arrive as
+        # whitespace-separated words ("close window"). Treat underscores as
+        # word separators so authors don't have to choose between voice
+        # ergonomics and a valid storage name.
+        def _spoken(s: str) -> str:
+            return _normalize_spoken(s.replace("_", " "))
+
+        # (entry, spoken_phrase) pairs across name + synonyms.
+        pairs: list[tuple[object, str]] = []
+        for entry in candidates:
+            pairs.append((entry, _spoken(entry.name)))
+            for phrase in entry.phrases:
+                spoken = _spoken(phrase)
+                if spoken:
+                    pairs.append((entry, spoken))
+
+        pairs.sort(key=lambda p: len(p[1].split()), reverse=True)
+        for entry, spoken in pairs:
+            if spoken == normalized:
+                return Plan(
+                    steps=(ToolCall(name=entry.name, kwargs={}),),  # type: ignore[attr-defined]
+                    raw_response={"router": "verb", "verb": entry.name, "tail": ""},  # type: ignore[attr-defined]
+                )
+        return None
 
 
 def _coerce_wait_ms(tail: str) -> int:

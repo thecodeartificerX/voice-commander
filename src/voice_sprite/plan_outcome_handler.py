@@ -77,3 +77,22 @@ def handle_tool_fired(
             born_at_s=now_provider(),
         )
     )
+
+
+def handle_transcript(
+    data: dict[str, Any],
+    chat_log: ChatLog,
+    now_provider: Callable[[], float] = time.monotonic,
+) -> None:
+    """Append the recognised transcript so the user can see what was heard
+    before any routing / execution decision lands."""
+    text = data.get("text")
+    if not text:
+        return
+    chat_log.append(
+        ChatLogEntry(
+            text=f"“{str(text).strip()}”",
+            status="info",
+            born_at_s=now_provider(),
+        )
+    )

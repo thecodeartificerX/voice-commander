@@ -108,7 +108,11 @@ def main() -> None:
     # Chat-log + summarizer stack
     from .chat_log import ChatLog
     from .chat_log_renderer import ChatLogRenderer
-    from .plan_outcome_handler import handle_plan_outcome, handle_tool_fired
+    from .plan_outcome_handler import (
+        handle_plan_outcome,
+        handle_tool_fired,
+        handle_transcript,
+    )
 
     chat_log = ChatLog(
         max_lines=cfg.hud.max_lines,
@@ -216,6 +220,8 @@ def main() -> None:
                 bubble.show(data["name"])
         elif event_type == "plan_outcome":
             handle_plan_outcome(data, chat_log)
+        elif event_type == "transcript":
+            handle_transcript(data, chat_log)
 
     def on_disconnect() -> None:
         sm.force_crashed()

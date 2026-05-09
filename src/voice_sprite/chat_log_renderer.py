@@ -11,6 +11,7 @@ from .chat_log import ChatLog
 _COLOR_OK = (143, 215, 127)  # #8fd77f — success
 _COLOR_ERROR = (255, 118, 118)  # #ff7676 — error
 _COLOR_MISS = (255, 181, 98)  # #ffb562 — miss
+_COLOR_INFO = (180, 200, 230)  # #b4c8e6 — transcript / informational
 
 
 def _color_for_status(status: str) -> tuple[int, int, int]:
@@ -18,6 +19,8 @@ def _color_for_status(status: str) -> tuple[int, int, int]:
         return _COLOR_ERROR
     if status == "miss":
         return _COLOR_MISS
+    if status == "info":
+        return _COLOR_INFO
     return _COLOR_OK
 
 

@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from voice_sprite.chat_log import ChatLog
-from voice_sprite.plan_outcome_handler import handle_plan_outcome, handle_tool_fired
+from voice_sprite.plan_outcome_handler import (
+    handle_plan_outcome,
+    handle_tool_fired,
+    handle_transcript,
+)
 
 
 @pytest.fixture()
@@ -72,4 +76,22 @@ def test_tool_fired_appends_raw_name(chat_log: ChatLog) -> None:
 
 def test_tool_fired_no_name_is_noop(chat_log: ChatLog) -> None:
     handle_tool_fired({}, chat_log, now_provider=lambda: 1.0)
+    assert len(_entries(chat_log)) == 0
+
+
+def test_transcript_appends_info_entry(chat_log: ChatLog) -> None:
+    handle_transcript(
+        {"text": "press ctrl c", "confidence": 0.85},
+        chat_log,
+        now_provider=lambda: 1.0,
+    )
+    entries = _entries(chat_log)
+    assert len(entries) == 1
+    assert "press ctrl c" in entries[0].text
+    assert entries[0].status == "info"
+
+
+def test_transcript_empty_text_is_noop(chat_log: ChatLog) -> None:
+    handle_transcript({"text": ""}, chat_log, now_provider=lambda: 1.0)
+    handle_transcript({}, chat_log, now_provider=lambda: 1.0)
     assert len(_entries(chat_log)) == 0

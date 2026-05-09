@@ -7,7 +7,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Literal
 
-ChatLogStatus = Literal["ok", "error", "miss"]
+ChatLogStatus = Literal["ok", "error", "miss", "info"]
 
 
 @dataclass
