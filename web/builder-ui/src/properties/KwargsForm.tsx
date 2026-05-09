@@ -3,6 +3,11 @@ import { Input } from '@/components/ui/input'
 import { useGraphStore } from '@/store/graphStore'
 import { useSchemaStore } from '@/store/schemaStore'
 import type { ToolArgMeta } from '@/types/graph'
+import { KeyRecorder } from './KeyRecorder'
+
+// Refs whose `combo` arg should render the click-to-record key recorder
+// instead of a plain text input.
+const KEY_RECORDER_REFS: ReadonlySet<string> = new Set(['pipeline.press'])
 
 interface KwargsFormProps {
   nodeId: string
@@ -120,7 +125,14 @@ export function KwargsForm({ nodeId, kwargs, nodeRef }: KwargsFormProps) {
               <span className="ml-1 text-muted-foreground/60">({typeLabel})</span>
               {required ? <span className="ml-1 text-red-400">*</span> : null}
             </label>
-            {kind === 'bool' ? (
+            {KEY_RECORDER_REFS.has(nodeRef) && key === 'combo' ? (
+              <KeyRecorder
+                value={typeof value === 'string' ? value : ''}
+                onChange={(combo) =>
+                  updateKwarg(key, combo === '' ? { value: undefined, drop: true } : { value: combo, drop: false })
+                }
+              />
+            ) : kind === 'bool' ? (
               <input
                 type="checkbox"
                 checked={value === true}

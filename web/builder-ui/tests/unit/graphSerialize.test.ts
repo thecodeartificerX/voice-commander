@@ -37,7 +37,7 @@ const CONTROL_GRAPH: Graph = {
 const DATA_GRAPH: Graph = {
   ...meta(),
   nodes: [
-    { id: 'a', ref: 'perception.clipboard', kwargs: {}, pos: [0, 0] },
+    { id: 'a', ref: 'pipeline.read_clipboard', kwargs: {}, pos: [0, 0] },
     { id: 'b', ref: 'shell.notify', kwargs: {}, pos: [100, 0] },
   ],
   edges: [{ from: 'a.data', to: 'b.msg' }],
@@ -153,7 +153,7 @@ describe('graphSerialize — F-M2 round-trip', () => {
         ...meta(),
         description: 'Test graph',
         nodes: [
-          { id: 'a', ref: 'perception.clipboard', kwargs: {}, pos: [0, 0] },
+          { id: 'a', ref: 'pipeline.read_clipboard', kwargs: {}, pos: [0, 0] },
           { id: 'b', ref: 'shell.notify', kwargs: {}, pos: [100, 0] },
         ],
         edges: [{ from: 'a.data', to: 'b.msg' }],

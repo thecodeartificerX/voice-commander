@@ -17,6 +17,18 @@ if TYPE_CHECKING:
     from .tool_metadata import ArgMetadata
 
 
+# Primitive registry names whose semantics are observation-only (no
+# focus / no keystrokes). Builder UI groups these under a separate
+# "Perception" palette section while still using their canonical
+# ``pipeline.<name>`` refs at runtime — see ADR 0066.
+PERCEPTION_PRIMITIVE_NAMES: frozenset[str] = frozenset({
+    "read_clipboard",
+    "get_active_window_title",
+    "get_cursor_pos",
+    "ocr_region",
+})
+
+
 @dataclass
 class ToolSchemaError(Exception):
     """Raised when a function parameter cannot be mapped to JSON schema."""

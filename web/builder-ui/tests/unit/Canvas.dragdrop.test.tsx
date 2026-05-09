@@ -148,13 +148,13 @@ describe('Canvas drag-and-drop', () => {
     expect(s.nodes[0]?.data).toEqual({ ref: 'control.branch', kwargs: {} })
   })
 
-  it('drop with perception.* ref produces type=perception', () => {
+  it('drop with a perception primitive ref produces type=perception', () => {
     const { getByTestId } = render(<Canvas />)
     const canvas = getByTestId('rf-canvas')
 
     fireDropAt(
       canvas,
-      JSON.stringify({ ref: 'perception.ocr', kind: 'perception' }),
+      JSON.stringify({ ref: 'pipeline.ocr_region', kind: 'perception' }),
       0,
       0,
     )

@@ -125,10 +125,20 @@ export function serializeGraph(
   }
 }
 
+// Names of perception primitives (registered as `pipeline.<name>` but
+// rendered as a separate Perception node category in the Builder).
+// Mirror of `PERCEPTION_PRIMITIVE_NAMES` in src/voice_commander/tool_schema.py.
+const PERCEPTION_PIPELINE_NAMES = new Set([
+  'pipeline.read_clipboard',
+  'pipeline.get_active_window_title',
+  'pipeline.get_cursor_pos',
+  'pipeline.ocr_region',
+])
+
 export function refToNodeType(ref: string): string {
   if (ref === 'control.branch') return 'branch'
   if (ref === 'control.foreach') return 'foreach'
-  if (ref.startsWith('perception.')) return 'perception'
+  if (PERCEPTION_PIPELINE_NAMES.has(ref)) return 'perception'
   if (ref.startsWith('command.')) return 'command'
   if (ref.startsWith('workflow.')) return 'workflow'
   return 'tool'

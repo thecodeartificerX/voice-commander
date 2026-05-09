@@ -10,10 +10,10 @@ interface PerceptionNodeData {
 }
 
 const PERCEPTION_LABELS: Record<string, string> = {
-  'perception.ocr': 'OCR region',
-  'perception.clipboard': 'Read clipboard',
-  'perception.window': 'Window title',
-  'perception.cursor': 'Cursor pos',
+  'pipeline.ocr_region': 'OCR region',
+  'pipeline.read_clipboard': 'Read clipboard',
+  'pipeline.get_active_window_title': 'Window title',
+  'pipeline.get_cursor_pos': 'Cursor pos',
 }
 
 export const PerceptionNode = memo(function PerceptionNode({

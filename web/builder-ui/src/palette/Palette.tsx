@@ -13,15 +13,17 @@ interface PaletteEntry {
 
 interface PaletteData {
   pipeline: PaletteEntry[]
+  perception: PaletteEntry[]
   commands: PaletteEntry[]
   workflows: PaletteEntry[]
 }
 
 /**
- * Hardcoded schemas for sections the backend doesn't enumerate
- * (control + perception). Pipeline / commands / workflows come from
- * `/graph/palette` directly. Kept in this module so the Palette is the
- * single source of truth that primes the schema store.
+ * Hardcoded schemas for the Control section the backend doesn't enumerate.
+ * Pipeline / perception / commands / workflows come from `/graph/palette`
+ * directly so there's a single source of truth — perception primitives
+ * use the same canonical `pipeline.<name>` refs as Pipeline entries; the
+ * backend just partitions them into their own list for display.
  */
 const CONTROL_SCHEMAS: ToolSchema[] = [
   {
@@ -38,48 +40,22 @@ const CONTROL_SCHEMAS: ToolSchema[] = [
   },
 ]
 
-const PERCEPTION_SCHEMAS: ToolSchema[] = [
-  {
-    ref: 'perception.clipboard',
-    name: 'clipboard',
-    description: 'Read clipboard text',
-    args: {},
-  },
-  {
-    ref: 'perception.window',
-    name: 'window',
-    description: 'Get active window title',
-    args: {},
-  },
-  {
-    ref: 'perception.cursor',
-    name: 'cursor',
-    description: 'Get cursor position',
-    args: {},
-  },
-  {
-    ref: 'perception.ocr',
-    name: 'ocr',
-    description: 'OCR a screen region',
-    args: {
-      x: { type: 'int', required: true },
-      y: { type: 'int', required: true },
-      w: { type: 'int', required: true },
-      h: { type: 'int', required: true },
-    },
-  },
-]
-
 function buildSchemas(data: PaletteData): ToolSchema[] {
   const schemas: ToolSchema[] = []
 
-  for (const item of data.pipeline) {
-    schemas.push({
-      ref: item.ref ?? `pipeline.${item.name}`,
-      name: item.name,
-      ...(item.description !== undefined ? { description: item.description } : {}),
-      args: item.args ?? {},
-    })
+  const primitiveSections: Array<{ items: PaletteEntry[]; prefix: string }> = [
+    { items: data.pipeline, prefix: 'pipeline' },
+    { items: data.perception, prefix: 'pipeline' },
+  ]
+  for (const { items, prefix } of primitiveSections) {
+    for (const item of items) {
+      schemas.push({
+        ref: item.ref ?? `${prefix}.${item.name}`,
+        name: item.name,
+        ...(item.description !== undefined ? { description: item.description } : {}),
+        args: item.args ?? {},
+      })
+    }
   }
   for (const item of data.commands) {
     schemas.push({
@@ -97,7 +73,7 @@ function buildSchemas(data: PaletteData): ToolSchema[] {
       args: item.args ?? {},
     })
   }
-  schemas.push(...CONTROL_SCHEMAS, ...PERCEPTION_SCHEMAS)
+  schemas.push(...CONTROL_SCHEMAS)
   return schemas
 }
 
@@ -122,7 +98,7 @@ export function Palette() {
   const sections: Array<{ title: string; items: PaletteEntry[]; kind: string }> = [
     { title: 'Commands', items: data.commands, kind: 'command' },
     { title: 'Workflows', items: data.workflows, kind: 'workflow' },
-    { title: 'Pipeline', items: data.pipeline, kind: 'tool' },
+    { title: 'Primitives', items: data.pipeline, kind: 'tool' },
     {
       title: 'Control',
       items: [
@@ -131,16 +107,7 @@ export function Palette() {
       ],
       kind: 'control',
     },
-    {
-      title: 'Perception',
-      items: [
-        { name: 'clipboard', ref: 'perception.clipboard', description: 'Read clipboard text' },
-        { name: 'window', ref: 'perception.window', description: 'Get active window title' },
-        { name: 'cursor', ref: 'perception.cursor', description: 'Get cursor position' },
-        { name: 'ocr', ref: 'perception.ocr', description: 'OCR a screen region' },
-      ],
-      kind: 'perception',
-    },
+    { title: 'Perception', items: data.perception, kind: 'perception' },
   ]
 
   return (

@@ -94,20 +94,38 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
     def palette() -> dict[str, Any]:
         """``GET /graph/palette`` — return the node palette for the builder canvas.
 
-        Response keys: ``pipeline`` (internal primitives), ``commands``, ``workflows``,
-        ``control`` (branch/foreach shapes), ``value`` (constant/input/output nodes).
+        Response keys: ``pipeline`` (action primitives), ``perception``
+        (read-only observation primitives — same registry origin as pipeline,
+        partitioned out so the Builder UI can render them as a separate
+        category without duplicating refs), ``commands``, ``workflows``,
+        ``control`` (branch/foreach shapes), ``value`` (constant/input/output
+        nodes).
         """
-        from voice_commander.tool_schema import describe_tool_for_builder
+        from voice_commander.tool_schema import (
+            PERCEPTION_PRIMITIVE_NAMES,
+            describe_tool_for_builder,
+        )
 
-        pipeline = [
-            describe_tool_for_builder(e)
-            for e in ctx.registry.all()
-            if e.internal and e.origin == "primitive" and e.enabled and not e.system
-        ]
+        pipeline: list[dict[str, Any]] = []
+        perception: list[dict[str, Any]] = []
+        for e in ctx.registry.all():
+            # Builder palette shows every user-composable primitive,
+            # regardless of LLM visibility. ``internal`` only governs
+            # whether the LLM tool list sees it; ``system`` hides
+            # registry-internal hooks (e.g. ``no_match``) from all UI
+            # surfaces.
+            if not (e.origin == "primitive" and e.enabled and not e.system):
+                continue
+            descriptor = describe_tool_for_builder(e)
+            if e.name in PERCEPTION_PRIMITIVE_NAMES:
+                perception.append(descriptor)
+            else:
+                pipeline.append(descriptor)
         commands = [_describe_graph(g) for g in ctx.command_store.load_all().values()]
         workflows = [_describe_graph(g) for g in ctx.workflow_store.load_all().values()]
         return {
             "pipeline": pipeline,
+            "perception": perception,
             "commands": commands,
             "workflows": workflows,
             "control": {

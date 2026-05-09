@@ -126,6 +126,9 @@ settle_ms = 0
 llm_only = true
 # ``no_match`` stays LLM-visible — it is the only non-command tool the LLM sees.
 internal = false
+# Hide from user-facing surfaces (Builder palette, /page/primitives, /api/tools);
+# this is the LLM-only escape hatch, not a primitive a user can compose with.
+system = true
 
 [tools.no_match.args.reason]
 description = "Brief explanation of why no command matched."

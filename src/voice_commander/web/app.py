@@ -114,9 +114,13 @@ def create_app(
     @app.get("/page/primitives", response_class=HTMLResponse)
     async def page_primitives(request: Request) -> HTMLResponse:
         """``GET /page/primitives`` — render the tools/primitives page
-        with tools grouped by category. System tools are excluded.
+        with tools grouped by category. System tools and graph-backed
+        commands/workflows are excluded so the Primitives tab shows
+        only the underlying primitive verb catalog.
         """
-        tools = [t for t in registry.all() if not t.system]
+        tools = [
+            t for t in registry.all() if not t.system and t.origin == "primitive"
+        ]
         grouped: dict[str, list[object]] = {}
         for t in tools:
             grouped.setdefault(t.category, []).append(t)
@@ -128,10 +132,12 @@ def create_app(
 
     @app.get("/api/tools")
     async def api_tools() -> JSONResponse:
-        """``GET /api/tools`` — return JSON list of non-system tools for the Builder UI.
+        """``GET /api/tools`` — return JSON list of primitive tools.
 
-        System tools (``system = true``) are excluded so infrastructure primitives
-        like ``speak`` do not appear in the React Flow palette or other UI surfaces.
+        Only ``origin == "primitive"`` and ``system == false`` entries are
+        included so the Primitives tab and any consumer of this endpoint
+        sees the verb catalog without graph-backed commands/workflows
+        leaking in.
         """
         return JSONResponse(
             [
@@ -145,7 +151,7 @@ def create_app(
                     "llm_only": t.llm_only,
                 }
                 for t in registry.all()
-                if not t.system
+                if not t.system and t.origin == "primitive"
             ]
         )
 

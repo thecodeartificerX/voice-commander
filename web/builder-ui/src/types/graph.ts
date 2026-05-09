@@ -64,8 +64,8 @@ export interface ToolArgMeta {
 /**
  * Schema describing a single tool/command/workflow/control/perception node.
  * `ref` is the canonical drag ref (e.g. `pipeline.wait`, `command.copy`,
- * `control.branch`, `perception.ocr`). The PropertiesPane looks up a node's
- * schema by its `ref` to render argument inputs.
+ * `control.branch`, `pipeline.ocr_region`). The PropertiesPane looks up a
+ * node's schema by its `ref` to render argument inputs.
  */
 export interface ToolSchema {
   ref: string
