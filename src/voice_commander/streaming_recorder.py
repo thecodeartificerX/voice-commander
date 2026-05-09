@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import enum
 import logging
 import queue
@@ -17,6 +18,49 @@ from .vad_gate import VADGate
 logger = logging.getLogger(__name__)
 
 _VAD_FRAME_SIZE = 512  # samples at 16 kHz fed to VADGate per call
+
+
+def _resolve_device_by_name(saved_index: int | None, device_name: str) -> int | None:
+    """Return the current PortAudio index for *device_name*, or *saved_index* as fallback.
+
+    Fast path: if the device at *saved_index* still has the right name, return it
+    immediately. Slow path: scan all input devices for a name match. If nothing
+    matches, log a warning and return ``None`` (PortAudio system default).
+    All sd exceptions are caught; returns *saved_index* on unexpected error.
+    """
+    if not device_name:
+        return saved_index
+    try:
+        devices = sd.query_devices()
+        # Fast path: check saved index still points to the right name.
+        if saved_index is not None:
+            try:
+                info = devices[saved_index]
+                if info["name"].strip().lower() == device_name.strip().lower():
+                    return saved_index
+            except (IndexError, KeyError):
+                pass
+        # Scan all input devices.
+        for idx, dev in enumerate(devices):
+            if dev.get("max_input_channels", 0) > 0:
+                if dev["name"].strip().lower() == device_name.strip().lower():
+                    if idx != saved_index:
+                        logger.info(
+                            "StreamingRecorder: '%s' moved index %s → %d",
+                            device_name, saved_index, idx,
+                        )
+                    return idx
+        logger.warning(
+            "StreamingRecorder: device '%s' not found; falling back to system default",
+            device_name,
+        )
+        return None
+    except Exception:
+        logger.exception(
+            "StreamingRecorder: device name resolution error; using saved index %s",
+            saved_index,
+        )
+        return saved_index
 
 
 class _SessionState(enum.Enum):
@@ -63,12 +107,14 @@ class StreamingRecorder:
         vad_gate: VADGate,
         utterance_sink: Callable[[npt.NDArray[np.float32]], None],
         vad_sample_rate: int = 16000,
+        device_name: str = "",
     ) -> None:
         self._device = device if device is not None and device >= 0 else None
         self._channels = channels
         self._vad_gate = vad_gate
         self._utterance_sink = utterance_sink
         self._vad_sample_rate = vad_sample_rate
+        self._device_name = device_name
 
         self._state = _SessionState.IDLE
         self._state_lock = threading.Lock()
@@ -89,24 +135,109 @@ class StreamingRecorder:
             return self._state is _SessionState.OPEN
 
     def _teardown(self) -> None:
+        # First pass: close the stream that was open when _teardown was called.
         if self._stream is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._stream.stop()
+            with contextlib.suppress(Exception):
                 self._stream.close()
-            except Exception:
-                logger.exception("StreamingRecorder: error stopping stream")
-            finally:
-                self._stream = None
+            self._stream = None
 
         self._raw_q.put(None)
 
         if self._vad_thread is not None:
             self._vad_thread.join(timeout=5.0)
             if self._vad_thread.is_alive():
-                logger.warning("StreamingRecorder: VAD worker thread did not exit within 5 s")
+                logger.warning("StreamingRecorder: VAD worker did not exit within 5 s")
             self._vad_thread = None
 
+        # Second pass: close any stream opened by _attempt_stream_recovery()
+        # between the first pass and the VAD thread exit.
+        if self._stream is not None:
+            with contextlib.suppress(Exception):
+                self._stream.stop()
+            with contextlib.suppress(Exception):
+                self._stream.close()
+            self._stream = None
+
         self._resampler = None
+
+    def _attempt_stream_recovery(self) -> bool:
+        """Close the dead stream and reopen it on the VAD worker thread.
+
+        Returns ``True`` if a new stream is running, ``False`` if recovery
+        failed or the session is already being torn down.
+
+        Thread-safety contract: called only from the VAD worker thread.
+        Does NOT call ``_teardown()``; that is ``close_session()``'s domain.
+        The second-pass stream close in ``_teardown()`` handles any stream
+        opened here that the first pass missed.
+        """
+        with self._state_lock:
+            if self._state is not _SessionState.OPEN:
+                logger.info(
+                    "StreamingRecorder: skipping recovery — state is %s",
+                    self._state.value,
+                )
+                return False
+
+        logger.warning("StreamingRecorder: attempting mid-session stream recovery")
+
+        # Close dead stream without going through _teardown().
+        old_stream, self._stream = self._stream, None
+        if old_stream is not None:
+            with contextlib.suppress(Exception):
+                old_stream.stop()
+            with contextlib.suppress(Exception):
+                old_stream.close()
+
+        # Drain stale audio. Stop immediately on a None sentinel (teardown in
+        # progress) — restore it so _vad_loop can exit normally.
+        while True:
+            try:
+                item = self._raw_q.get_nowait()
+            except queue.Empty:
+                break
+            if item is None:
+                self._raw_q.put(None)
+                logger.info("StreamingRecorder: recovery aborted — teardown in progress")
+                return False
+
+        # Re-resolve device by name before reopening.
+        resolved = _resolve_device_by_name(self._device, self._device_name)
+        if resolved != self._device:
+            logger.info(
+                "StreamingRecorder: recovery resolved index %s → %s",
+                self._device, resolved,
+            )
+            self._device = resolved
+
+        try:
+            device_info: Any = sd.query_devices(self._device)
+            native_rate = int(device_info["default_samplerate"])
+            self._resampler = Resampler(src_rate=native_rate, dst_rate=self._vad_sample_rate)
+            self._vad_gate.reset()
+            # Replace queue: old stream is stopped so its callback is no longer
+            # running; new stream's callback references self._raw_q at call time.
+            self._raw_q = queue.Queue(maxsize=64)
+            new_stream = sd.InputStream(
+                samplerate=native_rate,
+                channels=self._channels,
+                dtype="float32",
+                device=self._device,
+                callback=self._on_audio,
+            )
+            new_stream.start()
+            self._stream = new_stream
+            logger.info(
+                "StreamingRecorder: recovery succeeded (device=%s rate=%d)",
+                self._device, native_rate,
+            )
+            return True
+        except Exception:
+            logger.exception("StreamingRecorder: recovery failed")
+            self._stream = None
+            return False
 
     def open_session(self) -> None:
         """Open the audio stream and start the VAD worker thread.
@@ -128,6 +259,15 @@ class StreamingRecorder:
             raise RuntimeError("Cannot open session: previous VAD worker thread is still alive")
 
         try:
+            # Resolve device by name; updates self._device if the index has shifted.
+            resolved = _resolve_device_by_name(self._device, self._device_name)
+            if resolved != self._device:
+                logger.info(
+                    "StreamingRecorder: device index updated %s → %s (name=%r)",
+                    self._device, resolved, self._device_name,
+                )
+                self._device = resolved
+
             # Query the device's native sample rate (WASAPI only accepts it).
             device_info: Any = sd.query_devices(self._device)
             native_rate = int(device_info["default_samplerate"])
@@ -264,9 +404,29 @@ class StreamingRecorder:
                     consecutive_errors,
                 )
                 if consecutive_errors >= 5:
-                    logger.critical(
-                        "StreamingRecorder: VAD worker exceeded 5 consecutive errors; aborting",
-                    )
-                    break
+                    buf = np.empty(0, dtype=np.float32)
+                    if self._attempt_stream_recovery():
+                        # Re-check state: close_session() may have set CLOSING while
+                        # we were recovering. The sentinel is on the OLD queue; we
+                        # must self-terminate to unblock _teardown()'s join().
+                        with self._state_lock:
+                            current_state = self._state
+                        if current_state is not _SessionState.OPEN:
+                            logger.info(
+                                "StreamingRecorder: session closed during recovery; exiting"
+                            )
+                            while True:
+                                try:
+                                    self._raw_q.get_nowait()
+                                except queue.Empty:
+                                    break
+                            break
+                        logger.info("StreamingRecorder: recovery succeeded; resuming")
+                        consecutive_errors = 0
+                    else:
+                        logger.critical(
+                            "StreamingRecorder: recovery failed; aborting VAD worker"
+                        )
+                        break
 
         logger.debug("VAD worker exited")

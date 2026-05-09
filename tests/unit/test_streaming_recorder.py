@@ -89,7 +89,7 @@ class MockVADGate:
         self._count = 0
 
 
-def _make_recorder(monkeypatch, *, vad_gate=None, utterance_sink=None, native_rate=48000.0):
+def _make_recorder(monkeypatch, *, vad_gate=None, utterance_sink=None, native_rate=48000.0, device_name=""):
     """Construct a StreamingRecorder with all hardware patched out."""
     from voice_commander.streaming_recorder import StreamingRecorder
 
@@ -108,6 +108,7 @@ def _make_recorder(monkeypatch, *, vad_gate=None, utterance_sink=None, native_ra
         channels=1,
         vad_gate=vad_gate,
         utterance_sink=utterance_sink,
+        device_name=device_name,
     )
     return recorder, stream_instances
 
@@ -391,3 +392,238 @@ def test_orphaned_vad_thread_blocks_new_session(monkeypatch):
     finally:
         barrier.set()  # unblock the orphan thread so the test exits cleanly
         orphan.join(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# Device name resolution tests
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_by_name_fast_path(monkeypatch):
+    """Saved index still points to the correct device — return it immediately."""
+    from voice_commander.streaming_recorder import _resolve_device_by_name
+
+    fake_devices = [
+        {"name": "Speakers", "max_input_channels": 0, "default_samplerate": 48000.0},
+        {"name": "Headset Mic", "max_input_channels": 1, "default_samplerate": 16000.0},
+    ]
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_devices",
+        lambda device=None: fake_devices if device is None else fake_devices[device],
+    )
+
+    result = _resolve_device_by_name(1, "Headset Mic")
+    assert result == 1
+
+
+def test_resolve_by_name_drift(monkeypatch):
+    """Device moved to a new index — return the new index."""
+    from voice_commander.streaming_recorder import _resolve_device_by_name
+
+    fake_devices = [
+        {"name": "Speakers", "max_input_channels": 0, "default_samplerate": 48000.0},
+        {"name": "USB Audio", "max_input_channels": 1, "default_samplerate": 48000.0},
+        {"name": "Headset Mic", "max_input_channels": 1, "default_samplerate": 16000.0},
+    ]
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_devices",
+        lambda device=None: fake_devices if device is None else fake_devices[device],
+    )
+
+    # Saved index 0 points to "Speakers", but we want "Headset Mic" which is now at 2.
+    result = _resolve_device_by_name(0, "Headset Mic")
+    assert result == 2
+
+
+def test_resolve_by_name_not_found(monkeypatch):
+    """Device not in list — return None (system default fallback)."""
+    from voice_commander.streaming_recorder import _resolve_device_by_name
+
+    fake_devices = [
+        {"name": "Speakers", "max_input_channels": 0, "default_samplerate": 48000.0},
+    ]
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_devices",
+        lambda device=None: fake_devices if device is None else fake_devices[device],
+    )
+
+    result = _resolve_device_by_name(0, "Headset Mic")
+    assert result is None
+
+
+def test_resolve_by_name_empty_name(monkeypatch):
+    """Empty device_name — return saved_index without querying devices."""
+    from voice_commander.streaming_recorder import _resolve_device_by_name
+
+    queried = []
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_devices",
+        lambda device=None: queried.append(device) or [],
+    )
+
+    result = _resolve_device_by_name(5, "")
+    assert result == 5
+    assert queried == [], "sd.query_devices must not be called when device_name is empty"
+
+
+def test_open_session_uses_resolved_device_on_drift(monkeypatch):
+    """open_session() must open the InputStream with the resolved (current) index."""
+    from voice_commander.streaming_recorder import StreamingRecorder
+
+    # Device list: "Headset Mic" is at index 2, not the saved index 0.
+    fake_devices = [
+        {"name": "Speakers", "max_input_channels": 0, "default_samplerate": 48000.0},
+        {"name": "USB Audio", "max_input_channels": 1, "default_samplerate": 48000.0},
+        {"name": "Headset Mic", "max_input_channels": 1, "default_samplerate": 16000.0},
+    ]
+
+    device_args_seen: list = []
+
+    def fake_query_devices(device=None):
+        device_args_seen.append(device)
+        if device is None:
+            return fake_devices
+        return fake_devices[device]
+
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_devices",
+        fake_query_devices,
+    )
+
+    stream_device_args: list = []
+
+    class TrackingInputStream:
+        def __init__(self, **kwargs):
+            stream_device_args.append(kwargs.get("device"))
+            self.callback = kwargs.get("callback")
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.InputStream",
+        TrackingInputStream,
+    )
+    monkeypatch.setattr("voice_commander.streaming_recorder.Resampler", MockResampler)
+
+    recorder = StreamingRecorder(
+        device=0,                # stale saved index
+        channels=1,
+        vad_gate=MockVADGate(),
+        utterance_sink=lambda _: None,
+        device_name="Headset Mic",
+    )
+    recorder.open_session()
+
+    # The recorder's internal _device must have been updated to the resolved index.
+    assert recorder._device == 2, f"Expected device=2, got {recorder._device}"
+    # The InputStream must have been opened with the resolved index.
+    assert stream_device_args == [2], f"Expected InputStream(device=2), got {stream_device_args}"
+
+    recorder.close_session()
+
+
+def test_recovery_aborts_when_session_closing(monkeypatch):
+    """_attempt_stream_recovery() returns False when state is not OPEN."""
+    from voice_commander.streaming_recorder import _SessionState
+
+    recorder, _ = _make_recorder(monkeypatch)
+    recorder.open_session()
+
+    # Forcibly set state to CLOSING to simulate close_session() in progress.
+    with recorder._state_lock:
+        recorder._state = _SessionState.CLOSING
+
+    result = recorder._attempt_stream_recovery()
+    assert result is False
+
+    # Clean up — manually reset state and stream to allow gc without errors.
+    with recorder._state_lock:
+        recorder._state = _SessionState.IDLE
+    recorder._stream = None
+    recorder._vad_thread = None
+    recorder._resampler = None
+
+
+def test_recovery_aborts_on_sentinel_in_queue(monkeypatch):
+    """If a None sentinel is found while draining, recovery aborts and restores it."""
+    recorder, _ = _make_recorder(monkeypatch)
+    recorder.open_session()
+
+    # Place a sentinel on the queue (simulates _teardown() in progress).
+    recorder._raw_q.put(None)
+
+    result = recorder._attempt_stream_recovery()
+
+    assert result is False
+    # The sentinel must be back on the queue so _vad_loop can see it.
+    assert recorder._raw_q.get_nowait() is None
+
+    # Clean up.
+    with recorder._state_lock:
+        from voice_commander.streaming_recorder import _SessionState
+        recorder._state = _SessionState.IDLE
+    recorder._stream = None
+    recorder._vad_thread = None
+    recorder._resampler = None
+
+
+def test_recovery_succeeds_and_opens_new_stream(monkeypatch):
+    """_attempt_stream_recovery() opens a fresh stream and returns True."""
+    stream_instances: list = []
+
+    class TrackingInputStream:
+        def __init__(self, **kwargs):
+            self.callback = kwargs.get("callback")
+            self._closed = False
+            stream_instances.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def close(self):
+            self._closed = True
+
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_devices",
+        lambda device=None: {"default_samplerate": 48000.0},
+    )
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.InputStream",
+        TrackingInputStream,
+    )
+    monkeypatch.setattr("voice_commander.streaming_recorder.Resampler", MockResampler)
+
+    from voice_commander.streaming_recorder import StreamingRecorder
+
+    recorder = StreamingRecorder(
+        device=None,
+        channels=1,
+        vad_gate=MockVADGate(),
+        utterance_sink=lambda _: None,
+    )
+    recorder.open_session()
+    assert len(stream_instances) == 1
+
+    # Simulate the first stream dying.
+    dead_stream = stream_instances[0]
+
+    result = recorder._attempt_stream_recovery()
+
+    assert result is True
+    # A second InputStream must have been opened.
+    assert len(stream_instances) == 2
+    # The old stream should have been stopped (closed by recovery cleanup).
+    # The new stream should be active.
+    assert recorder._stream is stream_instances[1]
+
+    recorder.close_session()
