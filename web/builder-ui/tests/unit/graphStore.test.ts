@@ -86,6 +86,20 @@ describe('graphStore — F-H2 dirty semantics', () => {
     expect(useGraphStore.getState().dirty).toBe(false)
     expect(useGraphStore.getState().selectedNodeId).toBe('n1')
   })
+
+  it('setSynonyms updates graphMeta.synonyms and flips dirty', () => {
+    useGraphStore.getState().setSynonyms(['pact', 'paste that'])
+    const s = useGraphStore.getState()
+    expect(s.graphMeta?.synonyms).toEqual(['pact', 'paste that'])
+    expect(s.dirty).toBe(true)
+  })
+
+  it('setDescription updates graphMeta.description and flips dirty', () => {
+    useGraphStore.getState().setDescription('does the thing')
+    const s = useGraphStore.getState()
+    expect(s.graphMeta?.description).toBe('does the thing')
+    expect(s.dirty).toBe(true)
+  })
 })
 
 describe('graphStore — draft / new-graph flow', () => {
@@ -223,6 +237,32 @@ describe('graphStore — Issue #95: load() must strip nodes/edges from graphMeta
       expect(graphMeta).not.toHaveProperty('edges')
       expect(graphMeta?.name).toBe('my_cmd')
       expect(graphMeta?.schema_version).toBe(1)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('load() normalises missing synonyms to []', async () => {
+    const backendGraph = {
+      schema_version: 1,
+      name: 'legacy_cmd',
+      kind: 'command',
+      description: '',
+      enabled: true,
+      llm_visible: true,
+      inputs: [],
+      // synonyms key intentionally absent — legacy graph
+      nodes: [],
+      edges: [],
+    }
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify(backendGraph), { status: 200 }),
+    )
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    try {
+      await useGraphStore.getState().load('command', 'legacy_cmd')
+      expect(useGraphStore.getState().graphMeta?.synonyms).toEqual([])
     } finally {
       globalThis.fetch = originalFetch
     }

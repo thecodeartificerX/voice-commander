@@ -848,7 +848,7 @@ the canonical DAG schema. Returns the count of migrated graphs. Invoked by
 
 ## 16. Builder UI
 
-The React SPA node-graph canvas served at `/page/builder`. See ADRs 0071 (React SPA), 0078 (palette partition), 0077 (press parser).
+The React SPA node-graph canvas served at `/page/builder`. See ADRs 0071 (React SPA), 0078 (palette partition), 0077 (press parser), 0080 (graph settings panel).
 
 ### Technology stack
 
@@ -878,6 +878,15 @@ Returns JSON with six top-level keys: `pipeline` (action primitives), `perceptio
 ### KeyRecorder widget
 
 `web/builder-ui/src/properties/KeyRecorder.tsx` — clicks-to-record key combos for `press(combo)` arguments. Includes a type-mode override (✏ toggle) for OS-swallowed keys (e.g. Win key on Windows) where recording is impossible. See ADR 0077.
+
+### Graph settings panel + synonyms editor
+
+`web/builder-ui/src/properties/GraphSettingsPanel.tsx` — the PropertiesPane empty state (rendered when no node is selected). Edits two graph-level fields:
+
+- **Description** — bound to `graphMeta.description` via `setDescription()`.
+- **Phrases** — chip-style tag input (`SynonymsEditor.tsx`) bound to `graphMeta.synonyms` via `setSynonyms()`. Used to register Whisper mistranscriptions (e.g. `p.a.c.t` → `paste`) without leaving the Builder.
+
+Both fields round-trip through the existing `POST /graph/{name}` save path; no new endpoints. Legacy graphs without a `synonyms` key normalise to `[]` on `graphStore.load()`. The panel surfaces an "Edit primitive phrases →" link to `/page/primitives` for the TOML primitives that aren't covered by this surface. See ADR 0080.
 
 ### Runs panel
 

@@ -79,6 +79,14 @@ export interface Graph {
   name: string
   kind: GraphKind
   description: string
+  /**
+   * Spoken phrases that exact-match (case-insensitive, punctuation-stripped)
+   * to fire this command. Lets authors register weird Whisper transcriptions
+   * (e.g. `"P.A.C.T."` → fires `paste`). Mirrors `Graph.synonyms` in
+   * `voice_commander.commands.graph.Graph`. Optional in the wire format
+   * because legacy graphs may omit the key — normalise to `[]` after load.
+   */
+  synonyms?: string[]
   enabled: boolean
   llm_visible: boolean
   inputs: GraphInput[]

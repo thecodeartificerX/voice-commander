@@ -1,15 +1,12 @@
 import { useGraphStore } from '@/store/graphStore'
 import { KwargsForm } from './KwargsForm'
+import { GraphSettingsPanel } from './GraphSettingsPanel'
 
 export function PropertiesPane() {
   const { selectedNodeId, nodes } = useGraphStore()
 
   if (!selectedNodeId) {
-    return (
-      <div className="p-3 text-xs text-muted-foreground">
-        Select a node to edit its properties.
-      </div>
-    )
+    return <GraphSettingsPanel />
   }
 
   const node = nodes.find((n) => n.id === selectedNodeId)

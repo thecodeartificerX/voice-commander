@@ -65,6 +65,10 @@ interface GraphState {
   applyEdgeChanges(changes: EdgeChange[]): void
   selectNode(id: string | null): void
   toggleLlmVisible(): void
+  /** Replace the graph's synonyms list and mark dirty. */
+  setSynonyms(synonyms: string[]): void
+  /** Replace the graph's description and mark dirty. */
+  setDescription(description: string): void
   /** Set the run-status overlay; never marks the graph dirty. */
   setNodeRunStatus(map: Record<string, 'ok' | 'error' | 'skipped'>): void
 }
@@ -82,6 +86,7 @@ function makeBlankGraphMeta(
     name,
     kind,
     description: '',
+    synonyms: [],
     enabled: true,
     llm_visible: true,
     inputs: [],
@@ -103,8 +108,11 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   async load(kind, name) {
     const graph = await apiGetGraph(name)
     const { nodes, edges } = deserializeGraph(graph)
-    // Extract graph metadata excluding nodes/edges (canonical shape from backend)
-    const { nodes: _n, edges: _e, ...graphMeta } = graph
+    // Extract graph metadata excluding nodes/edges (canonical shape from backend).
+    // Normalise `synonyms` to `[]` so legacy graphs without the key still
+    // render against an array in the editor.
+    const { nodes: _n, edges: _e, ...rest } = graph
+    const graphMeta = { ...rest, synonyms: rest.synonyms ?? [] }
     set({
       graphId: name,
       graphKind: kind,
@@ -234,5 +242,19 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         dirty: true,
       }
     })
+  },
+
+  setSynonyms(synonyms) {
+    set((s) => ({
+      graphMeta: s.graphMeta ? { ...s.graphMeta, synonyms } : s.graphMeta,
+      dirty: true,
+    }))
+  },
+
+  setDescription(description) {
+    set((s) => ({
+      graphMeta: s.graphMeta ? { ...s.graphMeta, description } : s.graphMeta,
+      dirty: true,
+    }))
   },
 }))
