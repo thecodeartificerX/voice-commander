@@ -71,3 +71,7 @@ src/voice_commander/web/static/builder/
 
 # Worktrees
 .worktrees/
+pi-worktrees/
+
+# Claude Code local-only overrides
+.claude/or-settings.local.json
