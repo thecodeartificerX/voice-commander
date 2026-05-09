@@ -42,6 +42,11 @@ function connect(onConnect?: (connected: boolean) => void) {
     'trace.run_started',
     'trace.span_ended',
     'trace.run_completed',
+    'key_recorder_started',
+    'key_recorder_captured',
+    'key_recorder_cancelled',
+    'key_recorder_timeout',
+    'key_recorder_failed',
   ]
   for (const type of eventTypes) {
     es.addEventListener(type, (ev: MessageEvent) => {

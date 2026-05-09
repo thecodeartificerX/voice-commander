@@ -716,6 +716,11 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
 
     event_bus = EventBus()
 
+    # Backend keyboard recorder for the Builder UI's `press` combo capture.
+    # Single instance, lazy listener (one record session at a time).
+    from voice_commander.recorder import KeyRecorder
+    key_recorder = KeyRecorder(event_bus)
+
     # LLM Router — always created.
     llm_router = LLMRouter(cfg.llm, registry, reload_lock)
     if cfg.llm.warmup_on_startup:
@@ -791,6 +796,7 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
             llm_router=llm_router,
             observability_store=_obs_store,
             observability_tracer=_obs_tracer,
+            key_recorder=key_recorder,
         )
         web_server = WebServer(app, host=cfg.web.host, port=cfg.web.port)
 

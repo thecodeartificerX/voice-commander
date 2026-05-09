@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from ..llm_router import LLMRouter
     from ..observability.store import Store
     from ..observability.tracer import Tracer
+    from ..recorder import KeyRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ def create_app(
     llm_router: LLMRouter | None = None,
     observability_store: Store | None = None,
     observability_tracer: Tracer | None = None,
+    key_recorder: KeyRecorder | None = None,
 ) -> FastAPI:
     """Create and return the FastAPI application for the command management dashboard.
 
@@ -233,6 +235,57 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    # ------------------------------------------------------------------
+    # POST /key_recorder/start, /key_recorder/cancel — backend chord capture
+    # ------------------------------------------------------------------
+
+    @app.post("/key_recorder/start")
+    async def key_recorder_start(request: Request) -> JSONResponse:
+        """``POST /key_recorder/start`` — begin a single-shot chord capture.
+
+        Returns 202 if the recorder began, 409 if one is already running,
+        503 if the daemon was started without a ``KeyRecorder``. The
+        captured combo is delivered asynchronously over ``/events`` as a
+        ``key_recorder_captured`` SSE event.
+        """
+        if key_recorder is None:
+            return JSONResponse(
+                {"error": "key recorder not configured"}, status_code=503
+            )
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        timeout_raw = body.get("timeout") if isinstance(body, dict) else None
+        try:
+            timeout = float(timeout_raw) if timeout_raw is not None else 15.0
+        except (TypeError, ValueError):
+            timeout = 15.0
+        # Clamp to a sane window — no infinite suppress.
+        timeout = max(1.0, min(timeout, 60.0))
+        try:
+            started = key_recorder.start(timeout=timeout)
+        except Exception as exc:
+            logger.exception("key_recorder.start raised")
+            return JSONResponse(
+                {"error": f"start failed: {exc}"}, status_code=500
+            )
+        if not started:
+            return JSONResponse(
+                {"error": "already recording"}, status_code=409
+            )
+        return JSONResponse({"status": "started", "timeout": timeout}, status_code=202)
+
+    @app.post("/key_recorder/cancel")
+    async def key_recorder_cancel() -> Response:
+        """``POST /key_recorder/cancel`` — abort the active session (idempotent)."""
+        if key_recorder is None:
+            return JSONResponse(
+                {"error": "key recorder not configured"}, status_code=503
+            )
+        key_recorder.cancel()
+        return Response(status_code=204)
 
     # ------------------------------------------------------------------
     # GET /tool/{name}/edit — swap card to edit form

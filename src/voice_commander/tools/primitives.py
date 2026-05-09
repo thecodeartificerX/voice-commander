@@ -27,6 +27,15 @@ from ._win32 import (
     _do_focus,
     _verify_foreground,
 )
+from .keyboard_combo import (
+    PRESS_ALIASES as _PRESS_ALIASES,
+)
+from .keyboard_combo import (
+    PRESS_SPLIT_RE as _PRESS_SPLIT_RE,
+)
+from .keyboard_combo import (
+    parse_combo as _parse_combo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,26 +91,8 @@ _PRESS_BLOCKLIST: set[frozenset[str]] = {
     frozenset({"win", "r"}),  # Run dialog — script / command entry
 }
 
-# Whisper / LLM emit human spellings; pyautogui expects short keynames.
-_PRESS_ALIASES: dict[str, str] = {
-    "control": "ctrl",
-    "windows": "win",
-    "windowskey": "win",
-    "winkey": "win",
-    "option": "alt",
-    "return": "enter",
-    "escape": "esc",
-    "del": "delete",
-    "ins": "insert",
-    "pgup": "pageup",
-    "pgdn": "pagedown",
-    "spacebar": "space",
-}
-
-# Splits combo on '+', '-', whitespace, commas, or 'and' between tokens.
-# Whisper often transcribes "Ctrl-C" with a hyphen, hence '-' is treated
-# as a separator rather than part of a key name.
-_PRESS_SPLIT_RE = re.compile(r"\s*(?:\+|,|-|\band\b|\s)\s*", re.IGNORECASE)
+# Aliases + split regex live in tools/keyboard_combo.py; re-exported above
+# so existing imports continue to work.
 
 # How long to poll EnumWindows after an open() before giving up.
 _OPEN_VERIFY_TIMEOUT_MS = 500
@@ -332,8 +323,7 @@ def press(combo: str) -> None:
     WARNING and no-ops instead of raising — the dispatcher continues
     with the rest of the plan if any.
     """
-    raw_tokens = [t for t in _PRESS_SPLIT_RE.split(combo.strip()) if t]
-    keys = [_PRESS_ALIASES.get(t.lower(), t.lower()) for t in raw_tokens]
+    keys = _parse_combo(combo)
     if not keys:
         logger.warning("press: empty combo %r; no-op", combo)
         return
