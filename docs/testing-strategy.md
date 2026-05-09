@@ -1,7 +1,7 @@
 # Testing Strategy
 
 **Project:** Voice Commander
-**Last updated:** 2026-04-26
+**Last updated:** 2026-05-09
 **Status:** Authoritative — update this document whenever test structure changes.
 
 ---
@@ -100,8 +100,17 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 | `GraphMigrate` | `tests/unit/test_graph_migrate.py` | Legacy `commands.json` / `workflows.json` → canonical graph schema conversion, idempotency | `tmp_path` fixture for temp JSON files; canned legacy format dicts |
 | `GraphStore` | `tests/unit/test_command_store.py` | `load()` / `save()` / `list()` / `delete()` operations, file-backed JSON persistence, `GraphStoreError` on kind mismatch | `tmp_path` fixture for temp store directory; no external deps |
 | `Registrar` | `tests/unit/test_command_registrar.py` | `register_graphs()` synthesises `ToolEntry` per graph, `reload_all()` picks up changes, `llm_visible` flag respected (ADR 0067) | Stub `GraphStore` + in-memory `ToolRegistry`; no external deps |
+| `VerbRouter` | `tests/unit/test_verb_router.py` (~34 tests) | Primitive verb routing (`click`/`scroll`/`focus`/`open`/`type`/`press`/`wait`); registry-aware command-name matching (longest-prefix wins, underscore↔space normalization, punctuation stripping, case-insensitive); synonym-based routing (entry.phrases match noisy Whisper transcripts, e.g. "P.A.C.T." → "paste"); enabled-only filter; primitive-origin precedence (primitives never fall through to the command-name path) | In-memory `ToolRegistry` reset per test; no hardware deps |
+| `press()` parser | `tests/unit/test_tools_primitives.py` (~10 tests) | Permissive combo-string parser: split on `+`/`-`/whitespace/commas/`and`; alias map (`control→ctrl`, `windows→win`, `option→alt`, `return→enter`, `escape→esc`, `spacebar→space`); unknown-key emits WARNING + no-op; empty-combo no-op | No external deps; `pyautogui` mocked |
+| Sprite `transcript` handler | `tests/unit/test_sprite_plan_outcome_handler.py` (8 tests, see `test_transcript_appends_info_entry`) | SSE `transcript` event handler appends an INFO-level chat-log entry; full plan-outcome handler suite for ok/miss/error/malformed events | No external deps; in-process `EventBus` with stub subscriber |
 
-> **Note:** React component and Zustand store unit tests live in `web/builder-ui/tests/unit/` and run via vitest (see Layer 1b above). They are not listed in this table, which covers Python daemon subsystems only.
+> **Note:** React component and Zustand store unit tests live in `web/builder-ui/tests/unit/` and run via vitest (see Layer 1b above). They are not listed in this table, which covers Python daemon subsystems only. The exception is the `KeyRecorder` widget test noted in the Layer 1b section below.
+
+**Layer 1b component test highlights** (`web/builder-ui/tests/unit/`):
+
+| Component | Test file | What it covers |
+|---|---|---|
+| `KeyRecorder` | `KeyRecorder.test.tsx` | Click-to-record state machine (idle → recording → committed); modifier+key chord formatting; Esc cancels recording; type-mode toggle (✏) flips to raw text input; ✕ clear empties value; OS-swallowed-key fallback message |
 
 ---
 
@@ -293,8 +302,9 @@ This gate validates the node-graph builder subsystem introduced in PR #51. Run a
 **Runtime execution:**
 
 - [ ] Create a simple 2-node command graph (e.g., `focus("Notepad")` → `type("hello")`).
-- [ ] Trigger via voice — LLM resolves to graph, `GraphRuntime` executes nodes in topological order, side-effects observed.
-- [ ] Create a graph with `llm_visible = false` (ADR 0067) — verify it does NOT appear in LLM tool list but IS callable from other graphs.
+- [ ] Trigger via voice using the graph's bare command name (no "Merlin" toggle) — `VerbRouter` matches the registered name directly, `GraphRuntime` executes nodes in topological order, side-effects observed.
+- [ ] Trigger the same graph after saying "Merlin" — `LLMRouter` resolves the utterance to the graph tool (ad-hoc Merlin-mode path remains functional).
+- [ ] Create a graph with `llm_visible = false` (ADR 0067) — verify it does NOT appear in LLM tool list but IS callable from other graphs and by direct voice name via `VerbRouter`.
 
 **Cross-references:** ADR 0062 (Drawflow), ADR 0063 (canonical schema), ADR 0064 (graph runtime), ADR 0065 (typed returns), ADR 0066 (perception primitives), ADR 0067 (llm_visible flag), ADR 0068 (commander skill authoring).
 

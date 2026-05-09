@@ -1,6 +1,6 @@
 # 0052. Hybrid Rule + LLM Summarization for HUD Entries
 
-**Status:** Accepted
+**Status:** Superseded by ADR 0075 (rule-table summarizer deleted; HUD now renders raw `tool_fired.name` directly)
 **Date:** 2026-04-22
 **Spec:** [superpowers/specs/2026-04-22-command-hud-design.md](../superpowers/specs/2026-04-22-command-hud-design.md)
 

@@ -301,20 +301,27 @@ Additionally, `GetExitCodeProcess` is called after a successful `OpenProcess` �
 
 ---
 
-## 21. LM Studio Must Be Running for Any Routing to Work
+## 21. LM Studio Is Only Required for Merlin Mode and Unmatched Utterances
 
-**Problem:** Every voice utterance that passes the confidence/word-count gates is now routed through `LLMRouter.route()` unconditionally (ADR 0040). If LM Studio is not running, every utterance produces a miss chime — the daemon appears to be broken even though ASR is working correctly.
+**Problem (historical context):** Before VerbRouter was introduced, every voice utterance was routed through `LLMRouter.route()` unconditionally. If LM Studio was not running, every utterance produced a miss chime — the daemon was effectively non-functional without an LLM backend.
 
-**Explanation:** There is no rapidfuzz hot path or offline fallback. `LLMRouter.route()` makes an HTTP call to `http://localhost:1234/v1/chat/completions`. A connection refused, timeout, or HTTP error all return `None`, which `Resolver` converts to a miss. This is by design — `None` is the safe, observable failure mode — but it means the daemon is effectively non-functional without LM Studio.
+**Current routing behaviour:** The routing pipeline is now two-stage:
 
-**Mitigation:**
+1. **VerbRouter (offline, always first).** Every transcript is tested against VerbRouter before any LLM call is made. VerbRouter resolves the utterance in two layers:
+   - **Primitive verb rules** (`click`, `scroll`, `press X`, `type X`, `focus X`, `open X`, `wait N`). These have always worked offline.
+   - **User-authored command and workflow names + synonyms.** VerbRouter looks up the first token(s) of the transcript against all registered command/workflow names and their declared synonyms. If a match is found, the command fires immediately — no HTTP call, no LM Studio required.
+2. **LLMRouter (online, only on fallthrough).** The LLM is reached only when **both** of the following are true: (a) the transcript did not match any primitive verb rule, AND (b) the transcript did not match any registered command or workflow name. Additionally, if the user toggles **Merlin mode** (says "Merlin"), the next utterance is routed directly through `LLMRouter` regardless of whether it would have matched a verb or command name.
+
+**Practical consequence:** A daemon with a populated command/workflow registry handles all user-authored commands fully offline. LM Studio is only required for ad-hoc, open-ended requests in Merlin mode, or for utterances that do not match any authored command. Primitive verbs (`click`, `scroll`, `press X`, etc.) also work offline and have always done so.
+
+**If LM Studio is not running**, only the LLM fallthrough path is affected. Authored commands and primitive verbs continue to work. Utterances that fall through to `LLMRouter.route()` will miss-chime (connection refused → `None` → miss). There is no silent failure; the miss chime is the observable signal.
+
+**Mitigation for Merlin-mode / ad-hoc routing:**
 
 1. Start LM Studio before starting the Voice Commander daemon.
 2. Load the configured model in LM Studio (`[llm].model_id` in `config.toml`; default is `google/gemma-4-e4b`).
 3. Verify with the daemon's startup log: it calls `LLMRouter.warmup()` at startup and logs either `LLM router warm` or `LLM router warmup failed` with the error. If you see the failure message, check LM Studio is running and the model is loaded.
-4. `LLMRouter.warmup()` sends a real chat-completion POST (not just a `GET /v1/models` ping — see gotcha §19). A successful warmup log means the first real utterance will hit a warm KV cache.
-
-**If LM Studio is not available by design** (e.g. running on a machine without an LLM), the daemon will still capture, transcribe, and gate audio correctly — every routable utterance will miss-chime. There is no silent failure; the miss chime is the observable signal.
+4. `LLMRouter.warmup()` sends a real chat-completion POST (not just a `GET /v1/models` ping — see gotcha §19). A successful warmup log means the first real LLM call will hit a warm KV cache.
 
 **Diagnostic commands:**
 
@@ -326,7 +333,7 @@ Test-NetConnection -ComputerName localhost -Port 1234
 Select-String -Path outputs\voice_commander_*.log -Pattern "LLM router"
 ```
 
-See ADR 0040 for the full rationale for removing the rapidfuzz fallback path.
+See ADR 0040 for the full rationale for the original removal of the rapidfuzz fallback path.
 
 ---
 

@@ -25,12 +25,12 @@ Voice Commander is the boring middle ground. Push-to-talk, speak plain English, 
 
 - **Push-to-talk session model.** Tap Scroll Lock to open a session → speak one or many commands back-to-back → tap again to close. Silero VAD auto-segments utterances on silence, so you never press a key between commands.
 - **Sub-second latency.** [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper) running `small.en` on CUDA, with an ndarray hand-off (no temp-file I/O on the hot path), puts the speech-end → keystroke budget at ~700 ms.
-- **Deterministic normal-mode routing.** Core commands (`copy`, `paste`, `new tab`, `close window`, etc.) route through a fast deterministic verb router (~1 ms, no LLM needed). Say `Merlin` during a session to temporarily enable LLM-powered open-ended planning.
+- **Deterministic normal-mode routing.** Commands you author in the Builder UI (`copy`, `paste`, `new tab`, `close window`, etc.) are dispatched by name through VerbRouter at ~1 ms with no LLM involved. VerbRouter resolves user-authored command and workflow names (and their synonyms) against the registry first, then falls back to primitive verb routing for raw action verbs. Say `Merlin` during a session to temporarily enable LLM-powered open-ended planning; say `Merlin` again to revert.
 - **Web UI.** Open `http://127.0.0.1:8765` while the daemon runs to edit phrases, toggle tools, and hot-reload without restarting. HTMX + FastAPI. The `/page/builder` route is a React SPA — run `cd web/builder-ui && pnpm install && pnpm build` once before serving it. See [ADR 0022](docs/decisions/0022-htmx-over-spa.md) and [ADR 0071](docs/decisions/0071-builder-react-spa.md).
 - **Sidecar TOML metadata.** Phrases and descriptions live in `.toml` files beside each tool module, so config and code evolve independently. See [ADR 0021](docs/decisions/0021-sidecar-toml-per-tool.md).
 - **Audio + visual feedback.** A miss chime on low confidence, silence on success ([ADR 0014](docs/decisions/0014-miss-only-chimes.md)). The sprite companion provides continuous visual state ([ADR 0049](docs/decisions/0049-miss-chimes-retained.md)). No toast notifications.
 - **On-screen sprite companion.** A pixel-art desktop pet mirrors daemon state — idle, listening, thinking, success, miss. Runs as a separate process (`voice_sprite`) via SSE, so a sprite crash never affects voice recognition. Configurable corner, size, and art via `config.toml [sprite]`. See [ADR 0045](docs/decisions/0045-sprite-separate-process-via-sse.md).
-- **Command HUD.** A persistent RPG-style chat log renders one line per voice command directly next to the sprite — colour-coded by outcome (green = ok, red = error, amber = miss). Entries hold full opacity for 4 s, then fade over 3 s. The HUD lives inside the same pyglet window as the sprite, so no second overlay process is needed. Configure via `config.toml [hud]`. See [ADR 0051](docs/decisions/0051-command-hud-overlay.md).
+- **Command HUD.** A persistent RPG-style chat log renders one line per voice command directly next to the sprite — colour-coded by outcome (green = ok, red = error, amber = miss). Per-utterance display order: the recognised transcript is shown first (light-blue info status), followed by one line per `tool_fired` step, and finally a `plan_outcome` line only if the outcome is non-ok. Entries hold full opacity for 4 s, then fade over 3 s. The HUD lives inside the same pyglet window as the sprite, so no second overlay process is needed. Configure via `config.toml [hud]`. See [ADR 0051](docs/decisions/0051-command-hud-overlay.md).
 - **Cursor-follow across monitors.** The sprite (and its attached HUD) docks to the bottom-right of whichever monitor holds the mouse cursor, sitting above the taskbar regardless of which edge the taskbar is on. 30 Hz polling — no mouse hook, no elevated rights required. See [ADR 0053](docs/decisions/0053-sprite-follows-cursor-monitor.md).
 - **CUDA preloading shim.** cuBLAS and cuDNN are preloaded via `ctypes` before `faster_whisper` imports, so venv-local pip wheels resolve cleanly regardless of shell `PATH` state. You still need CUDA Toolkit and cuDNN installed system-wide (see [CUDA setup](#cuda-setup) below). See [ADR 0012](docs/decisions/0012-cuda-dll-bundling.md).
 - **Node-graph Builder UI.** Open `/page/builder` in the web UI to author commands and workflows as directed acyclic graphs on a React Flow canvas. Nodes are typed (tool calls, control-flow branches, foreach loops), edges carry data-flow wires and control-flow signals (`ok`/`error`/`true`/`false`), and each graph registers as an ordinary tool so the LLM router invokes it transparently. A `llm_visible` flag keeps helper sub-workflows out of the LLM's tool list, keeping small models fast. Graph definitions are stored as canonical JSON in `commands.json` / `workflows.json`. See ADRs 0062–0068.
@@ -48,7 +48,7 @@ Voice Commander is the boring middle ground. Push-to-talk, speak plain English, 
 | System | `lock screen`, `take screenshot`, `cancel` |
 | Mouse | `click`, `right click` |
 
-Core commands route deterministically via the verb router; say `Merlin` to unlock LLM-powered open-ended requests.
+Commands are user-authored graphs dispatched by name via VerbRouter (~1 ms, no LLM); say `Merlin` to unlock LLM-powered open-ended requests.
 
 > **Note.** The browser-focus group currently targets [Comet](https://comet.perplexity.ai) specifically (my daily driver). If you use a different browser, change two lines in `src/voice_commander/tools/_win32.py` or open an issue and we will land a config-driven lookup.
 
@@ -203,7 +203,7 @@ Full schema + rationale: [`docs/superpowers/specs/2026-04-19-voice-commander-des
 
 ## LLM Router
 
-Every transcript goes through a local LLM unconditionally. `LLMRouter` POSTs to an LM Studio OpenAI-compatible endpoint (default model: Gemma 4 E4B) with a few-shot system prompt describing the nine-verb catalog (ADR 0043). The LLM returns a one-shot ordered plan of typed tool calls — including chained commands like *"open a new tab then paste"* — which the `Dispatcher` executes step-by-step with per-tool settle delays. For the `focus` and `open` verbs, the `target` string is grounded onto a concrete `hwnd` / launch token by the pure-function `resolver` module (rapidfuzz scoring over visible windows / Start-Menu + AppsFolder, ADR 0042). If LM Studio is offline, unreachable, or returns an unparseable response, the router degrades silently to a miss chime; the daemon keeps running.
+In normal mode, every transcript is handled by `VerbRouter`: it resolves user-authored command and workflow names (and their synonyms) against the registry first, then falls back to primitive verb routing for raw action verbs (`click`, `scroll`, `focus X`, `open X`, `type X`, `press X`, `wait N`). The LLM is only reached when the user toggles Merlin mode by saying "Merlin" mid-session. In Merlin mode, `LLMRouter` POSTs to an LM Studio OpenAI-compatible endpoint (default model: Gemma 4 E4B) with a few-shot system prompt describing the 11-primitive catalog (ADR 0075): 7 action primitives (`click`, `focus`, `open`, `press`, `scroll`, `type`, `wait`) + 4 perception primitives (`read_clipboard`, `get_active_window_title`, `get_cursor_pos`, `ocr_region`), plus the LLM-only `no_match(reason)` escape hatch. The LLM returns a one-shot ordered plan of typed tool calls — including chained commands like *"open a new tab then paste"* — which the `Dispatcher` executes step-by-step with per-tool settle delays. For the `focus` and `open` verbs, the `target` string is grounded onto a concrete `hwnd` / launch token by the pure-function `resolver` module (rapidfuzz scoring over visible windows / Start-Menu + AppsFolder, ADR 0042). If LM Studio is offline, unreachable, or returns an unparseable response, the router degrades silently to a miss chime; the daemon keeps running.
 
 Configure in `config.toml`:
 
@@ -226,7 +226,9 @@ open_fuzzy_threshold   = 70
 
 > **Fuzzy thresholds.** The resolver's `focus_fuzzy_threshold` / `open_fuzzy_threshold` knobs control how tolerant `focus(target)` and `open(target)` are when mapping the LLM's `target` string onto a visible window / Start-Menu entry. Lower (e.g. 60) = more permissive, accepts looser phonetic matches; higher (e.g. 80) = stricter, fewer false positives but more misses. Defaults of 70 were validated against a 20-utterance live-test script.
 
-Full design: [`docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design.md`](docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design.md). Routing architecture decisions: [ADR 0040](docs/decisions/0040-llm-only-routing-replaces-hybrid.md), [ADR 0041](docs/decisions/0041-rapidfuzz-for-parameter-resolution.md), [ADR 0042](docs/decisions/0042-resolver-module-design.md), [ADR 0043](docs/decisions/0043-nine-verb-primitive-catalog.md), [ADR 0044](docs/decisions/0044-few-shot-system-prompt.md).
+Full design: [`docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design.md`](docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design.md). Routing architecture decisions: [ADR 0040](docs/decisions/0040-llm-only-routing-replaces-hybrid.md), [ADR 0041](docs/decisions/0041-rapidfuzz-for-parameter-resolution.md), [ADR 0042](docs/decisions/0042-resolver-module-design.md), [ADR 0043](docs/decisions/0043-nine-verb-primitive-catalog.md), [ADR 0044](docs/decisions/0044-few-shot-system-prompt.md), [ADR 0075](docs/decisions/0075-eleven-primitive-catalog.md).
+
+> **`press()` combo format.** `press()` accepts permissive combo strings — `+`, `-`, whitespace, commas, and `and` all work as separators. Examples: `"Ctrl V"`, `"Ctrl-C"`, `"ctrl and shift t"`, `"ctrl+c"` are all valid. Common aliases: `control`→`ctrl`, `windows`→`win`, `option`→`alt`, `return`→`enter`, `escape`→`esc`, `spacebar`→`space`.
 
 ---
 
@@ -260,7 +262,7 @@ Read [`docs/architecture.md`](docs/architecture.md) for the full component contr
 
 The fastest path is the `commander` Claude skill shipped in this repo — it walks you through a short interview and either writes a Python primitive (with TOML + tests) or authors a graph command / workflow directly in canonical JSON.
 
-For graph commands and workflows, use the **Builder UI**: navigate to `/page/commands` in the web UI → click **+ New command** → the React Flow node-graph canvas opens. Drag tools from the left palette onto the canvas, connect ports with data edges, fill in the graph metadata (name, description, synonyms) in the right sidebar, and click **Save**. The builder converts the canvas to canonical `Graph` JSON and writes it to `commands.json` / `workflows.json` via `GraphStore`. A `--validate` self-check runs automatically.
+For graph commands and workflows, use the **Builder UI**: navigate to `/page/commands` in the web UI → click **+ New command** → the React Flow node-graph canvas opens. The left palette is organised into three sections: **Primitives** (the 7 action + 4 perception action primitives), **Perception** (perception-only quick-access grouping), and **Commands** (your authored commands and workflows — not mixed in with primitives). The `no_match` escape hatch is hidden from the palette; it is LLM-only. Drag nodes from the palette onto the canvas, connect ports with data edges, fill in the graph metadata (name, description, synonyms) in the right sidebar, and click **Save**. The builder converts the canvas to canonical `Graph` JSON and writes it to `commands.json` / `workflows.json` via `GraphStore`. A `--validate` self-check runs automatically.
 
 To write a raw Python primitive by hand:
 
@@ -386,7 +388,7 @@ Start at [`docs/index.md`](docs/index.md) for a guided reading order.
 - ✅ Mute hotkey for dictation coexistence
 - 🔜 Per-app command sets
 - 🔜 Wake-word mode (opt-in)
-- ✅ LLM intent router (unconditional dispatch via LM Studio)
+- ✅ LLM intent router (Merlin-mode gated, via LM Studio)
 - 🔜 Argument-bearing commands (path, app name extraction via tool-calling)
 
 ---

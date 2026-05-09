@@ -47,7 +47,8 @@ voice-commander/
 │   ├── prompt_template.txt         # external system prompt template (hot-reloadable)
 │   ├── registry.py                 # @tool decorator + auto-discovery
 │   ├── tool_metadata.py            # sidecar TOML read/write + per-tool file locking
-│   ├── tool_schema.py              # Python sig → OpenAI JSON Schema generator
+│   ├── tool_schema.py              # Python sig → OpenAI JSON Schema generator; exports PERCEPTION_PRIMITIVE_NAMES frozenset used by Builder palette to partition perception primitives out of the action pipeline list
+│   ├── verb_router.py              # VerbRouter: optional registry: ToolRegistry | None; route() matches command/workflow names + synonyms (entry.phrases) before primitive verb rules
 │   ├── config.py                   # config loader + deep-merge + validation
 │   ├── single_instance.py          # one-daemon guard
 │   ├── validator.py                # startup sig/TOML drift checker (7 rules)
@@ -119,7 +120,13 @@ voice-commander/
 │   │   ├── components/ui/         # shadcn/ui components (button, input, badge, sheet, etc.)
 │   │   ├── lib/                   # utilities (cn, errorCategory, graphSerialize, timeFormat)
 │   │   ├── palette/               # node palette + drag handlers
+│   │   │   ├── Palette.tsx        # reads `pipeline` + `perception` arrays from /graph/palette (single source of truth from backend); hardcoded PERCEPTION_SCHEMAS removed — perception primitives use real `pipeline.X` refs
+│   │   │   └── PaletteItem.tsx    # draggable palette entry
 │   │   ├── properties/            # property inspector side panel
+│   │   │   ├── PropertiesPane.tsx # top-level inspector panel
+│   │   │   ├── KwargsForm.tsx     # kwargs field renderer; delegates to KeyRecorder when KEY_RECORDER_REFS.has(nodeRef) && key === 'combo'
+│   │   │   ├── KeyRecorder.tsx    # click-to-record key-combo widget for press(combo) arg; type-mode override (✏ toggle for OS-swallowed keys like Win); ✕ clear button; wired via KEY_RECORDER_REFS set keyed by nodeRef === 'pipeline.press' AND key === 'combo'
+│   │   │   └── PortEditor.tsx     # port wiring editor
 │   │   ├── runs/                  # RunsPanel, RunRow, SpanTree, drawer
 │   │   ├── store/                 # Zustand stores (graphStore, runsStore, uiStore)
 │   │   ├── styles/                # globals.css (CSS custom properties, ADR 0069 taxonomy)
@@ -137,13 +144,10 @@ voice-commander/
 │   ├── cursor_tracker.py         # CursorDock: snaps window to cursor's monitor work area
 │   ├── dpi.py                    # per-monitor DPI queries via shcore.dll
 │   ├── event_client.py           # httpx-sse consumer with auto-reconnect
-│   ├── llm_summary_client.py     # HTTP client for LM Studio one-shot summarization
-│   ├── plan_outcome_handler.py   # handle_plan_outcome: parses plan_outcome SSE event → ChatLog entry
+│   ├── plan_outcome_handler.py   # handle_plan_outcome: parses plan_outcome SSE event → ChatLog entry; handle_transcript: appends light-blue info-status entry to chat log for daemon transcript SSE event
 │   ├── speech_bubble.py          # fading label overlay
 │   ├── sprite_renderer.py        # frame selection + animation timing
 │   ├── state_machine.py          # 11-state FSM + heartbeat timeout
-│   ├── summarizer.py             # hybrid rule-table + LLM-fallback HUD text generator
-│   ├── summary_rules.py          # per-verb summary rules and chain detectors
 │   ├── win32_flags.py            # WS_EX_LAYERED | WS_EX_TRANSPARENT | etc.
 │   └── window.py                 # pyglet Window subclass
 │

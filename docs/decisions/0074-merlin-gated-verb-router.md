@@ -2,6 +2,7 @@
 
 ## Status
 Accepted
+**Extended by:** ADR 0076 (registry-aware VerbRouter routing)
 
 ## Context
 ADR 0040 made all routing LLM-only. In practice, this means every simple command ("copy", "paste", "new tab") pays ~600 ms LLM latency. A deterministic first-word router can handle the common case in ~1 ms, reducing perceived latency and removing the LM Studio dependency for the core command surface.

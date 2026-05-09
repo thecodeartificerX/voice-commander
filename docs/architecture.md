@@ -42,7 +42,7 @@ This document is the canonical reference for Voice Commander's subsystem design 
 |---|---|---|
 | PortAudio callback thread | `sd.InputStream` callback | `indata.copy()` + `raw_q.put_nowait()` — no blocking, no allocation |
 | VAD worker thread | `Resampler` + `VADGate` | Drains `raw_q`; resamples 48k→16k; runs silero-vad; emits complete utterances to `utt_q` |
-| Pipeline worker thread | `Transcriber` + `LLMRouter` + `Dispatcher` | Drains `utt_q`; runs transcribe → gates → `LLMRouter.route()` → `Dispatcher.run_plan()` |
+| Pipeline worker thread | `Transcriber` + `VerbRouter` + `LLMRouter` + `Dispatcher` | Drains `utt_q`; runs transcribe → gates → `VerbRouter.route()` (normal mode) or `LLMRouter.route()` (Merlin mode) → `Dispatcher.run_plan()` |
 
 **Session model:** Scroll Lock opens a session; a second press closes it. While a session is open, VAD auto-segments the audio stream. Each detected utterance fires the pipeline worker immediately — no keypresses required between commands.
 
@@ -59,6 +59,7 @@ Subsystems are connected by the `StreamingDaemon` orchestrator. Each is independ
 | `VADGate` | Detect speech onset/offset; accumulate utterance ndarrays with pre-roll | `silero-vad`, `onnxruntime` |
 | `StreamingRecorder` | Own `sd.InputStream` + VAD worker thread; call `utterance_sink` on speech-end | `sounddevice`, `Resampler`, `VADGate` |
 | `Transcriber` | ndarray (or WAV path) → text using preloaded model | `faster-whisper` (CUDA) |
+| `VerbRouter` | Route transcripts in normal (non-Merlin) mode: match against registered command/workflow names and synonyms first (longest token-count match wins, underscore→space, punct-stripped, case-insensitive), then fall back to primitive verb rules (click/scroll/focus X/open X/type X/press X/wait N). Returns `Plan \| None`. | (no external) |
 | `ToolRegistry` | Register/discover `@tool`-decorated functions; supports `@tool(name=...)` override for builtin-shadowing names (`type`, `open`) | stdlib (`importlib`) |
 | `resolver` (module) | Ground `focus(target)` / `open(target)` parameters onto hwnds / launch tokens via rapidfuzz scoring | `rapidfuzz`, `pywin32`, `win32com` |
 | `Dispatcher` | Execute a multi-step plan step-by-step; emit per-step INFO log; report plan start/complete/error | (no external) |
@@ -242,7 +243,7 @@ class Transcriber:
 @dataclass(frozen=True)
 class ToolEntry:
     name: str             # function name, e.g. "copy"
-    phrases: tuple[str, ...]  # populated from TOML if phrases keys present; unused for routing. Retained for backward compatibility and web UI display.
+    phrases: tuple[str, ...]  # populated from TOML if phrases keys present. Used by VerbRouter to match Whisper-friendly synonyms (e.g. ['p a c t'] for 'paste').
     func: Callable[[], None]
     module: str           # e.g. "voice_commander.tools.clipboard"
     docstring: str | None
@@ -250,6 +251,7 @@ class ToolEntry:
     llm_only: bool            # True → tool has parameters; not phrase-matchable
     params_schema: dict | None  # OpenAI tool JSON schema (built by tool_schema)
     internal: bool            # True → hidden from LLM tool list; still dispatchable
+    system: bool              # True → infrastructure tool (e.g. no_match); hidden from Builder palette and LLM tool list
     origin: Literal["primitive", "command", "workflow"]  # source of entry
     args_meta: dict[str, ArgMetadata]  # per-param schema for web UI guided kwargs form (ADR 0057)
 
@@ -258,7 +260,8 @@ class ToolRegistry:
     def all(self) -> list[ToolEntry]: ...
     def by_name(self, name: str) -> ToolEntry | None: ...
     def all_llm_visible(self) -> list[ToolEntry]: ...
-        # All entries visible to the LLM router (all enabled tools)
+        # All enabled tools visible to the LLM router. Excludes entries with system=True
+        # (e.g. no_match) — distinct from internal=True which governs LLM visibility only.
 
 def tool() -> Callable[[Callable], Callable]:
     """Decorator. Registers the function on the module-global registry."""
@@ -267,7 +270,7 @@ def discover(package: str = "voice_commander.tools") -> ToolRegistry:
     """Imports every submodule in `package`, triggering @tool registration."""
 ```
 
-**What it does:** Maintains a name-keyed dictionary of `ToolEntry` records. The `@tool` decorator registers the decorated function on the module-global `ToolRegistry` singleton at import time. `discover()` uses `importlib` to import every submodule under `voice_commander.tools`, which triggers all `@tool` decorators as a side effect. Re-registering the same `name` raises `DuplicateToolError` to catch accidental duplicates early. The `phrases` field is populated from TOML when phrases keys are present; it is not used for routing but is retained for backward compatibility and web UI display.
+**What it does:** Maintains a name-keyed dictionary of `ToolEntry` records. The `@tool` decorator registers the decorated function on the module-global `ToolRegistry` singleton at import time. `discover()` uses `importlib` to import every submodule under `voice_commander.tools`, which triggers all `@tool` decorators as a side effect. Re-registering the same `name` raises `DuplicateToolError` to catch accidental duplicates early. The `phrases` field is populated from TOML when phrases keys are present; it is used by `VerbRouter` to match registered command/workflow names and their Whisper-friendly synonyms against transcripts (e.g. `['p a c t']` for `'paste'`).
 
 **Who calls it:** `build_streaming_daemon()` factory calls `discover()` to populate the registry at startup. `LLMRouter` calls `all_llm_visible()` to build the tools array for each chat completion request. `Dispatcher.run_plan()` calls `by_name()` to look up tool functions during plan execution.
 
@@ -378,7 +381,7 @@ class StreamingDaemon:
     def on_scroll_lock(self) -> None: ...        # scroll-lock hotkey callback
 ```
 
-**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems, including a one-shot `resolver._set_config(cfg.llm)` to inject fuzzy-threshold config into the parameter resolver. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_scroll_lock()` is the scroll-lock hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → VerbRouter.route() | LLMRouter.route() → Dispatcher.run_plan()`. Async WAV write (`outputs/last_utterance.wav`) and JSON plan dump (`outputs/last_plan.json`) are submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` handles `--validate` mode (runs `validate_or_die()` then exits), acquires a single-instance OS-level lock to prevent duplicate daemon processes, configures logging, logs environment diagnostics, installs a crash reporter, and then calls `build_streaming_daemon(Config.load()).run(cfg.hotkey.key)`. The pipeline worker first checks if the transcript is exactly `Merlin` (case-insensitive, stripped punctuation). If so, it toggles `_merlin_mode` and returns. Otherwise, if `_merlin_mode` is True, it calls `LLMRouter.route(transcript)`. If False, it calls `VerbRouter.route(transcript)`. Both return `Plan | None`; a None result fires `FeedbackSink.on_miss()`.
+**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems, including a one-shot `resolver._set_config(cfg.llm)` to inject fuzzy-threshold config into the parameter resolver. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_scroll_lock()` is the scroll-lock hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → VerbRouter.route() | LLMRouter.route() → Dispatcher.run_plan()`. Async WAV write (`outputs/last_utterance.wav`) and JSON plan dump (`outputs/last_plan.json`) are submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` handles `--validate` mode (runs `validate_or_die()` then exits), acquires a single-instance OS-level lock to prevent duplicate daemon processes, configures logging, logs environment diagnostics, installs a crash reporter, and then calls `build_streaming_daemon(Config.load()).run(cfg.hotkey.key)`. The pipeline worker first checks if the transcript is exactly `Merlin` (case-insensitive, stripped punctuation). If so, it toggles `_merlin_mode` and returns. Otherwise, if `_merlin_mode` is True, it calls `LLMRouter.route(transcript)`. If False, it calls `VerbRouter.route(transcript)`. `VerbRouter` first tries to match the transcript against registered command/workflow names and their `entry.phrases` synonyms (longest token-count match wins, underscore→space normalization, punctuation-stripped, case-insensitive); on miss it falls back to primitive verb rules (click/scroll/focus X/open X/type X/press X/wait N). Both routers return `Plan | None`; a None result fires `FeedbackSink.on_miss()`.
 
 **Who calls it:** `__main__.py` (the process entry point), signal handlers, and `on_scroll_lock` (hotkey-listener thread).
 
@@ -464,7 +467,7 @@ def validate_or_die(registry: ToolRegistry, store: ToolMetadataStore) -> None: .
 11. Word-count gate: drop if fewer than `min_word_count` words.
 12. `no_speech_prob` gate: drop if above `max_no_speech_prob`.
 13. Confidence gate: `on_miss()` if below `min_confidence`.
-14. `VerbRouter.route(result.text)` (normal mode) or `LLMRouter.route(result.text)` (Merlin mode) → `Plan | None`.
+14. `VerbRouter.route(result.text)` (normal mode) or `LLMRouter.route(result.text)` (Merlin mode) → `Plan | None`. In normal mode, VerbRouter first matches against registered command/workflow names and `entry.phrases` synonyms (longest token-count match wins; underscore↔space normalized, punctuation stripped, case-insensitive), then falls back to primitive verb rules.
 14a. If `None` returned: pipeline worker calls `FeedbackSink.on_miss(text, ())` directly and loops back to `utt_q`.
 14b. If `Plan` returned: `Dispatcher.run_plan(text, plan, registry)` executes multi-step plan (per-step INFO log; `resolver.resolve_window` / `resolve_app` called inside `focus` / `open` as needed).
 15. Pipeline worker loops back to `utt_q`.
@@ -531,6 +534,15 @@ class EventBus:
 ### SSE Endpoint
 
 `GET /events` — `text/event-stream`. One JSON event per SSE frame. Keepalive every 30s. `Last-Event-ID` header rewinds through ring buffer.
+
+### SSE Event Catalog (partial)
+
+| Event type | Payload | Published by | Notes |
+|---|---|---|---|
+| `transcript` | `{text: str, confidence: float}` | `StreamingDaemon` after transcription gates pass | Sprite renders as info-status chat-log line (light blue, `#b4c8e6`). Per-utterance HUD ordering: `transcript` → `tool_fired`(s) → `plan_outcome`. |
+| `tool_fired` | `{name: str, kwargs: dict}` | `Dispatcher` per step | HUD raw `tool_fired.name` string, fading chat log. |
+| `plan_outcome` | `{transcript, steps, status, failed_step_index, error_msg, duration_ms}` | `Dispatcher` / `StreamingDaemon` | `status="miss"` renders `"no match"` in HUD. |
+| `daemon_heartbeat` | `{}` | Heartbeat thread (1 Hz) | Sprite uses for liveness; 3 s timeout → CRASHED state. |
 
 ---
 
@@ -836,34 +848,40 @@ the canonical DAG schema. Returns the count of migrated graphs. Invoked by
 
 ## 16. Builder UI
 
-The Drawflow node-graph canvas served at `/page/builder`.
+The React SPA node-graph canvas served at `/page/builder`. See ADRs 0071 (React SPA), 0078 (palette partition), 0077 (press parser).
+
+### Technology stack
+
+- **React 18.3 + Vite 5 + TypeScript** SPA at `web/builder-ui/`, built to `src/voice_commander/web/static/builder/` via `pnpm build` (or `make builder-build`). Requires a one-time `pnpm install` on fresh clones. Fresh clones without the build step show a friendly stub page.
+- **React Flow** canvas (replaces Drawflow).
+- Three **Zustand** stores: `graphStore`, `runsStore`, `uiStore`.
 
 ### Routes — `web/builder.py`
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/page/builder` | Full builder page (three-column layout) |
-| `GET` | `/builder/palette` | Tool palette HTMX fragment |
-| `GET` | `/builder/graph/{name}` | Load a graph into Drawflow JSON format |
+| `GET` | `/page/builder` | Full builder page — serves the compiled React SPA shell |
+| `GET` | `/graph/palette` | JSON palette payload consumed by the SPA |
+| `GET` | `/builder/graph/{name}` | Load a graph into canonical JSON format |
 | `POST` | `/builder/graph/{name}/save` | Save canvas export → canonical JSON → `GraphStore` |
 | `POST` | `/builder/graph/{name}/validate` | Run `graph_validator.validate` and return errors |
 | `GET` | `/builder/graph/new` | Blank canvas stub |
 
-### Frontend — `static/builder.js`
+### Palette (`/graph/palette`)
 
-Initialises the Drawflow canvas, populates the drag-and-drop tool palette from the
-tool registry, serialises the canvas on save, and calls the `/validate` endpoint on
-demand. Self-contained; no npm build step.
+Returns JSON with six top-level keys: `pipeline` (action primitives), `perception` (observation primitives, partitioned by `PERCEPTION_PRIMITIVE_NAMES` from `tool_schema.py`), `commands`, `workflows`, `control`, `value`.
 
-### Layout — `templates/page_builder.html`
+**Filter rules:** a tool entry appears in the palette when `origin == "primitive" and enabled and not system`. The `internal` flag governs LLM visibility only, not Builder palette visibility. `no_match` carries `system=True` and is hidden.
 
-Three-column layout: left sidebar (palette), centre (canvas), right sidebar (graph
-metadata form). HTMX drives all save/validate interactions without a full-page reload.
+**Section render order in the SPA palette:** Commands → Workflows → Primitives → Control → Perception.
 
-### Vendored library — `static/drawflow.min.{js,css}`
+### KeyRecorder widget
 
-Drawflow 0.0.60. Single-file vendored bundle; no CDN dependency; upgraded by
-deliberate file replacement (ADR 0062).
+`web/builder-ui/src/properties/KeyRecorder.tsx` — clicks-to-record key combos for `press(combo)` arguments. Includes a type-mode override (✏ toggle) for OS-swallowed keys (e.g. Win key on Windows) where recording is impossible. See ADR 0077.
+
+### Runs panel
+
+n8n-style runs panel with SSE live tail (`run.appended` event), structured rows with status icons, a span-tree drawer, and a copy-as-prompt export. Backed by `runsStore`.
 
 ---
 

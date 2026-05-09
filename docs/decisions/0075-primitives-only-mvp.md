@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-05-08
 **Supersedes:** ADR 0025 (mute hotkey), ADR 0072 (speak/dictation toggle), ADR 0073 (remote transcription backend) — and reduces ADR 0043 (nine-verb primitive catalog) to seven action verbs + four perception verbs.
+**Partially superseded by:** ADR 0076 (registry-aware VerbRouter routing — the primitives-only routing claim no longer holds; VerbRouter now also routes user-authored command/workflow names via registry lookup)
 
 ## Context
 
