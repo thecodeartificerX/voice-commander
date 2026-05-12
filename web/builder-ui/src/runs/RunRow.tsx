@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { Circle, Ban, Zap, XCircle, Brain, WifiOff } from 'lucide-react'
+import { Circle, Ban, Zap, XCircle, WifiOff } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { relativeTime, formatDuration } from '@/lib/timeFormat'
 import { getCategoryMeta } from '@/lib/errorCategory'
@@ -15,7 +15,6 @@ function StatusIcon({ run }: { run: RunSummary }) {
   const cat = run.error_category
   if (cat === 'wiring') return <Zap className="h-3 w-3 text-orange-400 shrink-0" />
   if (cat === 'program') return <XCircle className="h-3 w-3 text-red-400 shrink-0" />
-  if (cat === 'llm') return <Brain className="h-3 w-3 text-purple-400 shrink-0" />
   if (cat === 'infra') return <WifiOff className="h-3 w-3 text-gray-400 shrink-0" />
   return <XCircle className="h-3 w-3 text-red-400 shrink-0" />
 }

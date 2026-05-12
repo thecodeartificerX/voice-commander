@@ -100,17 +100,33 @@ def test_store_round_trip_run_and_span(tmp_path):
 
 
 def test_store_prune_keeps_only_n_most_recent(tmp_path):
-    store = Store(tmp_path / "runs.db", keep_runs=3, queue_max=256, daemon_pid=42)
+    """Prune fires every _PRUNE_EVERY run_end writes.
+
+    Write 2 * _PRUNE_EVERY + keep_runs runs so that two prune cycles fire,
+    guaranteeing the table is trimmed to at most keep_runs + (_PRUNE_EVERY - 1)
+    rows (the overshoot bound), with the most-recent keep_runs rows surviving.
+    """
+    from voice_commander.observability.store import _PRUNE_EVERY
+
+    keep_runs = 3
+    # Write enough runs to trigger at least two prune cycles.
+    total = 2 * _PRUNE_EVERY + keep_runs
+    store = Store(tmp_path / "runs.db", keep_runs=keep_runs, queue_max=total * 2 + 10, daemon_pid=42)
     store.start()
     try:
-        for i in range(60):
-            rid = f"r{i:02d}"
+        for i in range(total):
+            rid = f"r{i:04d}"
             store.write_run_start(RunRecord(rid, 1000.0 + i, f"t{i}", 42))
             store.write_run_end(RunUpdate(rid, 1000.5 + i, "ok", None, 1))
-        _drain(store, timeout=3.0)
-        runs = store.list_runs(limit=100)
-        assert len(runs) == 3
-        assert {r["run_id"] for r in runs} == {"r57", "r58", "r59"}
+        _drain(store, timeout=5.0)
+        runs = store.list_runs(limit=total)
+        # After the final prune cycle the table must not exceed
+        # keep_runs + (_PRUNE_EVERY - 1) rows.
+        assert len(runs) <= keep_runs + (_PRUNE_EVERY - 1)
+        # The most-recent keep_runs runs must always survive the prune.
+        surviving_ids = {r["run_id"] for r in runs}
+        for j in range(total - keep_runs, total):
+            assert f"r{j:04d}" in surviving_ids, f"r{j:04d} should have survived pruning"
     finally:
         store.stop()
 

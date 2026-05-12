@@ -6,12 +6,10 @@ monkeypatched out so the tests run without a microphone, CUDA, or LM Studio.
 
 Covered scenarios
 -----------------
-1. Default config → daemon._llm_router is wired; all other components are present.
-2. Config values propagate correctly to components (model_size,
-   recorder device, llm.timeout_ms).
+1. Default config → all required components are present.
+2. Config values propagate correctly to components (model_size, recorder device).
 3. Factory is idempotent — two calls with identical config yield two
-   independent daemons (distinct _utt_q, distinct _llm_router, distinct
-   _recorder, distinct _shutdown).
+   independent daemons (distinct _utt_q, distinct _recorder, distinct _shutdown).
 
 Notes on patching strategy
 --------------------------
@@ -40,12 +38,10 @@ from voice_commander.config import (
     AudioConfig,
     Config,
     HotkeyConfig,
-    LLMConfig,
     TranscriptionConfig,
     WebConfig,
 )
 from voice_commander.daemon import StreamingDaemon, build_streaming_daemon
-from voice_commander.llm_router import LLMRouter
 
 # ---------------------------------------------------------------------------
 # Patch-target constants
@@ -72,8 +68,6 @@ def base_cfg(tmp_path: Path) -> Config:
         ),
         # Web UI disabled — no port binding attempted.
         web=WebConfig(enabled=False),
-        # LLM router: warmup disabled to avoid network call.
-        llm=LLMConfig(timeout_ms=300, warmup_on_startup=False),
     )
 
 
@@ -86,7 +80,6 @@ def _base_patch_kwargs(
     *,
     transcriber_cls: Any = None,
     recorder_cls: Any = None,
-    llm_router_cls: Any = None,
 ) -> dict[str, Any]:
     """Build keyword arguments for patch.multiple targeting voice_commander.daemon.
 
@@ -109,8 +102,6 @@ def _base_patch_kwargs(
         discover=MagicMock(return_value=mock_registry),
         ToolMetadataStore=MagicMock(return_value=mock_store),
     )
-    if llm_router_cls is not None:
-        kwargs["LLMRouter"] = llm_router_cls
     return kwargs
 
 
@@ -124,23 +115,19 @@ def _full_patches(**daemon_kwargs: Any) -> Generator[None, None, None]:
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — Default config: daemon is built; _llm_router is wired; all other
-#           components are present.
+# Test 1 — Default config: daemon is built; all required components are present.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
-def test_factory_llm_router_always_wired(base_cfg: Config) -> None:
-    """build_streaming_daemon always wires _llm_router regardless of config."""
+def test_factory_wires_required_components(base_cfg: Config) -> None:
+    """build_streaming_daemon wires all required components."""
     with _full_patches(**_base_patch_kwargs()):
         daemon = build_streaming_daemon(base_cfg)
 
     assert isinstance(daemon, StreamingDaemon)
 
-    # LLM router must always be present (sole routing path post-ADR 0040).
-    assert daemon._llm_router is not None, "Expected _llm_router to be wired"
-
-    # All other required components must be wired.
+    # All required components must be wired.
     assert daemon._transcriber is not None, "transcriber missing"
     assert daemon._dispatcher is not None, "dispatcher missing"
     assert daemon._feedback is not None, "feedback missing"
@@ -195,55 +182,10 @@ def test_factory_propagates_recorder_device_minus_one(base_cfg: Config) -> None:
     )
 
 
-@pytest.mark.integration
-def test_factory_propagates_llm_timeout(base_cfg: Config) -> None:
-    """LLMRouter is constructed with the LLMConfig that carries the correct timeout_ms."""
-    cfg = replace(
-        base_cfg,
-        llm=LLMConfig(timeout_ms=800, warmup_on_startup=False),
-    )
-
-    mock_router_cls = MagicMock(return_value=MagicMock(spec=LLMRouter))
-
-    with _full_patches(**_base_patch_kwargs(llm_router_cls=mock_router_cls)):
-        build_streaming_daemon(cfg)
-
-    mock_router_cls.assert_called_once()
-    # First positional argument to LLMRouter(config, registry) is the LLMConfig.
-    router_cfg_arg = mock_router_cls.call_args.args[0]
-    assert router_cfg_arg.timeout_ms == 800, (
-        f"Expected LLMConfig.timeout_ms=800, got {router_cfg_arg.timeout_ms}"
-    )
 
 
-@pytest.mark.integration
-def test_factory_wires_reload_lock_to_llm_router(base_cfg: Config) -> None:
-    """LLMRouter must receive a threading.Lock as its third argument (reload_lock).
 
-    The lock wiring is the core change in PR #39 / issue #11.  If a future
-    refactor drops the third argument, LLMRouter raises TypeError at runtime
-    with no test signal — this test catches that regression.
-    """
-    captured: dict[str, Any] = {}
 
-    def capture_router(cfg: Any, registry: Any, reload_lock: Any) -> MagicMock:
-        captured["lock"] = reload_lock
-        return MagicMock(spec=LLMRouter)
-
-    with _full_patches(**_base_patch_kwargs(llm_router_cls=capture_router)):
-        build_streaming_daemon(base_cfg)
-
-    assert "lock" in captured, "LLMRouter constructor was never called"
-    # threading.Lock is a factory, not a type; duck-type on the context-manager
-    # protocol instead.
-    lock = captured["lock"]
-    assert lock is not None, "reload_lock was None"
-    assert callable(getattr(lock, "acquire", None)), (
-        f"Expected a lock-like object with .acquire(), got {type(lock)}"
-    )
-    assert callable(getattr(lock, "release", None)), (
-        f"Expected a lock-like object with .release(), got {type(lock)}"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +203,6 @@ def test_factory_idempotent_independent_state(base_cfg: Config, tmp_path: Path) 
     - Enqueuing to daemon1 does not affect daemon2.
     - Distinct _shutdown Events (setting daemon1's does not affect daemon2).
     - Distinct _recorder objects.
-    - Distinct _llm_router instances (each daemon has its own LLMRouter).
 
     Note on _registry: ``discover()`` intentionally returns the module-level
     ``_GLOBAL_REGISTRY`` singleton, so both daemons will reference the same
@@ -301,9 +242,7 @@ def test_factory_idempotent_independent_state(base_cfg: Config, tmp_path: Path) 
     # --- Recorder independence ---
     assert daemon1._recorder is not daemon2._recorder, "_recorder must be distinct per daemon"
 
-    # --- LLMRouter independence ---
-    # Each daemon gets its own LLMRouter instance, even though they share the global registry.
-    assert daemon1._llm_router is not daemon2._llm_router, "_llm_router must be distinct per daemon"
+
 
 
 # ---------------------------------------------------------------------------

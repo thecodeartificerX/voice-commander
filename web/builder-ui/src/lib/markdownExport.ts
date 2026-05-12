@@ -44,11 +44,6 @@ function renderSpanTree(spans: SpanRecord[], parentId: string | null, depth: num
     .join('\n')
 }
 
-function findLlmPlan(spans: SpanRecord[]): unknown {
-  const llmSpan = spans.find((s) => s.type === 'llm_call')
-  return llmSpan?.output ?? null
-}
-
 function buildFailureSummary(run: RunDetail): string {
   if (run.status !== 'error') return ''
   const errorSpan = run.spans
@@ -60,7 +55,6 @@ function buildFailureSummary(run: RunDetail): string {
   const catText: Record<string, string> = {
     wiring: 'fix the graph, not a tool',
     program: 'fix the tool implementation or its dependencies',
-    llm: 'tweak prompt template, swap model, or adjust temperature',
     infra: 'check service health, restart daemon, replug device',
   }
   const fix = catText[cat] ?? 'investigate the error'
@@ -71,7 +65,6 @@ export function buildMarkdownExport(run: RunDetail): string {
   const shortId = run.run_id.slice(0, 6)
   const startIso = new Date(run.started_at * 1000).toISOString()
   const dur = formatDuration(run.duration_ms)
-  const llmPlan = findLlmPlan(run.spans)
   const spanTree = renderSpanTree(run.spans, null, 0)
   const failureSummary = buildFailureSummary(run)
 
@@ -88,11 +81,6 @@ export function buildMarkdownExport(run: RunDetail): string {
   }
   md += `**Daemon PID:** ${run.daemon_pid}\n`
   md += `**Schema:** runs.db v${run.schema_version}\n`
-
-  if (llmPlan !== null) {
-    md += `\n## Plan returned by LLM\n\n`
-    md += `\`\`\`json\n${JSON.stringify(llmPlan, null, 2)}\n\`\`\`\n`
-  }
 
   md += `\n## Span tree\n\n${spanTree}\n`
 

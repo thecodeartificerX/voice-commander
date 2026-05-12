@@ -1,14 +1,11 @@
 category = "primitives"
 
 # Primitive verbs dispatch to the OS (keystrokes, window focus, app launch).
-# Most are marked ``internal = true`` so the LLM never sees them directly —
-# user-defined commands and workflows in commands.json / workflows.json are
-# the primary surface the LLM routes against.
+# Most are marked ``internal = true`` so they are hidden from direct VerbRouter
+# matching; user-defined commands and workflows are the primary routing surface.
 #
-# Exceptions kept LLM-visible (internal=false):
-#   - ``press``: raw keystroke escape hatch for bare key-name utterances
-#     ("control T", "scroll lock", "enter") that no command covers.
-#   - ``no_match``: the "nothing matched" escape hatch. No-op Python function.
+# Exceptions (internal=false):
+#   - ``press``: raw keystroke for bare key-name utterances ("control T", "enter").
 
 [tools.focus]
 phrases = []
@@ -115,22 +112,3 @@ description = "Number of scroll clicks."
 required = false
 type = "integer"
 default = 3
-
-# --- LLM escape hatch ---------------------------------------------------------
-
-[tools.no_match]
-phrases = []
-description = "Signal that the utterance does not match any command or workflow."
-enabled = true
-settle_ms = 0
-llm_only = true
-# ``no_match`` stays LLM-visible — it is the only non-command tool the LLM sees.
-internal = false
-# Hide from user-facing surfaces (Builder palette, /page/primitives, /api/tools);
-# this is the LLM-only escape hatch, not a primitive a user can compose with.
-system = true
-
-[tools.no_match.args.reason]
-description = "Brief explanation of why no command matched."
-required = true
-type = "string"

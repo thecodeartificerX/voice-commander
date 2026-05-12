@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class HotkeyConfig:
     key: str = "scroll_lock"
+    # Secondary hotkey that toggles mute *within* an active session
+    # (ADR 0025). Default ``ctrl_r`` so the right Ctrl key — already a
+    # common dictation push-to-talk — flips voice-commander into a
+    # muted state with the audio stream torn down. Empty string disables
+    # the secondary binding entirely.
+    mute_key: str = "ctrl_r"
 
 
 @dataclass(frozen=True)
@@ -76,28 +82,6 @@ class WebConfig:
     auto_open_browser: bool = True
 
 
-@dataclass(frozen=True)
-class LLMConfig:
-    """Runtime config for the LLM-only routing path (ADR 0040 / spec 2026-04-21).
-
-    Every field is resolved at daemon startup via the precedence chain
-    ``env var → config.toml → hardcoded default``, and the winning source is
-    logged at INFO so silent fallbacks never happen.
-    """
-
-    endpoint_url: str = "http://localhost:1234/v1"
-    model_id: str = "google/gemma-4-e4b"
-    default_browser: str = "chrome"
-    timeout_ms: int = 1200
-    # warmup_timeout_ms is a one-shot startup cost paid once at daemon init,
-    # not a per-call budget. Keep it generous (default 5000ms) so the first
-    # real user call always hits a pre-filled prefix KV cache.
-    warmup_timeout_ms: int = 5000
-    max_plan_steps: int = 12
-    warmup_on_startup: bool = True
-    focus_fuzzy_threshold: int = 70
-    open_fuzzy_threshold: int = 70
-
 
 @dataclass(frozen=True)
 class SpriteConfig:
@@ -142,30 +126,26 @@ class Config:
     vad: VadConfig = field(default_factory=VadConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     web: WebConfig = field(default_factory=WebConfig)
-    llm: LLMConfig = field(default_factory=LLMConfig)
     sprite: SpriteConfig = field(default_factory=SpriteConfig)
     perception: PerceptionConfig = field(default_factory=PerceptionConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
-    # Per-field source strings for [llm], keyed by field name. Populated by
-    # :meth:`load`; empty when the config is constructed directly. Consumed by
-    # :func:`log_llm_sources` at daemon startup so every field's origin is
-    # visible.
-    llm_sources: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path) -> Config:
         raw = _read_toml(path)
         if "llm_router" in raw:
             raise ValueError(
-                "Config section '[llm_router]' was renamed to '[llm]' in ADR 0040. "
-                "Rename the section in your config file."
+                "Config section '[llm_router]' was renamed to '[llm]' in ADR 0040; "
+                "[llm] has since been removed entirely (ADR 0082). "
+                "Remove the section from your config file."
             )
+        if "llm" in raw:
+            logger.warning(
+                "[llm] section is deprecated and ignored — LLM routing was removed (ADR 0082)"
+            )
+            raw.pop("llm")
         vad_raw = raw.get("vad", {})
         gates_raw = vad_raw.pop("gates", {})
-
-        # Build LLMConfig via the per-field resolution helper so we can record
-        # each field's winning source (env / file / default).
-        llm_values, llm_sources = _resolve_llm_fields(file_llm=raw.get("llm", {}))
 
         return cls(
             hotkey=_section(HotkeyConfig, raw.get("hotkey", {})),
@@ -175,11 +155,9 @@ class Config:
             vad=_section(VadConfig, {**vad_raw, "gates": _section(VadGatesConfig, gates_raw)}),
             logging=_section(LoggingConfig, raw.get("logging", {})),
             web=_section(WebConfig, raw.get("web", {})),
-            llm=LLMConfig(**llm_values),
             sprite=_section(SpriteConfig, raw.get("sprite", {})),
             perception=_section(PerceptionConfig, raw.get("perception", {})),
             observability=_section(ObservabilityConfig, raw.get("observability", {})),
-            llm_sources=llm_sources,
         )
 
 
@@ -188,102 +166,14 @@ class Config:
 # ---------------------------------------------------------------------------
 
 
-_ENV_PREFIX = "VC_LLM_"
 
 
-def _resolve_llm_fields(*, file_llm: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
-    """Resolve every LLMConfig field from env / config.toml / default.
-
-    Returns ``(values, sources)`` where ``sources[field]`` is one of:
-
-    * ``"env:VC_LLM_<FIELD>"``
-    * ``"config.toml"``
-    * ``"default"``
-    """
-    hints = get_type_hints(LLMConfig)
-    known_fields = {f.name: f for f in fields(LLMConfig)}
-
-    # Surface unknown keys the same way _section does, so typos get caught.
-    for key in file_llm:
-        if key not in known_fields:
-            raise ValueError(f"Unknown config key '{key}' for LLMConfig in config.toml [llm]")
-
-    values: dict[str, Any] = {}
-    sources: dict[str, str] = {}
-
-    for field_name, f_meta in known_fields.items():
-        expected = hints[field_name]
-        env_key = f"{_ENV_PREFIX}{field_name.upper()}"
-
-        env_raw = os.environ.get(env_key)
-        if env_raw is not None:
-            values[field_name] = _coerce_scalar(env_raw, expected, env_key)
-            sources[field_name] = f"env:{env_key}"
-            continue
-
-        if field_name in file_llm:
-            value = file_llm[field_name]
-            _check_type(value, expected, f"LLMConfig.{field_name}")
-            values[field_name] = value
-            sources[field_name] = "config.toml"
-            continue
-
-        values[field_name] = f_meta.default
-        sources[field_name] = "default"
-
-    return values, sources
-
-
-def _coerce_scalar(raw: str, expected: Any, env_key: str) -> Any:
-    """Convert an env-var string to *expected*. Raise ``ValueError`` on a bad cast."""
-    if expected is str:
-        return raw
-    if expected is bool:
-        lowered = raw.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "off"}:
-            return False
-        raise ValueError(f"Env {env_key}={raw!r} not a valid bool")
-    if expected is int:
-        try:
-            return int(raw)
-        except ValueError as exc:
-            raise ValueError(f"Env {env_key}={raw!r} not a valid int") from exc
-    if expected is float:
-        try:
-            return float(raw)
-        except ValueError as exc:
-            raise ValueError(f"Env {env_key}={raw!r} not a valid float") from exc
-    raise ValueError(f"Env {env_key}: unsupported target type {expected}")
 
 
 def _check_type(value: Any, expected: Any, label: str) -> None:
     if not _type_ok(value, expected):
         raise TypeError(f"Config {label} expected {expected}, got {type(value).__name__}")
 
-
-def log_llm_sources(cfg: Config) -> None:
-    """Emit one INFO line per [llm].* field showing value + source.
-
-    Called once at daemon startup. See spec Section 5 for the format.
-    """
-    if not cfg.llm_sources:
-        return  # Config constructed directly (e.g. in a test); nothing to log.
-
-    field_names = [f.name for f in fields(LLMConfig)]
-    # Fixed-width key column so log lines align in a tail.
-    max_key_len = max(len(name) for name in field_names)
-    for name in field_names:
-        value = getattr(cfg.llm, name)
-        source = cfg.llm_sources.get(name, "default")
-        logger.info(
-            "config: llm.%-*s = %s (source: %s)",
-            max_key_len,
-            name,
-            value,
-            source,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -333,17 +223,6 @@ def _type_ok(value: Any, expected: Any) -> bool:
 
 
 _USER_EDITABLE_SECTIONS: dict[str, set[str]] = {
-    "llm": {
-        "endpoint_url",
-        "model_id",
-        "default_browser",
-        "timeout_ms",
-        "warmup_timeout_ms",
-        "max_plan_steps",
-        "warmup_on_startup",
-        "focus_fuzzy_threshold",
-        "open_fuzzy_threshold",
-    },
     "audio": {"channels", "device", "device_name", "output_dir"},
     "transcription": {
         "model_size",

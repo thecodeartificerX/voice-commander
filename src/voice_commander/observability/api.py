@@ -53,14 +53,6 @@ def _build_export_md(run: dict[str, Any], spans: list[dict[str, Any]]) -> str:
     lines.append(f"**Daemon PID:** {daemon_pid}")
     lines.append(f"**Schema:** runs.db v{schema_version}")
 
-    # Find LLM plan output
-    llm_span = next((s for s in spans if s["type"] == "llm_call"), None)
-    if llm_span and llm_span.get("output") is not None:
-        lines.append("\n## Plan returned by LLM\n")
-        lines.append("```json")
-        lines.append(json.dumps(llm_span["output"], indent=2))
-        lines.append("```")
-
     # Span tree
     lines.append("\n## Span tree\n")
 
@@ -98,7 +90,6 @@ def _build_export_md(run: dict[str, Any], spans: list[dict[str, Any]]) -> str:
             cat_fixes = {
                 "wiring": "fix the graph, not a tool",
                 "program": "fix the tool implementation or its dependencies",
-                "llm": "tweak prompt template, swap model, or adjust temperature",
                 "infra": "check service health, restart daemon, replug device",
             }
             fix = cat_fixes.get(cat, "investigate the error")
@@ -125,7 +116,6 @@ def build_observability_router(
     *,
     tracer: Any = None,
     bus: Any = None,
-    llm_router: Any = None,
     dispatcher: Any = None,
     registry: Any = None,
 ) -> APIRouter:
@@ -240,25 +230,6 @@ def build_observability_router(
     def get_run(run_id: str) -> dict[str, Any]:
         return _run_with_spans(run_id)
 
-    @router.get("/{run_id}/llm")
-    def get_run_llm(run_id: str) -> dict[str, Any]:
-        spans = store.get_spans(run_id)
-        for s in spans:
-            if s["type"] == "llm_call":
-                return {
-                    "run_id": run_id,
-                    "model": s["attrs"].get("model"),
-                    "endpoint_url": s["attrs"].get("endpoint_url"),
-                    "prompt_full": s["attrs"].get("prompt_full"),
-                    "transcript": s["attrs"].get("transcript"),
-                    "tools": s["attrs"].get("tools"),
-                    "raw_response": s["attrs"].get("raw_response"),
-                    "output": s["output"],
-                    "duration_ms": s["duration_ms"],
-                    "status": s["status"],
-                    "error_msg": s["error_msg"],
-                }
-        raise HTTPException(status_code=404, detail="no llm_call span on this run")
 
     @router.post("/prune")
     def prune_runs(body: dict[str, int]) -> dict[str, Any]:
@@ -267,21 +238,6 @@ def build_observability_router(
             store.set_keep_runs(keep)
         return {"keep_runs": store.keep_runs}
 
-    @router.post("/{run_id}/replay-llm")
-    def replay_llm_ep(run_id: str) -> dict[str, Any]:
-        if llm_router is None:
-            raise HTTPException(503, detail="llm_router not configured")
-        from voice_commander.observability.replay import replay_llm as _replay_llm
-
-        result = _replay_llm(store, run_id, llm_router)
-        return {
-            "run_id": result.run_id,
-            "old_plan": result.old_plan,
-            "new_plan": result.new_plan,
-            "changed": result.changed,
-            "error": result.error,
-        }
-
     @router.post("/{run_id}/replay-full")
     def replay_full_ep(
         run_id: str,
@@ -289,11 +245,11 @@ def build_observability_router(
     ) -> dict[str, Any]:
         if x_replay_confirm.lower() != "yes":
             raise HTTPException(412, detail="missing X-Replay-Confirm: yes header")
-        if not all([llm_router, dispatcher, registry, tracer]):
+        if not all([dispatcher, registry, tracer]):
             raise HTTPException(503, detail="full replay requires daemon services")
         from voice_commander.observability.replay import replay_full as _replay_full
 
-        new_id = _replay_full(store, run_id, llm_router, dispatcher, registry, tracer)
+        new_id = _replay_full(store, run_id, dispatcher, registry, tracer)
         return {"new_run_id": new_id, "replay_of": run_id}
 
     return router

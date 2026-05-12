@@ -12,9 +12,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, Form, Query, Request, Response
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.responses import Response as StarletteResponse
 
 from ..registry import ToolRegistry
 from ..tool_metadata import ToolMetadata, ToolMetadataError, ToolMetadataStore
@@ -23,7 +25,6 @@ from .admin import attach_admin_routes
 if TYPE_CHECKING:
     from ..commands.store import GraphStore
     from ..event_bus import EventBus
-    from ..llm_router import LLMRouter
     from ..observability.store import Store
     from ..observability.tracer import Tracer
     from ..recorder import KeyRecorder
@@ -42,9 +43,7 @@ def create_app(
     *,
     command_store: GraphStore | None = None,
     workflow_store: GraphStore | None = None,
-    llm_context: dict[str, object] | None = None,
     config_path: Path | None = None,
-    llm_router: LLMRouter | None = None,
     observability_store: Store | None = None,
     observability_tracer: Tracer | None = None,
     key_recorder: KeyRecorder | None = None,
@@ -58,6 +57,18 @@ def create_app(
     """
 
     app = FastAPI(title="Voice Commander", docs_url=None, redoc_url=None)
+    app.add_middleware(GZipMiddleware, minimum_size=500)
+
+    class ImmutableHashedStaticFiles(StaticFiles):
+        """StaticFiles subclass that injects immutable Cache-Control for hashed asset paths."""
+
+        async def get_response(self, path: str, scope):  # type: ignore[override]
+            response = await super().get_response(path, scope)
+            # path uses OS separator; normalise to forward-slashes for the check.
+            normalised = path.replace("\\", "/")
+            if isinstance(response, StarletteResponse) and normalised.startswith("assets/"):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return response
 
     @app.middleware("http")
     async def csrf_protect(  # noqa: ARG001
@@ -75,6 +86,16 @@ def create_app(
             )
         return await call_next(request)
 
+    # Mount /static/builder with immutable cache headers for hashed Vite assets.
+    # This mount must be registered before the generic /static mount so Starlette
+    # routes /static/builder/* here first (more-specific path wins).
+    _BUILDER_STATIC_DIR = _STATIC_DIR / "builder"
+    if _BUILDER_STATIC_DIR.exists():
+        app.mount(
+            "/static/builder",
+            ImmutableHashedStaticFiles(directory=str(_BUILDER_STATIC_DIR)),
+            name="static-builder",
+        )
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
@@ -198,12 +219,18 @@ def create_app(
         q, replay = event_bus.subscribe_with_replay(last_id)
 
         async def generate() -> AsyncIterator[str]:
+            import time as _time
+
+            IDLE_TIMEOUT_S = 60.0
+            KEEPALIVE_INTERVAL_S = 15.0
             loop = asyncio.get_running_loop()
+            last_activity = _time.monotonic()
             try:
                 # Replay missed events from ring buffer (atomic with subscribe)
                 for ev in replay:
                     if await request.is_disconnected():
                         return
+                    last_activity = _time.monotonic()
                     yield (
                         f"id: {ev.id}\n"
                         f"event: {ev.type}\n"
@@ -216,8 +243,9 @@ def create_app(
                     try:
                         ev = await asyncio.wait_for(
                             loop.run_in_executor(None, q.get, True, 1.0),
-                            timeout=2.0,
+                            timeout=KEEPALIVE_INTERVAL_S,
                         )
+                        last_activity = _time.monotonic()
                         yield (
                             f"id: {ev.id}\n"
                             f"event: {ev.type}\n"
@@ -225,6 +253,11 @@ def create_app(
                         )
                     except (_queue_mod.Empty, TimeoutError):
                         if await request.is_disconnected():
+                            return
+                        if _time.monotonic() - last_activity > IDLE_TIMEOUT_S:
+                            logger.info(
+                                "SSE client idle > %.0fs, closing connection", IDLE_TIMEOUT_S
+                            )
                             return
                         yield ": keepalive\n\n"
             finally:
@@ -476,17 +509,6 @@ def create_app(
             event_bus=event_bus,
         )
 
-    if llm_router is not None:
-        from .prompt import attach_prompt_routes
-
-        attach_prompt_routes(
-            app,
-            templates=templates,
-            llm_router=llm_router,
-            reload_lock=reload_lock,
-            event_bus=event_bus,
-        )
-
     if command_store is not None and workflow_store is not None:
         from ..commands.registrar import reload_all as _registrar_reload_all
         from .builder import BuilderContext
@@ -511,7 +533,6 @@ def create_app(
                 observability_store,
                 tracer=observability_tracer,
                 bus=event_bus,
-                llm_router=llm_router,
             )
         )
 

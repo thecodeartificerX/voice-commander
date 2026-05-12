@@ -14,7 +14,6 @@ const STATUS_PILLS: Array<{ id: RunStatus | 'all'; label: string }> = [
 const CATEGORY_PILLS: Array<{ id: ErrorCategory; label: string }> = [
   { id: 'program', label: '⚙ prog' },
   { id: 'wiring', label: '⚡ wir' },
-  { id: 'llm', label: '🤖 llm' },
   { id: 'infra', label: '📡 infra' },
 ]
 

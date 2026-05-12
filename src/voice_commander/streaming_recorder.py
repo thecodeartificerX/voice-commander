@@ -5,6 +5,7 @@ import enum
 import logging
 import queue
 import threading
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
@@ -19,39 +20,152 @@ logger = logging.getLogger(__name__)
 
 _VAD_FRAME_SIZE = 512  # samples at 16 kHz fed to VADGate per call
 
+# Process-lifetime resampler cache, keyed by (src_rate, dst_rate).
+# Bounded by the number of distinct sample-rate pairs seen (≤ ~5 in practice).
+_RESAMPLER_CACHE: dict[tuple[int, int], Resampler] = {}
+
+
+def _get_resampler(src_rate: int, dst_rate: int) -> Resampler:
+    """Return a cached Resampler for (src_rate, dst_rate), resetting its state.
+
+    The cache is process-lifetime; each entry is re-used across sessions by
+    calling reset() so soxr's internal filter state is cleared before the
+    new session starts feeding audio.
+    """
+    key = (src_rate, dst_rate)
+    if key not in _RESAMPLER_CACHE:
+        _RESAMPLER_CACHE[key] = Resampler(src_rate=src_rate, dst_rate=dst_rate)
+    instance = _RESAMPLER_CACHE[key]
+    instance.reset()
+    return instance
+
+
+def _pop_frame(
+    pending: deque[npt.NDArray[np.float32]], n: int
+) -> npt.NDArray[np.float32]:
+    """Pull exactly *n* samples from the head of *pending* and return them.
+
+    VADGate.process() passes the frame to silero VADIterator (no in-place
+    mutation) and may store a reference in its internal ring buffer, so we
+    return a *copy* to prevent the ring buffer from aliasing our deque chunks.
+
+    Strategy:
+    - If the leading array has >= n samples: slice the first n, replace head
+      with the remainder (or pop it fully if exhausted), return a copy.
+    - Otherwise: drain enough head arrays into a pre-allocated output buffer,
+      push any residual tail of the last partially-consumed array back to front.
+    """
+    head = pending[0]
+    if head.shape[0] >= n:
+        frame = head[:n].copy()
+        if head.shape[0] == n:
+            pending.popleft()
+        else:
+            pending[0] = head[n:]
+        return frame
+
+    # Multi-chunk case: fill a pre-allocated buffer from the deque head.
+    out = np.empty(n, dtype=np.float32)
+    written = 0
+    while written < n:
+        chunk = pending.popleft()
+        need = n - written
+        if chunk.shape[0] <= need:
+            out[written : written + chunk.shape[0]] = chunk
+            written += chunk.shape[0]
+        else:
+            # Last chunk: copy what we need, push the residual back to front.
+            out[written:] = chunk[:need]
+            written = n
+            pending.appendleft(chunk[need:])
+    return out
+
+
+_WASAPI_HOST_API_NAME = "Windows WASAPI"
+
+
+def _find_wasapi_hostapi_index() -> int | None:
+    """Return the PortAudio host-API index for Windows WASAPI, or ``None``.
+
+    Windows enumerates the same physical input device once per host API
+    (MME, Windows DirectSound, Windows WASAPI, Windows WDM-KS). DirectSound
+    in particular is prone to ``PaErrorCode -9999`` host errors when device
+    topology shifts (USB device added/removed, sample-rate change). WASAPI
+    is the modern Windows native path and is far more reliable, so the
+    resolver filters all name matches through it (ADR 0081).
+    """
+    try:
+        for idx, api in enumerate(sd.query_hostapis()):
+            if api.get("name", "").strip().lower() == _WASAPI_HOST_API_NAME.lower():
+                return idx
+    except Exception:
+        logger.exception("StreamingRecorder: sd.query_hostapis() failed")
+        return None
+    return None
+
 
 def _resolve_device_by_name(saved_index: int | None, device_name: str) -> int | None:
-    """Return the current PortAudio index for *device_name*, or *saved_index* as fallback.
+    """Return the current PortAudio index for *device_name* on Windows WASAPI.
 
-    Fast path: if the device at *saved_index* still has the right name, return it
-    immediately. Slow path: scan all input devices for a name match. If nothing
-    matches, log a warning and return ``None`` (PortAudio system default).
-    All sd exceptions are caught; returns *saved_index* on unexpected error.
+    ``device_name`` is the authoritative identity for the configured input
+    (ADR 0081). The resolver scans **WASAPI input devices only** — same
+    name under DirectSound / MME / WDM-KS is ignored. *saved_index* is a
+    non-authoritative cache: used only for the fast path when it still
+    points to a WASAPI device whose name matches the target.
+
+    Returns:
+        * the WASAPI index for *device_name* (fast or slow path); or
+        * ``None`` (PortAudio system default) when no WASAPI match exists,
+          WASAPI is unavailable, or *device_name* is empty and no fallback
+          index is configured.
+
+    All sd exceptions are caught; returns *saved_index* on unexpected error
+    so a transient PortAudio glitch never wipes a working configuration.
     """
     if not device_name:
         return saved_index
+    target = device_name.strip().lower()
     try:
+        wasapi_idx = _find_wasapi_hostapi_index()
+        if wasapi_idx is None:
+            logger.warning(
+                "StreamingRecorder: Windows WASAPI host API not available; "
+                "falling back to system default for '%s'",
+                device_name,
+            )
+            return None
+
         devices = sd.query_devices()
-        # Fast path: check saved index still points to the right name.
+
+        def _is_wasapi_input_named(dev: Any, name_target: str) -> bool:
+            return (
+                dev.get("hostapi") == wasapi_idx
+                and dev.get("max_input_channels", 0) > 0
+                and dev.get("name", "").strip().lower() == name_target
+            )
+
+        # Fast path: saved index still points to the right WASAPI device.
         if saved_index is not None:
             try:
                 info = devices[saved_index]
-                if info["name"].strip().lower() == device_name.strip().lower():
+                if _is_wasapi_input_named(info, target):
                     return saved_index
             except (IndexError, KeyError):
                 pass
-        # Scan all input devices.
+
+        # Slow path: scan all WASAPI input devices.
         for idx, dev in enumerate(devices):
-            if dev.get("max_input_channels", 0) > 0:
-                if dev["name"].strip().lower() == device_name.strip().lower():
-                    if idx != saved_index:
-                        logger.info(
-                            "StreamingRecorder: '%s' moved index %s → %d",
-                            device_name, saved_index, idx,
-                        )
-                    return idx
+            if _is_wasapi_input_named(dev, target):
+                if idx != saved_index:
+                    logger.info(
+                        "StreamingRecorder: WASAPI '%s' resolved index %s → %d",
+                        device_name, saved_index, idx,
+                    )
+                return idx
+
         logger.warning(
-            "StreamingRecorder: device '%s' not found; falling back to system default",
+            "StreamingRecorder: no WASAPI input device named '%s'; "
+            "falling back to system default",
             device_name,
         )
         return None
@@ -215,7 +329,8 @@ class StreamingRecorder:
         try:
             device_info: Any = sd.query_devices(self._device)
             native_rate = int(device_info["default_samplerate"])
-            self._resampler = Resampler(src_rate=native_rate, dst_rate=self._vad_sample_rate)
+            # Fetch (or create) a cached Resampler; reset() clears soxr filter state.
+            self._resampler = _get_resampler(native_rate, self._vad_sample_rate)
             self._vad_gate.reset()
             # Replace queue: old stream is stopped so its callback is no longer
             # running; new stream's callback references self._raw_q at call time.
@@ -278,8 +393,8 @@ class StreamingRecorder:
                 self._channels,
             )
 
-            # Fresh Resampler for this session (src_rate comes from device query).
-            self._resampler = Resampler(src_rate=native_rate, dst_rate=self._vad_sample_rate)
+            # Fetch (or create) a cached Resampler; reset() clears soxr filter state.
+            self._resampler = _get_resampler(native_rate, self._vad_sample_rate)
 
             # Reset VADGate for a clean session.
             self._vad_gate.reset()
@@ -369,7 +484,8 @@ class StreamingRecorder:
     def _vad_loop(self) -> None:
         """Pull raw chunks, resample, frame, gate, and fire utterance_sink."""
         logger.debug("VAD worker started")
-        buf = np.empty(0, dtype=np.float32)
+        pending: deque[npt.NDArray[np.float32]] = deque()
+        pending_samples = 0
         consecutive_errors = 0
 
         while True:
@@ -382,11 +498,13 @@ class StreamingRecorder:
                 if self._resampler is None:
                     raise RuntimeError("Resampler not initialised")
                 resampled: npt.NDArray[np.float32] = self._resampler.process(chunk.flatten())
-                buf = np.concatenate((buf, resampled))
+                if resampled.size:
+                    pending.append(resampled)
+                    pending_samples += resampled.shape[0]
 
-                while buf.shape[0] >= _VAD_FRAME_SIZE:
-                    frame: npt.NDArray[np.float32] = buf[:_VAD_FRAME_SIZE]
-                    buf = buf[_VAD_FRAME_SIZE:]
+                while pending_samples >= _VAD_FRAME_SIZE:
+                    frame: npt.NDArray[np.float32] = _pop_frame(pending, _VAD_FRAME_SIZE)
+                    pending_samples -= _VAD_FRAME_SIZE
 
                     result = self._vad_gate.process(frame)
                     if result is not None:
@@ -404,7 +522,8 @@ class StreamingRecorder:
                     consecutive_errors,
                 )
                 if consecutive_errors >= 5:
-                    buf = np.empty(0, dtype=np.float32)
+                    pending = deque()
+                    pending_samples = 0
                     if self._attempt_stream_recovery():
                         # Re-check state: close_session() may have set CLOSING while
                         # we were recovering. The sentinel is on the OLD queue; we

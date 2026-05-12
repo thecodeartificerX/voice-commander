@@ -81,7 +81,6 @@ describe('App bootstrap — F-C3', () => {
       edges: [],
       selectedNodeId: null,
       dirty: false,
-      llmVisible: false,
     })
     useRunsStore.setState({
       runs: [],

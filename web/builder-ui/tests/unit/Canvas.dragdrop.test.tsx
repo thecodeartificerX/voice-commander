@@ -64,7 +64,6 @@ function freshStore() {
     edges: [],
     selectedNodeId: null,
     dirty: false,
-    llmVisible: true,
     draft: false,
     runStatusByNodeId: {},
   })

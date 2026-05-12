@@ -24,7 +24,6 @@ describe('Toolbar — back button + draft name', () => {
       edges: [],
       selectedNodeId: null,
       dirty: false,
-      llmVisible: false,
       draft: false,
       runStatusByNodeId: {},
     })

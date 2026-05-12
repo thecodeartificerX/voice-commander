@@ -1,10 +1,15 @@
 [hotkey]
 key = "scroll_lock"
+# Secondary hotkey: toggles mute within an active session (ADR 0025).
+# Default ctrl_r — pressing right Ctrl during a session closes the audio
+# stream, drains in-flight utterances, and stays in muted state until
+# right Ctrl is pressed again. Set to "" to disable.
+mute_key = "ctrl_r"
 
 [audio]
 device_name = "At 2020 (AT2020USB-X)"
 channels = 1
-device = 8
+device = 7
 output_dir = "outputs"
 
 [transcription]
@@ -40,17 +45,6 @@ enabled = true
 host = "127.0.0.1"
 port = 8765
 auto_open_browser = true
-
-[llm]
-endpoint_url = "http://192.168.4.200:5055/v1"
-model_id = "gemma4:e4b"
-default_browser = "comet"
-timeout_ms = 30000
-warmup_timeout_ms = 30000
-max_plan_steps = 12
-warmup_on_startup = true
-focus_fuzzy_threshold = 70
-open_fuzzy_threshold = 70
 
 [sprite]
 enabled = true

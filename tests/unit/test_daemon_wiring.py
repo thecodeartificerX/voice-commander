@@ -21,9 +21,6 @@ def test_build_streaming_daemon_constructs_tracer(monkeypatch, tmp_path):
         def all(self):
             return []
 
-        def all_llm_visible(self):
-            return []
-
         def by_name(self, name):
             return None
 
@@ -41,26 +38,18 @@ def test_build_streaming_daemon_constructs_tracer(monkeypatch, tmp_path):
     with (
         patch("voice_commander.daemon.load_silero_vad", return_value=object()),
         patch("voice_commander.daemon.Transcriber"),
-        patch("voice_commander.daemon.LLMRouter") as MockLLMRouter,
         patch("voice_commander.daemon.StreamingRecorder"),
         patch("voice_commander.daemon.WindowsFeedbackSink"),
         patch("voice_commander.daemon.create_app"),
         patch("voice_commander.daemon.discover", return_value=fake_registry),
         patch("voice_commander.daemon.validate_config_or_die"),
         patch("voice_commander.daemon.validate_or_die"),
-        patch("voice_commander.daemon.log_llm_sources"),
         patch("voice_commander.daemon.ToolMetadataStore"),
         patch("voice_commander.daemon.VADGate"),
         patch("voice_commander.commands.registrar.reload_all", return_value=([], [])),
         patch("voice_commander.commands.GraphStore"),
         patch("voice_commander.commands.seed_if_missing"),
     ):
-        # LLMRouter mock needs set_tracer and warmup
-        mock_router = MagicMock()
-        mock_router.warmup.return_value = True
-        mock_router.set_tracer = MagicMock()
-        MockLLMRouter.return_value = mock_router
-
         daemon = build_streaming_daemon(cfg)
 
     assert daemon._tracer is not None

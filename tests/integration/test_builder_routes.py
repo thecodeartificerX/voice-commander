@@ -471,3 +471,44 @@ def test_builder_js_contains_normalize_args() -> None:
     guard-comment history.
     """
     pass  # normalizeArgs moved to React SPA; no longer in a served JS file
+
+
+def test_hashed_assets_carry_immutable_cache_control(tmp_path: Path) -> None:
+    """Hashed Vite assets under /static/builder/assets/ must carry immutable Cache-Control.
+
+    Skipped gracefully when the SPA has not been built (no assets/ directory present).
+    """
+    from voice_commander.web.app import _STATIC_DIR
+
+    assets_dir = _STATIC_DIR / "builder" / "assets"
+    if not assets_dir.exists():
+        pytest.skip("builder SPA not built — no assets/ directory to test against")
+
+    # Find any .js file under assets/
+    js_files = list(assets_dir.glob("*.js"))
+    if not js_files:
+        pytest.skip("no .js files found under builder/assets/")
+
+    asset_name = js_files[0].name
+
+    reg = _primitive_registry()
+    cs, ws, config_path = _seed_stores(tmp_path)
+    store = ToolMetadataStore(tmp_path / "tools_meta_cc")
+    (tmp_path / "tools_meta_cc").mkdir()
+    app = create_app(
+        reg,
+        store,
+        threading.Lock(),
+        event_bus=EventBus(),
+        command_store=cs,
+        workflow_store=ws,
+        config_path=config_path,
+    )
+    test_client = TestClient(app)
+
+    r = test_client.get(f"/static/builder/assets/{asset_name}")
+    assert r.status_code == 200
+    cc = r.headers.get("cache-control", "")
+    assert "immutable" in cc, (
+        f"Expected immutable Cache-Control for hashed asset, got: {cc!r}"
+    )

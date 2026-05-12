@@ -8,6 +8,21 @@ export default defineConfig({
   build: {
     outDir: '../../src/voice_commander/web/static/builder',
     emptyOutDir: true,
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('reactflow')) return 'react-flow';
+            if (id.includes('@radix-ui')) return 'radix';
+            if (id.includes('zustand')) return 'zustand';
+            if (id.includes('lucide-react')) return 'lucide';
+            if (id.includes('react-dom') || /[\\/]node_modules[\\/]react[\\/]/.test(id) || /[\\/]node_modules[\\/]scheduler[\\/]/.test(id)) return 'react';
+            return 'vendor';
+          }
+        },
+      },
+    },
   },
   resolve: {
     alias: {

@@ -141,7 +141,10 @@ def main() -> None:
         logger.error("Voice Commander already running: %s", e)
         sys.exit(1)
     try:
-        build_streaming_daemon(cfg).run(cfg.hotkey.key)
+        build_streaming_daemon(cfg).run(
+            cfg.hotkey.key,
+            mute_key=cfg.hotkey.mute_key,
+        )
     finally:
         lock.release()
 

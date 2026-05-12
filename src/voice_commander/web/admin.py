@@ -179,29 +179,18 @@ def attach_admin_routes(
     @app.post("/config", response_class=HTMLResponse)
     async def config_save(
         request: Request,
-        llm_endpoint_url: str = Form(default=""),
-        llm_model_id: str = Form(default=""),
-        llm_default_browser: str = Form(default=""),
-        llm_timeout_ms: int = Form(default=1200),
         audio_device: int = Form(default=-1),
         transcription_model_size: str = Form(default="small.en"),
         transcription_min_confidence: float = Form(default=0.3),
     ) -> HTMLResponse:
         """``POST /config`` — persist config changes from form fields.
 
-        Form fields: llm_endpoint_url, llm_model_id, llm_default_browser,
-        llm_timeout_ms, audio_device, transcription_model_size,
+        Form fields: audio_device, transcription_model_size,
         transcription_min_confidence.  Returns a green banner on success, amber
         if a restart is needed (audio device or model changed), or an error
         banner on failure.
         """
         updates: dict[str, dict[str, Any]] = {
-            "llm": {
-                "endpoint_url": llm_endpoint_url,
-                "model_id": llm_model_id,
-                "default_browser": llm_default_browser,
-                "timeout_ms": int(llm_timeout_ms),
-            },
             "audio": {"device": int(audio_device)},
             "transcription": {
                 "model_size": transcription_model_size,

@@ -1,6 +1,6 @@
 """Unit tests for voice_commander.daemon.StreamingDaemon.
 
-All hardware subsystems (recorder, transcriber, llm_router, dispatcher) are
+All hardware subsystems (recorder, transcriber, dispatcher) are
 replaced with MagicMocks.  Utterance ndarrays are injected directly into the
 pipeline queue so no real audio or GPU work occurs.
 
@@ -27,7 +27,6 @@ for _mod in ("silero_vad", "torch", "sounddevice", "soxr"):
 from voice_commander.daemon import StreamingDaemon  # noqa: E402
 from voice_commander.event_bus import EventBus  # noqa: E402
 from voice_commander.feedback import CapturingFeedbackSink  # noqa: E402
-from voice_commander.llm_router import LLMRouter  # noqa: E402
 from voice_commander.plan import Plan, ToolCall  # noqa: E402
 from voice_commander.transcriber import TranscriptionResult  # noqa: E402
 from voice_commander.verb_router import VerbRouter  # noqa: E402
@@ -46,7 +45,6 @@ def _make_daemon(
     CapturingFeedbackSink,
     MagicMock,  # recorder
     MagicMock,  # transcriber
-    MagicMock,  # llm_router
     MagicMock,  # dispatcher
 ]:
     feedback = CapturingFeedbackSink()
@@ -55,7 +53,6 @@ def _make_daemon(
     recorder.is_open = False
 
     transcriber = MagicMock()
-    llm_router = MagicMock(spec=LLMRouter)
     dispatcher = MagicMock()
     verb_router = MagicMock(spec=VerbRouter)
     verb_router.route.return_value = Plan(
@@ -67,7 +64,6 @@ def _make_daemon(
         feedback=feedback,
         recorder=recorder,
         transcriber=transcriber,
-        llm_router=llm_router,
         dispatcher=dispatcher,
         verb_router=verb_router,
         registry=MagicMock(),
@@ -76,7 +72,7 @@ def _make_daemon(
     )
     # Mock transcribers are always "ready" — simulate a completed background load.
     daemon._transcriber_ready.set()
-    return daemon, feedback, recorder, transcriber, llm_router, dispatcher
+    return daemon, feedback, recorder, transcriber, dispatcher
 
 
 def _fake_utterance(n: int = 1600) -> np.ndarray:
@@ -140,7 +136,7 @@ def test_on_scroll_lock_reports_error_when_open_session_raises(tmp_path):
 
 def test_pipeline_processes_utterance(tmp_path):
     """Utterance placed in _utt_q flows through transcribe → route → run_plan."""
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
@@ -148,7 +144,6 @@ def test_pipeline_processes_utterance(tmp_path):
     transcriber.transcribe.return_value = result
 
     plan = Plan(steps=(ToolCall(name="press", kwargs={"combo": "ctrl+c"}),), raw_response={})
-    llm_router.route.return_value = plan
 
     # Start pipeline thread.
     pipeline_done = threading.Event()
@@ -179,7 +174,7 @@ def test_pipeline_processes_utterance(tmp_path):
 def test_pipeline_handles_transcribe_error(tmp_path):
     """RuntimeError from transcriber.transcribe is caught; on_error is called;
     the pipeline thread exits cleanly after receiving the poison pill."""
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
@@ -273,18 +268,15 @@ def test_utt_q_overflow_calls_on_miss(tmp_path):
 
 
 def test_process_utterance_publishes_miss_on_route_none(tmp_path):
-    """When router returns None in Merlin mode, plan_outcome status=miss is published."""
+    """When VerbRouter returns None, plan_outcome status=miss is published."""
     bus = EventBus()
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
         output_dir=str(tmp_path), event_bus=bus
     )
 
     result = _fake_transcription_result("gobbledygook", confidence=0.95)
     transcriber.transcribe.return_value = result
-    llm_router.route.return_value = None
-
-    # Force LLM path so the miss-on-None path is exercised.
-    daemon._merlin_mode = True
+    daemon._verb_router.route.return_value = None
 
     _run_process_utterance(daemon, tmp_path)
 
@@ -303,7 +295,7 @@ def test_process_utterance_publishes_miss_on_route_none(tmp_path):
 def test_process_utterance_publishes_miss_on_confidence_gate(tmp_path):
     """When confidence is below threshold, plan_outcome status=miss is published."""
     bus = EventBus()
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
         output_dir=str(tmp_path), event_bus=bus
     )
 
@@ -325,7 +317,7 @@ def test_process_utterance_publishes_miss_on_confidence_gate(tmp_path):
 def test_process_utterance_no_miss_event_on_word_count_gate(tmp_path):
     """Word-count gate is infra noise — no plan_outcome published when it fires."""
     bus = EventBus()
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
         output_dir=str(tmp_path), event_bus=bus
     )
     # min_word_count defaults to 1; empty string has 0 words
@@ -341,7 +333,7 @@ def test_process_utterance_no_miss_event_on_word_count_gate(tmp_path):
 def test_process_utterance_no_miss_event_on_no_speech_gate(tmp_path):
     """no_speech_prob gate is infra noise — no plan_outcome published when it fires."""
     bus = EventBus()
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
         output_dir=str(tmp_path), event_bus=bus
     )
     # no_speech_prob above default max of 0.6
@@ -355,10 +347,10 @@ def test_process_utterance_no_miss_event_on_no_speech_gate(tmp_path):
 
 
 def test_process_utterance_publishes_error_when_registry_none(tmp_path):
-    """When _registry is None after LLM routing, plan_outcome status=error is published
+    """When _registry is None, plan_outcome status=error is published
     and dispatcher.run_plan is never called."""
     bus = EventBus()
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
         output_dir=str(tmp_path), event_bus=bus
     )
     daemon._registry = None  # force the error path
@@ -366,10 +358,7 @@ def test_process_utterance_publishes_error_when_registry_none(tmp_path):
     result = _fake_transcription_result("open spotify", confidence=0.95)
     transcriber.transcribe.return_value = result
     plan = Plan(steps=(ToolCall(name="open", kwargs={"target": "spotify"}),), raw_response={})
-    llm_router.route.return_value = plan
-
-    # Force LLM path so the original test intent is preserved.
-    daemon._merlin_mode = True
+    daemon._verb_router.route.return_value = plan
 
     _run_process_utterance(daemon, tmp_path)
 
@@ -385,156 +374,22 @@ def test_process_utterance_publishes_error_when_registry_none(tmp_path):
 
 
 def test_process_utterance_calls_on_miss_when_plan_is_none(tmp_path):
-    """Fast-path None → feedback.on_miss once; no retry, no agentic."""
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+    """Fast-path None → feedback.on_miss once; no retry."""
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
     result = _fake_transcription_result("hello friend", confidence=0.95)
     transcriber.transcribe.return_value = result
-    llm_router.route.return_value = None  # no matching command/workflow
-
-    # Force LLM path so the original test intent is preserved.
-    daemon._merlin_mode = True
+    daemon._verb_router.route.return_value = None  # no matching command/workflow
 
     daemon._process_utterance(_fake_utterance())
 
-    llm_router.route.assert_called_once()
+    daemon._verb_router.route.assert_called_once()
     dispatcher.run_plan.assert_not_called()
     assert any(name == "on_miss" for name, _ in feedback.calls), (
         f"Expected an on_miss call on the feedback sink; got {feedback.calls}"
     )
-
-
-# ---------------------------------------------------------------------------
-# Merlin-gated verb-router tests (ADR 0074)
-# ---------------------------------------------------------------------------
-
-
-def test_normal_mode_uses_verb_router(tmp_path):
-    """In normal mode (_merlin_mode=False) the verb router is consulted."""
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
-        output_dir=str(tmp_path)
-    )
-
-    result = _fake_transcription_result("copy", confidence=0.95)
-    transcriber.transcribe.return_value = result
-
-    daemon._process_utterance(_fake_utterance())
-
-    assert daemon._merlin_mode is False
-    llm_router.route.assert_not_called()
-    dispatcher.run_plan.assert_called_once()
-
-    args = dispatcher.run_plan.call_args
-    assert args[0][1].raw_response["router"] == "verb"
-
-
-def test_merlin_toggle_turns_llm_mode_on_and_off(tmp_path):
-    """Saying 'Merlin' toggles _merlin_mode; next utterance uses LLM router."""
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
-        output_dir=str(tmp_path)
-    )
-
-    # Toggle on
-    result = _fake_transcription_result("Merlin", confidence=0.95)
-    transcriber.transcribe.return_value = result
-
-    daemon._process_utterance(_fake_utterance())
-    assert daemon._merlin_mode is True
-    llm_router.route.assert_not_called()
-    dispatcher.run_plan.assert_not_called()
-    assert not any(name == "on_miss" for name, _ in feedback.calls)
-
-    # Utterance while in Merlin mode → LLM router
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
-        output_dir=str(tmp_path)
-    )
-    daemon._merlin_mode = True
-    llm_router.route.return_value = Plan(
-        steps=(ToolCall(name="open", kwargs={"target": "spotify"}),),
-        raw_response={},
-    )
-
-    result = _fake_transcription_result("open spotify", confidence=0.95)
-    transcriber.transcribe.return_value = result
-
-    daemon._process_utterance(_fake_utterance())
-    llm_router.route.assert_called_once_with("open spotify")
-    dispatcher.run_plan.assert_called_once()
-
-    # Toggle off
-    result = _fake_transcription_result("merlin", confidence=0.95)
-    transcriber.transcribe.return_value = result
-    daemon._process_utterance(_fake_utterance())
-    assert daemon._merlin_mode is False
-
-
-def test_session_reset_clears_merlin_mode(tmp_path):
-    """Closing a session resets _merlin_mode to False."""
-    daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
-    daemon._session_active = True
-    daemon._merlin_mode = True
-    recorder.is_open = True
-
-    daemon.on_scroll_lock()
-
-    assert daemon._merlin_mode is False
-    assert daemon._session_active is False
-
-    # Re-opening must also reset
-    daemon._session_active = False
-    daemon._merlin_mode = True
-    recorder.is_open = False
-
-    daemon.on_scroll_lock()
-    assert daemon._merlin_mode is False
-    assert daemon._session_active is True
-
-
-def test_merlin_mode_routes_to_llm_router(tmp_path):
-    """When _merlin_mode=True, LLM router is used and verb router is not."""
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
-        output_dir=str(tmp_path)
-    )
-    daemon._merlin_mode = True
-
-    llm_router.route.return_value = Plan(
-        steps=(ToolCall(name="open", kwargs={"target": "spotify"}),),
-        raw_response={},
-    )
-
-    result = _fake_transcription_result("open spotify", confidence=0.95)
-    transcriber.transcribe.return_value = result
-
-    daemon._process_utterance(_fake_utterance())
-
-    llm_router.route.assert_called_once_with("open spotify")
-    dispatcher.run_plan.assert_called_once()
-
-
-def test_merlin_toggle_does_not_fire_miss(tmp_path):
-    """The 'Merlin' toggle utterance must not trigger on_miss or plan_outcome."""
-    bus = EventBus()
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
-        output_dir=str(tmp_path), event_bus=bus
-    )
-
-    result = _fake_transcription_result("Merlin", confidence=0.95)
-    transcriber.transcribe.return_value = result
-
-    daemon._process_utterance(_fake_utterance())
-
-    assert not any(name == "on_miss" for name, _ in feedback.calls)
-    llm_router.route.assert_not_called()
-    dispatcher.run_plan.assert_not_called()
-    outcomes = [e for e in bus.replay_after(0) if e.type == "plan_outcome"]
-    assert outcomes == []
-
-
-# ---------------------------------------------------------------------------
-# Helper for running _process_utterance via pipeline thread
-# ---------------------------------------------------------------------------
 
 
 def _run_process_utterance(daemon: StreamingDaemon, tmp_path) -> None:

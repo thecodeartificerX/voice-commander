@@ -80,9 +80,6 @@
 [data-error-category="program"] {
   outline: 2px solid #ef4444 !important;
 }
-[data-error-category="llm"] {
-  outline: 2px solid #a855f7 !important;
-}
 [data-error-category="infra"] {
   outline: 2px solid #6b7280 !important;
 }

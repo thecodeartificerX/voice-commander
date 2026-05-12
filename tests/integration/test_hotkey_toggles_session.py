@@ -90,7 +90,6 @@ def stub_daemon(tmp_path: Any) -> Any:
     transcriber.load.return_value = None
     transcriber.unload.return_value = None
 
-    llm_router = MagicMock()
     dispatcher = MagicMock()
 
     daemon = StreamingDaemon(
@@ -98,7 +97,6 @@ def stub_daemon(tmp_path: Any) -> Any:
         recorder=recorder,  # type: ignore[arg-type]
         transcriber=transcriber,
         verb_router=MagicMock(),
-        llm_router=llm_router,
         dispatcher=dispatcher,
         output_dir=str(tmp_path / "outputs"),
     )
@@ -191,7 +189,6 @@ def test_toggle_open_failure_reported(tmp_path: Any) -> None:
         recorder=recorder,  # type: ignore[arg-type]
         transcriber=MagicMock(),
         verb_router=MagicMock(),
-        llm_router=MagicMock(),
         dispatcher=MagicMock(),
         output_dir=str(tmp_path / "outputs"),
     )

@@ -1,10 +1,9 @@
 """Error categorisation helper for the observability pipeline.
 
-Four buckets:
+Three buckets:
 - program  : tool function raised an unhandled exception during execution
 - wiring   : graph structure/runtime error (missing kwarg, dangling port, bad branch, etc.)
-- llm      : router returned malformed plan, unknown tool, or retry budget exceeded
-- infra    : LM Studio unreachable, audio device gone, SQLite locked, etc.
+- infra    : audio device gone, SQLite locked, network unreachable, etc.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from enum import StrEnum  # requires Python 3.11+
 
 
 class Category(StrEnum):
-    """4-bucket runtime error taxonomy.
+    """3-bucket runtime error taxonomy.
 
     Inherits from ``StrEnum`` so ``Category.PROGRAM == "program"`` is True and
     JSON / SQLite serialisation produces the bare lowercase strings — keeping
@@ -22,15 +21,11 @@ class Category(StrEnum):
 
     PROGRAM = "program"
     WIRING = "wiring"
-    LLM = "llm"
     INFRA = "infra"
 
 
 # Exceptions that classify as 'wiring' — imported lazily to avoid circular imports
 _WIRING_TYPES: tuple[str, ...] = ("WiringError",)
-
-# Exceptions that classify as 'llm'
-_LLM_TYPES: tuple[str, ...] = ("LLMPlanError",)
 
 # Stdlib network/audio types that *always* count as infra regardless of where
 # they were raised. ``OSError`` is intentionally excluded — most filesystem
@@ -53,25 +48,21 @@ def classify(exc: BaseException, *, where: str = "") -> Category:
     """Return the error category for *exc*.
 
     *where* is a hint string (e.g. ``"graph_runtime"``, ``"dispatcher"``,
-    ``"llm_router"``, ``"daemon"``) used as a tiebreaker. Specifically:
+    ``"daemon"``) used as a tiebreaker. Specifically:
     raw ``OSError`` is treated as infra only when raised from the daemon
     audio path (``where == "daemon"``); elsewhere it is a program bug.
 
     Classification priority:
     1. WiringError    → ``wiring``
-    2. LLMPlanError   → ``llm``
-    3. httpx errors   → ``infra``  (any ``httpx.*`` exception class)
-    4. stdlib net/audio types → ``infra``
-    5. raw OSError from daemon audio path → ``infra``
-    6. default        → ``program``
+    2. httpx errors   → ``infra``  (any ``httpx.*`` exception class)
+    3. stdlib net/audio types → ``infra``
+    4. raw OSError from daemon audio path → ``infra``
+    5. default        → ``program``
     """
     type_name = type(exc).__name__
 
     if type_name in _WIRING_TYPES:
         return Category.WIRING
-
-    if type_name in _LLM_TYPES:
-        return Category.LLM
 
     # Any class defined in the httpx package is an infra error — covers
     # ConnectError, ConnectTimeout, ReadTimeout, RemoteProtocolError, etc.

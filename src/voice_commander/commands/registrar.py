@@ -81,10 +81,9 @@ def register_graphs(
     for g in graphs.values():
         if not g.enabled:
             continue
-        internal = not g.llm_visible
         params_schema = _build_schema(g)
         _drop_shadowed_primitive(registry, g.name)
-        entry = _build_entry(g, runtime, origin, internal, params_schema)
+        entry = _build_entry(g, runtime, origin, False, params_schema)
         registry.register(entry)
         names.append(g.name)
     logger.info("Registered %d %s graphs: %s", len(names), origin, names)
@@ -126,7 +125,7 @@ def reload_all(
         if not g.enabled:
             continue
         _drop_shadowed_primitive(registry, g.name)
-        entry = _build_entry(g, runtime, "command", not g.llm_visible, _build_schema(g))
+        entry = _build_entry(g, runtime, "command", False, _build_schema(g))
         registry.register(entry)
         cmd_names.append(g.name)
 
@@ -135,7 +134,7 @@ def reload_all(
         if not g.enabled:
             continue
         _drop_shadowed_primitive(registry, g.name)
-        entry = _build_entry(g, runtime, "workflow", not g.llm_visible, _build_schema(g))
+        entry = _build_entry(g, runtime, "workflow", False, _build_schema(g))
         registry.register(entry)
         wf_names.append(g.name)
 

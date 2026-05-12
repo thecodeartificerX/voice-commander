@@ -23,8 +23,6 @@
                    class="px-2 py-1 rounded hover:text-emerald-400 {% if active == 'commands' %}text-emerald-400 border-b-2 border-emerald-400{% else %}text-neutral-400{% endif %}">Commands</a>
                 <a href="/page/workflows"
                    class="px-2 py-1 rounded hover:text-indigo-300 {% if active == 'workflows' %}text-indigo-300 border-b-2 border-indigo-300{% else %}text-neutral-400{% endif %}">Workflows</a>
-                <a href="/page/prompt"
-                   class="px-2 py-1 rounded hover:text-purple-400 {% if active == 'prompt' %}text-purple-400 border-b-2 border-purple-400{% else %}text-neutral-400{% endif %}">Prompt</a>
                 <a href="/page/config"
                    class="px-2 py-1 rounded hover:text-amber-300 {% if active == 'config' %}text-amber-300 border-b-2 border-amber-300{% else %}text-neutral-400{% endif %}">Config</a>
                 <a href="/page/primitives"
@@ -123,7 +121,6 @@
         es.addEventListener("command_deleted", () => reloadSection("#commands-list", "/commands"));
         es.addEventListener("workflow_saved", () => reloadSection("#workflows-list", "/workflows"));
         es.addEventListener("workflow_deleted", () => reloadSection("#workflows-list", "/workflows"));
-        es.addEventListener("prompt_template_saved", () => reloadInner("#prompt-inspector-root", "/prompt"));
     })();
     </script>
     {% block scripts %}{% endblock %}

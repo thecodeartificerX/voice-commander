@@ -8,6 +8,7 @@ import queue
 import signal
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,12 +18,11 @@ import soundfile as sf
 from silero_vad import load_silero_vad
 
 from . import resolver as param_resolver
-from .config import Config, log_llm_sources
+from .config import Config
 from .dispatcher import Dispatcher
 from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
-from .llm_router import LLMRouter
 from .observability import Store, Tracer
 from .verb_router import VerbRouter, build_default_rules
 from .observability.errors import classify as _classify_error
@@ -63,9 +63,8 @@ class StreamingDaemon:
 
     Optionally runs an embedded uvicorn-hosted web UI for managing tool
     metadata (phrases / descriptions / enabled flag) via sidecar TOML files.
-    The web server, registry, and LLM router all share a single
-    :class:`threading.Lock` so metadata reloads never race with
-    live tool-call routing.
+    The web server and registry share a single :class:`threading.Lock` so
+    metadata reloads never race with live tool-call routing.
     """
 
     def __init__(
@@ -73,7 +72,6 @@ class StreamingDaemon:
         feedback: FeedbackSink,
         recorder: StreamingRecorder | None,
         transcriber: Transcriber,
-        llm_router: LLMRouter,
         dispatcher: Dispatcher,
         verb_router: VerbRouter,
         *,
@@ -100,8 +98,6 @@ class StreamingDaemon:
                 init (see :func:`build_streaming_daemon`).
             transcriber: :class:`Transcriber` for speech-to-text (faster-whisper).
                 Model is loaded later by :meth:`run`.
-            llm_router: :class:`LLMRouter` for transcript → tool-call plan via
-                LM Studio.
             dispatcher: :class:`Dispatcher` that executes multi-step plans.
             registry: :class:`ToolRegistry` for tool lookup during plan execution.
                 ``None`` disables dispatch (error is logged).
@@ -132,7 +128,6 @@ class StreamingDaemon:
         self._feedback = feedback
         self._recorder = recorder
         self._transcriber = transcriber
-        self._llm_router = llm_router
         self._dispatcher = dispatcher
         self._registry = registry
         self._min_confidence = min_confidence
@@ -161,7 +156,11 @@ class StreamingDaemon:
             thread_name_prefix="wav-writer",
         )
         self._session_active: bool = False
-        self._merlin_mode = False
+        # ADR 0025 — secondary hotkey toggles mute *within* an active session.
+        # Muted means: audio stream torn down via recorder.close_session() and
+        # any in-flight utterances drained. The Scroll Lock session conceptually
+        # remains "open" so the user can unmute back into the same session.
+        self._muted: bool = False
         self._verb_router = verb_router
         # Set when Transcriber.load() completes successfully in the background thread.
         # Pipeline worker waits on this before calling transcribe().
@@ -196,29 +195,82 @@ class StreamingDaemon:
             logger.warning("on_scroll_lock called but recorder is not yet initialised; ignoring")
             return
         if self._session_active:
-            self._recorder.close_session()
+            was_muted = self._muted
+            # In muted sub-state the audio stream is already torn down — do not
+            # call close_session() again (would log a misleading warning and
+            # potentially raise).
+            if not was_muted:
+                try:
+                    self._recorder.close_session()
+                except Exception:
+                    logger.exception("close_session() failed during scroll-lock close")
             self._drain_utt_q()
             self._session_active = False
-            self._merlin_mode = False
+            self._muted = False
             self._feedback.on_recording_stop()
+            if was_muted:
+                # Sprite tracks muted as a sub-state of an active session; emit
+                # unmuted before session_stopped so the renderer's mute overlay
+                # clears cleanly.
+                self._publish("unmuted")
             self._publish("session_stopped")
             logger.info("Session closed")
         else:
             try:
                 self._recorder.open_session()
                 self._session_active = True
-                self._merlin_mode = False
+                self._muted = False
                 self._feedback.on_recording_start()
                 self._publish("session_started")
                 logger.info("Session opened")
             except Exception as e:
                 self._session_active = False
-                self._merlin_mode = False
+                self._muted = False
                 self._feedback.on_error("recorder.open_session", e)
 
-    def _is_merlin_toggle(self, transcript: str) -> bool:
-        text_norm = transcript.strip().lower().rstrip(".,!?")
-        return text_norm == "merlin"
+    def on_mute_toggle(self) -> None:
+        """Toggle mute within an active session. No-op when session is inactive.
+
+        Thread context: called exclusively on the **pynput hotkey-listener thread**.
+        pynput serialises key callbacks, so concurrent invocations cannot happen.
+
+        State transitions (ADR 0025):
+
+        * **Active+unmuted → active+muted**: closes the audio stream via
+          ``recorder.close_session()``, drains ``_utt_q`` (so any utterance
+          mid-pipeline is discarded once the pipeline guard fires), publishes
+          ``muted`` for the sprite.
+        * **Active+muted → active+unmuted**: reopens the audio stream via
+          ``recorder.open_session()``, publishes ``unmuted``.
+        * **Inactive → no-op**: silent return. The right-Ctrl key is also a
+          common dictation push-to-talk; pressing it outside an open session
+          must not produce any voice-commander side-effect.
+        """
+        if not self._session_active:
+            return
+        if self._recorder is None:
+            return
+        if self._muted:
+            try:
+                self._recorder.open_session()
+                self._muted = False
+                self._publish("unmuted")
+                self._feedback.on_recording_start()
+                logger.info("Session unmuted")
+            except Exception as e:
+                # Stream did not reopen — leave muted flag set so the user can
+                # try again. Surface via feedback so the chime is consistent.
+                self._feedback.on_error("recorder.open_session", e)
+        else:
+            try:
+                self._recorder.close_session()
+            except Exception:
+                logger.exception("close_session() failed during mute; treating as muted")
+            self._drain_utt_q()
+            self._muted = True
+            self._publish("muted")
+            self._feedback.on_recording_stop()
+            logger.info("Session muted")
 
     def _drain_utt_q(self) -> None:
         """Discard all pending utterances from the queue."""
@@ -274,7 +326,7 @@ class StreamingDaemon:
         2. **no_speech_prob** — above ``_max_no_speech_prob`` → silent drop.
         3. **confidence** — below ``_min_confidence`` → miss chime +
            ``plan_outcome`` (status=``miss``).
-        4. **LLM route** — ``LLMRouter.route()`` returns ``None`` → miss chime + ``plan_outcome``.
+        4. **VerbRouter** — ``VerbRouter.route()`` returns ``None`` → miss chime + ``plan_outcome``.
         5. **dispatch** — ``Dispatcher.run_plan()`` executes the plan.
 
         Args:
@@ -318,6 +370,18 @@ class StreamingDaemon:
                 ts.set_output({"text": result.text})
 
             self._tracer.update_transcript(run.run_id, result.text)
+
+            # Mute guard (ADR 0025): an utterance may have been mid-transcription
+            # when the user toggled mute. Drop it silently — no transcript event,
+            # no feedback, no plan_outcome — so the muted state is honoured even
+            # for in-flight audio.
+            if self._muted:
+                logger.debug(
+                    "Mute guard: dropping utterance '%s' (muted during pipeline)",
+                    result.text,
+                )
+                return
+
             self._feedback.on_transcript(result.text, result.confidence)
             self._publish(
                 "transcript",
@@ -346,18 +410,7 @@ class StreamingDaemon:
                 _publish_miss(result.text)
                 return
 
-            # Merlin mode toggle
-            if self._is_merlin_toggle(result.text):
-                self._merlin_mode = not self._merlin_mode
-                logger.info("Merlin mode %s", "entered" if self._merlin_mode else "exited")
-                self._publish("merlin_toggled", {"merlin_mode": self._merlin_mode})
-                return
-
-            if self._merlin_mode:
-                self._publish("llm_thinking")
-                plan = self._llm_router.route(result.text)
-            else:
-                plan = self._verb_router.route(result.text)
+            plan = self._verb_router.route(result.text)
 
             if plan is None:
                 # No match in the command/workflow catalog. Chime once and stop —
@@ -447,7 +500,7 @@ class StreamingDaemon:
     # Run / shutdown
     # ------------------------------------------------------------------
 
-    def run(self, hotkey_key: str) -> None:
+    def run(self, hotkey_key: str, mute_key: str = "") -> None:
         """Blocking entry point — warm up models, start all threads, block until shutdown.
 
         Thread context: **must be called from the main thread** so that the
@@ -477,6 +530,8 @@ class StreamingDaemon:
 
         Args:
             hotkey_key: Key name for session toggle (e.g. ``"scroll_lock"``).
+            mute_key: Optional secondary key name (e.g. ``"ctrl_r"``) bound to
+                :meth:`on_mute_toggle`. Empty string disables the binding.
 
         Raises:
             Exception: Re-raises only if :meth:`HotkeyController.start` fails
@@ -532,7 +587,17 @@ class StreamingDaemon:
 
         # Start hotkey listener.
         try:
-            self._hotkey = HotkeyController({hotkey_key: self.on_scroll_lock})
+            bindings: dict[str, Callable[[], None]] = {hotkey_key: self.on_scroll_lock}
+            if mute_key:
+                if mute_key == hotkey_key:
+                    logger.warning(
+                        "mute_key %r equals hotkey %r; mute binding ignored",
+                        mute_key,
+                        hotkey_key,
+                    )
+                else:
+                    bindings[mute_key] = self.on_mute_toggle
+            self._hotkey = HotkeyController(bindings)
             self._hotkey.start()
         except Exception as e:
             logger.exception("HotkeyController.start() failed; aborting startup")
@@ -598,13 +663,17 @@ class StreamingDaemon:
             except Exception:
                 logger.exception("Error stopping web server during shutdown")
 
-        # Close any open session.
+        # Close any open session. When muted, the audio stream was already
+        # torn down by on_mute_toggle — skip close_session() to avoid a
+        # spurious warning about closing an already-closed session.
         if self._recorder is not None and self._session_active:
-            try:
-                self._recorder.close_session()
-            except Exception:
-                logger.exception("Error closing session during shutdown")
+            if not self._muted:
+                try:
+                    self._recorder.close_session()
+                except Exception:
+                    logger.exception("Error closing session during shutdown")
             self._session_active = False
+            self._muted = False
 
         # Stop hotkey listener.
         if self._hotkey is not None:
@@ -683,14 +752,14 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         cfg.transcription.device,
     )
 
-    # Metadata store + reload lock shared between registry, LLM router, and web server.
+    # Metadata store + reload lock shared between registry and web server.
     tools_dir = Path(__file__).resolve().parent / "tools"
     store = ToolMetadataStore(tools_dir)
     reload_lock = threading.Lock()
 
     registry = discover("voice_commander.tools", store=store)
 
-    # Generate JSON schemas for all tools (used by LLM router).
+    # Generate JSON schemas for all tools.
     all_meta = store.load_all()
     for entry in registry.all():
         meta = all_meta.get(entry.name)
@@ -706,13 +775,9 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     validate_config_or_die(cfg)
     validate_or_die(registry, store)
 
-    # Log every [llm].* field and its winning source (env / config.toml /
-    # default) before anything reads cfg.llm at runtime.
-    log_llm_sources(cfg)
-
-    # Wire the parameter resolver's threshold accessors to the live LLMConfig
+    # Wire the parameter resolver's threshold accessors to the live config
     # so focus/open read focus_fuzzy_threshold / open_fuzzy_threshold from TOML.
-    param_resolver._set_config(cfg.llm)
+    param_resolver._set_config(cfg)
 
     event_bus = EventBus()
 
@@ -720,17 +785,6 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
     # Single instance, lazy listener (one record session at a time).
     from voice_commander.recorder import KeyRecorder
     key_recorder = KeyRecorder(event_bus)
-
-    # LLM Router — always created.
-    llm_router = LLMRouter(cfg.llm, registry, reload_lock)
-    if cfg.llm.warmup_on_startup:
-        def _llm_warmup() -> None:
-            if llm_router.warmup():
-                logger.info("LLM router warmup succeeded")
-            else:
-                logger.warning("LLM router warmup failed — LM Studio may be offline")
-
-        threading.Thread(target=_llm_warmup, name="vc-llm-warmup", daemon=True).start()
 
     # Load user-defined commands + workflows (first-run seeding + registration).
     from voice_commander.commands import GraphStore, seed_if_missing
@@ -765,7 +819,6 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         _obs_tracer = Tracer(store=_NoopStore(), bus=event_bus, enabled=False)
 
     dispatcher = Dispatcher(feedback, event_bus=event_bus, tracer=_obs_tracer)
-    llm_router.set_tracer(_obs_tracer)
 
     commands_path = repo_root / "commands.json"
     workflows_path = repo_root / "workflows.json"
@@ -793,7 +846,6 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
             command_store=command_store,
             workflow_store=workflow_store,
             config_path=repo_root / "config.toml",
-            llm_router=llm_router,
             observability_store=_obs_store,
             observability_tracer=_obs_tracer,
             key_recorder=key_recorder,
@@ -806,7 +858,6 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         feedback=feedback,
         recorder=None,
         transcriber=transcriber,
-        llm_router=llm_router,
         dispatcher=dispatcher,
         verb_router=VerbRouter(build_default_rules(), registry=registry),
         registry=registry,

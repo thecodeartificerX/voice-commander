@@ -24,7 +24,6 @@ interface GraphState {
   edges: Edge[]
   selectedNodeId: string | null
   dirty: boolean
-  llmVisible: boolean
   /**
    * True when the graph has never been saved (created via `initBlank`).
    * The toolbar uses this to expose an editable name input and to gate
@@ -64,7 +63,6 @@ interface GraphState {
   applyNodeChanges(changes: NodeChange[]): void
   applyEdgeChanges(changes: EdgeChange[]): void
   selectNode(id: string | null): void
-  toggleLlmVisible(): void
   /** Replace the graph's synonyms list and mark dirty. */
   setSynonyms(synonyms: string[]): void
   /** Replace the graph's description and mark dirty. */
@@ -101,7 +99,6 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   edges: [],
   selectedNodeId: null,
   dirty: false,
-  llmVisible: false,
   draft: false,
   runStatusByNodeId: {},
 
@@ -121,7 +118,6 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       edges,
       selectedNodeId: null,
       dirty: false,
-      llmVisible: graph.llm_visible,
       draft: false,
       runStatusByNodeId: {},
     })
@@ -139,7 +135,6 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       // Mark dirty so Save is enabled immediately — the user usually wants
       // to rename + save, not edit the canvas first.
       dirty: true,
-      llmVisible: meta.llm_visible,
       draft: true,
       runStatusByNodeId: {},
     })
@@ -230,17 +225,6 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         return s
       }
       return { runStatusByNodeId: map }
-    })
-  },
-
-  toggleLlmVisible() {
-    set((s) => {
-      const next = !s.llmVisible
-      return {
-        llmVisible: next,
-        graphMeta: s.graphMeta ? { ...s.graphMeta, llm_visible: next } : s.graphMeta,
-        dirty: true,
-      }
     })
   },
 

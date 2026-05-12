@@ -1,76 +1,40 @@
-"""Replay tooling — LLM-replay (safe) and full-replay (footgun)."""
+"""Replay tooling — re-route a past transcript through VerbRouter and optionally re-fire it."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from voice_commander.observability.store import Store
 from voice_commander.observability.tracer import Tracer
 
 
-@dataclass(frozen=True)
-class ReplayResult:
-    run_id: str
-    old_plan: list[dict[str, Any]]
-    new_plan: list[dict[str, Any]] | None
-    changed: bool
-    error: str | None = None
-
-
-def replay_llm(store: Store, run_id: str, router: Any) -> ReplayResult:
-    """Re-route the original transcript through the current LLMRouter.
-
-    No tool fires. Returns old plan vs new plan + ``changed`` flag.
-    """
-    spans = store.get_spans(run_id)
-    llm = next((s for s in spans if s["type"] == "llm_call"), None)
-    if llm is None:
-        return ReplayResult(
-            run_id=run_id, old_plan=[], new_plan=None, changed=False, error="no llm_call span"
-        )
-    _run = store.get_run(run_id)
-    transcript = llm["attrs"].get("transcript") or (_run["transcript"] if _run is not None else "")
-    old_plan = (llm["output"] or {}).get("steps", [])
-    plan = router.route(transcript)
-    new_plan = (
-        [{"name": s.name, "kwargs": dict(s.kwargs)} for s in plan.steps]
-        if plan is not None
-        else None
-    )
-    return ReplayResult(
-        run_id=run_id,
-        old_plan=old_plan,
-        new_plan=new_plan,
-        changed=new_plan != old_plan,
-    )
-
 
 def replay_full(
     store: Store,
     run_id: str,
-    router: Any,
     dispatcher: Any,
     registry: Any,
     tracer: Tracer,
 ) -> str:
-    """Re-route AND re-fire the plan. **DESTRUCTIVE** — re-types into foreground.
+    """Re-route AND re-fire the plan via VerbRouter. **DESTRUCTIVE** — re-types into foreground.
 
     Returns the run_id of the new replay run.
     """
+    from voice_commander.verb_router import VerbRouter, build_default_rules
+
     _run = store.get_run(run_id)
     if _run is None:
         raise ValueError(f"run {run_id} not found")
-    spans = store.get_spans(run_id)
-    llm = next((s for s in spans if s["type"] == "llm_call"), None)
-    if llm is None:
-        raise ValueError("no llm_call span; cannot replay")
-    transcript = llm["attrs"].get("transcript") or _run["transcript"]
+    transcript = _run["transcript"]
+    if not transcript:
+        raise ValueError("run has no transcript; cannot replay")
+
+    verb_router = VerbRouter(build_default_rules())
 
     with tracer.run(transcript) as new_run:
         with tracer.span("replay_marker", name="replay_marker", replay_of=run_id):
             pass
-        plan = router.route(transcript)
+        plan = verb_router.route(transcript)
         if plan is not None:
             dispatcher.run_plan(transcript, plan, registry)
     return new_run.run_id

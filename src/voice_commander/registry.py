@@ -72,17 +72,6 @@ class ToolRegistry:
     def by_name(self, name: str) -> ToolEntry | None:
         return self._by_name.get(name)
 
-    def all_llm_visible(self) -> list[ToolEntry]:
-        """Return tools that are enabled, marked llm_only=True, AND NOT internal.
-
-        These are the only tools passed to the LLM router's tools array.
-        ``internal=True`` hides raw primitives from the LLM while leaving
-        them dispatchable for commands/workflows that reference them.
-        """
-        return sorted(
-            (e for e in self._by_name.values() if e.enabled and e.llm_only and not e.internal),
-            key=lambda e: e.name,
-        )
 
     def by_origin(self, origin: Origin) -> list[ToolEntry]:
         """Return enabled tools that came from *origin*.

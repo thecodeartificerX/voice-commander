@@ -4,12 +4,11 @@
 # validate() calls typing.get_type_hints(entry.func) which needs real runtime
 # annotations, not stringified ones.
 
-from dataclasses import replace
 from unittest.mock import MagicMock
 
 import pytest
 
-from voice_commander.config import Config, LLMConfig
+from voice_commander.config import Config
 from voice_commander.registry import ToolEntry, ToolRegistry
 from voice_commander.tool_metadata import ArgMetadata, ToolMetadata, ToolMetadataStore
 from voice_commander.validator import validate, validate_config
@@ -183,28 +182,28 @@ def test_rule5_settle_ms_too_high():
 
 
 def test_rule7_missing_primitive():
-    """Module is 'voice_commander.tools.primitives' but 'no_match' is absent → [rule7]."""
+    """Module is 'voice_commander.tools.primitives' but 'wait' is absent → [rule7]."""
 
-    def wait() -> None:
+    def press() -> None:
         pass
 
-    # Register *only* 'wait' from the primitives module — 'no_match' is absent.
+    # Register only 'press' from primitives module — 'wait' is absent.
     entry = _entry(
-        "wait",
-        wait,
+        "press",
+        press,
         module="voice_commander.tools.primitives",
         llm_only=True,
         phrases=(),
     )
     registry = _make_registry(entry)
-    store = _make_store({"wait": _meta("wait", llm_only=True, phrases=())})
+    store = _make_store({"press": _meta("press", llm_only=True, phrases=())})
 
     errors = validate(registry, store)
 
     rule7_errors = [e for e in errors if "[rule7]" in e]
     assert rule7_errors, f"Expected [rule7] error, got: {errors}"
-    assert any("no_match" in e for e in rule7_errors), (
-        f"Expected 'no_match' mentioned in [rule7] errors, got: {rule7_errors}"
+    assert any("wait" in e for e in rule7_errors), (
+        f"Expected 'wait' mentioned in [rule7] errors, got: {rule7_errors}"
     )
 
 
@@ -228,47 +227,15 @@ def test_happy_path_all_valid():
 
 
 # ---------------------------------------------------------------------------
-# Rule C1: llm_router.timeout_ms minimum
+# validate_config: no rules → always empty list
 # ---------------------------------------------------------------------------
 
 
-def _cfg_with_timeout(timeout_ms: int) -> "Config":
-    """Build a default Config with llm_router.timeout_ms overridden."""
-    llm_cfg = LLMConfig(timeout_ms=timeout_ms)
-    return replace(Config(), llm=llm_cfg)
-
-
-def test_rule_c1_timeout_ms_below_minimum():
-    """timeout_ms=100 is below the 200 ms minimum → [rule_c1] error mentioning timeout_ms."""
-    cfg = _cfg_with_timeout(100)
-
+def test_validate_config_returns_empty():
+    """validate_config() has no rules after LLM removal — always returns []."""
+    cfg = Config()
     errors = validate_config(cfg)
-
-    assert any("[rule_c1]" in e for e in errors), f"Expected [rule_c1] error, got: {errors}"
-    assert any("timeout_ms" in e for e in errors), (
-        f"Expected 'timeout_ms' in error message, got: {errors}"
-    )
-    assert any("200" in e for e in errors), (
-        f"Expected minimum value '200' mentioned in error message, got: {errors}"
-    )
-
-
-def test_rule_c1_timeout_ms_at_minimum_is_valid():
-    """timeout_ms=200 is exactly at the minimum → no errors."""
-    cfg = _cfg_with_timeout(200)
-
-    errors = validate_config(cfg)
-
-    assert errors == [], f"Expected no errors at timeout_ms=200, got: {errors}"
-
-
-def test_rule_c1_timeout_ms_above_minimum_is_valid():
-    """timeout_ms=600 is well above the minimum → no errors."""
-    cfg = _cfg_with_timeout(600)
-
-    errors = validate_config(cfg)
-
-    assert errors == [], f"Expected no errors at timeout_ms=600, got: {errors}"
+    assert errors == []
 
 
 

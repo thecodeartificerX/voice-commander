@@ -103,11 +103,17 @@ class Transcriber:
             vad_filter=use_vad,
             vad_parameters={"min_silence_duration_ms": 300} if use_vad else None,
         )
-        segments = list(segments_iter)
-        text = " ".join(s.text for s in segments).strip()
-        confidences = [s.avg_logprob for s in segments if s.avg_logprob is not None]
+        text_parts: list[str] = []
+        confidences: list[float] = []
+        no_speech_probs: list[float] = []
+        for seg in segments_iter:
+            text_parts.append(seg.text)
+            if seg.avg_logprob is not None:
+                confidences.append(seg.avg_logprob)
+            if seg.no_speech_prob is not None:
+                no_speech_probs.append(seg.no_speech_prob)
+        text = " ".join(text_parts).strip()
         conf = _normalize_logprob(sum(confidences) / len(confidences)) if confidences else 0.0
-        no_speech_probs = [s.no_speech_prob for s in segments if s.no_speech_prob is not None]
         avg_no_speech = sum(no_speech_probs) / len(no_speech_probs) if no_speech_probs else 0.0
         return TranscriptionResult(
             text=text,

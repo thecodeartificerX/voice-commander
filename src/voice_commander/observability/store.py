@@ -524,9 +524,8 @@ class Store:
 
 _SENTINEL = object()
 
-# Prune old runs every N run_end writes. Set to 1 so the store
-# never exceeds keep_runs + 1 rows; raise if the write cost matters.
-_PRUNE_EVERY = 1
+# Prune every 50 run_end writes to amortize the full-table DELETE; max overshoot above keep_runs is _PRUNE_EVERY - 1.
+_PRUNE_EVERY = 50
 
 
 def _json_default(obj: Any) -> Any:

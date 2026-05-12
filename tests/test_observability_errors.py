@@ -21,14 +21,6 @@ def test_classify_wiring_error():
     assert classify(exc, where="graph_runtime") == "wiring"
 
 
-def test_classify_llm_error():
-    from voice_commander.observability.errors import classify
-    class LLMPlanError(Exception):
-        pass
-    exc = LLMPlanError("bad json")
-    assert classify(exc, where="llm_router") == "llm"
-
-
 def test_classify_connection_refused_infra():
     from voice_commander.observability.errors import classify
     assert classify(ConnectionRefusedError("refused"), where="daemon") == "infra"
@@ -36,7 +28,7 @@ def test_classify_connection_refused_infra():
 
 def test_classify_timeout_infra():
     from voice_commander.observability.errors import classify
-    assert classify(TimeoutError("timed out"), where="llm_router") == "infra"
+    assert classify(TimeoutError("timed out"), where="dispatcher") == "infra"
 
 
 def test_classify_os_error_infra():
@@ -69,7 +61,7 @@ def test_classify_httpx_connect_error_is_infra():
     from voice_commander.observability.errors import classify
     import httpx
     exc = httpx.ConnectError("server down")
-    assert classify(exc, where="llm_router") == "infra"
+    assert classify(exc, where="dispatcher") == "infra"
 
 
 def test_classify_socket_gaierror_from_non_daemon_is_program():

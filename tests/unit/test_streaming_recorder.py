@@ -19,11 +19,17 @@ import pytest
 
 
 def _make_fake_sd(monkeypatch, *, native_rate: float = 48000.0):
-    """Patch sd.query_devices and sd.InputStream on the streaming_recorder module."""
+    """Patch sd.query_devices, sd.query_hostapis, and sd.InputStream."""
 
     monkeypatch.setattr(
         "voice_commander.streaming_recorder.sd.query_devices",
         lambda device: {"default_samplerate": native_rate},
+    )
+    # WASAPI at index 0 by default for hardware-less tests; resolver only
+    # consults hostapis when a non-empty device_name is in play.
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_hostapis",
+        lambda: [{"name": "Windows WASAPI"}],
     )
 
     class FakeInputStream:
@@ -395,60 +401,72 @@ def test_orphaned_vad_thread_blocks_new_session(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Device name resolution tests
+# Device name resolution tests (WASAPI-only — ADR 0081)
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_by_name_fast_path(monkeypatch):
-    """Saved index still points to the correct device — return it immediately."""
-    from voice_commander.streaming_recorder import _resolve_device_by_name
+# Standard 4-host-API Windows layout used by the resolution tests:
+#   0 = MME, 1 = Windows DirectSound, 2 = Windows WASAPI, 3 = Windows WDM-KS
+_WIN_HOSTAPIS = [
+    {"name": "MME"},
+    {"name": "Windows DirectSound"},
+    {"name": "Windows WASAPI"},
+    {"name": "Windows WDM-KS"},
+]
+_WASAPI = 2
+_DSOUND = 1
+_MME = 0
 
-    fake_devices = [
-        {"name": "Speakers", "max_input_channels": 0, "default_samplerate": 48000.0},
-        {"name": "Headset Mic", "max_input_channels": 1, "default_samplerate": 16000.0},
-    ]
+
+def _patch_hostapis(monkeypatch, hostapis=None):
     monkeypatch.setattr(
-        "voice_commander.streaming_recorder.sd.query_devices",
-        lambda device=None: fake_devices if device is None else fake_devices[device],
+        "voice_commander.streaming_recorder.sd.query_hostapis",
+        lambda: hostapis if hostapis is not None else _WIN_HOSTAPIS,
     )
 
-    result = _resolve_device_by_name(1, "Headset Mic")
-    assert result == 1
+
+def _patch_devices(monkeypatch, devices):
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_devices",
+        lambda device=None: devices if device is None else devices[device],
+    )
+
+
+def test_resolve_by_name_fast_path(monkeypatch):
+    """Saved index still points to the right WASAPI device — return it immediately."""
+    from voice_commander.streaming_recorder import _resolve_device_by_name
+
+    _patch_hostapis(monkeypatch)
+    _patch_devices(monkeypatch, [
+        {"name": "Speakers", "max_input_channels": 0, "hostapi": _WASAPI},
+        {"name": "Headset Mic", "max_input_channels": 1, "hostapi": _WASAPI},
+    ])
+    assert _resolve_device_by_name(1, "Headset Mic") == 1
 
 
 def test_resolve_by_name_drift(monkeypatch):
-    """Device moved to a new index — return the new index."""
+    """Device moved to a new WASAPI index — return the new index."""
     from voice_commander.streaming_recorder import _resolve_device_by_name
 
-    fake_devices = [
-        {"name": "Speakers", "max_input_channels": 0, "default_samplerate": 48000.0},
-        {"name": "USB Audio", "max_input_channels": 1, "default_samplerate": 48000.0},
-        {"name": "Headset Mic", "max_input_channels": 1, "default_samplerate": 16000.0},
-    ]
-    monkeypatch.setattr(
-        "voice_commander.streaming_recorder.sd.query_devices",
-        lambda device=None: fake_devices if device is None else fake_devices[device],
-    )
-
-    # Saved index 0 points to "Speakers", but we want "Headset Mic" which is now at 2.
-    result = _resolve_device_by_name(0, "Headset Mic")
-    assert result == 2
+    _patch_hostapis(monkeypatch)
+    _patch_devices(monkeypatch, [
+        {"name": "Speakers", "max_input_channels": 0, "hostapi": _WASAPI},
+        {"name": "USB Audio", "max_input_channels": 1, "hostapi": _WASAPI},
+        {"name": "Headset Mic", "max_input_channels": 1, "hostapi": _WASAPI},
+    ])
+    # Saved index 0 points at "Speakers"; "Headset Mic" is at 2.
+    assert _resolve_device_by_name(0, "Headset Mic") == 2
 
 
 def test_resolve_by_name_not_found(monkeypatch):
     """Device not in list — return None (system default fallback)."""
     from voice_commander.streaming_recorder import _resolve_device_by_name
 
-    fake_devices = [
-        {"name": "Speakers", "max_input_channels": 0, "default_samplerate": 48000.0},
-    ]
-    monkeypatch.setattr(
-        "voice_commander.streaming_recorder.sd.query_devices",
-        lambda device=None: fake_devices if device is None else fake_devices[device],
-    )
-
-    result = _resolve_device_by_name(0, "Headset Mic")
-    assert result is None
+    _patch_hostapis(monkeypatch)
+    _patch_devices(monkeypatch, [
+        {"name": "Speakers", "max_input_channels": 0, "hostapi": _WASAPI},
+    ])
+    assert _resolve_device_by_name(0, "Headset Mic") is None
 
 
 def test_resolve_by_name_empty_name(monkeypatch):
@@ -460,10 +478,83 @@ def test_resolve_by_name_empty_name(monkeypatch):
         "voice_commander.streaming_recorder.sd.query_devices",
         lambda device=None: queried.append(device) or [],
     )
+    # query_hostapis must also not be called for the empty-name short-circuit.
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_hostapis",
+        lambda: (_ for _ in ()).throw(AssertionError("must not be called")),
+    )
 
-    result = _resolve_device_by_name(5, "")
-    assert result == 5
+    assert _resolve_device_by_name(5, "") == 5
     assert queried == [], "sd.query_devices must not be called when device_name is empty"
+
+
+def test_resolve_by_name_skips_directsound_duplicate(monkeypatch):
+    """Same device name under DirectSound is ignored; WASAPI copy wins."""
+    from voice_commander.streaming_recorder import _resolve_device_by_name
+
+    _patch_hostapis(monkeypatch)
+    _patch_devices(monkeypatch, [
+        # DirectSound copy at index 9 — what the user's flaky config.toml points at.
+        {"name": "At 2020 (AT2020USB-X)", "max_input_channels": 1, "hostapi": _DSOUND},
+        # MME copy at index 4 — also ignored.
+        {"name": "At 2020 (AT2020USB-X)", "max_input_channels": 1, "hostapi": _MME},
+        # WASAPI copy at index 14 — the one the resolver must pick.
+        {"name": "At 2020 (AT2020USB-X)", "max_input_channels": 1, "hostapi": _WASAPI},
+    ])
+    # Saved DirectSound index 0 must be re-resolved to the WASAPI copy at 2.
+    assert _resolve_device_by_name(0, "At 2020 (AT2020USB-X)") == 2
+
+
+def test_resolve_fast_path_rejects_directsound_match(monkeypatch):
+    """Fast path must validate host API, not just name."""
+    from voice_commander.streaming_recorder import _resolve_device_by_name
+
+    _patch_hostapis(monkeypatch)
+    _patch_devices(monkeypatch, [
+        {"name": "Headset Mic", "max_input_channels": 1, "hostapi": _DSOUND},
+        {"name": "Headset Mic", "max_input_channels": 1, "hostapi": _WASAPI},
+    ])
+    # Saved index 0 is the DirectSound copy — fast path must reject it and
+    # fall through to the slow scan, landing on the WASAPI copy at 1.
+    assert _resolve_device_by_name(0, "Headset Mic") == 1
+
+
+def test_resolve_when_wasapi_missing_returns_none(monkeypatch):
+    """If Windows WASAPI is not in the host-API list (degenerate host), fall
+    back to system default with a warning rather than picking a DirectSound copy."""
+    from voice_commander.streaming_recorder import _resolve_device_by_name
+
+    _patch_hostapis(monkeypatch, hostapis=[{"name": "MME"}, {"name": "Windows DirectSound"}])
+    _patch_devices(monkeypatch, [
+        {"name": "Headset Mic", "max_input_channels": 1, "hostapi": _DSOUND},
+    ])
+    assert _resolve_device_by_name(0, "Headset Mic") is None
+
+
+def test_resolve_ignores_output_only_wasapi_device(monkeypatch):
+    """A WASAPI device with max_input_channels=0 (a render endpoint) must not match."""
+    from voice_commander.streaming_recorder import _resolve_device_by_name
+
+    _patch_hostapis(monkeypatch)
+    _patch_devices(monkeypatch, [
+        {"name": "Speakers", "max_input_channels": 0, "hostapi": _WASAPI},
+    ])
+    assert _resolve_device_by_name(None, "Speakers") is None
+
+
+def test_resolve_exception_falls_back_to_saved_index(monkeypatch):
+    """Any sd exception must not destroy the saved configuration."""
+    from voice_commander.streaming_recorder import _resolve_device_by_name
+
+    _patch_hostapis(monkeypatch)
+
+    def _boom(device=None):
+        raise RuntimeError("portaudio glitch")
+
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_devices", _boom
+    )
+    assert _resolve_device_by_name(7, "Headset Mic") == 7
 
 
 def test_open_session_uses_resolved_device_on_drift(monkeypatch):
@@ -471,10 +562,11 @@ def test_open_session_uses_resolved_device_on_drift(monkeypatch):
     from voice_commander.streaming_recorder import StreamingRecorder
 
     # Device list: "Headset Mic" is at index 2, not the saved index 0.
+    # All three carry hostapi=2 (WASAPI) per ADR 0081 resolver semantics.
     fake_devices = [
-        {"name": "Speakers", "max_input_channels": 0, "default_samplerate": 48000.0},
-        {"name": "USB Audio", "max_input_channels": 1, "default_samplerate": 48000.0},
-        {"name": "Headset Mic", "max_input_channels": 1, "default_samplerate": 16000.0},
+        {"name": "Speakers", "max_input_channels": 0, "default_samplerate": 48000.0, "hostapi": 2},
+        {"name": "USB Audio", "max_input_channels": 1, "default_samplerate": 48000.0, "hostapi": 2},
+        {"name": "Headset Mic", "max_input_channels": 1, "default_samplerate": 16000.0, "hostapi": 2},
     ]
 
     device_args_seen: list = []
@@ -488,6 +580,10 @@ def test_open_session_uses_resolved_device_on_drift(monkeypatch):
     monkeypatch.setattr(
         "voice_commander.streaming_recorder.sd.query_devices",
         fake_query_devices,
+    )
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.sd.query_hostapis",
+        lambda: [{"name": "MME"}, {"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}],
     )
 
     stream_device_args: list = []
@@ -552,9 +648,26 @@ def test_recovery_aborts_when_session_closing(monkeypatch):
 
 
 def test_recovery_aborts_on_sentinel_in_queue(monkeypatch):
-    """If a None sentinel is found while draining, recovery aborts and restores it."""
-    recorder, _ = _make_recorder(monkeypatch)
-    recorder.open_session()
+    """If a None sentinel is found while draining, recovery aborts and restores it.
+
+    We bypass `open_session()` to avoid spawning a live VAD worker — that
+    worker's blocking `_raw_q.get()` would race the test's sentinel `put(None)`
+    and consume it before `_attempt_stream_recovery()` ever sees it.
+    """
+    _make_fake_sd(monkeypatch, native_rate=48000.0)
+    monkeypatch.setattr("voice_commander.streaming_recorder.Resampler", MockResampler)
+
+    from voice_commander.streaming_recorder import StreamingRecorder, _SessionState
+
+    recorder = StreamingRecorder(
+        device=None,
+        channels=1,
+        vad_gate=MockVADGate(),
+        utterance_sink=lambda _: None,
+    )
+    # Force the recorder into the OPEN state without starting threads.
+    with recorder._state_lock:
+        recorder._state = _SessionState.OPEN
 
     # Place a sentinel on the queue (simulates _teardown() in progress).
     recorder._raw_q.put(None)
@@ -567,7 +680,6 @@ def test_recovery_aborts_on_sentinel_in_queue(monkeypatch):
 
     # Clean up.
     with recorder._state_lock:
-        from voice_commander.streaming_recorder import _SessionState
         recorder._state = _SessionState.IDLE
     recorder._stream = None
     recorder._vad_thread = None
@@ -627,3 +739,101 @@ def test_recovery_succeeds_and_opens_new_stream(monkeypatch):
     assert recorder._stream is stream_instances[1]
 
     recorder.close_session()
+
+
+# ---------------------------------------------------------------------------
+# _pop_frame correctness tests
+# ---------------------------------------------------------------------------
+
+
+def test_pop_frame_head_larger_than_n():
+    """Head array has more than n samples; residual stays on the head."""
+    from collections import deque
+    from voice_commander.streaming_recorder import _pop_frame
+
+    arr = np.arange(1024, dtype=np.float32)
+    pending: deque = deque([arr])
+    result = _pop_frame(pending, 512)
+
+    assert result.shape == (512,), f"Expected 512 samples, got {result.shape}"
+    np.testing.assert_array_equal(result, arr[:512])
+    # Residual must remain as the only element on the head.
+    assert len(pending) == 1
+    assert pending[0].shape == (512,)
+    np.testing.assert_array_equal(pending[0], arr[512:])
+
+
+def test_pop_frame_head_exactly_n():
+    """Head array has exactly n samples; head is fully popped."""
+    from collections import deque
+    from voice_commander.streaming_recorder import _pop_frame
+
+    arr = np.arange(512, dtype=np.float32)
+    pending: deque = deque([arr])
+    result = _pop_frame(pending, 512)
+
+    assert result.shape == (512,)
+    np.testing.assert_array_equal(result, arr)
+    assert len(pending) == 0
+
+
+def test_pop_frame_multiple_chunks_needed():
+    """Multiple small arrays are drained to fill n; residual pushed back to front."""
+    from collections import deque
+    from voice_commander.streaming_recorder import _pop_frame
+
+    # Three chunks of 200 samples each; request 512 → drains first two (400)
+    # and takes 112 from the third, leaving 88 samples as the new head.
+    chunks = [
+        np.full(200, i, dtype=np.float32) for i in range(3)
+    ]
+    pending: deque = deque(chunks)
+    result = _pop_frame(pending, 512)
+
+    assert result.shape == (512,)
+    # First 200 samples = 0.0, next 200 = 1.0, last 112 = 2.0
+    np.testing.assert_array_equal(result[:200], np.zeros(200, dtype=np.float32))
+    np.testing.assert_array_equal(result[200:400], np.ones(200, dtype=np.float32))
+    np.testing.assert_array_equal(result[400:], np.full(112, 2.0, dtype=np.float32))
+    # Residual from third chunk (88 samples) must be at the head.
+    assert len(pending) == 1
+    assert pending[0].shape == (88,)
+    np.testing.assert_array_equal(pending[0], np.full(88, 2.0, dtype=np.float32))
+
+
+# ---------------------------------------------------------------------------
+# _get_resampler cache tests
+# ---------------------------------------------------------------------------
+
+
+def test_get_resampler_returns_same_instance_for_same_rates(monkeypatch):
+    """_get_resampler returns the same Resampler instance for the same (src, dst) pair."""
+    import voice_commander.streaming_recorder as sr_mod
+
+    reset_calls: list[tuple[int, int]] = []
+
+    class TrackingResampler:
+        def __init__(self, src_rate: int, dst_rate: int = 16000):
+            self.src_rate = src_rate
+            self.dst_rate = dst_rate
+
+        def reset(self) -> None:
+            reset_calls.append((self.src_rate, self.dst_rate))
+
+    # Clear the module-level cache and patch Resampler before the test.
+    original_cache = sr_mod._RESAMPLER_CACHE.copy()
+    sr_mod._RESAMPLER_CACHE.clear()
+    monkeypatch.setattr("voice_commander.streaming_recorder.Resampler", TrackingResampler)
+
+    try:
+        first = sr_mod._get_resampler(48000, 16000)
+        second = sr_mod._get_resampler(48000, 16000)
+
+        assert first is second, "Expected the same instance to be returned for the same rates"
+        # reset() must have been called on each invocation.
+        assert len(reset_calls) == 2
+        assert all(r == (48000, 16000) for r in reset_calls)
+    finally:
+        # Restore cache so other tests are unaffected.
+        sr_mod._RESAMPLER_CACHE.clear()
+        sr_mod._RESAMPLER_CACHE.update(original_cache)

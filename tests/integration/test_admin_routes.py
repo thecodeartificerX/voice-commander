@@ -67,7 +67,7 @@ def _primitive_registry() -> ToolRegistry:
 def _seed_stores(root: Path) -> tuple[GraphStore, GraphStore, Path]:
     config_path = root / "config.toml"
     config_path.write_text(
-        '[llm]\nmodel_id = "test-model"\nendpoint_url = "http://x/"\n',
+        "[audio]\ndevice = -1\n",
         encoding="utf-8",
     )
     cs = GraphStore(root / "commands.json", kind="command")
@@ -234,10 +234,6 @@ def test_config_save_rewrites_toml(client: TestClient, tmp_path: Path) -> None:
     resp = client.post(
         "/config",
         data={
-            "llm_endpoint_url": "http://new-host:1234/v1",
-            "llm_model_id": "new-model",
-            "llm_default_browser": "comet",
-            "llm_timeout_ms": 3000,
             "audio_device": 11,
             "transcription_model_size": "base.en",
             "transcription_min_confidence": 0.45,
@@ -246,8 +242,6 @@ def test_config_save_rewrites_toml(client: TestClient, tmp_path: Path) -> None:
     )
     assert resp.status_code == 200
     text = (tmp_path / "config.toml").read_text(encoding="utf-8")
-    assert 'endpoint_url = "http://new-host:1234/v1"' in text
-    assert 'model_id = "new-model"' in text
     assert "device = 11" in text
     assert 'model_size = "base.en"' in text
 
@@ -290,10 +284,6 @@ def test_config_save_restart_required_banner(client: TestClient) -> None:
         "/config",
         headers={"HX-Request": "true"},
         data={
-            "llm_endpoint_url": "http://x",
-            "llm_model_id": "m",
-            "llm_default_browser": "chrome",
-            "llm_timeout_ms": 1200,
             "audio_device": 3,
             "transcription_model_size": "small.en",
             "transcription_min_confidence": 0.3,
@@ -309,10 +299,6 @@ def test_config_save_hot_reload_banner(client: TestClient) -> None:
         "/config",
         headers={"HX-Request": "true"},
         data={
-            "llm_endpoint_url": "http://x",
-            "llm_model_id": "m",
-            "llm_default_browser": "chrome",
-            "llm_timeout_ms": 1200,
             "audio_device": -1,
             "transcription_model_size": "small.en",
             "transcription_min_confidence": 0.4,

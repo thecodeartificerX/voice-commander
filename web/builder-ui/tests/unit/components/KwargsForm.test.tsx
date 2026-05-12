@@ -32,7 +32,6 @@ function reset(kwargs: Record<string, unknown>, ref = 'shell.notify') {
     edges: [],
     selectedNodeId: 'n1',
     dirty: false,
-    llmVisible: false,
     runStatusByNodeId: {},
   })
 }

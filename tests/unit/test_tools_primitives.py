@@ -1,4 +1,4 @@
-"""Unit tests for the 9-verb LLM-only primitive catalog (ADR 0042).
+"""Unit tests for the primitive catalog.
 
 Covers each verb with pyautogui + resolver + win32 helpers mocked. Verifies
 self-verify behaviors where applicable (focus raises, close* warn on timeout).
@@ -15,7 +15,6 @@ from voice_commander.resolver import OpenResolveError
 from voice_commander.tools._win32 import FocusWindowError
 from voice_commander.tools.primitives import (
     click,
-    no_match,
     open_target,
     press,
     scroll,
@@ -354,15 +353,6 @@ def test_scroll_unknown_direction_logs_warning(caplog: pytest.LogCaptureFixture)
 
 
 # ---------------------------------------------------------------------------
-# no_match
-# ---------------------------------------------------------------------------
-
-
-def test_no_match_is_noop() -> None:
-    assert no_match("casual chit-chat") is None
-
-
-# ---------------------------------------------------------------------------
 # Sanity: OS-level fallback keeps the suite import-clean even on non-Windows
 # ---------------------------------------------------------------------------
 
@@ -373,7 +363,6 @@ def test_imports_expose_expected_symbols() -> None:
     for name in (
         "click",
         "focus",
-        "no_match",
         "open_target",
         "press",
         "scroll",

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronLeft, Save, Eye, EyeOff, RefreshCw } from 'lucide-react'
+import { ChevronLeft, Save, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useGraphStore } from '@/store/graphStore'
@@ -19,8 +19,6 @@ export function Toolbar() {
     save,
     renameDraft,
     renameSaved,
-    llmVisible,
-    toggleLlmVisible,
   } = useGraphStore()
   const { promptInspectorOpen, setPromptInspectorOpen } = useUiStore()
   const [saving, setSaving] = useState(false)
@@ -109,17 +107,6 @@ export function Toolbar() {
       {dirty && <span className="text-[10px] text-yellow-400">●</span>}
 
       <div className="flex-1" />
-
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={toggleLlmVisible}
-        title={llmVisible ? 'LLM-visible: on' : 'LLM-visible: off'}
-        className="gap-1 text-xs"
-      >
-        {llmVisible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
-        LLM
-      </Button>
 
       <Button
         size="sm"

@@ -22,7 +22,6 @@ function seed(meta: Partial<NonNullable<ReturnType<typeof useGraphStore.getState
     edges: [],
     selectedNodeId: null,
     dirty: false,
-    llmVisible: true,
     runStatusByNodeId: {},
   })
 }
@@ -92,7 +91,6 @@ describe('GraphSettingsPanel', () => {
       edges: [],
       selectedNodeId: null,
       dirty: false,
-      llmVisible: false,
       runStatusByNodeId: {},
     })
     render(<GraphSettingsPanel />)

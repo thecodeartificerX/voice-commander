@@ -43,13 +43,13 @@ class OpenResolveError(Exception):
 _DEFAULT_FOCUS_THRESHOLD = 70
 _DEFAULT_OPEN_THRESHOLD = 70
 
-# Cache of the active LLMConfig (set by daemon.build_streaming_daemon at
+# Cache of the active config (set by daemon.build_streaming_daemon at
 # startup). Tests can override via :func:`_set_config_for_tests`.
 _config_ref: Any = None
 
 
 def _set_config(config: Any) -> None:
-    """Daemon hook — wires the active ``LLMConfig`` so thresholds flow from TOML."""
+    """Daemon hook — wires the active config so fuzzy thresholds flow from TOML."""
     global _config_ref
     _config_ref = config
 

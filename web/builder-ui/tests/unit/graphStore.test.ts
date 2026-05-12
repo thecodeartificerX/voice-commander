@@ -36,7 +36,6 @@ function freshState() {
     edges: SAMPLE_EDGES,
     selectedNodeId: null,
     dirty: false,
-    llmVisible: false,
     runStatusByNodeId: {},
   })
 }
@@ -112,7 +111,6 @@ describe('graphStore — draft / new-graph flow', () => {
       edges: [],
       selectedNodeId: null,
       dirty: false,
-      llmVisible: false,
       draft: false,
       runStatusByNodeId: {},
     })
@@ -166,7 +164,6 @@ describe('graphStore — draft / new-graph flow', () => {
       edges: [],
       selectedNodeId: null,
       dirty: false,
-      llmVisible: true,
       draft: false,
       runStatusByNodeId: {},
     })
@@ -207,7 +204,6 @@ describe('graphStore — Issue #95: load() must strip nodes/edges from graphMeta
       edges: [],
       selectedNodeId: null,
       dirty: false,
-      llmVisible: false,
       draft: false,
       runStatusByNodeId: {},
     })

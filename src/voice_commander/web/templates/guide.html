@@ -20,7 +20,7 @@
 Scroll Lock ──► StreamingRecorder ──► Silero VAD ──► faster-whisper
                                                          │
                                                          ▼ transcript
-                                                    VerbRouter | LLMRouter.route()
+                                                    VerbRouter.route()
                                                          │
                                            match ◄───────┤────► no match
                                              │                    │
@@ -34,12 +34,8 @@ Scroll Lock ──► StreamingRecorder ──► Silero VAD ──► faster-wh
                                    win32 focus, etc.)</pre>
         <p class="text-sm text-neutral-400">
             Source: <code class="text-neutral-200">src/voice_commander/daemon.py</code> → <code class="text-neutral-200">_process_utterance()</code>.
-            Normal mode uses <code class="text-neutral-200">VerbRouter.route()</code>; say <code class="text-neutral-200">Merlin</code> to toggle LLM mode. If the active router returns <code>None</code>, the daemon plays the miss chime and stops.
-            There is no retry loop.
-        </p>
-        <p class="text-sm text-neutral-400">
-            Normal mode uses a deterministic verb router. Merlin mode is a session-scoped
-            spoken toggle that re-enables <code>LLMRouter.route()</code> for open-ended requests.
+            <code class="text-neutral-200">VerbRouter.route()</code> is the sole routing path — matches command/workflow names and synonyms first, then falls back to primitive verb rules. If the router returns <code>None</code>, the daemon plays the miss chime and stops.
+            There is no retry loop, no LLM fallback.
         </p>
     </section>
 
@@ -61,8 +57,7 @@ Scroll Lock ──► StreamingRecorder ──► Silero VAD ──► faster-wh
         </ul>
         <p class="text-sm text-neutral-400">
             Every primitive has <code class="text-neutral-200">internal = true</code> in <code>primitives.toml</code>.
-            That flag makes them dispatchable but hidden from the LLM: <code>all_llm_visible()</code> filters
-            <code>internal</code> entries out of the tool list sent to LM Studio.
+            That flag is used by the Builder palette to partition the "Primitives" vs "Perception" sections.
         </p>
     </section>
 
@@ -84,9 +79,8 @@ Scroll Lock ──► StreamingRecorder ──► Silero VAD ──► faster-wh
         <p class="text-sm text-neutral-400">
             On startup (and after each edit from this UI), the <code class="text-neutral-200">commands/registrar.py</code>
             builds a synthetic <code>ToolEntry</code> per command. The entry's <code>func</code> is a closure
-            that constructs a one-step <code>Plan</code> and hands it to the dispatcher. The LLM sees the
-            command's <code>name</code>, <code>description</code>, and synonyms (appended as <em>Phrases:</em>
-            in the tool description).
+            that constructs a one-step <code>Plan</code> and hands it to the dispatcher. <code>VerbRouter</code>
+            matches the command by its <code>name</code> and <code>synonyms</code> (exact-match, case-insensitive).
         </p>
     </section>
 
@@ -113,10 +107,9 @@ Scroll Lock ──► StreamingRecorder ──► Silero VAD ──► faster-wh
 }</pre>
         <p class="text-sm text-neutral-400">
             At dispatch time, <code class="text-neutral-200">commands/template.py</code> walks each step's
-            kwargs and replaces <code>{name}</code> tokens using a merged context of
-            <code>{default_browser: …}</code> + the arg values the LLM passed. Unknown placeholders raise
-            <code>TemplateError</code> — the dispatcher halts the workflow instead of typing a literal
-            <code>{foo}</code> into your window.
+            kwargs and replaces <code>{name}</code> tokens using a merged context of runtime arg values.
+            Unknown placeholders raise <code>TemplateError</code> — the dispatcher halts the workflow
+            instead of typing a literal <code>{foo}</code> into your window.
         </p>
         <p class="text-sm text-neutral-400">
             Step <code>ref</code> values use <code>primitive:&lt;name&gt;</code> or
@@ -125,24 +118,18 @@ Scroll Lock ──► StreamingRecorder ──► Silero VAD ──► faster-wh
         </p>
     </section>
 
-    <!-- What the LLM sees -->
+    <!-- How VerbRouter routes -->
     <section class="space-y-3">
-        <h2 class="text-xl font-semibold text-emerald-400">5. What the LLM sees</h2>
+        <h2 class="text-xl font-semibold text-emerald-400">5. How VerbRouter routes</h2>
         <p class="text-sm text-neutral-300">
-            The LLM receives only the output of <code class="text-neutral-200">registry.all_llm_visible()</code>,
-            which returns entries where <code>enabled=True</code>, <code>llm_only=True</code>, and
-            <code>internal=False</code>. That list is exactly:
+            <code class="text-neutral-200">VerbRouter.route(transcript)</code> is the sole routing path (LLM routing removed, ADR 0082).
+            It queries the live registry and applies rules in this order:
         </p>
-        <ul class="text-sm text-neutral-300 list-disc list-inside space-y-1">
-            <li>every enabled user-defined command (<code>origin="command"</code>)</li>
-            <li>every enabled user-defined workflow (<code>origin="workflow"</code>)</li>
-            <li><code>no_match</code> — the single non-command tool, used when nothing fits</li>
-        </ul>
-        <p class="text-sm text-neutral-400">
-            The system prompt is a short intent-matcher: <em>"pick one tool whose description or phrases best
-            match the transcript; if nothing fits, call <code>no_match</code>."</em> No few-shot examples,
-            no shortcut cheat-sheet — because tool descriptions already carry that information.
-        </p>
+        <ol class="text-sm text-neutral-300 list-decimal list-inside space-y-1">
+            <li>Exact-match the lowercased, punctuation-stripped transcript against all command/workflow names and their synonyms — longest token count wins, underscore↔space normalised.</li>
+            <li>Primitive verb rules: <code>click</code>, <code>scroll</code>, <code>focus X</code>, <code>open X</code>, <code>type X</code>, <code>press X</code>, <code>wait N</code>.</li>
+            <li>No match → returns <code>None</code> → miss chime.</li>
+        </ol>
     </section>
 
     <!-- Creating a command via UI -->

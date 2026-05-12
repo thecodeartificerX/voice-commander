@@ -1,13 +1,12 @@
-"""LLM-only primitive verbs — the 7-tool catalog the LLM/VerbRouter dispatch.
+"""Primitive verbs — the 7-action + 4-perception tool catalog.
 
-This module is the sole source of LLM-visible action primitives. Every verb
+This module is the sole source of action primitives. Every verb
 here is ``llm_only = true`` with ``phrases = []``. Two verbs shadow Python
 builtins — ``type`` and ``open``. Their Python symbols are ``type_text`` and
-``open_target``; the registry exposes them under the short LLM-visible names
-via ``@tool(name=...)``.
+``open_target``; the registry exposes them under the short names via
+``@tool(name=...)``.
 
-Surviving verbs: ``focus``, ``type``, ``open``, ``press``, ``wait``,
-``click``, ``scroll``, plus the LLM escape hatch ``no_match``.
+Action verbs: ``focus``, ``type``, ``open``, ``press``, ``wait``, ``click``, ``scroll``.
 """
 
 from __future__ import annotations
@@ -400,16 +399,3 @@ def scroll(direction: str, amount: int = 3) -> None:
     pyautogui.scroll(clicks)
 
 
-# ---------------------------------------------------------------------------
-# no_match
-# ---------------------------------------------------------------------------
-
-
-@tool
-def no_match(reason: str) -> None:
-    """Escape hatch: LLM signals no tool fits the utterance.
-
-    The router intercepts ``no_match`` before dispatch — the body is a no-op.
-    """
-    # Body intentionally empty — router treats no_match as the "None plan" signal.
-    return

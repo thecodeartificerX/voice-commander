@@ -92,7 +92,7 @@ def validate(registry: ToolRegistry, store: ToolMetadataStore) -> list[str]:
     # Check if any tool from the primitives module is registered
     has_primitives = any("tools.primitives" in e.module for e in registry.all())
     if has_primitives:
-        for required_name in ("no_match", "wait"):
+        for required_name in ("wait",):
             prim_entry = registry.by_name(required_name)
             if prim_entry is None:
                 errors.append(f"[rule7] Required primitive '{required_name}' not registered")
@@ -116,26 +116,12 @@ def validate_or_die(registry: ToolRegistry, store: ToolMetadataStore) -> None:
 # Config validation
 # ---------------------------------------------------------------------------
 
-_LLM_TIMEOUT_MIN_MS = 200
-
-
 def validate_config(cfg: Config) -> list[str]:
     """Validate runtime config values that cannot be caught by type-checking alone.
 
     Returns a list of error strings. Empty list means valid.
     """
-    errors: list[str] = []
-
-    # Rule C1: llm_router.timeout_ms must be >= 200.
-    # The HTTP client allocates 100 ms for connect and splits the remainder
-    # for read; values below 200 ms produce a negative read timeout.
-    if cfg.llm.timeout_ms < _LLM_TIMEOUT_MIN_MS:
-        errors.append(
-            f"[rule_c1] llm.timeout_ms={cfg.llm.timeout_ms} is below "
-            f"the minimum allowed value of {_LLM_TIMEOUT_MIN_MS} ms"
-        )
-
-    return errors
+    return []
 
 
 def validate_config_or_die(cfg: Config) -> None:

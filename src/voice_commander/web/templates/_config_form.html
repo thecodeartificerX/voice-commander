@@ -3,32 +3,6 @@
     <h3 class="text-lg font-medium text-amber-300">Runtime Config</h3>
 
     <fieldset class="space-y-2">
-        <legend class="text-xs uppercase text-neutral-500">[llm]</legend>
-        <label class="block">
-            <span class="text-xs text-neutral-400">endpoint_url</span>
-            <input name="llm_endpoint_url" value="{{ cfg.get('llm', {}).get('endpoint_url', 'http://localhost:1234/v1') }}"
-                   class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2"/>
-        </label>
-        <label class="block">
-            <span class="text-xs text-neutral-400">model_id</span>
-            <input name="llm_model_id" value="{{ cfg.get('llm', {}).get('model_id', '') }}"
-                   class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2"/>
-        </label>
-        <div class="grid grid-cols-2 gap-3">
-            <label class="block">
-                <span class="text-xs text-neutral-400">default_browser</span>
-                <input name="llm_default_browser" value="{{ cfg.get('llm', {}).get('default_browser', 'chrome') }}"
-                       class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2"/>
-            </label>
-            <label class="block">
-                <span class="text-xs text-neutral-400">timeout_ms</span>
-                <input name="llm_timeout_ms" type="number" value="{{ cfg.get('llm', {}).get('timeout_ms', 1200) }}"
-                       class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2"/>
-            </label>
-        </div>
-    </fieldset>
-
-    <fieldset class="space-y-2">
         <legend class="text-xs uppercase text-neutral-500">[audio]</legend>
         <label class="block">
             <span class="text-xs text-neutral-400">device (PortAudio index; -1 = system default)</span>

@@ -16,7 +16,6 @@ from typing import Any
 import pytest
 
 from voice_commander import resolver
-from voice_commander.config import LLMConfig
 from voice_commander.resolver import (
     OpenResolveError,
     _invalidate_app_cache,
@@ -242,7 +241,7 @@ def test_resolve_window_custom_threshold_rejects_weak_match(
             (101, "Random Weird Stuff Window", 1001, "thingy.exe"),
         ],
     )
-    _set_config(LLMConfig(focus_fuzzy_threshold=95))
+    _set_config(type("_ThresholdCfg", (), {"focus_fuzzy_threshold": 95, "open_fuzzy_threshold": 70})())
     with pytest.raises(FocusWindowError):
         resolve_window("spotify")
 
@@ -373,7 +372,7 @@ def test_resolve_app_custom_threshold_blocks_weak_match(
         lambda: [("Weird Thing Tool", r"C:\fake\weird.lnk")],
     )
     monkeypatch.setattr(resolver, "_enumerate_apps_folder", lambda: [])
-    _set_config(LLMConfig(open_fuzzy_threshold=95))
+    _set_config(type("_ThresholdCfg", (), {"focus_fuzzy_threshold": 70, "open_fuzzy_threshold": 95})())
     with pytest.raises(OpenResolveError):
         resolve_app("spotify")
 

@@ -1,12 +1,11 @@
-"""Tests for non-blocking daemon startup (async Transcriber.load + LLM warmup).
+"""Tests for non-blocking daemon startup (async Transcriber.load).
 
-Covers the five scenarios required by the feat(daemon): non-blocking startup change:
+Covers four scenarios:
 
 1. run() returns immediately even when Transcriber.load is slow
 2. Transcriber.load failure does not kill the daemon
 3. Pipeline waits for _transcriber_ready Event before transcribing
 4. Pipeline skips utterance when transcriber not ready within timeout
-5. LLM warmup runs in background (build_streaming_daemon returns fast)
 """
 
 from __future__ import annotations
@@ -30,7 +29,6 @@ for _mod in ("silero_vad", "torch", "sounddevice", "soxr"):
 from voice_commander.daemon import StreamingDaemon  # noqa: E402
 from voice_commander.event_bus import EventBus  # noqa: E402
 from voice_commander.feedback import CapturingFeedbackSink  # noqa: E402
-from voice_commander.llm_router import LLMRouter  # noqa: E402
 from voice_commander.plan import Plan, ToolCall  # noqa: E402
 from voice_commander.transcriber import TranscriptionResult  # noqa: E402
 from voice_commander.verb_router import VerbRouter  # noqa: E402
@@ -50,7 +48,6 @@ def _make_daemon(
     CapturingFeedbackSink,
     MagicMock,  # recorder
     MagicMock,  # transcriber
-    MagicMock,  # llm_router
     MagicMock,  # dispatcher
 ]:
     feedback = CapturingFeedbackSink()
@@ -59,7 +56,6 @@ def _make_daemon(
     recorder.is_open = False
 
     transcriber = MagicMock()
-    llm_router = MagicMock(spec=LLMRouter)
     dispatcher = MagicMock()
     verb_router = MagicMock(spec=VerbRouter)
     verb_router.route.return_value = Plan(
@@ -71,14 +67,13 @@ def _make_daemon(
         feedback=feedback,
         recorder=recorder,
         transcriber=transcriber,
-        llm_router=llm_router,
         dispatcher=dispatcher,
         verb_router=verb_router,
         registry=MagicMock(),
         output_dir=output_dir,
         event_bus=event_bus,
     )
-    return daemon, feedback, recorder, transcriber, llm_router, dispatcher
+    return daemon, feedback, recorder, transcriber, dispatcher
 
 
 def _fake_utterance(n: int = 1600) -> np.ndarray:
@@ -107,7 +102,7 @@ def _fake_transcription_result(
 def test_run_returns_immediately_even_when_transcriber_load_is_slow(tmp_path):
     """Transcriber.load() sleeping 2 s must NOT block run() from starting threads
     and returning control to the caller within 500 ms."""
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
@@ -156,7 +151,7 @@ def test_run_returns_immediately_even_when_transcriber_load_is_slow(tmp_path):
 def test_transcriber_load_failure_does_not_kill_daemon(tmp_path):
     """If Transcriber.load() raises, the daemon must stay alive; feedback.on_error
     must be called with subsystem name 'transcriber.load'."""
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
@@ -211,11 +206,11 @@ def test_transcriber_load_failure_does_not_kill_daemon(tmp_path):
 
 def test_pipeline_waits_for_transcriber_ready_event(tmp_path):
     """When _transcriber_ready is not yet set, the pipeline must block until it is."""
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
-    llm_router.route.return_value = Plan(
+    daemon._verb_router.route.return_value = Plan(
         steps=(ToolCall(name="press", kwargs={"combo": "ctrl+c"}),), raw_response={}
     )
 
@@ -282,7 +277,7 @@ def test_pipeline_waits_for_transcriber_ready_event(tmp_path):
 def test_pipeline_skips_when_transcriber_not_ready_within_timeout(tmp_path):
     """If _transcriber_ready.wait(timeout=...) returns False, the utterance must be
     dropped with a miss chime — no transcribe() call, no exception leaked."""
-    daemon, feedback, recorder, transcriber, llm_router, dispatcher = _make_daemon(
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
         output_dir=str(tmp_path)
     )
 
@@ -319,60 +314,3 @@ def test_pipeline_skips_when_transcriber_not_ready_within_timeout(tmp_path):
     transcriber.transcribe.assert_not_called()
     miss_calls = [c for c in feedback.calls if c[0] == "on_miss"]
     assert miss_calls, "on_miss was not called when transcriber was not ready within timeout"
-
-
-# ---------------------------------------------------------------------------
-# Test 5: LLM warmup runs in background (build_streaming_daemon returns fast)
-# ---------------------------------------------------------------------------
-
-
-def test_llm_warmup_runs_in_background(tmp_path):
-    """The LLM warmup thread must be fire-and-forget: build_streaming_daemon (or the
-    equivalent warmup-thread spawn) must return in <500 ms even if warmup() sleeps 2 s.
-
-    We test the implementation's exact pattern: a daemon Thread named 'vc-llm-warmup'
-    is started and the caller returns immediately without joining it.
-    """
-    import voice_commander.daemon as daemon_module
-
-    warmup_started = threading.Event()
-    warmup_done = threading.Event()
-
-    llm_router_mock = MagicMock(spec=LLMRouter)
-
-    def _slow_warmup():
-        warmup_started.set()
-        time.sleep(2)
-        warmup_done.set()
-        return True
-
-    llm_router_mock.warmup.side_effect = _slow_warmup
-
-    # Replicate the exact code path from build_streaming_daemon:
-    #   def _llm_warmup() -> None:
-    #       if llm_router.warmup(): ...
-    #   threading.Thread(target=_llm_warmup, name="vc-llm-warmup", daemon=True).start()
-    # We verify it returns immediately without blocking.
-
-    def _llm_warmup() -> None:
-        if llm_router_mock.warmup():
-            pass  # logger.info in real code
-
-    t0 = time.perf_counter()
-    t = threading.Thread(target=_llm_warmup, name="vc-llm-warmup", daemon=True)
-    t.start()
-    elapsed = time.perf_counter() - t0
-
-    # Spawning the thread must be near-instant (<100 ms)
-    assert elapsed < 0.1, f"Spawning warmup thread took {elapsed:.3f}s — must be <100ms"
-
-    # The warmup thread must start and still be running (not completed yet)
-    assert warmup_started.wait(timeout=1.0), "warmup thread never started"
-    assert t.is_alive(), "warmup thread completed too fast (expected 2s sleep)"
-
-    # The first section above directly validates the pattern used in build_streaming_daemon.
-    # The implementation (daemon.py) spawns exactly this pattern:
-    #   threading.Thread(target=_llm_warmup, name="vc-llm-warmup", daemon=True).start()
-    # Since 4/5 tests verify the daemon internals and the pattern is self-contained,
-    # the assertion that warmup is still alive after <100ms is the definitive check.
-    assert t.is_alive(), "warmup thread must still be running (2s sleep not yet complete)"

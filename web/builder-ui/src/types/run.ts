@@ -1,6 +1,6 @@
 export type RunStatus = 'ok' | 'miss' | 'error' | 'running'
 
-export type ErrorCategory = 'program' | 'wiring' | 'llm' | 'infra'
+export type ErrorCategory = 'program' | 'wiring' | 'infra'
 
 export interface RunSummary {
   run_id: string

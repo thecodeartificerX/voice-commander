@@ -83,12 +83,6 @@ def test_get_run_404(store_with_runs):
     assert r.status_code == 404
 
 
-def test_get_run_llm_returns_404_when_no_llm_span(store_with_runs):
-    client = TestClient(_app(store_with_runs))
-    r = client.get("/api/runs/aaa/llm")
-    assert r.status_code == 404
-
-
 def test_runs_stream_503_when_no_bus(store_with_runs):
     """Without a bus, /api/runs/stream must return 503."""
     client = TestClient(_app(store_with_runs, bus=None))
@@ -142,13 +136,6 @@ def test_runs_stream_returns_200(store_with_runs):
     assert "text/event-stream" in ct
 
 
-def test_replay_llm_503_when_no_router(store_with_runs):
-    """Without llm_router, /api/runs/{id}/replay-llm returns 503."""
-    client = TestClient(_app(store_with_runs))
-    r = client.post("/api/runs/aaa/replay-llm", json={})
-    assert r.status_code == 503
-
-
 def test_replay_full_requires_confirm_header(store_with_runs):
     """Without X-Replay-Confirm header, /api/runs/{id}/replay-full returns 412."""
     from unittest.mock import MagicMock
@@ -160,7 +147,6 @@ def test_replay_full_requires_confirm_header(store_with_runs):
     router_obj = build_observability_router(
         store_with_runs,
         tracer=MagicMock(),
-        llm_router=MagicMock(),
         dispatcher=MagicMock(),
         registry=MagicMock(),
     )

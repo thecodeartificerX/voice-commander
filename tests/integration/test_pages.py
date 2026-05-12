@@ -60,7 +60,7 @@ def _primitive_registry() -> ToolRegistry:
 def _seed_stores(root: Path) -> tuple[GraphStore, GraphStore, Path]:
     config_path = root / "config.toml"
     config_path.write_text(
-        '[llm]\nmodel_id = "test-model"\nendpoint_url = "http://x/"\n',
+        "[audio]\ndevice = -1\n",
         encoding="utf-8",
     )
     cs = GraphStore(root / "commands.json", kind="command")

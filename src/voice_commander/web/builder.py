@@ -87,7 +87,10 @@ def make_router(*, templates: Jinja2Templates, ctx: BuilderContext) -> APIRouter
         instead of a 404 so contributors know what build step to run.
         """
         if _SPA_INDEX.exists():
-            return FileResponse(_SPA_INDEX)
+            return FileResponse(
+                _SPA_INDEX,
+                headers={"Cache-Control": "no-cache, must-revalidate"},
+            )
         return HTMLResponse(content=_SPA_STUB, status_code=200)
 
     @r.get("/graph/palette")

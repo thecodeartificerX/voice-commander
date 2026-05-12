@@ -12,12 +12,11 @@ so that exit-code contracts are verified end-to-end without spawning subprocesse
 # The validator calls typing.get_type_hints() which needs real runtime annotations.
 
 import sys
-from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from voice_commander.config import Config, LLMConfig
+from voice_commander.config import Config
 from voice_commander.registry import ToolEntry, ToolRegistry
 from voice_commander.tool_metadata import ArgMetadata, ToolMetadata, ToolMetadataStore
 
@@ -79,11 +78,6 @@ def _meta(
         llm_only=llm_only,
         args=args or {},
     )
-
-
-def _cfg_with_timeout(timeout_ms: int) -> Config:
-    """Return a Config with llm_router.timeout_ms overridden."""
-    return replace(Config(), llm=LLMConfig(timeout_ms=timeout_ms))
 
 
 # ---------------------------------------------------------------------------
@@ -167,53 +161,6 @@ class TestHappyPath:
 
 # ---------------------------------------------------------------------------
 # Config drift: timeout_ms below minimum → sys.exit(1)
-# ---------------------------------------------------------------------------
-
-
-class TestConfigDrift:
-    def test_timeout_ms_too_low_causes_exit_1(self):
-        """llm_router.timeout_ms=100 (< 200) → validate_config_or_die calls sys.exit(1)."""
-
-        def my_tool() -> None:
-            pass
-
-        registry = _make_registry(_entry("my_tool", my_tool))
-        store = _make_store({"my_tool": _meta("my_tool")})
-        cfg = _cfg_with_timeout(100)  # below 200 ms minimum
-
-        p_store_cls, p_discover = _patch_infrastructure(registry, store)
-        with p_store_cls, p_discover:
-            from voice_commander.__main__ import _run_validate
-
-            with pytest.raises(SystemExit) as exc_info:
-                _run_validate(cfg)
-
-        assert exc_info.value.code == 1
-
-    def test_timeout_ms_at_minimum_does_not_exit(self, capsys):
-        """llm_router.timeout_ms=200 (exactly at minimum) → no SystemExit."""
-
-        def my_tool() -> None:
-            pass
-
-        registry = _make_registry(_entry("my_tool", my_tool))
-        store = _make_store({"my_tool": _meta("my_tool")})
-        cfg = _cfg_with_timeout(200)
-
-        p_store_cls, p_discover = _patch_infrastructure(registry, store)
-        with p_store_cls, p_discover:
-            from voice_commander.__main__ import _run_validate
-
-            _run_validate(cfg)  # must not raise
-
-        assert "OK" in capsys.readouterr().out
-
-
-# ---------------------------------------------------------------------------
-# Tool drift: validate_or_die raises when registry/TOML disagree → sys.exit(1)
-# ---------------------------------------------------------------------------
-
-
 class TestToolDrift:
     def test_rule2_missing_toml_arg_causes_exit_1(self):
         """Function param with no matching TOML arg → validate_or_die exits 1."""
@@ -305,14 +252,14 @@ class TestToolDrift:
 
 class TestOutputContract:
     def test_ok_not_printed_on_config_failure(self, capsys):
-        """When config validation fails (exit 1), 'OK' is never printed to stdout."""
+        """When tool validation fails (exit 1), 'OK' is never printed to stdout."""
 
-        def my_tool() -> None:
+        def my_tool(query: str) -> None:
             pass
 
         registry = _make_registry(_entry("my_tool", my_tool))
-        store = _make_store({"my_tool": _meta("my_tool")})
-        cfg = _cfg_with_timeout(50)  # well below minimum
+        store = _make_store({"my_tool": _meta("my_tool", args={})})  # missing 'query' → rule2
+        cfg = Config()
 
         p_store_cls, p_discover = _patch_infrastructure(registry, store)
         with p_store_cls, p_discover:
