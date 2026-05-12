@@ -88,36 +88,149 @@ param(
     [Parameter(ParameterSetName = 'Interactive')]
     [Parameter(ParameterSetName = 'NoMenu')]
     [Parameter(ParameterSetName = 'DirectDevice')]
-    [string]$LlmEndpoint = '',
-
-    [Parameter(ParameterSetName = 'Interactive')]
-    [Parameter(ParameterSetName = 'NoMenu')]
-    [Parameter(ParameterSetName = 'DirectDevice')]
-    [string]$LlmModel = ''
-)
-
-# LLM endpoint presets shared between TUI + flag-based persistence.
-$script:LlmPresets = @(
-    [PSCustomObject]@{
-        Key      = 'L'
-        Label    = 'LM Studio (local)'
-        Endpoint = 'http://localhost:1234/v1'
-        Model    = 'google/gemma-4-e4b'
-        Hint     = 'localhost:1234 / google/gemma-4-e4b'
-    },
-    [PSCustomObject]@{
-        Key      = 'O'
-        Label    = 'Ollama (remote 192.168.4.200:5050)'
-        Endpoint = 'http://192.168.4.200:5050/v1'
-        Model    = 'gemma4:e4b'
-        Hint     = '192.168.4.200:5050/v1 / gemma4:e4b'
-    }
+    [Parameter(ParameterSetName = 'ListDevices')]
+    [switch]$NoNuke
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 Set-Location -LiteralPath $PSScriptRoot
+
+# ---------------------------------------------------------------------------
+# Stale process nuke  (runs before everything else; bypass with -NoNuke)
+# ---------------------------------------------------------------------------
+
+function Invoke-VoiceStaleProcessNuke {
+    <#
+    .SYNOPSIS
+        Kill leftover voice-commander and voice-sprite processes from a prior run.
+
+    .DESCRIPTION
+        Idempotent prelude that cleans up three categories of stale state:
+
+          a. Lock-file owner — if outputs/.daemon.lock exists, reads the PID
+             (stored as "PID:GUID"), kills the process tree if alive, then
+             removes the lockfile.
+
+          b. Port holder — resolves the web-UI port (UIPort param > env var
+             VOICE_COMMANDER_WEB_PORT > default 8765) and kills any process
+             listening on that TCP port.
+
+          c. Orphan python/uv processes — kills any python.exe, pythonw.exe,
+             or uv.exe whose CommandLine contains "voice_commander" or
+             "voice_sprite", being careful not to kill the current shell.
+
+        Emits one Write-VoiceSecondary line when anything was killed; silent
+        on a clean system.
+    #>
+
+    $killedAnything = $false
+    $currentPid = $PID  # PowerShell's own PID
+
+    # --- a. Lock-file owner ---
+    $lockPath = Join-Path $PSScriptRoot 'outputs/.daemon.lock'
+    if (Test-Path -LiteralPath $lockPath) {
+        try {
+            $lockContent = (Get-Content -LiteralPath $lockPath -Raw -ErrorAction SilentlyContinue).Trim()
+            if ($lockContent) {
+                $lockPid = [int]($lockContent -split ':')[0]
+                if ($lockPid -gt 0 -and $lockPid -ne $currentPid) {
+                    try {
+                        $testProc = Get-Process -Id $lockPid -ErrorAction SilentlyContinue
+                        if ($null -ne $testProc -and -not $testProc.HasExited) {
+                            Write-Verbose "Killing lock-file owner PID $lockPid"
+                            & taskkill.exe /PID $lockPid /T /F 2>&1 | Out-Null
+                            $killedAnything = $true
+                        }
+                    }
+                    catch {
+                        Write-Verbose "Lock-file PID check failed: $_"
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Verbose "Lock-file read failed (corrupt?): $_"
+        }
+        try {
+            Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+            Write-Verbose "Removed stale lock file: $lockPath"
+        }
+        catch {
+            Write-Verbose "Could not remove lock file: $_"
+        }
+    }
+
+    # --- b. Port holder ---
+    $resolvedPort = if ($UIPort -gt 0) {
+        $UIPort
+    } elseif ($env:VOICE_COMMANDER_WEB_PORT) {
+        [int]$env:VOICE_COMMANDER_WEB_PORT
+    } else {
+        8765
+    }
+
+    try {
+        $portConns = Get-NetTCPConnection -LocalPort $resolvedPort -State Listen -ErrorAction SilentlyContinue
+        foreach ($conn in $portConns) {
+            $portPid = $conn.OwningProcess
+            if ($portPid -gt 0 -and $portPid -ne $currentPid) {
+                Write-Verbose "Killing process $portPid holding port $resolvedPort"
+                try {
+                    & taskkill.exe /PID $portPid /T /F 2>&1 | Out-Null
+                    $killedAnything = $true
+                }
+                catch {
+                    Write-Verbose "taskkill for port holder PID $portPid failed: $_"
+                }
+            }
+        }
+    }
+    catch {
+        Write-Verbose "Get-NetTCPConnection failed: $_"
+    }
+
+    # --- c. Orphan python/uv processes ---
+    $targetNames = @('python.exe', 'pythonw.exe', 'uv.exe')
+    $targetKeywords = @('voice_commander', 'voice_sprite')
+
+    foreach ($procName in $targetNames) {
+        try {
+            $candidates = Get-CimInstance Win32_Process -Filter "Name='$procName'" -ErrorAction SilentlyContinue
+            foreach ($proc in $candidates) {
+                if ($proc.ProcessId -eq $currentPid) { continue }
+                $cmdLine = $proc.CommandLine
+                if (-not $cmdLine) { continue }
+                $isTarget = $false
+                foreach ($kw in $targetKeywords) {
+                    if ($cmdLine -like "*$kw*") { $isTarget = $true; break }
+                }
+                if ($isTarget) {
+                    Write-Verbose "Killing orphan $procName PID $($proc.ProcessId): $cmdLine"
+                    try {
+                        & taskkill.exe /PID $proc.ProcessId /T /F 2>&1 | Out-Null
+                        $killedAnything = $true
+                    }
+                    catch {
+                        Write-Verbose "taskkill for orphan PID $($proc.ProcessId) failed: $_"
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Verbose "CIM query for $procName failed: $_"
+        }
+    }
+
+    if ($killedAnything) {
+        Write-VoiceSecondary 'Cleaned up stale processes/lockfile.'
+    }
+}
+
+if (-not $NoNuke) {
+    Invoke-VoiceStaleProcessNuke
+}
 
 # ---------------------------------------------------------------------------
 # Ctrl+C tree-kill guard
@@ -194,7 +307,7 @@ namespace VoiceCommander {
 [VoiceCommander.CancelGuard]::Install()
 
 # Phase banner shown in Show-VoiceBanner. Extracted so phase bumps touch one place.
-$script:PhaseString = '  Phase 7: supervisor process (daemon + sprite under one parent)'
+$script:PhaseString = '  Hardened: WASAPI-only + deterministic routing (ADRs 0081-0082)'
 
 # ---------------------------------------------------------------------------
 # Builder UI build helper
@@ -414,15 +527,15 @@ function Get-VoiceConfigDevice {
 function Get-VoiceInputDevice {
     <#
     .SYNOPSIS
-        Returns Windows DirectSound input devices as typed PSCustomObject array.
+        Returns Windows WASAPI input devices as typed PSCustomObject array.
 
     .DESCRIPTION
         Calls list-input-devices.py and returns [PSCustomObject[]] with PSTypeName
         'VoiceCommander.AudioDevice' and properties: Index, Name, HostApi,
         MaxInputChannels, DefaultSampleRate. The list is filtered to Windows
-        DirectSound entries only (DirectSound resamples internally so any rate
-        works hassle-free; MME duplicates add noise; WASAPI is rate-strict).
-        Original PortAudio indices are preserved. Returns $null on error.
+        WASAPI entries only (ADR 0081: WASAPI is the mandatory host API;
+        DirectSound and MME are excluded). Original PortAudio indices are
+        preserved. Returns $null on error.
     #>
     Write-Verbose 'Querying PortAudio input devices via list-input-devices.py'
     try {
@@ -440,7 +553,7 @@ function Get-VoiceInputDevice {
         }
 
         $typed = foreach ($d in $parsed) {
-            if ($d.hostapi -ne 'Windows DirectSound') { continue }
+            if ($d.hostapi -ne 'Windows WASAPI') { continue }
             [PSCustomObject]@{
                 PSTypeName        = 'VoiceCommander.AudioDevice'
                 Index             = [int]$d.index
@@ -451,7 +564,7 @@ function Get-VoiceInputDevice {
             }
         }
 
-        Write-Verbose "Device list contained $(@($typed).Count) DirectSound entries"
+        Write-Verbose "Device list contained $(@($typed).Count) WASAPI entries"
         return @($typed)
     }
     catch [System.Management.Automation.RuntimeException] {
@@ -651,244 +764,6 @@ function Save-VoiceDeviceChoice {
     }
 }
 
-function Get-VoiceConfigLlm {
-    <#
-    .SYNOPSIS
-        Returns @{ EndpointUrl; ModelId } from config.toml, or $null on failure.
-    #>
-    Write-Verbose 'Reading [llm] config via Config.load'
-    try {
-        $py = @"
-from pathlib import Path
-from voice_commander.config import Config
-c = Config.load(Path('config.toml')).llm
-print(c.endpoint_url)
-print(c.model_id)
-"@
-        $raw = uv run python -c $py 2>$null
-        if ($null -eq $raw) { return $null }
-        $parts = $raw -split "`r?`n" | Where-Object { $_ -ne '' }
-        if ($parts.Count -lt 2) { return $null }
-        return [PSCustomObject]@{
-            EndpointUrl = $parts[0].Trim()
-            ModelId     = $parts[1].Trim()
-        }
-    }
-    catch {
-        Write-Verbose "[llm] config read failed: $_"
-        return $null
-    }
-}
-
-function Save-VoiceLlmChoice {
-    <#
-    .SYNOPSIS
-        Persist [llm] endpoint_url + model_id via set-llm-endpoint.py.
-    #>
-    param(
-        [Parameter(Mandatory)] [string]$EndpointUrl,
-        [Parameter(Mandatory)] [string]$ModelId
-    )
-
-    Write-Verbose "Persisting llm.endpoint_url=$EndpointUrl model_id=$ModelId"
-    try {
-        & uv 'run' 'python' 'scripts/set-llm-endpoint.py' $EndpointUrl $ModelId
-        if ($LASTEXITCODE -ne 0) {
-            Write-Verbose "set-llm-endpoint.py exited with code $LASTEXITCODE"
-            return $false
-        }
-        return $true
-    }
-    catch {
-        Write-Verbose "Save-VoiceLlmChoice failed: $_"
-        return $false
-    }
-}
-
-function Read-VoiceLlmEndpoint {
-    <#
-    .SYNOPSIS
-        Use-last / Choose-new menu for the LLM endpoint + model.
-
-    .DESCRIPTION
-        Mirrors the audio device menu. Choose-new offers the
-        named presets ($script:LlmPresets), a [C] Custom path that prompts for
-        endpoint_url + model_id, plus [B] Back / [Q] Quit.
-
-    .OUTPUTS
-        [PSCustomObject]@{ EndpointUrl; ModelId } picked, or $null on quit.
-    #>
-    param(
-        [PSCustomObject]$Current
-    )
-
-    $hasCurrent = $null -ne $Current -and $Current.EndpointUrl -and $Current.ModelId
-
-    if ($hasCurrent) {
-        Write-Host ''
-        Write-VoiceHeader 'Last LLM endpoint:'
-        Write-VoiceSuccess ("  {0}" -f $Current.EndpointUrl)
-        Write-VoiceSecondary ("       (model: {0})" -f $Current.ModelId)
-        Write-Host ''
-        Write-VoicePrompt '  [1] Use last'
-        Write-VoicePrompt '  [2] Choose new'
-        Write-VoicePrompt '  [Q] Quit'
-        Write-Host ''
-
-        $top = Read-VoiceMenuChoice -ValidKeys @('1', '2', 'Q') -Prompt '> '
-
-        if ($top -eq 'Q') {
-            Write-Host ''
-            Write-VoiceSecondary 'Goodbye.'
-            return $null
-        }
-
-        if ($top -eq '1') {
-            return [PSCustomObject]@{
-                EndpointUrl = $Current.EndpointUrl
-                ModelId     = $Current.ModelId
-            }
-        }
-        # '2' falls through
-    }
-
-    while ($true) {
-        Write-Host ''
-        Write-VoiceHeader 'Choose LLM endpoint:'
-        foreach ($p in $script:LlmPresets) {
-            Write-VoicePrompt ("  [{0}] {1}" -f $p.Key, $p.Label)
-            Write-VoiceSecondary ("       {0}" -f $p.Hint)
-        }
-        Write-VoicePrompt '  [C] Custom (enter URL + model)'
-        if ($hasCurrent) { Write-VoicePrompt '  [B] Back' }
-        Write-VoicePrompt '  [Q] Quit'
-        Write-Host ''
-
-        $valid = @('C', 'Q') + ($script:LlmPresets | ForEach-Object { $_.Key })
-        if ($hasCurrent) { $valid += 'B' }
-
-        $choice = Read-VoiceMenuChoice -ValidKeys $valid -Prompt '> '
-
-        if ($choice -eq 'Q') {
-            Write-Host ''
-            Write-VoiceSecondary 'Goodbye.'
-            return $null
-        }
-
-        if ($choice -eq 'B') {
-            return Read-VoiceLlmEndpoint -Current $Current
-        }
-
-        if ($choice -eq 'C') {
-            $defaultUrl = if ($hasCurrent) { $Current.EndpointUrl } else { '' }
-            $defaultModel = if ($hasCurrent) { $Current.ModelId } else { '' }
-
-            Write-Host ''
-            if ($defaultUrl) {
-                Write-VoicePrompt ("  Endpoint URL [{0}]:" -f $defaultUrl) -NoNewline
-            }
-            else {
-                Write-VoicePrompt '  Endpoint URL (e.g. http://host:port/v1):' -NoNewline
-            }
-            Write-Host ' ' -NoNewline
-            $url = (Read-Host).Trim()
-            if (-not $url -and $defaultUrl) { $url = $defaultUrl }
-            if (-not $url) {
-                Write-VoiceFailure '  Endpoint URL required.'
-                continue
-            }
-
-            if ($defaultModel) {
-                Write-VoicePrompt ("  Model ID [{0}]:" -f $defaultModel) -NoNewline
-            }
-            else {
-                Write-VoicePrompt '  Model ID (e.g. gemma4:e4b):' -NoNewline
-            }
-            Write-Host ' ' -NoNewline
-            $model = (Read-Host).Trim()
-            if (-not $model -and $defaultModel) { $model = $defaultModel }
-            if (-not $model) {
-                Write-VoiceFailure '  Model ID required.'
-                continue
-            }
-
-            return [PSCustomObject]@{ EndpointUrl = $url; ModelId = $model }
-        }
-
-        # Preset key
-        $preset = $script:LlmPresets | Where-Object { $_.Key -eq $choice } | Select-Object -First 1
-        if ($null -ne $preset) {
-            return [PSCustomObject]@{
-                EndpointUrl = $preset.Endpoint
-                ModelId     = $preset.Model
-            }
-        }
-    }
-}
-
-function Resolve-VoiceLlmChoice {
-    <#
-    .SYNOPSIS
-        Decide + persist the LLM endpoint for this launch.
-
-    .DESCRIPTION
-        Three paths matching Resolve-VoiceTranscriptionChoice:
-          1. -LlmEndpoint (and optional -LlmModel) → persist directly.
-          2. Non-interactive / -NoMenu → reuse saved config silently.
-          3. Interactive → Use-last / Choose-new menu.
-    #>
-    param(
-        [bool]$IsInteractiveSession,
-        [bool]$SkipMenu
-    )
-
-    $current = Get-VoiceConfigLlm
-
-    if ($LlmEndpoint) {
-        $model = if ($LlmModel) {
-            $LlmModel
-        }
-        elseif ($null -ne $current -and $current.ModelId) {
-            $current.ModelId
-        }
-        else {
-            ''
-        }
-        if (-not $model) {
-            Write-VoiceFailure '-LlmEndpoint supplied without -LlmModel and no saved model_id; need both.'
-            exit 1
-        }
-        if (-not (Save-VoiceLlmChoice -EndpointUrl $LlmEndpoint -ModelId $model)) {
-            Write-VoiceFailure 'Failed to persist LLM endpoint.'
-            exit 1
-        }
-        return
-    }
-
-    if ($SkipMenu -or -not $IsInteractiveSession) {
-        if ($null -ne $current) {
-            Write-VoiceSuccess ("LLM endpoint: {0} (model {1})." -f $current.EndpointUrl, $current.ModelId)
-        }
-        return
-    }
-
-    $picked = Read-VoiceLlmEndpoint -Current $current
-    if ($null -eq $picked) { exit 0 }
-
-    $unchanged = $null -ne $current `
-        -and $current.EndpointUrl -eq $picked.EndpointUrl `
-        -and $current.ModelId -eq $picked.ModelId
-    if (-not $unchanged) {
-        if (-not (Save-VoiceLlmChoice -EndpointUrl $picked.EndpointUrl -ModelId $picked.ModelId)) {
-            Write-VoiceFailure '  Failed to save LLM endpoint.'
-            Write-VoiceSecondary '  Continuing with whatever is currently in config.toml.'
-        }
-    }
-
-    Write-Host ''
-    Write-VoiceSuccess ("LLM endpoint: {0} (model {1})." -f $picked.EndpointUrl, $picked.ModelId)
-}
-
 function Start-VoiceSupervisor {
     <#
     .SYNOPSIS
@@ -1060,7 +935,6 @@ if ($PSCmdlet.ParameterSetName -eq 'DirectDevice') {
     else {
         Write-VoiceSuccess "Using device [$Device]."
     }
-    Resolve-VoiceLlmChoice -IsInteractiveSession $false -SkipMenu $true
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander...'
     $ExitCode = Start-VoiceWithUI
@@ -1089,7 +963,6 @@ if ($NoMenu) {
     }
     Write-Verbose "Non-interactive: using saved device [$SavedNoMenu]"
     Write-VoiceSuccess "Using saved device [$SavedNoMenu]."
-    Resolve-VoiceLlmChoice -IsInteractiveSession $false -SkipMenu $true
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander...'
     $ExitCode = Start-VoiceWithUI
@@ -1117,7 +990,6 @@ if (-not $IsInteractive) {
         exit 1
     }
     Write-VoiceSuccess "Non-interactive session -- using saved device [$SavedAuto]."
-    Resolve-VoiceLlmChoice -IsInteractiveSession $false -SkipMenu $true
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander...'
     $ExitCode = Start-VoiceWithUI
@@ -1255,8 +1127,6 @@ if ($null -ne $FinalDevice) {
 else {
     Write-VoiceSuccess "Using device [$PickedIndex]."
 }
-
-Resolve-VoiceLlmChoice -IsInteractiveSession $true -SkipMenu $false
 
 Write-Host ''
 Write-VoicePrompt 'Starting Voice Commander...'
