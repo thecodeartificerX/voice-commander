@@ -141,7 +141,7 @@ def main() -> None:
         logger.error("Voice Commander already running: %s", e)
         sys.exit(1)
     try:
-        build_streaming_daemon(cfg).run(
+        build_streaming_daemon(cfg, config_path=Path("config.toml")).run(
             cfg.hotkey.key,
             mute_key=cfg.hotkey.mute_key,
         )

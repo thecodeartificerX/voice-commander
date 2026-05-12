@@ -226,10 +226,66 @@ class StreamingDaemon:
         # Set when Transcriber.load() completes successfully in the background thread.
         # Pipeline worker waits on this before calling transcribe().
         self._transcriber_ready: threading.Event = threading.Event()
+        # Live config snapshot — set by build_streaming_daemon after construction;
+        # updated in-place by _on_config_changed without requiring a restart.
+        self._cfg: Config | None = None
+        # Config file watcher — set by build_streaming_daemon; stopped in shutdown().
+        self._config_watcher: Any = None
 
     def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         if self._event_bus is not None:
             self._event_bus.publish(event_type, data)
+
+    # ------------------------------------------------------------------
+    # Config hot-reload
+    # ------------------------------------------------------------------
+
+    def _apply_config_diff(self, new_cfg: Config) -> None:
+        """Apply the subset of config changes that can be hot-reloaded without restart.
+
+        Called on the watchdog observer thread from :meth:`_on_config_changed`.
+
+        Currently handled diffs
+        -----------------------
+        * ``audio.device_name`` — updates ``_recorder._device_name`` so the new
+          device name is used on the next :meth:`open_session` call.  An
+          already-open session is NOT closed — the change takes effect silently
+          on the next session open.
+
+        TODO: more diffs as needed (logging level, web port, etc.)
+        """
+        if self._cfg is None:
+            return
+
+        if new_cfg.audio.device_name != self._cfg.audio.device_name:
+            logger.info(
+                "config hot-reload: audio.device_name %r → %r (takes effect on next session open)",
+                self._cfg.audio.device_name,
+                new_cfg.audio.device_name,
+            )
+            if self._recorder is not None:
+                # str assignment is atomic in CPython; the recorder reads
+                # _device_name inside open_session() under _state_lock, so
+                # there is no observable race.
+                self._recorder._device_name = new_cfg.audio.device_name
+
+    def _on_config_changed(self, path: Path) -> None:
+        """Callback invoked by :class:`ConfigWatcher` when config.toml changes.
+
+        Runs on the watchdog observer thread.  Parses the new config, diffs
+        against the current snapshot, and applies supported hot-reload changes.
+        Publishes a ``config_reloaded`` event on success so the sprite / UI can
+        reflect the reload.
+        """
+        try:
+            new_cfg = Config.load(path)
+        except Exception:
+            logger.exception("config hot-reload: failed to parse %s", path)
+            return
+
+        self._apply_config_diff(new_cfg)
+        self._cfg = new_cfg
+        self._publish("config_reloaded", {"path": str(path)})
 
     # ------------------------------------------------------------------
     # Hotkey callbacks
@@ -758,6 +814,14 @@ class StreamingDaemon:
         # Shut down the WAV writer executor.
         self._wav_executor.shutdown(wait=False)
 
+        # Stop config file watcher.
+        if self._config_watcher is not None:
+            try:
+                self._config_watcher.stop()
+            except Exception:
+                logger.exception("Error stopping config watcher")
+            self._config_watcher = None
+
         # Stop observability store.
         if self._store is not None:
             try:
@@ -772,7 +836,7 @@ class StreamingDaemon:
             logger.exception("Error unloading transcriber")
 
 
-def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
+def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> StreamingDaemon:
     """Factory: wire all subsystems into a StreamingDaemon.
 
     Also wires the embedded web UI when enabled. The metadata store, registry,
@@ -953,5 +1017,23 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
             _st_result.error,
         )
         sys.exit(73)
+
+    # Store live config snapshot so _on_config_changed can diff against it.
+    daemon._cfg = cfg
+
+    # Wire config hot-reload watcher.  Resolves config_path relative to cwd
+    # when not supplied explicitly (matches how __main__.py loads Config).
+    _cfg_path = (config_path or Path("config.toml")).resolve()
+    if _cfg_path.exists():
+        from .config_watcher import ConfigWatcher
+
+        daemon._config_watcher = ConfigWatcher(_cfg_path, daemon._on_config_changed)
+        daemon._config_watcher.start()
+        logger.info("config hot-reload: watching %s", _cfg_path)
+    else:
+        logger.warning(
+            "config hot-reload: config file %s not found, watcher not started",
+            _cfg_path,
+        )
 
     return daemon
