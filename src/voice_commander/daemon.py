@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import json
 import logging
 import os
 import queue
 import signal
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -28,7 +31,7 @@ from .verb_router import VerbRouter, build_default_rules
 from .observability.errors import classify as _classify_error
 from .plan import Plan, PlanOutcome
 from .registry import ToolRegistry, discover
-from .streaming_recorder import StreamingRecorder
+from .streaming_recorder import SelfTestResult, StreamingRecorder
 from .tool_metadata import ToolMetadataStore
 from .tool_schema import sig_to_json_schema
 from .transcriber import (
@@ -41,6 +44,64 @@ from .web.app import create_app
 from .web.server import WebServer
 
 logger = logging.getLogger(__name__)
+
+
+def _provenance_banner(cfg: Config, result: SelfTestResult) -> list[str]:
+    """Return two banner lines describing resolved startup state.
+
+    Format::
+
+        === voice_commander | pid=<PID> | git=<SHORT_SHA> | config=<SHORT_HASH> ===
+        === audio: name='<DEVICE_NAME>' -> <HOSTAPI>[<IDX>] @ <RATE>Hz | <STATUS> ===
+
+    *SHORT_SHA* — first 7 chars of ``git rev-parse HEAD``, ``"unknown"`` on error.
+    *SHORT_HASH* — first 12 chars of SHA-256 of ``config.toml`` bytes, ``"unknown"`` on error.
+    *STATUS* — ``"OK"`` on success; ``"FAIL: <first line of error>"`` on failure.
+    """
+    # Git SHA
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        short_sha = proc.stdout.strip()[:7] if proc.returncode == 0 else "unknown"
+    except Exception:
+        short_sha = "unknown"
+
+    # Config hash
+    try:
+        config_bytes = Path("config.toml").read_bytes()
+        short_hash = hashlib.sha256(config_bytes).hexdigest()[:12]
+    except Exception:
+        short_hash = "unknown"
+
+    # Device name
+    device_name = cfg.audio.device_name or "(default)"
+
+    # Host API + index string
+    if result.device_index is None:
+        hostapi_idx_str = "(default)"
+    else:
+        hostapi_idx_str = f"{result.host_api}[{result.device_index}]"
+
+    # Status
+    if result.ok:
+        status = "OK"
+    else:
+        first_error_line = (result.error or "unknown error").splitlines()[0]
+        status = f"FAIL: {first_error_line}"
+
+    line1 = (
+        f"=== voice_commander | pid={os.getpid()} | git={short_sha}"
+        f" | config={short_hash} ==="
+    )
+    line2 = (
+        f"=== audio: name='{device_name}' -> {hostapi_idx_str}"
+        f" @ {result.native_rate}Hz | {status} ==="
+    )
+    return [line1, line2]
 
 
 class _NoopStore:
@@ -877,5 +938,20 @@ def build_streaming_daemon(cfg: Config) -> StreamingDaemon:
         utterance_sink=daemon._on_utterance,
         device_name=cfg.audio.device_name,
     )
+
+    # Audio self-test: open device for ~200 ms before hotkey becomes active.
+    # On failure: log, emit banner with FAIL status, then exit with code 73.
+    _st_result = daemon._recorder.self_test()
+    _banner_lines = _provenance_banner(cfg, _st_result)
+    for _line in _banner_lines:
+        logger.info(_line)
+
+    if not _st_result.ok:
+        logger.error(
+            "Audio self-test failed — device='%s' error=%r; exiting with code 73",
+            cfg.audio.device_name or "(default)",
+            _st_result.error,
+        )
+        sys.exit(73)
 
     return daemon

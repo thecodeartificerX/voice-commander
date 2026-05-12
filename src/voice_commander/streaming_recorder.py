@@ -5,8 +5,11 @@ import enum
 import logging
 import queue
 import threading
+import time
+import traceback
 from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -17,6 +20,29 @@ from .resampler import Resampler
 from .vad_gate import VADGate
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SelfTestResult:
+    """Result of a short (~200 ms) audio device self-test.
+
+    Attributes:
+        ok: ``True`` when the device opened and streamed successfully.
+        device_index: Resolved PortAudio device index, or ``None`` for the
+            system default.
+        host_api: Human-readable host-API name (e.g. ``"Windows WASAPI"``),
+            or ``"(default)"`` when *device_index* is ``None``.
+        native_rate: Device's native sample-rate in Hz.
+        error: Exception message + one-line traceback when *ok* is ``False``,
+            ``None`` on success.
+    """
+
+    ok: bool
+    device_index: int | None
+    host_api: str
+    native_rate: int
+    error: str | None
+
 
 _VAD_FRAME_SIZE = 512  # samples at 16 kHz fed to VADGate per call
 
@@ -241,6 +267,91 @@ class StreamingRecorder:
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
+
+    def self_test(self) -> SelfTestResult:
+        """Open the configured audio device for ~200 ms and immediately close it.
+
+        Designed to be called **before** the hotkey listener becomes active so
+        that a broken device is detected at startup rather than on first use.
+
+        The test opens a throwaway :class:`sd.InputStream` (no-op callback),
+        calls ``start()``, sleeps 200 ms, then calls ``stop()`` + ``close()``.
+        It does NOT spawn the VAD worker thread or touch any recorder state
+        (``self._state``, ``self._stream``, etc.).
+
+        Returns:
+            :class:`SelfTestResult` with ``ok=True`` on success or ``ok=False``
+            plus an ``error`` description on any :class:`sd.PortAudioError` or
+            unexpected exception.
+        """
+        resolved = _resolve_device_by_name(self._device, self._device_name)
+
+        # Determine host_api name and native_rate from the resolved device.
+        host_api = "(default)"
+        native_rate = 48000  # safe fallback; overwritten on success
+        if resolved is not None:
+            try:
+                device_info: Any = sd.query_devices(resolved)
+                native_rate = int(device_info["default_samplerate"])
+                hostapi_index = device_info.get("hostapi")
+                if hostapi_index is not None:
+                    hostapi_info = sd.query_hostapis()[hostapi_index]
+                    host_api = hostapi_info.get("name", "(unknown)")
+            except Exception:
+                pass
+        else:
+            # System default: still try to learn its native rate.
+            try:
+                device_info = sd.query_devices(None)
+                native_rate = int(device_info["default_samplerate"])
+            except Exception:
+                pass
+
+        stream = None
+        try:
+            stream = sd.InputStream(
+                samplerate=native_rate,
+                channels=self._channels,
+                dtype="float32",
+                device=resolved,
+                callback=lambda *a: None,
+            )
+            stream.start()
+            time.sleep(0.2)
+            stream.stop()
+            stream.close()
+            stream = None
+            logger.info(
+                "StreamingRecorder: self-test OK (device=%s host_api=%r rate=%d)",
+                resolved, host_api, native_rate,
+            )
+            return SelfTestResult(
+                ok=True,
+                device_index=resolved,
+                host_api=host_api,
+                native_rate=native_rate,
+                error=None,
+            )
+        except Exception as exc:
+            tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
+            error_detail = "".join(tb_lines).strip()
+            logger.error(
+                "StreamingRecorder: self-test FAILED (device=%s): %s",
+                resolved, error_detail,
+            )
+            # Best-effort cleanup.
+            if stream is not None:
+                with contextlib.suppress(Exception):
+                    stream.stop()
+                with contextlib.suppress(Exception):
+                    stream.close()
+            return SelfTestResult(
+                ok=False,
+                device_index=resolved,
+                host_api=host_api,
+                native_rate=native_rate,
+                error=error_detail,
+            )
 
     @property
     def is_open(self) -> bool:
