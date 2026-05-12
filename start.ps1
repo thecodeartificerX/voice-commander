@@ -795,6 +795,29 @@ function Start-VoiceSupervisor {
     if ($NoSprite) { $supArgs += '--no-sprite' }
     Write-Verbose "Launching supervisor: uv $($supArgs -join ' ')"
 
+    # --- Memory-allocator tuning ------------------------------------------------
+    # Defer to the system allocator so Python does not fight with mimalloc when
+    # it is preloaded.
+    $env:PYTHONMALLOC = 'malloc'
+
+    # Cap incidental BLAS / OpenMP thread pools spawned by numpy / torch helpers.
+    $env:OMP_NUM_THREADS = '2'
+    $env:MKL_NUM_THREADS = '2'
+
+    # Optional mimalloc preload: extend PATH so the Windows loader finds the DLLs
+    # before Python initialises its allocator.
+    $mimalloc     = Join-Path $PSScriptRoot 'bin\mimalloc.dll'
+    $miRedirect   = Join-Path $PSScriptRoot 'bin\mimalloc-redirect.dll'
+    if ((Test-Path -LiteralPath $mimalloc) -and (Test-Path -LiteralPath $miRedirect)) {
+        if ($env:PATH -notlike "*$PSScriptRoot\bin*") {
+            $env:PATH = "$PSScriptRoot\bin;$env:PATH"
+        }
+        Write-Host '[mimalloc] preload enabled'
+    } else {
+        Write-Host '[mimalloc] DLLs not found in bin/ — skipping (set PYTHONMALLOC=malloc only)'
+    }
+    # ---------------------------------------------------------------------------
+
     $proc = Start-Process -FilePath 'uv' -ArgumentList $supArgs `
         -NoNewWindow -PassThru
     $script:SupervisorProc = $proc

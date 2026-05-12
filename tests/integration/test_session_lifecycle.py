@@ -15,9 +15,10 @@ real (uses soxr) to exercise the actual resampling path.
 
 Patching strategy
 -----------------
-``VADGate.__init__`` does ``from silero_vad import VADIterator`` at call time
-(a local import). The correct patch target is therefore ``silero_vad.VADIterator``
-— patching the name in the silero_vad module before it is imported locally.
+``VADGate.__init__`` does ``from voice_commander.vad_onnx import VADIterator`` at call
+time (a local import). The correct patch target is therefore
+``voice_commander.vad_onnx.VADIterator`` — patching the name in the vad_onnx module
+before it is imported locally.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ requires_cuda = pytest.mark.skipif(not HAS_CUDA, reason="CUDA not available")
 
 
 # ---------------------------------------------------------------------------
-# Stub VADIterator: silero-compatible interface, always silent
+# Stub VADIterator: vad_onnx-compatible interface, always silent
 # ---------------------------------------------------------------------------
 
 
@@ -116,7 +117,7 @@ class _RecorderContext:
 
         p_devices = patch("sounddevice.query_devices", return_value=_make_device_info())
         p_stream = patch("sounddevice.InputStream", self.mock_stream_cls)
-        p_silero = patch("silero_vad.VADIterator", _AlwaysSilentVADIterator)
+        p_silero = patch("voice_commander.vad_onnx.VADIterator", _AlwaysSilentVADIterator)
 
         for p in (p_devices, p_stream, p_silero):
             p.start()

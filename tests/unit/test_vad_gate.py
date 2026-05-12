@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-from types import ModuleType
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -9,11 +8,11 @@ import numpy as np
 import pytest
 
 # ---------------------------------------------------------------------------
-# Fake silero_vad module + FakeVADIterator
+# Fake voice_commander.vad_onnx.VADIterator injection
 #
-# VADGate does `from silero_vad import VADIterator` inside __init__, so we
-# inject a fake module into sys.modules *before* importing VADGate (and before
-# each test that constructs one).
+# VADGate does `from voice_commander.vad_onnx import VADIterator` inside __init__,
+# so we patch the VADIterator attribute on the already-imported vad_onnx module
+# *before* each test that constructs a VADGate.
 # ---------------------------------------------------------------------------
 
 _VAD_FRAME_SAMPLES = 512  # matches _WINDOW_SAMPLES in vad_gate.py
@@ -40,10 +39,10 @@ class FakeVADIterator:
 
 
 def _install_fake_silero(monkeypatch: pytest.MonkeyPatch) -> FakeVADIterator:
-    """Inject a fake silero_vad module and return the FakeVADIterator class."""
-    fake_mod = ModuleType("silero_vad")
-    fake_mod.VADIterator = FakeVADIterator  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "silero_vad", fake_mod)
+    """Patch VADIterator on voice_commander.vad_onnx and return the FakeVADIterator class."""
+    import voice_commander.vad_onnx as _vad_onnx_mod
+
+    monkeypatch.setattr(_vad_onnx_mod, "VADIterator", FakeVADIterator)
     return FakeVADIterator
 
 
@@ -240,9 +239,10 @@ def test_back_to_back_utterances_no_pre_roll_corruption(monkeypatch):
             super().__init__(model, **kwargs)
             self._schedule = dict(self._SCHEDULE)
 
-    # Temporarily replace the VADIterator in the fake silero module with our
-    # two-part variant so VADGate instantiates it.
-    sys.modules["silero_vad"].VADIterator = _TwoPartIterator  # type: ignore[attr-defined]
+    # Replace the VADIterator on vad_onnx with our two-part variant so VADGate
+    # instantiates it (monkeypatch already set FakeVADIterator; overwrite now).
+    import voice_commander.vad_onnx as _vad_onnx_mod
+    monkeypatch.setattr(_vad_onnx_mod, "VADIterator", _TwoPartIterator)
 
     gate = VADGate(
         model=fake_model,

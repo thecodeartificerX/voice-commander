@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
-from silero_vad import load_silero_vad
+from voice_commander.vad_onnx import load_silero_vad
 
 from . import resolver as param_resolver
 from .config import Config
@@ -844,9 +844,8 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
     from the UI never race with the LLM router reading tool metadata on the
     pipeline thread.
     """
-    import torch
-
-    torch.set_num_threads(1)
+    # Torch eliminated by in-house onnxruntime VAD wrapper (voice_commander.vad_onnx).
+    # Thread caps are handled by SessionOptions(inter/intra_op_num_threads=1).
     vad_model = load_silero_vad(onnx=True)
 
     vad_gate = VADGate(

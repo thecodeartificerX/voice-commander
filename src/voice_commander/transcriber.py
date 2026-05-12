@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import logging
 import math
 from dataclasses import dataclass
@@ -65,8 +66,13 @@ class Transcriber:
             self._compute_type,
         )
         self._model = WhisperModel(
-            self._model_size, device=self._device, compute_type=self._compute_type
+            self._model_size,
+            device=self._device,
+            compute_type=self._compute_type,
+            cpu_threads=2,
+            num_workers=1,
         )
+        gc.collect()
         logger.info("Model loaded")
 
     def unload(self) -> None:
@@ -76,8 +82,6 @@ class Transcriber:
         logger.info("Unloading faster-whisper model")
         del self._model
         self._model = None
-        import gc
-
         gc.collect()
 
     def transcribe(self, source: Path | npt.NDArray[np.float32]) -> TranscriptionResult:

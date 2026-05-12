@@ -21,15 +21,15 @@ class _State(Enum):
 
 
 class VADGate:
-    """Wrap silero-vad's VADIterator with pre-roll buffering and utterance accumulation.
+    """Wrap the VADIterator with pre-roll buffering and utterance accumulation.
 
     Fed 512-sample 16 kHz float32 frames via :meth:`process`.  Returns a
     completed utterance ndarray (pre-roll + speech) when speech ends, or
     ``None`` while accumulating.
 
     Args:
-        model: Loaded silero VAD model (``torch.nn.Module``; typed as ``Any``
-            because silero doesn't export typed model classes).
+        model: Loaded VAD model (e.g. :class:`~voice_commander.vad_onnx.SileroVADOnnx`;
+            typed as ``Any`` to remain compatible with stub or mock objects in tests).
         threshold: VAD speech-probability threshold (0–1).
         min_speech_ms: Minimum speech duration in milliseconds. Utterances
             whose speech portion (excluding pre-roll) is shorter than this
@@ -55,8 +55,8 @@ class VADGate:
         pre_roll_ms: int = 320,
         max_utterance_ms: int = 30_000,
     ) -> None:
-        from silero_vad import (
-            VADIterator,  # local import — silero may not be present at import time
+        from voice_commander.vad_onnx import (
+            VADIterator,  # local import — keeps module importable without onnxruntime at import time
         )
 
         self._vad: Any = VADIterator(
