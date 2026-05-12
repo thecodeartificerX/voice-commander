@@ -490,6 +490,115 @@ class StreamingRecorder:
             self._stream = None
             return False
 
+    def _open_input_stream(self) -> sd.InputStream:
+        """Open and start an InputStream, retrying once with fresh device resolution.
+
+        On the first attempt, uses the current ``self._device`` index.  If
+        :class:`sd.PortAudioError` is raised (e.g. another app grabbed the
+        device in WASAPI exclusive mode, or a USB topology shift invalidated
+        the cached index), the method:
+
+        1. Clears ``self._device`` and re-runs :func:`_resolve_device_by_name`
+           for a fresh WASAPI scan.
+        2. If the fresh resolution returns the *same* failing index, falls back
+           to ``device=None`` (system default) as a last resort.
+        3. On second failure: logs ERROR with both errors and re-raises the
+           second :class:`sd.PortAudioError`.
+
+        Side effect: sets ``self._native_rate`` so the caller can use it for
+        resampler setup.
+        """
+        first_error: sd.PortAudioError | None = None
+        failing_device: int | None = self._device  # stash for retry comparison
+
+        for attempt in range(2):
+            if attempt == 0:
+                resolved = _resolve_device_by_name(self._device, self._device_name)
+                if resolved != self._device:
+                    logger.info(
+                        "StreamingRecorder: device index updated %s → %s (name=%r)",
+                        self._device, resolved, self._device_name,
+                    )
+                self._device = resolved
+            else:
+                # Force-clear saved index and re-scan WASAPI from scratch.
+                self._device = None
+                fresh = _resolve_device_by_name(None, self._device_name)
+                if fresh == failing_device:
+                    # Same index failed; escalate to system default.
+                    logger.warning(
+                        "StreamingRecorder: fresh resolve returned same failing index %s; "
+                        "falling back to system default",
+                        failing_device,
+                    )
+                    fresh = None
+                self._device = fresh
+
+            # Query device info for native rate + host API name.
+            device_info: Any = None
+            native_rate = 48000
+            host_api_name = "(default)"
+            device_label = "(default)"
+            if self._device is not None:
+                try:
+                    device_info = sd.query_devices(self._device)
+                    native_rate = int(device_info["default_samplerate"])
+                    device_label = device_info.get("name", str(self._device))
+                    try:
+                        host_api_name = sd.query_hostapis()[device_info["hostapi"]]["name"]
+                    except Exception:
+                        host_api_name = "(unknown)"
+                except Exception:
+                    logger.warning(
+                        "StreamingRecorder: could not query device info for index %s",
+                        self._device,
+                    )
+
+            try:
+                stream = sd.InputStream(
+                    samplerate=native_rate,
+                    channels=self._channels,
+                    dtype="float32",
+                    device=self._device,
+                    callback=self._on_audio,
+                )
+                stream.start()
+                # Stash native_rate for resampler setup by the caller.
+                self._native_rate = native_rate
+                if attempt == 0:
+                    logger.info(
+                        "StreamingRecorder: opening session (device=%s (%r) "
+                        "host_api=%r native_rate=%d channels=%d)",
+                        self._device, device_label, host_api_name, native_rate, self._channels,
+                    )
+                else:
+                    logger.warning(
+                        "StreamingRecorder: opened session on RETRY "
+                        "(device=%s (%r) host_api=%r native_rate=%d). "
+                        "First attempt failed: %s",
+                        self._device, device_label, host_api_name, native_rate, first_error,
+                    )
+                return stream
+            except sd.PortAudioError as exc:
+                if attempt == 0:
+                    first_error = exc
+                    failing_device = self._device
+                    logger.warning(
+                        "StreamingRecorder: InputStream.start() failed on first attempt "
+                        "(device=%s (%r) host_api=%r native_rate=%d): %s. "
+                        "Retrying with fresh device resolution...",
+                        self._device, device_label, host_api_name, native_rate, exc,
+                    )
+                    continue
+                logger.error(
+                    "StreamingRecorder: InputStream.start() failed on retry too "
+                    "(device=%s (%r) host_api=%r native_rate=%d). "
+                    "First error: %s. Retry error: %s",
+                    self._device, device_label, host_api_name, native_rate, first_error, exc,
+                )
+                raise
+        raise RuntimeError("unreachable")  # pragma: no cover
+
     def open_session(self) -> None:
         """Open the audio stream and start the VAD worker thread.
 
@@ -510,24 +619,11 @@ class StreamingRecorder:
             raise RuntimeError("Cannot open session: previous VAD worker thread is still alive")
 
         try:
-            # Resolve device by name; updates self._device if the index has shifted.
-            resolved = _resolve_device_by_name(self._device, self._device_name)
-            if resolved != self._device:
-                logger.info(
-                    "StreamingRecorder: device index updated %s → %s (name=%r)",
-                    self._device, resolved, self._device_name,
-                )
-                self._device = resolved
-
-            # Query the device's native sample rate (WASAPI only accepts it).
-            device_info: Any = sd.query_devices(self._device)
-            native_rate = int(device_info["default_samplerate"])
-            logger.info(
-                "StreamingRecorder: opening session (device=%s, native_rate=%d, channels=%d)",
-                self._device,
-                native_rate,
-                self._channels,
-            )
+            # Open InputStream with retry-once-with-fresh-resolve fallback.
+            # _open_input_stream() also sets self._device (resolved) and
+            # self._native_rate (device native sample rate).
+            self._stream = self._open_input_stream()
+            native_rate: int = self._native_rate  # type: ignore[attr-defined]
 
             # Fetch (or create) a cached Resampler; reset() clears soxr filter state.
             self._resampler = _get_resampler(native_rate, self._vad_sample_rate)
@@ -537,16 +633,6 @@ class StreamingRecorder:
 
             # Fresh queue for this session.
             self._raw_q = queue.Queue(maxsize=64)
-
-            # Open and start the InputStream.
-            self._stream = sd.InputStream(
-                samplerate=native_rate,
-                channels=self._channels,
-                dtype="float32",
-                device=self._device,
-                callback=self._on_audio,
-            )
-            self._stream.start()
 
             # Spawn VAD worker thread.
             self._vad_thread = threading.Thread(

@@ -7,11 +7,15 @@ Hardware tests (requiring an actual audio device) are marked with
 
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 
 import numpy as np
 import pytest
+import sounddevice as sd
+
+from voice_commander.streaming_recorder import StreamingRecorder
 
 # ---------------------------------------------------------------------------
 # Helpers: fake sounddevice primitives
@@ -837,3 +841,217 @@ def test_get_resampler_returns_same_instance_for_same_rates(monkeypatch):
         # Restore cache so other tests are unaffected.
         sr_mod._RESAMPLER_CACHE.clear()
         sr_mod._RESAMPLER_CACHE.update(original_cache)
+
+
+# ---------------------------------------------------------------------------
+# _open_input_stream retry tests (ADR 0081 defence-in-depth)
+# ---------------------------------------------------------------------------
+
+# Reusable fake host-API + device tables for retry tests.
+_RETRY_HOSTAPIS = [{"name": "Windows WASAPI"}]
+_RETRY_DEVICE = {
+    "name": "At 2020 (AT2020USB-X)",
+    "default_samplerate": 48000.0,
+    "hostapi": 0,
+    "max_input_channels": 1,
+}
+
+
+def _make_portaudio_error() -> sd.PortAudioError:
+    """Return a PortAudioError that can be constructed without a real device."""
+    # PortAudioError(message, args=...) — use the simplest public constructor.
+    return sd.PortAudioError("WdmSyncIoctl: DeviceIoControl GLE = 0x00000490 (simulated)")
+
+
+class _PatchedRecorder:
+    """Context-manager helper: builds a StreamingRecorder with sd patched."""
+
+    def __init__(self, monkeypatch, *, device_index: int | None = 5, device_name: str = "At 2020 (AT2020USB-X)"):
+        self.monkeypatch = monkeypatch
+        self.device_index = device_index
+        self.device_name = device_name
+        self.recorder: StreamingRecorder | None = None
+
+    def __enter__(self):
+        self.monkeypatch.setattr(
+            "voice_commander.streaming_recorder.sd.query_hostapis",
+            lambda: _RETRY_HOSTAPIS,
+        )
+        self.monkeypatch.setattr(
+            "voice_commander.streaming_recorder.sd.query_devices",
+            lambda device=None: _RETRY_DEVICE,
+        )
+        self.monkeypatch.setattr("voice_commander.streaming_recorder.Resampler", MockResampler)
+        # Install a no-op InputStream by default; individual tests may override it.
+
+        class _DefaultFakeInputStream:
+            def __init__(self, **kwargs):
+                self.callback = kwargs.get("callback")
+                self._closed = False
+
+            def start(self):
+                pass
+
+            def stop(self):
+                pass
+
+            def close(self):
+                self._closed = True
+
+        self.monkeypatch.setattr(
+            "voice_commander.streaming_recorder.sd.InputStream",
+            _DefaultFakeInputStream,
+        )
+
+        self.recorder = StreamingRecorder(
+            device=self.device_index,
+            channels=1,
+            vad_gate=MockVADGate(),
+            utterance_sink=lambda _: None,
+            device_name=self.device_name,
+        )
+        return self.recorder
+
+    def __exit__(self, *_):
+        if self.recorder is not None and self.recorder.is_open:
+            self.recorder.close_session()
+
+
+def test_open_session_retries_on_porterror(monkeypatch):
+    """First InputStream.start() raises PortAudioError; second succeeds.
+
+    Verify both InputStream constructors are called and no exception reaches
+    the caller of open_session().
+    """
+    call_count = 0
+
+    class _RetryInputStream:
+        def __init__(self, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            self._attempt = call_count
+            self.callback = kwargs.get("callback")
+            self._closed = False
+
+        def start(self):
+            if self._attempt == 1:
+                raise _make_portaudio_error()
+
+        def stop(self):
+            pass
+
+        def close(self):
+            self._closed = True
+
+    with _PatchedRecorder(monkeypatch) as recorder:
+        monkeypatch.setattr(
+            "voice_commander.streaming_recorder.sd.InputStream",
+            _RetryInputStream,
+        )
+        recorder.open_session()
+
+        assert call_count == 2, f"Expected 2 InputStream constructions, got {call_count}"
+        assert recorder.is_open is True
+
+
+def test_open_session_falls_back_to_default_on_persistent_resolution(monkeypatch):
+    """When fresh resolve returns the same failing device index, fall back to
+    device=None (system default) on the second attempt.
+    """
+    device_args_used: list = []
+
+    call_counter = [0]
+
+    class _TrackingInputStream:
+        def __init__(self, **kwargs):
+            call_counter[0] += 1
+            device_args_used.append(kwargs.get("device"))
+            self.callback = kwargs.get("callback")
+            self._closed = False
+            self._attempt = call_counter[0]
+
+        def start(self):
+            if self._attempt == 1:
+                raise _make_portaudio_error()
+
+        def stop(self):
+            pass
+
+        def close(self):
+            self._closed = True
+
+    # Resolver always returns the same index (5) — simulating persistent index.
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder._resolve_device_by_name",
+        lambda saved, name: 5,
+    )
+
+    with _PatchedRecorder(monkeypatch, device_index=5) as recorder:
+        monkeypatch.setattr(
+            "voice_commander.streaming_recorder.sd.InputStream",
+            _TrackingInputStream,
+        )
+        recorder.open_session()
+
+    # First attempt: device=5; second attempt: device=None (system default fallback).
+    assert device_args_used[0] == 5, f"First attempt should use device=5, got {device_args_used[0]}"
+    assert device_args_used[1] is None, (
+        f"Second attempt should fall back to device=None, got {device_args_used[1]}"
+    )
+
+
+def test_open_session_raises_on_second_failure(monkeypatch):
+    """Both InputStream attempts raise PortAudioError.
+
+    Verify that the SECOND error is re-raised (not the first), and that an
+    ERROR-level log record is emitted referencing both errors.
+    """
+    first_err = _make_portaudio_error()
+    second_err = sd.PortAudioError("retry also failed (simulated)")
+    call_count = 0
+
+    class _AlwaysFailInputStream:
+        def __init__(self, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            self._attempt = call_count
+            self.callback = kwargs.get("callback")
+            self._closed = False
+
+        def start(self):
+            if self._attempt == 1:
+                raise first_err
+            raise second_err
+
+        def stop(self):
+            pass
+
+        def close(self):
+            self._closed = True
+
+    with _PatchedRecorder(monkeypatch) as recorder:
+        monkeypatch.setattr(
+            "voice_commander.streaming_recorder.sd.InputStream",
+            _AlwaysFailInputStream,
+        )
+
+        with pytest.raises(sd.PortAudioError) as exc_info:
+            recorder.open_session()
+
+    # The SECOND error must be what propagates.
+    assert exc_info.value is second_err, "Expected the second PortAudioError to be re-raised"
+    assert call_count == 2, f"Expected 2 InputStream constructions, got {call_count}"
+
+
+def test_open_session_logs_host_api_name(monkeypatch, caplog):
+    """Successful open_session() emits an INFO log containing the host API name."""
+    with _PatchedRecorder(monkeypatch) as recorder:
+        with caplog.at_level(logging.INFO, logger="voice_commander.streaming_recorder"):
+            recorder.open_session()
+
+    opening_records = [r for r in caplog.records if "opening session" in r.message]
+    assert opening_records, "Expected an 'opening session' INFO log record"
+    log_msg = opening_records[0].message
+    assert "Windows WASAPI" in log_msg, (
+        f"Expected host_api='Windows WASAPI' in log line, got: {log_msg!r}"
+    )
