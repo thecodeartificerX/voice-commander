@@ -234,7 +234,7 @@ def test_config_save_rewrites_toml(client: TestClient, tmp_path: Path) -> None:
     resp = client.post(
         "/config",
         data={
-            "audio_device": 11,
+            "audio_device_name": "Test Mic",
             "transcription_model_size": "base.en",
             "transcription_min_confidence": 0.45,
         },
@@ -242,8 +242,11 @@ def test_config_save_rewrites_toml(client: TestClient, tmp_path: Path) -> None:
     )
     assert resp.status_code == 200
     text = (tmp_path / "config.toml").read_text(encoding="utf-8")
-    assert "device = 11" in text
+    assert 'device_name = "Test Mic"' in text
     assert 'model_size = "base.en"' in text
+    # Legacy int key must NOT be written (ADR 0081)
+    device_int_lines = [l for l in text.splitlines() if l.strip().startswith("device") and "device_name" not in l]
+    assert device_int_lines == [], f"Unexpected legacy device int lines: {device_int_lines}"
 
 
 # ---------------------------------------------------------------------------
@@ -279,12 +282,12 @@ def test_restart_returns_202_when_supervised(
 
 
 def test_config_save_restart_required_banner(client: TestClient) -> None:
-    # audio_device=3 differs from the seed default (-1) → restart required.
+    # Changing audio_device_name differs from the seed default ("") → restart required.
     resp = client.post(
         "/config",
         headers={"HX-Request": "true"},
         data={
-            "audio_device": 3,
+            "audio_device_name": "New Microphone",
             "transcription_model_size": "small.en",
             "transcription_min_confidence": 0.3,
         },
@@ -294,12 +297,11 @@ def test_config_save_restart_required_banner(client: TestClient) -> None:
 
 
 def test_config_save_hot_reload_banner(client: TestClient) -> None:
-    # All restart-required fields match the seed config defaults → hot reload.
+    # No device_name change + transcription fields match defaults → hot reload.
     resp = client.post(
         "/config",
         headers={"HX-Request": "true"},
         data={
-            "audio_device": -1,
             "transcription_model_size": "small.en",
             "transcription_min_confidence": 0.4,
         },

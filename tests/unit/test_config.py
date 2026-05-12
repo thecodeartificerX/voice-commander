@@ -1,9 +1,12 @@
+import logging
+import os
 import textwrap
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from voice_commander.config import Config
+from voice_commander.config import Config, update_user_config
 
 
 def test_load_defaults_when_file_has_no_overrides(tmp_path):
@@ -117,3 +120,69 @@ def test_llm_section_is_silently_dropped(tmp_path):
     cfg_file.write_text("[llm]\nmodel_id = \"test\"\n")
     cfg = Config.load(cfg_file)
     assert cfg.audio.channels == 1  # defaults still work
+
+
+# ---------------------------------------------------------------------------
+# update_user_config tests
+# ---------------------------------------------------------------------------
+
+
+def test_update_user_config_strips_audio_device_key(tmp_path):
+    """Legacy audio.device int must not appear in the output after a write."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[audio]\ndevice = 7\ndevice_name = "Old"\n')
+
+    update_user_config(cfg_file, {"audio": {"device": 99, "device_name": "X"}})
+
+    # Read back raw TOML text
+    text = cfg_file.read_text()
+    # device_name must be updated
+    assert 'device_name = "X"' in text
+    # Legacy device int must have been stripped — no bare "device = ..." line
+    lines = text.splitlines()
+    device_lines = [l for l in lines if l.strip().startswith("device") and "device_name" not in l]
+    assert device_lines == [], f"Unexpected legacy device lines: {device_lines}"
+
+    # Also confirm via Config.load that device_name reads back correctly
+    cfg = Config.load(cfg_file)
+    assert cfg.audio.device_name == "X"
+    assert cfg.audio.device == -1  # default because key was stripped
+
+
+def test_update_user_config_atomic_via_replace(tmp_path):
+    """update_user_config must write via os.replace for atomicity."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[audio]\ndevice_name = "Before"\n')
+
+    replace_calls: list[tuple[str, str]] = []
+
+    original_replace = os.replace
+
+    def spy_replace(src: str, dst: str) -> None:
+        replace_calls.append((str(src), str(dst)))
+        original_replace(src, dst)
+
+    with patch("voice_commander.config.os.replace", side_effect=spy_replace):
+        update_user_config(cfg_file, {"audio": {"device_name": "After"}})
+
+    assert len(replace_calls) == 1, "os.replace should be called exactly once"
+    src_path, dst_path = replace_calls[0]
+    # Source must be the .tmp file next to the config
+    assert src_path.endswith(".tmp")
+    # Destination must be the config file itself
+    assert dst_path == str(cfg_file)
+
+
+def test_update_user_config_logs_warning_on_legacy_audio_device(tmp_path, caplog):
+    """A WARNING must be emitted when 'device' is supplied in the audio payload."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[audio]\ndevice_name = "Test"\n')
+
+    with caplog.at_level(logging.WARNING, logger="voice_commander.config"):
+        update_user_config(cfg_file, {"audio": {"device": 5, "device_name": "Test"}})
+
+    warning_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "device" in msg and ("legacy" in msg.lower() or "adr 0081" in msg.lower())
+        for msg in warning_messages
+    ), f"Expected legacy-device warning, got: {warning_messages}"

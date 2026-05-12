@@ -222,8 +222,13 @@ def _type_ok(value: Any, expected: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# Keys in [audio] that must never be written going forward (ADR 0081).
+# They are still *read* (AudioConfig.device survives for back-compat) but any
+# attempt to write them via update_user_config is silently dropped with a warning.
+_AUDIO_LEGACY_WRITE_KEYS: frozenset[str] = frozenset({"device"})
+
 _USER_EDITABLE_SECTIONS: dict[str, set[str]] = {
-    "audio": {"channels", "device", "device_name", "output_dir"},
+    "audio": {"channels", "device_name", "output_dir"},
     "transcription": {
         "model_size",
         "device",
@@ -246,8 +251,31 @@ def update_user_config(path: Path, updates: Mapping[str, Mapping[str, Any]]) -> 
     Comments in the original TOML are NOT preserved (stdlib TOML writer
     limitation); keep opinionated comments out of config.toml or migrate to
     tomlkit later if comment round-tripping becomes a requirement.
+
+    Legacy audio keys (e.g. ``audio.device``) are silently dropped from the
+    write payload with a warning; use ``device_name`` instead (ADR 0081).
+    When rewriting the config the legacy key is also removed from the output,
+    migrating old configs forward on the next save.
     """
+    # Strip legacy write keys from audio payloads before validation.
+    sanitized: dict[str, Mapping[str, Any]] = {}
     for section, payload in updates.items():
+        if section == "audio":
+            clean: dict[str, Any] = {}
+            for key, value in payload.items():
+                if key in _AUDIO_LEGACY_WRITE_KEYS:
+                    logger.warning(
+                        "update_user_config: dropping legacy key %r from audio section "
+                        "(use device_name; ADR 0081)",
+                        key,
+                    )
+                else:
+                    clean[key] = value
+            sanitized[section] = clean
+        else:
+            sanitized[section] = payload
+
+    for section, payload in sanitized.items():
         if section not in _USER_EDITABLE_SECTIONS:
             raise ConfigWriteError(f"Section [{section}] is not user-editable")
         allowed = _USER_EDITABLE_SECTIONS[section]
@@ -256,7 +284,14 @@ def update_user_config(path: Path, updates: Mapping[str, Mapping[str, Any]]) -> 
                 raise ConfigWriteError(f"Key '[{section}].{key}' is not user-editable")
 
     existing: dict[str, Any] = _read_toml(path) if path.exists() else {}
-    for section, payload in updates.items():
+
+    # Migrate forward: remove legacy audio keys from any existing config.
+    audio_existing = existing.get("audio")
+    if isinstance(audio_existing, dict):
+        for legacy_key in _AUDIO_LEGACY_WRITE_KEYS:
+            audio_existing.pop(legacy_key, None)
+
+    for section, payload in sanitized.items():
         sec = existing.setdefault(section, {})
         if not isinstance(sec, dict):
             raise ConfigWriteError(f"Existing [{section}] is not a table")

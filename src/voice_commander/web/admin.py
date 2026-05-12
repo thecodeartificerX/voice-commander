@@ -179,24 +179,31 @@ def attach_admin_routes(
     @app.post("/config", response_class=HTMLResponse)
     async def config_save(
         request: Request,
-        audio_device: int = Form(default=-1),
+        audio_device_name: str = Form(default="", alias="audio_device_name"),
         transcription_model_size: str = Form(default="small.en"),
         transcription_min_confidence: float = Form(default=0.3),
     ) -> HTMLResponse:
         """``POST /config`` — persist config changes from form fields.
 
-        Form fields: audio_device, transcription_model_size,
+        Form fields: audio_device_name, transcription_model_size,
         transcription_min_confidence.  Returns a green banner on success, amber
         if a restart is needed (audio device or model changed), or an error
         banner on failure.
+
+        Note: the legacy ``audio_device`` (int) form field is no longer
+        accepted — device identity is tracked by name only (ADR 0081).
         """
+        audio_updates: dict[str, Any] = {}
+        if audio_device_name.strip():
+            audio_updates["device_name"] = audio_device_name.strip()
         updates: dict[str, dict[str, Any]] = {
-            "audio": {"device": int(audio_device)},
             "transcription": {
                 "model_size": transcription_model_size,
                 "min_confidence": float(transcription_min_confidence),
             },
         }
+        if audio_updates:
+            updates["audio"] = audio_updates
         # Snapshot config before write to detect which restart-required keys changed.
         prev_cfg = Config.load(config_path)
         try:
@@ -207,7 +214,7 @@ def attach_admin_routes(
         _publish("config_saved", {"path": str(config_path)})
 
         needs_restart = (
-            prev_cfg.audio.device != new_cfg.audio.device
+            prev_cfg.audio.device_name != new_cfg.audio.device_name
             or prev_cfg.transcription.model_size != new_cfg.transcription.model_size
         )
 

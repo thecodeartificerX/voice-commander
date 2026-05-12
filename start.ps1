@@ -502,16 +502,20 @@ function Show-VoiceBanner {
 # Device data helpers
 # ---------------------------------------------------------------------------
 
-function Get-VoiceConfigDevice {
+function Get-VoiceConfigDeviceName {
     <#
     .SYNOPSIS
-        Returns the audio.device index from config.toml, or $null.
+        Returns the audio.device_name string from config.toml, or $null if unset/empty.
+    .DESCRIPTION
+        Reads the authoritative device identity (ADR 0081). The legacy
+        audio.device int is no longer used by the launcher.
     #>
-    Write-Verbose 'Reading audio.device via Config.load'
+    Write-Verbose 'Reading audio.device_name via Config.load'
     try {
-        $raw = uv run python -c "from pathlib import Path; from voice_commander.config import Config; print(Config.load(Path('config.toml')).audio.device)" 2>$null
-        $val = [int]$raw.Trim()
-        Write-Verbose "merged audio.device = $val"
+        $raw = uv run python -c "from pathlib import Path; from voice_commander.config import Config; print(Config.load(Path('config.toml')).audio.device_name)" 2>$null
+        $val = $raw.Trim()
+        Write-Verbose "merged audio.device_name = '$val'"
+        if ($val -eq '') { return $null }
         return $val
     }
     catch [System.Management.Automation.RuntimeException] {
@@ -588,20 +592,20 @@ function Show-VoiceDeviceTable {
 
     .DESCRIPTION
         Renders a formatted table of VoiceCommander.AudioDevice objects.
-        The row whose Index matches -CurrentIndex is highlighted in Green;
-        all other rows are White with DarkGray secondary columns.
+        The row whose Name matches -CurrentName (case-insensitive trim) is
+        highlighted in Green; all other rows are White.
 
     .PARAMETER DeviceList
         Array of PSCustomObject with PSTypeName 'VoiceCommander.AudioDevice'.
 
-    .PARAMETER CurrentIndex
-        Optional device index to highlight green (the currently saved device).
+    .PARAMETER CurrentName
+        Optional device name to highlight green (the currently saved device_name).
     #>
     param(
         [Parameter(Mandatory)]
         [PSCustomObject[]]$DeviceList,
 
-        [int]$CurrentIndex = -1
+        [string]$CurrentName = ''
     )
 
     $header = '{0,4}  {1,-40} {2,-20} {3,6} {4,4}' -f 'Idx', 'Name', 'HostAPI', 'SR', 'Ch'
@@ -610,9 +614,11 @@ function Show-VoiceDeviceTable {
     Write-VoiceHeader $header
     Write-VoiceHeader $divider
 
+    $normalizedCurrent = $CurrentName.Trim().ToLowerInvariant()
+
     foreach ($d in $DeviceList) {
         $row = '{0,4}  {1,-40} {2,-20} {3,6} {4,4}' -f $d.Index, $d.Name, $d.HostApi, $d.DefaultSampleRate, $d.MaxInputChannels
-        if ($d.Index -eq $CurrentIndex) {
+        if ($d.Name.Trim().ToLowerInvariant() -eq $normalizedCurrent -and $normalizedCurrent -ne '') {
             Write-Host $row -ForegroundColor Green
         }
         else {
@@ -902,12 +908,11 @@ if ($ListDevices) {
         Write-VoiceSecondary '  Hint: run `uv sync` then try again. Check that PortAudio is installed.'
         exit 2
     }
-    $SavedForList = Get-VoiceConfigDevice
-    $CurrentIdx = if ($null -ne $SavedForList) { $SavedForList } else { -1 }
+    $SavedNameForList = Get-VoiceConfigDeviceName
     Show-VoiceBanner
     Write-VoiceHeader 'Available input devices:'
-    Show-VoiceDeviceTable -DeviceList $DevicesForList -CurrentIndex $CurrentIdx
-    Write-VoiceSecondary '  (Green row = currently saved device in config.toml)'
+    Show-VoiceDeviceTable -DeviceList $DevicesForList -CurrentName $SavedNameForList
+    Write-VoiceSecondary '  (Green row = currently saved device_name in config.toml)'
     Write-Host ''
     exit 0
 }
@@ -955,14 +960,14 @@ if ($PSCmdlet.ParameterSetName -eq 'DirectDevice') {
 # ---------------------------------------------------------------------------
 
 if ($NoMenu) {
-    Write-Verbose '-NoMenu specified; reading saved device from config.toml'
-    $SavedNoMenu = Get-VoiceConfigDevice
-    if ($null -eq $SavedNoMenu -or $SavedNoMenu -lt 0) {
-        Write-Error 'No valid audio.device found in config.toml. Run start.ps1 interactively to choose a device, or use -Device <index>.'
+    Write-Verbose '-NoMenu specified; reading saved device_name from config.toml'
+    $SavedNoMenu = Get-VoiceConfigDeviceName
+    if ($null -eq $SavedNoMenu -or $SavedNoMenu -eq '') {
+        Write-Error 'No valid audio.device_name found in config.toml. Run start.ps1 interactively to choose a device, or use -Device <index>.'
         exit 1
     }
-    Write-Verbose "Non-interactive: using saved device [$SavedNoMenu]"
-    Write-VoiceSuccess "Using saved device [$SavedNoMenu]."
+    Write-Verbose "Non-interactive: using saved device '$SavedNoMenu'"
+    Write-VoiceSuccess "Using saved device '$SavedNoMenu'."
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander...'
     $ExitCode = Start-VoiceWithUI
@@ -983,13 +988,13 @@ if ($NoMenu) {
 # ---------------------------------------------------------------------------
 
 if (-not $IsInteractive) {
-    Write-Verbose 'Non-interactive session detected; falling back to saved device'
-    $SavedAuto = Get-VoiceConfigDevice
-    if ($null -eq $SavedAuto -or $SavedAuto -lt 0) {
-        Write-Error 'Non-interactive session and no valid audio.device in config.toml. Set audio.device in config.toml or run with -Device <index>.'
+    Write-Verbose 'Non-interactive session detected; falling back to saved device_name'
+    $SavedAuto = Get-VoiceConfigDeviceName
+    if ($null -eq $SavedAuto -or $SavedAuto -eq '') {
+        Write-Error 'Non-interactive session and no valid audio.device_name in config.toml. Set audio.device_name in config.toml or run with -Device <index>.'
         exit 1
     }
-    Write-VoiceSuccess "Non-interactive session -- using saved device [$SavedAuto]."
+    Write-VoiceSuccess "Non-interactive session -- using saved device '$SavedAuto'."
     Write-Host ''
     Write-VoicePrompt 'Starting Voice Commander...'
     $ExitCode = Start-VoiceWithUI
@@ -1012,11 +1017,13 @@ if ($null -eq $Devices -or $Devices.Count -eq 0) {
 
 Write-Verbose "Loaded $($Devices.Count) input devices"
 
-# Load saved device
-$CurrentDevice = Get-VoiceConfigDevice
+# Load saved device_name (authoritative per ADR 0081)
+$CurrentDeviceName = Get-VoiceConfigDeviceName
 $SavedDevice = $null
-if ($null -ne $CurrentDevice -and $CurrentDevice -ge 0) {
-    $SavedDevice = $Devices | Where-Object { $_.Index -eq $CurrentDevice } | Select-Object -First 1
+if ($null -ne $CurrentDeviceName -and $CurrentDeviceName -ne '') {
+    $SavedDevice = $Devices | Where-Object {
+        $_.Name.Trim().ToLowerInvariant() -eq $CurrentDeviceName.Trim().ToLowerInvariant()
+    } | Select-Object -First 1
 }
 
 $PickedIndex = $null
@@ -1026,7 +1033,7 @@ if ($null -ne $SavedDevice) {
     Write-VoiceHeader '== Voice Commander =='
     Write-Host ''
     Write-VoiceHeader 'Last device:'
-    Write-VoiceSuccess ("  [{0}] {1}" -f $SavedDevice.Index, $SavedDevice.Name)
+    Write-VoiceSuccess ("  {0}" -f $SavedDevice.Name)
     Write-VoiceSecondary ("       ({0}, {1} ch)" -f $SavedDevice.HostApi, $SavedDevice.MaxInputChannels)
     Write-Host ''
     Write-VoicePrompt '  [1] Use last'
@@ -1043,7 +1050,7 @@ if ($null -ne $SavedDevice) {
     }
 
     if ($TopChoice -eq '1') {
-        $PickedIndex = $CurrentDevice
+        $PickedIndex = $SavedDevice.Index
     }
     # '2' falls through to device picker below
 }
@@ -1053,8 +1060,7 @@ if ($null -eq $PickedIndex) {
     :DevicePicker while ($true) {
         Write-Host ''
         Write-VoiceHeader 'Available input devices:'
-        $highlight = if ($null -ne $CurrentDevice) { $CurrentDevice } else { -1 }
-        Show-VoiceDeviceTable -DeviceList $Devices -CurrentIndex $highlight
+        Show-VoiceDeviceTable -DeviceList $Devices -CurrentName $CurrentDeviceName
         Write-VoicePrompt '  Type the device index to select it.'
         Write-VoiceSecondary "  [B] Back  [Q] Quit"
         Write-Host ''
@@ -1069,7 +1075,7 @@ if ($null -eq $PickedIndex) {
                 Write-VoiceHeader '== Voice Commander =='
                 Write-Host ''
                 Write-VoiceHeader 'Last device:'
-                Write-VoiceSuccess ("  [{0}] {1}" -f $SavedDevice.Index, $SavedDevice.Name)
+                Write-VoiceSuccess ("  {0}" -f $SavedDevice.Name)
                 Write-VoiceSecondary ("       ({0}, {1} ch)" -f $SavedDevice.HostApi, $SavedDevice.MaxInputChannels)
                 Write-Host ''
                 Write-VoicePrompt '  [1] Use last'
@@ -1086,7 +1092,7 @@ if ($null -eq $PickedIndex) {
                 }
 
                 if ($BackChoice -eq '1') {
-                    $PickedIndex = $CurrentDevice
+                    $PickedIndex = $SavedDevice.Index
                     break DevicePicker
                 }
                 # '2' loops back to device picker

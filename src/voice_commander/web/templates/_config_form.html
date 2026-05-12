@@ -5,8 +5,8 @@
     <fieldset class="space-y-2">
         <legend class="text-xs uppercase text-neutral-500">[audio]</legend>
         <label class="block">
-            <span class="text-xs text-neutral-400">device (PortAudio index; -1 = system default)</span>
-            <input name="audio_device" type="number" value="{{ cfg.get('audio', {}).get('device', -1) }}"
+            <span class="text-xs text-neutral-400">device_name (authoritative device identity; ADR 0081)</span>
+            <input name="audio_device_name" type="text" value="{{ cfg.get('audio', {}).get('device_name', '') }}"
                    class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2"/>
         </label>
     </fieldset>
