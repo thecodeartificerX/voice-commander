@@ -1,9 +1,11 @@
+# Copy to config.toml and edit for your machine. See docs/ for details.
+
 [hotkey]
 key = "scroll_lock"
 mute_key = "ctrl_r"
 
 [audio]
-device_name = "At 2020 (AT2020USB-X)"
+device_name = ""
 channels = 1
 output_dir = "outputs"
 

@@ -1,9 +1,24 @@
 [project]
 name = "voice-commander"
 version = "0.1.0"
-description = "Voice-driven Windows command launcher"
+description = "Local-first voice command launcher for Windows — say the actual command, not a memorized shortcut."
 requires-python = ">=3.11"
 readme = "README.md"
+license = {file = "LICENSE"}
+authors = [{name = "Sakib R"}]
+keywords = ["voice", "speech-to-text", "automation", "windows", "whisper", "command-launcher", "voice-control"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Desktop Environment",
+]
 dependencies = [
     "pynput>=1.7.7",
     "sounddevice>=0.4.7",
@@ -29,6 +44,12 @@ dependencies = [
     "rapidfuzz>=3.14.5",
     "watchdog>=6.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/thecodeartificerX/voice-commander"
+Repository = "https://github.com/thecodeartificerX/voice-commander"
+Issues = "https://github.com/thecodeartificerX/voice-commander/issues"
+Documentation = "https://github.com/thecodeartificerX/voice-commander/tree/main/docs"
 
 [project.optional-dependencies]
 tray = ["pystray>=0.19.5", "Pillow>=10.2.0"]

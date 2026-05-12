@@ -138,7 +138,7 @@ These checklists are the acceptance criteria that a human must verify before unl
 - [ ] `config.toml` present; all keys from spec §5 present with correct defaults.
 - [ ] `src/voice_commander/config.py` implements `Config.load()` matching spec §5; `Config` is a frozen dataclass tree.
 - [ ] Directory layout matches spec §2.4 exactly (run `ls -R` and cross-check).
-- [ ] Human marks Phase 0 complete in Kaizen OS (`VC-P0-GATE` subquest → done).
+- [ ] Human marks Phase 0 complete (`VC-P0-GATE` subquest → done).
 
 ---
 
@@ -161,7 +161,7 @@ uv run voice-commander
 - [ ] Repeat the record-and-stop cycle 3 more times. Verify that `outputs/` still contains exactly one file (`recorded.wav`) — each recording overwrites the previous one.
 - [ ] Ctrl+C exits the daemon cleanly (no traceback, process terminates within 3 s).
 - [ ] `uv run pytest -m "not hardware"` exits 0 — `HotkeyController`, `Recorder`, and `FeedbackSink` unit tests all pass.
-- [ ] Human marks Phase 1 complete in Kaizen OS (`VC-P1-GATE` subquest → done).
+- [ ] Human marks Phase 1 complete (`VC-P1-GATE` subquest → done).
 
 ---
 
@@ -184,7 +184,7 @@ uv run voice-commander
 - [ ] Measure latency between stop-chime and transcript log line for each utterance — all are ≤ 1.5 s.
 - [ ] `uv run pytest -m "not hardware"` exits 0 — `Transcriber` unit tests pass (with mocked model).
 - [ ] `uv run pytest -m hardware` exits 0 — real CUDA transcription tests pass.
-- [ ] Human marks Phase 2 complete in Kaizen OS (`VC-P2-GATE` subquest → done).
+- [ ] Human marks Phase 2 complete (`VC-P2-GATE` subquest → done).
 
 ---
 
@@ -212,7 +212,7 @@ uv run voice-commander
 - [ ] Ctrl+C exits the daemon cleanly.
 - [ ] `uv run pytest -m "not hardware"` exits 0 — `ToolRegistry`, `Resolver`, `Dispatcher`, `FeedbackSink` unit tests all pass.
 - [ ] Integration test `tests/integration/test_copy_e2e.py` passes: WAV fixture → `copy` tool called.
-- [ ] Human marks Phase 3 complete in Kaizen OS (`VC-P3-GATE` subquest → done).
+- [ ] Human marks Phase 3 complete (`VC-P3-GATE` subquest → done).
 
 ---
 
@@ -241,7 +241,7 @@ uv run voice-commander
 - [ ] Say three nonsense utterances — each produces a miss beep and a `MISS` log line.
 - [ ] Log file contains no `on_error` entries from that session.
 - [ ] Miss rate on the 20-utterance check (14 commands + 6 natural variations) is ≤ 5 % (at most 1 miss).
-- [ ] Human marks Phase 4 complete in Kaizen OS (`VC-P4-GATE` subquest → done).
+- [ ] Human marks Phase 4 complete (`VC-P4-GATE` subquest → done).
 
 ---
 
@@ -267,7 +267,7 @@ uv run voice-commander
   - [ ] RSS memory at end − RSS at start ≤ 100 MB.
   - [ ] Log file contains no `on_error` or unhandled exception lines.
   - [ ] Log file is well-formed JSON lines throughout (no truncated entries).
-- [ ] Human marks Phase 5 complete in Kaizen OS (`VC-P5-GATE` subquest → done).
+- [ ] Human marks Phase 5 complete (`VC-P5-GATE` subquest → done).
 - [ ] **MVP SHIP.**
 
 ---

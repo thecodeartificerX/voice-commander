@@ -1,4 +1,504 @@
 {
   "schema_version": 1,
-  "graphs": {}
+  "graphs": {
+    "copy": {
+      "schema_version": 1,
+      "name": "copy",
+      "kind": "command",
+      "description": "Copy selected text or item to clipboard (Ctrl+C)",
+      "synonyms": [],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "d721221f-e779-4d94-bb46-570d2da9130b",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "ctrl+c" },
+          "pos": [448, 334]
+        }
+      ],
+      "edges": []
+    },
+    "cut": {
+      "schema_version": 1,
+      "name": "cut",
+      "kind": "command",
+      "description": "Cut selected text or item to clipboard (Ctrl+X)",
+      "synonyms": [],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "ctrl+x" },
+          "pos": [448, 334]
+        }
+      ],
+      "edges": []
+    },
+    "paste": {
+      "schema_version": 1,
+      "name": "paste",
+      "kind": "command",
+      "description": "Paste from clipboard (Ctrl+V)",
+      "synonyms": ["P.A.C.T", "peace"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "92684f00-fc95-4c6d-9af0-cf9c3acacacd",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "ctrl+v" },
+          "pos": [630, 249]
+        }
+      ],
+      "edges": []
+    },
+    "paste_log": {
+      "schema_version": 1,
+      "name": "paste_log",
+      "kind": "command",
+      "description": "Open Windows clipboard history picker (Win+V)",
+      "synonyms": ["clipboard history", "clipboard"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "5c01c391-d1f0-4cd5-a3f6-895cd6da6e3f",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "win+v" },
+          "pos": [1016, 468]
+        }
+      ],
+      "edges": []
+    },
+    "select": {
+      "schema_version": 1,
+      "name": "select",
+      "kind": "command",
+      "description": "Select all (Ctrl+A)",
+      "synonyms": ["select all"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "523c2736-ac93-47d2-b6c8-b5868d264bce",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "ctrl+a" },
+          "pos": [711, 225]
+        }
+      ],
+      "edges": []
+    },
+    "new_tab": {
+      "schema_version": 1,
+      "name": "new_tab",
+      "kind": "command",
+      "description": "Open a new browser or editor tab (Ctrl+T)",
+      "synonyms": ["new tap"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "fc49e680-34a6-4e09-afd9-1941d58393dc",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "ctrl+t" },
+          "pos": [746, 298]
+        }
+      ],
+      "edges": []
+    },
+    "close": {
+      "schema_version": 1,
+      "name": "close",
+      "kind": "command",
+      "description": "Close the current tab or document (Ctrl+W)",
+      "synonyms": ["close tab"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "047df8f2-6e6d-480c-8c5d-3379a6a52ab3",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "ctrl+w" },
+          "pos": [558, 338]
+        }
+      ],
+      "edges": []
+    },
+    "cancel": {
+      "schema_version": 1,
+      "name": "cancel",
+      "kind": "command",
+      "description": "Press Escape to dismiss or cancel the current action",
+      "synonyms": ["escape", "dismiss"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "1a2b3c4d-5e6f-7890-abcd-ef0123456789",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "esc" },
+          "pos": [1086, 417]
+        }
+      ],
+      "edges": []
+    },
+    "send": {
+      "schema_version": 1,
+      "name": "send",
+      "kind": "command",
+      "description": "Press Enter to confirm or submit",
+      "synonyms": ["confirm", "submit", "enter"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "9733626b-526a-4432-a98a-0e1f54553d97",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "enter" },
+          "pos": [1099, 441]
+        }
+      ],
+      "edges": []
+    },
+    "shift_enter": {
+      "schema_version": 1,
+      "name": "shift_enter",
+      "kind": "command",
+      "description": "Press Shift+Enter for a soft newline (new line without submitting)",
+      "synonyms": ["new line", "soft enter"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "af703881-0dd8-4c60-a382-177ee43baeb4",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "shift+enter" },
+          "pos": [950, 391]
+        }
+      ],
+      "edges": []
+    },
+    "back_space": {
+      "schema_version": 1,
+      "name": "back_space",
+      "kind": "command",
+      "description": "Delete the character to the left of the cursor",
+      "synonyms": ["pack space", "packspace", "backspace", "next space", "next piece"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "ef293f54-9cf7-4ff5-b566-0774b24b6c2b",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "backspace" },
+          "pos": [1169, 343]
+        }
+      ],
+      "edges": []
+    },
+    "space": {
+      "schema_version": 1,
+      "name": "space",
+      "kind": "command",
+      "description": "Press the spacebar",
+      "synonyms": [],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "0a798b90-7d50-4ec4-903d-efb148208848",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "space" },
+          "pos": [617, 360]
+        }
+      ],
+      "edges": []
+    },
+    "go_back": {
+      "schema_version": 1,
+      "name": "go_back",
+      "kind": "command",
+      "description": "Navigate back in browser history (Alt+Left)",
+      "synonyms": ["back"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "9c09bea0-c2f3-4a51-a4e4-fb2af69beceb",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "alt+left" },
+          "pos": [849, 374]
+        }
+      ],
+      "edges": []
+    },
+    "last": {
+      "schema_version": 1,
+      "name": "last",
+      "kind": "command",
+      "description": "Switch to the previous application window (Alt+Tab)",
+      "synonyms": ["switch window", "alt tab"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "b0751b2c-5425-49f9-8a3c-e153ba0bcd83",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "alt+tab" },
+          "pos": [715, 404]
+        }
+      ],
+      "edges": []
+    },
+    "address": {
+      "schema_version": 1,
+      "name": "address",
+      "kind": "command",
+      "description": "Focus the browser address bar (Ctrl+L)",
+      "synonyms": ["Entrance", "andres", "interest", "address bar", "url bar"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "27f36db5-5d83-4d57-a784-c95fb1f5a3a6",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "ctrl+l" },
+          "pos": [668, 358]
+        }
+      ],
+      "edges": []
+    },
+    "screenshot": {
+      "schema_version": 1,
+      "name": "screenshot",
+      "kind": "command",
+      "description": "Open Windows Snipping Tool to capture a region (Win+Shift+S)",
+      "synonyms": ["snip", "capture screen"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "0c813f35-6583-4fcb-aee2-3b94be9d8d44",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "win+shift+s" },
+          "pos": [1086, 417]
+        }
+      ],
+      "edges": []
+    },
+    "minimize": {
+      "schema_version": 1,
+      "name": "minimize",
+      "kind": "command",
+      "description": "Minimize the current window via system menu (Alt+Space, N)",
+      "synonyms": ["anyways", "nice"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "06dfca9f-a76e-486d-aa87-9181b2c2821e",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "alt+space" },
+          "pos": [387, 292]
+        },
+        {
+          "id": "5c3cbf28-4522-41fc-8734-a2833e39ac0e",
+          "ref": "pipeline.wait",
+          "kwargs": { "ms": 250 },
+          "pos": [554, 247]
+        },
+        {
+          "id": "6afe77aa-9c5f-4c92-9f11-319f97f2d958",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "n" },
+          "pos": [752, 273]
+        }
+      ],
+      "edges": [
+        { "from": "06dfca9f-a76e-486d-aa87-9181b2c2821e.ok", "to": "5c3cbf28-4522-41fc-8734-a2833e39ac0e.in" },
+        { "from": "5c3cbf28-4522-41fc-8734-a2833e39ac0e.ok", "to": "6afe77aa-9c5f-4c92-9f11-319f97f2d958.in" }
+      ]
+    },
+    "maximize": {
+      "schema_version": 1,
+      "name": "maximize",
+      "kind": "command",
+      "description": "Maximize the current window (Win+Up)",
+      "synonyms": ["fullscreen", "full screen"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "b412a7ae-3a2c-458e-9567-66c0c9cf514d",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "win+up" },
+          "pos": [795, 368]
+        }
+      ],
+      "edges": []
+    },
+    "google": {
+      "schema_version": 1,
+      "name": "google",
+      "kind": "command",
+      "description": "Open Google in the default browser",
+      "synonyms": [],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "464fb8c6-d721-4a70-a4b6-ead191a7a319",
+          "ref": "pipeline.open",
+          "kwargs": { "target": "https://google.com" },
+          "pos": [615, 382]
+        }
+      ],
+      "edges": []
+    },
+    "gmail": {
+      "schema_version": 1,
+      "name": "gmail",
+      "kind": "command",
+      "description": "Open Gmail in the default browser",
+      "synonyms": [],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "956032dd-ca20-4769-be7c-0a8ee2b02852",
+          "ref": "pipeline.open",
+          "kwargs": { "target": "https://gmail.com" },
+          "pos": [534, 290]
+        }
+      ],
+      "edges": []
+    },
+    "facebook": {
+      "schema_version": 1,
+      "name": "facebook",
+      "kind": "command",
+      "description": "Open Facebook in the default browser",
+      "synonyms": [],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "effdffb2-4f39-44df-bc0f-6be76945e9a2",
+          "ref": "pipeline.open",
+          "kwargs": { "target": "https://www.facebook.com" },
+          "pos": [734, 430]
+        }
+      ],
+      "edges": []
+    },
+    "mute": {
+      "schema_version": 1,
+      "name": "mute",
+      "kind": "command",
+      "description": "Toggle voice-commander session by pressing Scroll Lock (also works as push-to-talk end)",
+      "synonyms": ["meet"],
+      "inputs": [],
+      "llm_visible": true,
+      "strict": true,
+      "enabled": true,
+      "timeout_ms": 5000,
+      "foreach_iteration_cap": 50,
+      "nodes": [
+        {
+          "id": "7dd22461-4a44-41e1-9154-97b7bc5b8568",
+          "ref": "pipeline.press",
+          "kwargs": { "combo": "scrolllock" },
+          "pos": [988, 465]
+        }
+      ],
+      "edges": []
+    }
+  }
 }

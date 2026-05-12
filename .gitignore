@@ -16,7 +16,15 @@ htmlcov/
 outputs/*
 !outputs/.gitkeep
 *.log
-voice-commander.log
+voice-commander.log*
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store
 
 # User-owned command + workflow catalogs — seeded from *.default.json on first
 # run. Not tracked so fresh clones regenerate them cleanly and local edits
@@ -75,3 +83,9 @@ pi-worktrees/
 
 # Claude Code local-only overrides
 .claude/or-settings.local.json
+
+# Personal config — copy config.toml.example to config.toml and edit for your machine
+config.toml
+
+# Personal Claude skills (private tooling, not for contributors)
+.claude/skills/kaizenos-cli/

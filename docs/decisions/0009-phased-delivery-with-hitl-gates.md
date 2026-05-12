@@ -13,7 +13,7 @@ At the same time, pure waterfall (build one layer at a time, no code until the d
 
 ## Decision
 
-Deliver the project in **six phases (Phase 0–5)**, each ending in a documented human-validation gate before the next phase begins. Each gate is a Kaizen OS subquest (e.g. `VC-P0-GATE`) assigned to Sakib. No phase is considered complete until the human personally checks off every item on that phase's checklist in `docs/testing-strategy.md` and marks the Kaizen subquest done.
+Deliver the project in **six phases (Phase 0–5)**, each ending in a documented human-validation gate before the next phase begins. Each gate is a named milestone (e.g. `VC-P0-GATE`) that the maintainer owns. No phase is considered complete until the maintainer personally checks off every item on that phase's checklist in `docs/testing-strategy.md` and signs off the gate.
 
 The six phases and their scope are:
 
@@ -26,7 +26,7 @@ The six phases and their scope are:
 | 4 — Full MVP Toolset | All planned tools, toast feedback, miss sound, full daemon | `VC-P4-GATE` |
 | 5 — Hardening | ≥ 80 % test coverage, 24 h soak test, tray icon, packaging | `VC-P5-GATE` |
 
-Kaizen OS subquests hold the state that makes phased delivery auditable: each gate task's `done` status is the single source of truth for whether a phase has been signed off. AI agents that build within a phase are assigned `merlin`; gate tasks are assigned `sakib` and cannot be auto-completed by an agent.
+Gate tasks hold the state that makes phased delivery auditable: each gate's completion status is the single source of truth for whether a phase has been signed off. AI agents that build within a phase do the implementation work; gate tasks must be signed off by the human maintainer and cannot be auto-completed by an agent.
 
 ## Consequences
 
@@ -34,12 +34,12 @@ Kaizen OS subquests hold the state that makes phased delivery auditable: each ga
 - Integration failures surface at the earliest possible phase, when the codebase is still small and the blast radius is limited.
 - Each completed gate gives a known-good checkpoint; regressions are immediately visible in the next phase.
 - Human sanity-checks on real hardware catch environment issues (missing CUDA driver, wrong audio device, UAC prompts) that unit tests cannot detect.
-- Kaizen subquest states provide a persistent, queryable audit trail of project progress that survives context resets.
+- Gate task states provide a persistent audit trail of project progress that survives context resets.
 - Smaller per-phase scope lowers the cognitive load of each AI-agent work session and reduces the chance of diverging from the spec.
 
 ### Negative
 - Phases cannot be parallelised; a blocker in one phase stalls all subsequent work.
-- Human gate reviews add calendar friction: if Sakib is unavailable, the project sits idle even if all automated checks pass.
+- Human gate reviews add calendar friction: if the maintainer is unavailable, the project sits idle even if all automated checks pass.
 - Six distinct integration milestones require maintaining six incrementally functional daemon entry points, which adds some scaffolding code that is later superseded.
 
 ### Neutral
@@ -61,4 +61,3 @@ Replace the human gate with a fully automated integration test suite that runs o
 
 - Spec: [../superpowers/specs/2026-04-19-voice-commander-design.md](../superpowers/specs/2026-04-19-voice-commander-design.md)
 - Phase checklists: [../testing-strategy.md](../testing-strategy.md) §3
-- Kaizen OS subquests: quest `5687d04f-8de5-48b1-a38a-34a18fd1738d` (Phase 0 quest)

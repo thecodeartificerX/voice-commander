@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a bug or unexpected behavior
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behavior
+  - type: input
+    id: os
+    attributes:
+      label: OS version
+      placeholder: Windows 11 Pro 26100
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: 3.11.9
+  - type: input
+    id: hardware
+    attributes:
+      label: GPU / CPU
+      placeholder: RTX 4090 / i7-13700K
+  - type: input
+    id: version
+    attributes:
+      label: voice-commander version or git SHA
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log excerpts
+      render: shell
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: Bug is reproducible after daemon restart
+          required: true
