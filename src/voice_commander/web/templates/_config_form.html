@@ -2,12 +2,21 @@
       class="bg-neutral-900 border border-neutral-800 rounded-lg p-4 space-y-3">
     <h3 class="text-lg font-medium text-amber-300">Runtime Config</h3>
 
+    {% if error %}
+    <div class="bg-red-900/50 border border-red-700 text-red-300 rounded-lg p-3 text-sm">
+        {{ error }}
+    </div>
+    {% endif %}
+
     <fieldset class="space-y-2">
         <legend class="text-xs uppercase text-neutral-500">[audio]</legend>
         <label class="block">
             <span class="text-xs text-neutral-400">device_name (authoritative device identity; ADR 0081)</span>
-            <input name="audio_device_name" type="text" value="{{ cfg.get('audio', {}).get('device_name', '') }}"
-                   class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2"/>
+            <select name="audio_device_name" id="audio-device-select"
+                    class="mt-1 w-full bg-neutral-950 border border-neutral-800 rounded px-3 py-2 text-neutral-100">
+                <option value="">(system default)</option>
+            </select>
+            <span id="audio-device-warn" class="text-xs text-amber-400 mt-1 hidden block"></span>
         </label>
     </fieldset>
 
@@ -33,3 +42,44 @@
         <div id="config-status" class="text-sm"></div>
     </div>
 </form>
+
+<script>
+(function () {
+    var savedName = {{ current_device_name | tojson }};
+    var select = document.getElementById('audio-device-select');
+    var warn = document.getElementById('audio-device-warn');
+
+    fetch('/audio/devices')
+        .then(function (r) { return r.json(); })
+        .then(function (devices) {
+            var found = false;
+            devices.forEach(function (d) {
+                var opt = document.createElement('option');
+                opt.value = d.name;
+                opt.textContent = d.name + ' (' + d.hostapi + ', ' + d.rate + ' Hz)';
+                if (d.name === savedName) {
+                    opt.selected = true;
+                    found = true;
+                }
+                select.appendChild(opt);
+            });
+
+            if (savedName && !found) {
+                // Saved name missing from current WASAPI devices — show stale option.
+                var staleOpt = document.createElement('option');
+                staleOpt.value = savedName;
+                staleOpt.textContent = '(missing) ' + savedName;
+                staleOpt.selected = true;
+                staleOpt.disabled = true;
+                select.appendChild(staleOpt);
+
+                warn.textContent = 'Saved name not found in current WASAPI devices — re-select.';
+                warn.classList.remove('hidden');
+            }
+        })
+        .catch(function () {
+            warn.textContent = 'Could not load device list from /audio/devices.';
+            warn.classList.remove('hidden');
+        });
+}());
+</script>

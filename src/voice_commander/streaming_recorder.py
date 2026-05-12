@@ -210,6 +210,98 @@ class _SessionState(enum.Enum):
     CLOSING = "CLOSING"
 
 
+def validate_device(
+    saved_index: int | None,
+    device_name: str,
+    channels: int = 1,
+) -> SelfTestResult:
+    """Open *device_name* for ~200 ms and immediately close it.
+
+    A module-level free function so the admin route can validate a device
+    name without constructing a full :class:`StreamingRecorder`.
+
+    Args:
+        saved_index: Non-authoritative cached PortAudio index (may be
+            ``None``).  Passed straight to :func:`_resolve_device_by_name`.
+        device_name: Human-readable WASAPI device name, or ``""`` for the
+            system default.
+        channels: Number of capture channels (default 1 / mono).
+
+    Returns:
+        :class:`SelfTestResult` — ``ok=True`` on success, ``ok=False`` with
+        an ``error`` description on any :class:`sd.PortAudioError` or
+        unexpected exception.
+    """
+    resolved = _resolve_device_by_name(saved_index, device_name)
+
+    # Determine host_api name and native_rate from the resolved device.
+    host_api = "(default)"
+    native_rate = 48000  # safe fallback; overwritten on success
+    if resolved is not None:
+        try:
+            device_info: Any = sd.query_devices(resolved)
+            native_rate = int(device_info["default_samplerate"])
+            hostapi_index = device_info.get("hostapi")
+            if hostapi_index is not None:
+                hostapi_info = sd.query_hostapis()[hostapi_index]
+                host_api = hostapi_info.get("name", "(unknown)")
+        except Exception:
+            pass
+    else:
+        # System default: still try to learn its native rate.
+        try:
+            device_info = sd.query_devices(None)
+            native_rate = int(device_info["default_samplerate"])
+        except Exception:
+            pass
+
+    stream = None
+    try:
+        stream = sd.InputStream(
+            samplerate=native_rate,
+            channels=channels,
+            dtype="float32",
+            device=resolved,
+            callback=lambda *a: None,
+        )
+        stream.start()
+        time.sleep(0.2)
+        stream.stop()
+        stream.close()
+        stream = None
+        logger.info(
+            "StreamingRecorder: self-test OK (device=%s host_api=%r rate=%d)",
+            resolved, host_api, native_rate,
+        )
+        return SelfTestResult(
+            ok=True,
+            device_index=resolved,
+            host_api=host_api,
+            native_rate=native_rate,
+            error=None,
+        )
+    except Exception as exc:
+        tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
+        error_detail = "".join(tb_lines).strip()
+        logger.error(
+            "StreamingRecorder: self-test FAILED (device=%s): %s",
+            resolved, error_detail,
+        )
+        # Best-effort cleanup.
+        if stream is not None:
+            with contextlib.suppress(Exception):
+                stream.stop()
+            with contextlib.suppress(Exception):
+                stream.close()
+        return SelfTestResult(
+            ok=False,
+            device_index=resolved,
+            host_api=host_api,
+            native_rate=native_rate,
+            error=error_detail,
+        )
+
+
 class StreamingRecorder:
     """Manages a sounddevice InputStream and a VAD worker thread.
 
@@ -284,74 +376,7 @@ class StreamingRecorder:
             plus an ``error`` description on any :class:`sd.PortAudioError` or
             unexpected exception.
         """
-        resolved = _resolve_device_by_name(self._device, self._device_name)
-
-        # Determine host_api name and native_rate from the resolved device.
-        host_api = "(default)"
-        native_rate = 48000  # safe fallback; overwritten on success
-        if resolved is not None:
-            try:
-                device_info: Any = sd.query_devices(resolved)
-                native_rate = int(device_info["default_samplerate"])
-                hostapi_index = device_info.get("hostapi")
-                if hostapi_index is not None:
-                    hostapi_info = sd.query_hostapis()[hostapi_index]
-                    host_api = hostapi_info.get("name", "(unknown)")
-            except Exception:
-                pass
-        else:
-            # System default: still try to learn its native rate.
-            try:
-                device_info = sd.query_devices(None)
-                native_rate = int(device_info["default_samplerate"])
-            except Exception:
-                pass
-
-        stream = None
-        try:
-            stream = sd.InputStream(
-                samplerate=native_rate,
-                channels=self._channels,
-                dtype="float32",
-                device=resolved,
-                callback=lambda *a: None,
-            )
-            stream.start()
-            time.sleep(0.2)
-            stream.stop()
-            stream.close()
-            stream = None
-            logger.info(
-                "StreamingRecorder: self-test OK (device=%s host_api=%r rate=%d)",
-                resolved, host_api, native_rate,
-            )
-            return SelfTestResult(
-                ok=True,
-                device_index=resolved,
-                host_api=host_api,
-                native_rate=native_rate,
-                error=None,
-            )
-        except Exception as exc:
-            tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
-            error_detail = "".join(tb_lines).strip()
-            logger.error(
-                "StreamingRecorder: self-test FAILED (device=%s): %s",
-                resolved, error_detail,
-            )
-            # Best-effort cleanup.
-            if stream is not None:
-                with contextlib.suppress(Exception):
-                    stream.stop()
-                with contextlib.suppress(Exception):
-                    stream.close()
-            return SelfTestResult(
-                ok=False,
-                device_index=resolved,
-                host_api=host_api,
-                native_rate=native_rate,
-                error=error_detail,
-            )
+        return validate_device(self._device, self._device_name, self._channels)
 
     @property
     def is_open(self) -> bool:

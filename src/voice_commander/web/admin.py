@@ -22,6 +22,12 @@ from ..commands.registrar import reload_all as _reload_all
 from ..commands.store import GraphStore, GraphStoreError
 from ..config import Config, ConfigWriteError, update_user_config
 from ..registry import ToolRegistry
+from ..streaming_recorder import (
+    SelfTestResult,
+    _find_wasapi_hostapi_index,
+    _WASAPI_HOST_API_NAME,
+    validate_device,
+)
 
 if TYPE_CHECKING:
     from ..event_bus import EventBus
@@ -162,6 +168,61 @@ def attach_admin_routes(
         return templates.TemplateResponse(request, "_workflow_card.html", {"wf": new_wf})
 
     # ------------------------------------------------------------------
+    # Audio device list
+    # ------------------------------------------------------------------
+
+    @app.get("/audio/devices")
+    async def audio_devices() -> JSONResponse:
+        """``GET /audio/devices`` — return WASAPI input devices as JSON.
+
+        Returns a list of objects with keys: index, name, hostapi, rate,
+        channels.  Filtered to WASAPI inputs only, sorted by name.
+        Returns ``[]`` with a ``Warning`` header when WASAPI is unavailable.
+        """
+        import sounddevice as sd
+
+        wasapi_idx = _find_wasapi_hostapi_index()
+        if wasapi_idx is None:
+            return JSONResponse(
+                content=[],
+                headers={"Warning": '199 - "Windows WASAPI host API not found"'},
+            )
+
+        try:
+            devices = sd.query_devices()
+            hostapis = sd.query_hostapis()
+        except Exception:
+            logger.exception("audio_devices: sd.query_devices() failed")
+            return JSONResponse(
+                content=[],
+                headers={"Warning": '199 - "Failed to enumerate audio devices"'},
+            )
+
+        results = []
+        for idx, dev in enumerate(devices):
+            if (
+                dev.get("hostapi") == wasapi_idx
+                and dev.get("max_input_channels", 0) > 0
+            ):
+                hostapi_name = _WASAPI_HOST_API_NAME
+                try:
+                    hostapi_name = hostapis[dev["hostapi"]].get("name", _WASAPI_HOST_API_NAME)
+                except (IndexError, KeyError):
+                    pass
+                results.append(
+                    {
+                        "index": idx,
+                        "name": dev.get("name", ""),
+                        "hostapi": hostapi_name,
+                        "rate": int(dev.get("default_samplerate", 48000)),
+                        "channels": int(dev.get("max_input_channels", 1)),
+                    }
+                )
+
+        results.sort(key=lambda d: d["name"].lower())
+        return JSONResponse(content=results)
+
+    # ------------------------------------------------------------------
     # Config
     # ------------------------------------------------------------------
 
@@ -174,7 +235,12 @@ def attach_admin_routes(
         if config_path.exists():
             with config_path.open("rb") as fh:
                 raw = tomllib.load(fh)
-        return templates.TemplateResponse(request, "_config_form.html", {"cfg": raw})
+        current_device_name = raw.get("audio", {}).get("device_name", "")
+        return templates.TemplateResponse(
+            request,
+            "_config_form.html",
+            {"cfg": raw, "current_device_name": current_device_name},
+        )
 
     @app.post("/config", response_class=HTMLResponse)
     async def config_save(
@@ -194,8 +260,32 @@ def attach_admin_routes(
         accepted — device identity is tracked by name only (ADR 0081).
         """
         audio_updates: dict[str, Any] = {}
-        if audio_device_name.strip():
-            audio_updates["device_name"] = audio_device_name.strip()
+        cleaned_device_name = audio_device_name.strip()
+        if cleaned_device_name:
+            # Validate: attempt a 200 ms test stream before persisting.
+            result: SelfTestResult = validate_device(
+                saved_index=None, device_name=cleaned_device_name
+            )
+            if not result.ok:
+                import tomllib
+
+                raw = {}
+                if config_path.exists():
+                    with config_path.open("rb") as fh:
+                        raw = tomllib.load(fh)
+                current_device_name = raw.get("audio", {}).get("device_name", "")
+                error_msg = f"Cannot open device '{cleaned_device_name}': {result.error}"
+                return templates.TemplateResponse(
+                    request,
+                    "_config_form.html",
+                    {
+                        "cfg": raw,
+                        "current_device_name": current_device_name,
+                        "error": error_msg,
+                    },
+                    status_code=400,
+                )
+            audio_updates["device_name"] = cleaned_device_name
         updates: dict[str, dict[str, Any]] = {
             "transcription": {
                 "model_size": transcription_model_size,

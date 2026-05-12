@@ -182,6 +182,55 @@ def test_self_test_resolves_device_by_name(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# validate_device free-function tests
+# ---------------------------------------------------------------------------
+
+
+def test_validate_device_signature_matches_method(monkeypatch):
+    """validate_device(None, '') returns a SelfTestResult (not a method error)."""
+    from voice_commander.streaming_recorder import SelfTestResult, validate_device
+
+    _fake_sd_full(monkeypatch, native_rate=48000.0)
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder._resolve_device_by_name",
+        lambda saved, name: None,
+    )
+
+    result = validate_device(None, "")
+
+    assert isinstance(result, SelfTestResult)
+    assert result.ok is True
+
+
+def test_validate_device_called_by_self_test(monkeypatch):
+    """StreamingRecorder.self_test() delegates to validate_device."""
+    from voice_commander.streaming_recorder import SelfTestResult
+
+    sentinel = SelfTestResult(
+        ok=True, device_index=99, host_api="stub", native_rate=16000, error=None
+    )
+    calls: list[tuple] = []
+
+    def _fake_validate(saved_index, device_name, channels=1):
+        calls.append((saved_index, device_name, channels))
+        return sentinel
+
+    monkeypatch.setattr(
+        "voice_commander.streaming_recorder.validate_device",
+        _fake_validate,
+    )
+
+    recorder = _make_recorder(monkeypatch, device_name="MyMic")
+    result = recorder.self_test()
+
+    assert result is sentinel
+    assert len(calls) == 1
+    _, name, ch = calls[0]
+    assert name == "MyMic"
+    assert ch == 1
+
+
+# ---------------------------------------------------------------------------
 # Banner + exit-73 tests
 # ---------------------------------------------------------------------------
 

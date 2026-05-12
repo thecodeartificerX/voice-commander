@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,6 +24,7 @@ from voice_commander.commands.graph import Graph, GraphInput, Node
 from voice_commander.commands.store import GraphStore
 from voice_commander.event_bus import EventBus
 from voice_commander.registry import ToolEntry, ToolRegistry
+from voice_commander.streaming_recorder import SelfTestResult
 from voice_commander.tool_metadata import ArgMetadata, ToolMetadataStore
 from voice_commander.web.app import create_app
 
@@ -105,6 +107,20 @@ def _seed_stores(root: Path) -> tuple[GraphStore, GraphStore, Path]:
         )
     )
     return cs, ws, config_path
+
+
+_OK_DEVICE_RESULT = SelfTestResult(
+    ok=True, device_index=3, host_api="Windows WASAPI", native_rate=48000, error=None
+)
+
+
+@pytest.fixture()
+def ok_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch validate_device to always return ok=True for tests that POST a device name."""
+    monkeypatch.setattr(
+        "voice_commander.web.admin.validate_device",
+        lambda saved_index, device_name, channels=1: _OK_DEVICE_RESULT,
+    )
 
 
 @pytest.fixture()
@@ -230,7 +246,7 @@ def test_workflow_duplicate_missing_returns_404(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_config_save_rewrites_toml(client: TestClient, tmp_path: Path) -> None:
+def test_config_save_rewrites_toml(client: TestClient, tmp_path: Path, ok_device: None) -> None:
     resp = client.post(
         "/config",
         data={
@@ -281,7 +297,7 @@ def test_restart_returns_202_when_supervised(
 # ---------------------------------------------------------------------------
 
 
-def test_config_save_restart_required_banner(client: TestClient) -> None:
+def test_config_save_restart_required_banner(client: TestClient, ok_device: None) -> None:
     # Changing audio_device_name differs from the seed default ("") → restart required.
     resp = client.post(
         "/config",
@@ -308,3 +324,182 @@ def test_config_save_hot_reload_banner(client: TestClient) -> None:
     )
     assert resp.status_code == 200
     assert "applied immediately" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# GET /audio/devices
+# ---------------------------------------------------------------------------
+
+
+def test_audio_devices_route_returns_wasapi_only(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Route filters to WASAPI inputs; response has expected JSON shape."""
+    import voice_commander.web.admin as admin_mod
+
+    wasapi_hostapis = [
+        {"name": "Windows MME"},
+        {"name": "Windows WASAPI"},
+    ]
+    all_devices = [
+        # WASAPI input — should appear
+        {
+            "name": "AT2020 USB",
+            "hostapi": 1,
+            "max_input_channels": 1,
+            "default_samplerate": 48000.0,
+        },
+        # MME input — should be excluded
+        {
+            "name": "AT2020 USB",
+            "hostapi": 0,
+            "max_input_channels": 1,
+            "default_samplerate": 48000.0,
+        },
+        # WASAPI output — should be excluded (no input channels)
+        {
+            "name": "Speakers",
+            "hostapi": 1,
+            "max_input_channels": 0,
+            "default_samplerate": 48000.0,
+        },
+    ]
+
+    monkeypatch.setattr(admin_mod, "_find_wasapi_hostapi_index", lambda: 1)
+
+    import sounddevice as sd
+
+    monkeypatch.setattr(sd, "query_devices", lambda: all_devices)
+    monkeypatch.setattr(sd, "query_hostapis", lambda: wasapi_hostapis)
+
+    resp = client.get("/audio/devices")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    entry = body[0]
+    assert entry["name"] == "AT2020 USB"
+    assert entry["hostapi"] == "Windows WASAPI"
+    assert entry["rate"] == 48000
+    assert entry["channels"] == 1
+    assert "index" in entry
+
+
+def test_audio_devices_route_empty_when_no_wasapi(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Returns [] with a Warning header when WASAPI is unavailable."""
+    import voice_commander.web.admin as admin_mod
+
+    monkeypatch.setattr(admin_mod, "_find_wasapi_hostapi_index", lambda: None)
+
+    resp = client.get("/audio/devices")
+    assert resp.status_code == 200
+    assert resp.json() == []
+    assert "Warning" in resp.headers
+
+
+# ---------------------------------------------------------------------------
+# config_save: device validation
+# ---------------------------------------------------------------------------
+
+
+def test_config_save_rejects_invalid_device_name(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """POSTing a bad device name returns 400 and config is NOT updated."""
+    import voice_commander.web.admin as admin_mod
+
+    fail_result = SelfTestResult(
+        ok=False,
+        device_index=None,
+        host_api="(default)",
+        native_rate=48000,
+        error="PaErrorCode -9999: device unavailable",
+    )
+    monkeypatch.setattr(
+        admin_mod,
+        "validate_device",
+        lambda saved_index, device_name, channels=1: fail_result,
+    )
+
+    config_before = (tmp_path / "config.toml").read_text(encoding="utf-8")
+    resp = client.post(
+        "/config",
+        headers={"HX-Request": "true"},
+        data={
+            "audio_device_name": "Ghost Mic",
+            "transcription_model_size": "small.en",
+            "transcription_min_confidence": 0.3,
+        },
+    )
+    assert resp.status_code == 400
+    assert "Ghost Mic" in resp.text
+    assert "device unavailable" in resp.text or "PaErrorCode" in resp.text
+    # Config file must be unchanged.
+    assert (tmp_path / "config.toml").read_text(encoding="utf-8") == config_before
+
+
+def test_config_save_accepts_empty_device_name(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty device_name skips validation entirely and saves successfully."""
+    calls: list[str] = []
+
+    import voice_commander.web.admin as admin_mod
+
+    monkeypatch.setattr(
+        admin_mod,
+        "validate_device",
+        lambda *a, **kw: calls.append("called") or _OK_DEVICE_RESULT,
+    )
+
+    resp = client.post(
+        "/config",
+        headers={"HX-Request": "true"},
+        data={
+            "audio_device_name": "",
+            "transcription_model_size": "small.en",
+            "transcription_min_confidence": 0.3,
+        },
+    )
+    assert resp.status_code == 200
+    assert calls == [], "validate_device should NOT be called for empty device name"
+
+
+def test_config_save_validates_before_persist(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """validate_device is called and update_user_config is called on success."""
+    validate_calls: list[str] = []
+    persist_calls: list[str] = []
+
+    import voice_commander.web.admin as admin_mod
+
+    def _fake_validate(saved_index, device_name, channels=1):
+        validate_calls.append(device_name)
+        return _OK_DEVICE_RESULT
+
+    monkeypatch.setattr(admin_mod, "validate_device", _fake_validate)
+
+    import voice_commander.config as config_mod
+
+    original_update = config_mod.update_user_config
+
+    def _fake_update(path, updates):
+        persist_calls.append(str(path))
+        return original_update(path, updates)
+
+    monkeypatch.setattr(admin_mod, "update_user_config", _fake_update)
+
+    resp = client.post(
+        "/config",
+        headers={"HX-Request": "true"},
+        data={
+            "audio_device_name": "Studio Mic",
+            "transcription_model_size": "small.en",
+            "transcription_min_confidence": 0.3,
+        },
+    )
+    assert resp.status_code == 200
+    assert validate_calls == ["Studio Mic"]
+    assert len(persist_calls) == 1
