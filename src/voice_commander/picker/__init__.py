@@ -18,12 +18,14 @@ from voice_commander.picker.registry import (
     bare_picker,
     get_global_picker_registry,
 )
+from voice_commander.picker.session import PickerSession
 from voice_commander.picker.types import PickerItem, PickerProvider
 
 __all__ = [
     "BarePickerRegistry",
     "PickerItem",
     "PickerProvider",
+    "PickerSession",
     "bare_picker",
     "coerce_number",
     "get_global_picker_registry",
