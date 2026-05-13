@@ -96,6 +96,47 @@ def test_provider_returns_empty_when_no_candidates():
     tracker = MruTracker(capacity=8)
     settings = FocusPickerSettings(cap=5, exclude_foreground=False, exclude_self=False)
     provider = build_focus_picker(
-        tracker=tracker, settings=settings, foreground_hwnd=lambda: 0
+        tracker=tracker,
+        settings=settings,
+        foreground_hwnd=lambda: 0,
+        enumerate_visible=lambda: (),
     )
     assert provider() == []
+
+
+def test_provider_falls_back_to_enumerate_when_mru_empty():
+    tracker = MruTracker(capacity=8)
+    settings = FocusPickerSettings(cap=3, exclude_foreground=False, exclude_self=False)
+    fake_visible = [
+        _entry(101, proc="chrome.exe", title="Tab A"),
+        _entry(102, proc="Code.exe", title="daemon.py"),
+        _entry(103, proc="discord.exe", title="#general"),
+        _entry(104, proc="extra.exe", title="Too many"),
+    ]
+    provider = build_focus_picker(
+        tracker=tracker,
+        settings=settings,
+        foreground_hwnd=lambda: 0,
+        enumerate_visible=lambda: fake_visible,
+    )
+    items = provider()
+    assert len(items) == 3
+    assert [it.action.steps[0].kwargs["_hwnd"] for it in items] == [101, 102, 103]
+
+
+def test_provider_tops_up_partial_mru_with_enumerate():
+    tracker = MruTracker(capacity=8)
+    tracker.record(_entry(1, proc="app.exe", title="real"))
+    settings = FocusPickerSettings(cap=3, exclude_foreground=False, exclude_self=False)
+    provider = build_focus_picker(
+        tracker=tracker,
+        settings=settings,
+        foreground_hwnd=lambda: 0,
+        enumerate_visible=lambda: [
+            _entry(1, proc="app.exe", title="real"),  # dupe — skip
+            _entry(2, proc="app2.exe", title="b"),
+            _entry(3, proc="app3.exe", title="c"),
+        ],
+    )
+    hwnds = [it.action.steps[0].kwargs["_hwnd"] for it in provider()]
+    assert hwnds == [1, 2, 3]
