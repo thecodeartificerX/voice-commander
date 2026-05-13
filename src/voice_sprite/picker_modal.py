@@ -209,7 +209,7 @@ else:
             header = pyglet.text.Label(
                 f"{self._state.verb.upper()} — SAY NUMBER",
                 font_size=10,
-                bold=True,
+                weight="bold",
                 x=12,
                 y=self.height - 22,
                 anchor_x="left",
