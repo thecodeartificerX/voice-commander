@@ -57,3 +57,41 @@ def test_register_self_hwnd_excludes_it_from_top():
     tracker.record(_entry(2))
     top = tracker.top(5, predicate=lambda e: e.hwnd not in tracker.self_hwnds)
     assert [e.hwnd for e in top] == [2, 1]
+
+
+def test_pump_records_entries_via_injected_callback():
+    """Drive the foreground hook via a fake callback to verify push wiring."""
+    from voice_commander.picker.mru import Win32MruPump
+
+    tracker = MruTracker(capacity=8)
+
+    captured_cb: list = []
+
+    def fake_install_hook(cb):
+        captured_cb.append(cb)
+
+        def _uninstall() -> None:
+            captured_cb.clear()
+
+        return _uninstall
+
+    def fake_resolve(hwnd: int) -> MruEntry:
+        return MruEntry(hwnd=hwnd, pid=hwnd * 10, proc_name="chrome.exe", title=f"t{hwnd}")
+
+    pump = Win32MruPump(
+        tracker=tracker,
+        install_hook=fake_install_hook,
+        resolve_hwnd=fake_resolve,
+    )
+    pump.start()
+    try:
+        # Simulate two foreground changes.
+        assert captured_cb, "install_hook should have been called once on start"
+        cb = captured_cb[0]
+        cb(101)
+        cb(202)
+    finally:
+        pump.stop()
+
+    hwnds = [e.hwnd for e in tracker.snapshot()]
+    assert hwnds == [202, 101]
