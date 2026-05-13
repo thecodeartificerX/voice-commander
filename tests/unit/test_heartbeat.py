@@ -20,12 +20,13 @@ from voice_commander.daemon import StreamingDaemon
 def _make_daemon_shell(event_bus: MagicMock, shutdown: MagicMock) -> StreamingDaemon:
     """Build a StreamingDaemon instance without invoking __init__.
 
-    _heartbeat_loop only touches self._shutdown and self._event_bus (via
-    self._publish), so only those two attributes need to be set.
+    _heartbeat_loop touches self._shutdown, self._event_bus (via
+    self._publish), and self._picker_session (via self._tick_picker_session).
     """
     d = StreamingDaemon.__new__(StreamingDaemon)
     d._shutdown = shutdown
     d._event_bus = event_bus
+    d._picker_session = None
     return d
 
 

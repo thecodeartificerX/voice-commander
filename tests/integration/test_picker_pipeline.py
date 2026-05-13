@@ -173,3 +173,31 @@ def test_bare_focus_out_of_range_keeps_picker_open() -> None:
     daemon._process_utterance(audio)  # "one." — valid
     assert session.active is False
     assert captured == [{"target": "", "_hwnd": 11}]
+
+
+def test_heartbeat_tick_times_out_open_picker() -> None:
+    entries = [MruEntry(hwnd=11, pid=1, proc_name="chrome.exe", title="t")]
+    daemon, captured, feedback, bus, session = _make_daemon(
+        mru_entries=entries,
+        transcripts=[_Transcription("focus.")],
+    )
+    # Replace the session with one that uses a controllable clock + 1 s timeout.
+    from voice_commander.picker.session import PickerSession
+    clock = {"t": 100.0}
+    daemon._picker_session = PickerSession(
+        bus=bus, now=lambda: clock["t"], cancel_words=(), timeout_sec=1.0
+    )
+
+    audio = np.zeros(16000, dtype=np.float32)
+    daemon._process_utterance(audio)
+    assert daemon._picker_session.active is True
+
+    # Simulate one heartbeat tick within the timeout window.
+    clock["t"] = 100.5
+    daemon._tick_picker_session()
+    assert daemon._picker_session.active is True
+
+    # Simulate one tick past the timeout window.
+    clock["t"] = 101.5
+    daemon._tick_picker_session()
+    assert daemon._picker_session.active is False

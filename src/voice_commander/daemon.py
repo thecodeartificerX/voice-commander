@@ -659,9 +659,14 @@ class StreamingDaemon:
             logger.warning("utt_q full — dropping utterance (%d samples)", len(utterance))
             self._feedback.on_miss("(queue overflow)", ())
 
+    def _tick_picker_session(self) -> None:
+        if self._picker_session is not None:
+            self._picker_session.tick()
+
     def _heartbeat_loop(self) -> None:
         while not self._shutdown.wait(1.0):
             self._publish("daemon_heartbeat")
+            self._tick_picker_session()
 
     # ------------------------------------------------------------------
     # Run / shutdown
