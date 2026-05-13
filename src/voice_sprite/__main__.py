@@ -120,6 +120,10 @@ def main() -> None:
         fade_ms=cfg.hud.fade_ms,
     )
 
+    from .picker_modal import PickerModalWindow
+
+    picker_modal = PickerModalWindow()
+
     # Deferred pyglet import — avoids display probe at module-load time.
     # ImportError here means pyglet/GL libs missing; surface as startup
     # failure rather than import failure. pyglet 2.x lazy-loads submodules
@@ -208,6 +212,21 @@ def main() -> None:
 
     # SSE event handler
     def on_event(event_type: str, data: dict[str, Any]) -> None:
+        if event_type == "picker.open":
+            try:
+                verb = str(data.get("verb", ""))
+                items = list(data.get("items", []))
+                picker_modal.show(verb, items)
+            except Exception:
+                logger.exception("picker_modal.show failed")
+            return
+        if event_type == "picker.close":
+            try:
+                picker_modal.hide()
+            except Exception:
+                logger.exception("picker_modal.hide failed")
+            return
+
         result = sm.on_event(event_type, data)
         if result is not None:
             renderer.set_state(result)
