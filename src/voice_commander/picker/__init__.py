@@ -6,20 +6,15 @@ the framework opens a numbered on-screen picker built from a registered
 dispatched as the chosen item's pre-built ``Plan``.
 
 Public exports are exposed here so callers can import from
-``voice_commander.picker`` without reaching into submodules.
+``voice_commander.picker`` without reaching into submodules. The export
+list grows as submodules land (T1–T9); plan deviation noted because the
+plan's literal T0 content would eager-import unwritten modules and break
+all downstream tests.
 """
 
-from voice_commander.picker.coerce import coerce_number
-from voice_commander.picker.registry import BarePickerRegistry, bare_picker, get_global_picker_registry
-from voice_commander.picker.session import PickerSession
 from voice_commander.picker.types import PickerItem, PickerProvider
 
 __all__ = [
-    "BarePickerRegistry",
     "PickerItem",
     "PickerProvider",
-    "PickerSession",
-    "bare_picker",
-    "coerce_number",
-    "get_global_picker_registry",
 ]
