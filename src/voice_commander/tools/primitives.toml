@@ -16,10 +16,17 @@ llm_only = true
 internal = true
 
 [tools.focus.args.target]
-description = "Window to focus (e.g. 'notepad', 'chrome', 'spotify'). Fuzzy-matched against process names and window titles."
-required = true
+description = "Window to focus (e.g. 'notepad', 'chrome', 'spotify'). Fuzzy-matched against process names and window titles. Optional when '_hwnd' is supplied."
+required = false
 type = "string"
 widget_kind = "window-picker"
+default = ""
+
+[tools.focus.args._hwnd]
+description = "Pre-resolved Win32 window handle. Set by the bare-primitive picker; skips fuzzy resolution when non-zero."
+required = false
+type = "integer"
+default = 0
 
 [tools.focus.returns.hwnd]
 type = "integer"

@@ -105,12 +105,15 @@ _OPEN_VERIFY_FUZZY_THRESHOLD = 60
 
 
 @tool
-def focus(target: str) -> int:
-    """Focus a window matching *target* (process name or window title, fuzzy-matched).
+def focus(target: str = "", _hwnd: int = 0) -> int:
+    """Focus a window.
 
-    Delegates hwnd resolution to :func:`resolver.resolve_window`, then uses the
-    Windows 11 AttachThreadInput workaround to claim foreground and verifies the
-    focus change via ``_verify_foreground``.
+    When ``_hwnd`` is non-zero, the resolver is skipped and the supplied
+    Win32 handle is foregrounded directly. This is the path used by the
+    bare-primitive focus picker, which already knows the hwnd it wants.
+
+    Otherwise *target* is fuzzy-matched via :func:`resolver.resolve_window`
+    as before.
 
     Returns
     -------
@@ -120,9 +123,8 @@ def focus(target: str) -> int:
     Raises
     ------
     FocusWindowError
-        If no window matches above the configured fuzzy threshold, or if the
-        focus attempt fails verification. Propagated so Dispatcher halts the
-        plan chain rather than sending keystrokes to the wrong window.
+        If neither ``_hwnd`` nor a resolvable ``target`` is supplied, or if
+        the focus attempt fails verification.
     """
     try:
         import win32con
@@ -132,13 +134,16 @@ def focus(target: str) -> int:
         logger.warning("pywin32 not available, cannot focus window")
         raise FocusWindowError("pywin32 not available; cannot focus window") from exc
 
-    target_hwnd = resolver.resolve_window(target)
+    if _hwnd:
+        target_hwnd = int(_hwnd)
+    else:
+        if not target:
+            raise FocusWindowError("focus() requires target or _hwnd")
+        target_hwnd = resolver.resolve_window(target)
 
-    # Restore if minimized.
     if win32gui.IsIconic(target_hwnd):
         win32gui.ShowWindow(target_hwnd, win32con.SW_RESTORE)
 
-    # Obtain thread IDs for AttachThreadInput.
     fg_hwnd = win32gui.GetForegroundWindow()
     if fg_hwnd:
         foreground_tid, _ = win32process.GetWindowThreadProcessId(fg_hwnd)
