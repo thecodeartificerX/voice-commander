@@ -87,6 +87,12 @@ class PickerModalWindow:
         the pyglet main thread via :func:`pyglet.clock.schedule_once` so the
         SSE handler thread never touches a GL context.
         """
+        logger.info(
+            "picker_modal.show verb=%s items=%d preview=%r",
+            verb,
+            len(items),
+            [it.get("label", "") for it in items[:3]],
+        )
         self._state.open(verb, items)
         self._schedule_on_main(self._do_show)
 
@@ -214,8 +220,18 @@ else:
                 lbl.delete()
             self._labels = []
 
+            logger.info(
+                "picker_modal.refresh verb=%s rows=%d preview=%r window_size=%dx%d",
+                self._state.verb,
+                len(self._state.rows),
+                self._state.rows[:3],
+                self.width,
+                self.height,
+            )
+
             header = pyglet.text.Label(
                 f"{self._state.verb.upper()} — SAY NUMBER",
+                font_name="Segoe UI",
                 font_size=10,
                 weight="bold",
                 x=12,
@@ -230,6 +246,7 @@ else:
             for i, row in enumerate(self._state.rows):
                 lbl = pyglet.text.Label(
                     row,
+                    font_name="Segoe UI",
                     font_size=12,
                     x=12,
                     y=self.height - 44 - i * 22,
@@ -242,6 +259,7 @@ else:
 
             footer = pyglet.text.Label(
                 'say "cancel" to exit',
+                font_name="Segoe UI",
                 font_size=9,
                 x=12,
                 y=10,

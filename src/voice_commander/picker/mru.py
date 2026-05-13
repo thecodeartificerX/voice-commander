@@ -249,14 +249,29 @@ def _default_install_hook(callback: Callable[[int], None]) -> Callable[[], None]
 
 
 def _default_resolve_hwnd(hwnd: int) -> MruEntry | None:
-    """Resolve *hwnd* to an :class:`MruEntry`. Returns ``None`` on failure."""
+    """Resolve *hwnd* to an :class:`MruEntry`. Returns ``None`` on failure.
+
+    Filters out windows that are not user-meaningful focus targets:
+
+    * Invisible windows (``IsWindowVisible == False``).
+    * Click-through overlays (``WS_EX_TRANSPARENT``) — our own sprite +
+      picker modal both set this; without filtering they leak into the
+      MRU and become unfocusable picker options.
+    * No-activate overlays (``WS_EX_NOACTIVATE``) — same reason.
+    """
     try:
+        import win32con
         import win32gui
         import win32process
     except ImportError:
         return None
 
     try:
+        if not win32gui.IsWindowVisible(hwnd):
+            return None
+        ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+        if ex_style & (win32con.WS_EX_TRANSPARENT | win32con.WS_EX_NOACTIVATE):
+            return None
         title = win32gui.GetWindowText(hwnd) or ""
         _tid, pid = win32process.GetWindowThreadProcessId(hwnd)
     except Exception:
