@@ -139,3 +139,55 @@ def test_handle_transcript_non_number_keeps_open():
 def test_handle_transcript_inactive_returns_none():
     session = PickerSession(bus=_FakeBus(), cancel_words=())
     assert session.handle_transcript("three") is None
+
+
+def test_tick_closes_on_timeout():
+    bus = _FakeBus()
+    clock = {"t": 1000.0}
+    session = PickerSession(
+        bus=bus,
+        now=lambda: clock["t"],
+        cancel_words=(),
+        timeout_sec=5.0,
+    )
+    session.open("focus", [_item("Chrome", 11)])
+    bus.events.clear()
+
+    clock["t"] = 1003.0
+    session.tick()
+    assert session.active is True
+    assert bus.events == []
+
+    clock["t"] = 1005.5
+    session.tick()
+    assert session.active is False
+    assert bus.events == [("picker.close", {"verb": "focus", "reason": "timeout"})]
+
+
+def test_tick_noop_when_inactive():
+    bus = _FakeBus()
+    clock = {"t": 0.0}
+    session = PickerSession(
+        bus=bus, now=lambda: clock["t"], cancel_words=(), timeout_sec=1.0
+    )
+    clock["t"] = 100.0
+    session.tick()
+    assert bus.events == []
+
+
+def test_tick_reset_on_re_open():
+    """Re-opening (e.g. provider re-runs) resets the timeout window."""
+    bus = _FakeBus()
+    clock = {"t": 0.0}
+    session = PickerSession(
+        bus=bus, now=lambda: clock["t"], cancel_words=(), timeout_sec=5.0
+    )
+    session.open("focus", [_item("Chrome", 11)])
+    clock["t"] = 4.5
+    session.open("focus", [_item("VS Code", 22)])  # reset timer
+    clock["t"] = 9.0
+    session.tick()
+    assert session.active is True  # 4.5 elapsed since re-open, under 5.0
+    clock["t"] = 9.6
+    session.tick()
+    assert session.active is False  # now 5.1 elapsed since re-open

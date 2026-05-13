@@ -49,10 +49,12 @@ class PickerSession:
         bus: _BusLike,
         now: callable = time.monotonic,  # type: ignore[valid-type]
         cancel_words: tuple[str, ...] = ("cancel", "nevermind", "stop"),
+        timeout_sec: float = 5.0,
     ) -> None:
         self._bus = bus
         self._now = now
         self._cancel_set = frozenset(w.lower().strip() for w in cancel_words if w)
+        self._timeout_sec = float(timeout_sec)
         self._lock = threading.Lock()
         self._active = False
         self._verb = ""
@@ -139,3 +141,13 @@ class PickerSession:
         chosen = items[n - 1]
         self.close(reason="select")
         return PickerOutcome(kind="select", plan=chosen.action, n=n)
+
+    def tick(self) -> None:
+        """Heartbeat-driven check that fires :meth:`close(reason="timeout")` if elapsed."""
+        with self._lock:
+            if not self._active:
+                return
+            elapsed = self._now() - self._opened_at
+            should_close = elapsed >= self._timeout_sec
+        if should_close:
+            self.close(reason="timeout")
