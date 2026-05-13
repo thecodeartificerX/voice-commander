@@ -83,7 +83,7 @@ class CursorDock:
         y = mi.rcWork.bottom - window_h - self._margin_y
         self._window.set_location(x, y)
         self._last_hmon = hmon
-        logger.info(
+        logger.debug(
             "CursorDock → hmon=%s rcWork=(%d,%d,%d,%d) dpi=%d → window=(%d,%d) @ (%d,%d)",
             hmon,
             mi.rcWork.left,

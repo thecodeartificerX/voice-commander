@@ -325,11 +325,11 @@ class StreamingDaemon:
             self._session_active = False
             self._muted = False
             self._feedback.on_recording_stop()
-            if was_muted:
-                # Sprite tracks muted as a sub-state of an active session; emit
-                # unmuted before session_stopped so the renderer's mute overlay
-                # clears cleanly.
-                self._publish("unmuted")
+            # Single source of truth for the sprite's "disengaged" look: the
+            # `muted` SSE event fires whenever the daemon is not consuming
+            # audio, regardless of whether the cause is full session close
+            # (here) or in-session mute (on_mute_toggle).
+            self._publish("muted")
             self._publish("session_stopped")
             logger.info("Session closed")
         else:
@@ -339,6 +339,7 @@ class StreamingDaemon:
                 self._muted = False
                 self._feedback.on_recording_start()
                 self._publish("session_started")
+                self._publish("unmuted")
                 logger.info("Session opened")
             except Exception as e:
                 self._session_active = False
