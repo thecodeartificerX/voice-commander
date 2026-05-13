@@ -27,6 +27,8 @@ from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
 from .observability import Store, Tracer
+from .picker.registry import BarePickerRegistry
+from .picker.session import PickerSession
 from .verb_router import VerbRouter, build_default_rules
 from .observability.errors import classify as _classify_error
 from .plan import Plan, PlanOutcome
@@ -137,6 +139,8 @@ class StreamingDaemon:
         verb_router: VerbRouter,
         *,
         registry: ToolRegistry | None = None,
+        picker_session: PickerSession | None = None,
+        picker_registry: BarePickerRegistry | None = None,
         min_confidence: float = 0.30,
         min_word_count: int = 1,
         max_no_speech_prob: float = 0.6,
@@ -223,6 +227,8 @@ class StreamingDaemon:
         # remains "open" so the user can unmute back into the same session.
         self._muted: bool = False
         self._verb_router = verb_router
+        self._picker_session = picker_session
+        self._picker_registry = picker_registry
         # Set when Transcriber.load() completes successfully in the background thread.
         # Pipeline worker waits on this before calling transcribe().
         self._transcriber_ready: threading.Event = threading.Event()
@@ -506,6 +512,27 @@ class StreamingDaemon:
                 {"text": result.text, "confidence": result.confidence},
             )
 
+            # Picker sub-state (ADR 0083): if a bare-primitive picker is open,
+            # the next utterance is a selection, not a new command.
+            if self._picker_session is not None and self._picker_session.active:
+                outcome = self._picker_session.handle_transcript(result.text)
+                if outcome is None:
+                    pass  # closed between check and call — fall through
+                elif outcome.kind == "select" and outcome.plan is not None:
+                    if self._registry is None:
+                        logger.error("Registry not set — cannot run picker selection")
+                        return
+                    self._dispatcher.run_plan(result.text, outcome.plan, self._registry)
+                    return
+                elif outcome.kind == "cancel":
+                    self._feedback.on_plan_complete(result.text, 0)
+                    return
+                else:  # miss — out-of-range / non-number
+                    run.set_status("miss")
+                    self._feedback.on_miss(result.text, ())
+                    _publish_miss(result.text)
+                    return
+
             # Gate: word-count  (infrastructure noise — no plan_outcome)
             word_count = len(result.text.split())
             if word_count < self._min_word_count:
@@ -537,6 +564,28 @@ class StreamingDaemon:
                 run.set_status("miss")
                 self._feedback.on_miss(result.text, ())
                 _publish_miss(result.text)
+                return
+            if (
+                self._picker_session is not None
+                and self._picker_registry is not None
+                and len(plan.steps) == 1
+                and plan.steps[0].name == "__picker.open"
+            ):
+                verb = str(plan.steps[0].kwargs.get("verb", ""))
+                provider = self._picker_registry.get(verb)
+                if provider is None:
+                    logger.warning("picker open requested for unknown verb %r", verb)
+                    self._feedback.on_miss(result.text, ())
+                    _publish_miss(result.text)
+                    return
+                items = provider()
+                if not items:
+                    logger.info("picker %r produced empty list", verb)
+                    self._feedback.on_miss(result.text, ())
+                    _publish_miss(result.text)
+                    return
+                self._picker_session.open(verb, items)
+                self._feedback.on_plan_complete(result.text, 0)
                 return
             if self._registry is None:
                 logger.error("Registry not set — cannot execute plan for '%s'", result.text)
