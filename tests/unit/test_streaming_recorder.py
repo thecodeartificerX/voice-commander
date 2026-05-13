@@ -877,9 +877,17 @@ class _PatchedRecorder:
             "voice_commander.streaming_recorder.sd.query_hostapis",
             lambda: _RETRY_HOSTAPIS,
         )
+        # Real sd.query_devices() returns a DeviceList (list of dicts) for no-arg
+        # calls, and a single dict for indexed calls. Mirror both shapes so the
+        # host-API fallback resolver can enumerate candidates.
+        def _fake_query_devices(device=None):
+            if device is None:
+                return [_RETRY_DEVICE]
+            return _RETRY_DEVICE
+
         self.monkeypatch.setattr(
             "voice_commander.streaming_recorder.sd.query_devices",
-            lambda device=None: _RETRY_DEVICE,
+            _fake_query_devices,
         )
         self.monkeypatch.setattr("voice_commander.streaming_recorder.Resampler", MockResampler)
         # Install a no-op InputStream by default; individual tests may override it.
@@ -980,12 +988,6 @@ def test_open_session_falls_back_to_default_on_persistent_resolution(monkeypatch
         def close(self):
             self._closed = True
 
-    # Resolver always returns the same index (5) — simulating persistent index.
-    monkeypatch.setattr(
-        "voice_commander.streaming_recorder._resolve_device_by_name",
-        lambda saved, name: 5,
-    )
-
     with _PatchedRecorder(monkeypatch, device_index=5) as recorder:
         monkeypatch.setattr(
             "voice_commander.streaming_recorder.sd.InputStream",
@@ -993,10 +995,15 @@ def test_open_session_falls_back_to_default_on_persistent_resolution(monkeypatch
         )
         recorder.open_session()
 
-    # First attempt: device=5; second attempt: device=None (system default fallback).
-    assert device_args_used[0] == 5, f"First attempt should use device=5, got {device_args_used[0]}"
-    assert device_args_used[1] is None, (
-        f"Second attempt should fall back to device=None, got {device_args_used[1]}"
+    # New behaviour (host-API fallback chain): candidate list resolves the
+    # mocked device by name first, then falls back to device=None (system
+    # default) as the final candidate. The single mock entry has hostapi=0
+    # (WASAPI), so the first candidate is index 0 rather than the saved 5.
+    assert device_args_used[0] == 0, (
+        f"First candidate should be the resolved-by-name index (0), got {device_args_used[0]}"
+    )
+    assert device_args_used[-1] is None, (
+        f"Last fallback should be device=None (system default), got {device_args_used[-1]}"
     )
 
 

@@ -203,6 +203,57 @@ def _resolve_device_by_name(saved_index: int | None, device_name: str) -> int | 
         return saved_index
 
 
+# Host APIs ranked by reliability for InputStream open. Some USB mics (notably
+# the AT2020USB-X) raise PaErrorCode -9999 from WASAPI's internal kernel-
+# streaming path even though host_api=WASAPI was requested. When that happens
+# we walk this list before giving up and falling back to the system default
+# (which may itself be a silent virtual cable on systems with VB-Cable etc.).
+_HOST_API_FALLBACK_ORDER: tuple[str, ...] = (
+    "Windows WASAPI",
+    "Windows DirectSound",
+    "MME",
+)
+
+
+def _resolve_device_candidates(device_name: str) -> list[tuple[int, str]]:
+    """Return ``[(device_index, host_api_name), ...]`` for input devices matching
+    *device_name*, ordered by host-API reliability (WASAPI → DirectSound → MME).
+
+    Empty list when the name doesn't match any input device or PortAudio errors.
+    Callers should append ``(None, "(system default)")`` as a last-resort
+    fallback after exhausting the candidate list.
+    """
+    if not device_name:
+        return []
+    target = device_name.strip().lower()
+    try:
+        hostapis = sd.query_hostapis()
+        rank: dict[int, int] = {}
+        for idx, api in enumerate(hostapis):
+            name = api.get("name", "")
+            try:
+                rank[idx] = _HOST_API_FALLBACK_ORDER.index(name)
+            except ValueError:
+                continue
+        devices = sd.query_devices()
+        candidates: list[tuple[int, str, int]] = []
+        for idx, dev in enumerate(devices):
+            if (
+                dev.get("max_input_channels", 0) > 0
+                and dev.get("name", "").strip().lower() == target
+                and dev.get("hostapi") in rank
+            ):
+                api_name = hostapis[dev["hostapi"]]["name"]
+                candidates.append((idx, api_name, rank[dev["hostapi"]]))
+        candidates.sort(key=lambda c: c[2])
+        return [(idx, api_name) for idx, api_name, _ in candidates]
+    except Exception:
+        logger.exception(
+            "StreamingRecorder: _resolve_device_candidates(%r) failed", device_name
+        )
+        return []
+
+
 class _SessionState(enum.Enum):
     IDLE = "IDLE"
     OPENING = "OPENING"
@@ -491,67 +542,39 @@ class StreamingRecorder:
             return False
 
     def _open_input_stream(self) -> sd.InputStream:
-        """Open and start an InputStream, retrying once with fresh device resolution.
+        """Open and start an InputStream, walking a host-API fallback chain.
 
-        On the first attempt, uses the current ``self._device`` index.  If
-        :class:`sd.PortAudioError` is raised (e.g. another app grabbed the
-        device in WASAPI exclusive mode, or a USB topology shift invalidated
-        the cached index), the method:
+        Build the candidate list once from ``self._device_name`` via
+        :func:`_resolve_device_candidates` (WASAPI → DirectSound → MME), then
+        append ``(None, "(system default)")`` as final fallback. On each
+        :class:`sd.PortAudioError`, log + advance to the next candidate. Stash
+        the successful index on ``self._device`` and the native rate on
+        ``self._native_rate`` so the caller can wire the resampler.
 
-        1. Clears ``self._device`` and re-runs :func:`_resolve_device_by_name`
-           for a fresh WASAPI scan.
-        2. If the fresh resolution returns the *same* failing index, falls back
-           to ``device=None`` (system default) as a last resort.
-        3. On second failure: logs ERROR with both errors and re-raises the
-           second :class:`sd.PortAudioError`.
-
-        Side effect: sets ``self._native_rate`` so the caller can use it for
-        resampler setup.
+        Raises the *last* :class:`sd.PortAudioError` when every candidate
+        fails (rare — usually means PortAudio itself is wedged).
         """
+        candidates = _resolve_device_candidates(self._device_name)
+        if not candidates and self._device is not None:
+            # Fallback when caller passed a raw saved index without a name.
+            candidates = [(self._device, "(saved)")]
+        candidates.append((None, "(system default)"))
+
         first_error: sd.PortAudioError | None = None
-        failing_device: int | None = self._device  # stash for retry comparison
+        last_error: sd.PortAudioError | None = None
 
-        for attempt in range(2):
-            if attempt == 0:
-                resolved = _resolve_device_by_name(self._device, self._device_name)
-                if resolved != self._device:
-                    logger.info(
-                        "StreamingRecorder: device index updated %s → %s (name=%r)",
-                        self._device, resolved, self._device_name,
-                    )
-                self._device = resolved
-            else:
-                # Force-clear saved index and re-scan WASAPI from scratch.
-                self._device = None
-                fresh = _resolve_device_by_name(None, self._device_name)
-                if fresh == failing_device:
-                    # Same index failed; escalate to system default.
-                    logger.warning(
-                        "StreamingRecorder: fresh resolve returned same failing index %s; "
-                        "falling back to system default",
-                        failing_device,
-                    )
-                    fresh = None
-                self._device = fresh
-
-            # Query device info for native rate + host API name.
-            device_info: Any = None
+        for attempt, (device, api_name) in enumerate(candidates):
             native_rate = 48000
-            host_api_name = "(default)"
             device_label = "(default)"
-            if self._device is not None:
+            if device is not None:
                 try:
-                    device_info = sd.query_devices(self._device)
-                    native_rate = int(device_info["default_samplerate"])
-                    device_label = device_info.get("name", str(self._device))
-                    try:
-                        host_api_name = sd.query_hostapis()[device_info["hostapi"]]["name"]
-                    except Exception:
-                        host_api_name = "(unknown)"
+                    info = sd.query_devices(device)
+                    native_rate = int(info["default_samplerate"])
+                    device_label = info.get("name", str(device))
                 except Exception:
                     logger.warning(
                         "StreamingRecorder: could not query device info for index %s",
-                        self._device,
+                        device,
                     )
 
             try:
@@ -559,45 +582,45 @@ class StreamingRecorder:
                     samplerate=native_rate,
                     channels=self._channels,
                     dtype="float32",
-                    device=self._device,
+                    device=device,
                     callback=self._on_audio,
                 )
                 stream.start()
-                # Stash native_rate for resampler setup by the caller.
+                self._device = device
                 self._native_rate = native_rate
                 if attempt == 0:
                     logger.info(
                         "StreamingRecorder: opening session (device=%s (%r) "
                         "host_api=%r native_rate=%d channels=%d)",
-                        self._device, device_label, host_api_name, native_rate, self._channels,
+                        device, device_label, api_name, native_rate, self._channels,
                     )
                 else:
                     logger.warning(
-                        "StreamingRecorder: opened session on RETRY "
+                        "StreamingRecorder: opened session on FALLBACK candidate %d "
                         "(device=%s (%r) host_api=%r native_rate=%d). "
-                        "First attempt failed: %s",
-                        self._device, device_label, host_api_name, native_rate, first_error,
+                        "First error: %s",
+                        attempt, device, device_label, api_name, native_rate, first_error,
                     )
                 return stream
             except sd.PortAudioError as exc:
-                if attempt == 0:
+                last_error = exc
+                if first_error is None:
                     first_error = exc
-                    failing_device = self._device
-                    logger.warning(
-                        "StreamingRecorder: InputStream.start() failed on first attempt "
-                        "(device=%s (%r) host_api=%r native_rate=%d): %s. "
-                        "Retrying with fresh device resolution...",
-                        self._device, device_label, host_api_name, native_rate, exc,
-                    )
-                    continue
-                logger.error(
-                    "StreamingRecorder: InputStream.start() failed on retry too "
-                    "(device=%s (%r) host_api=%r native_rate=%d). "
-                    "First error: %s. Retry error: %s",
-                    self._device, device_label, host_api_name, native_rate, first_error, exc,
+                logger.warning(
+                    "StreamingRecorder: InputStream.start() failed on candidate %d "
+                    "(device=%s (%r) host_api=%r native_rate=%d): %s. "
+                    "Advancing to next candidate...",
+                    attempt, device, device_label, api_name, native_rate, exc,
                 )
-                raise
-        raise RuntimeError("unreachable")  # pragma: no cover
+                continue
+
+        logger.error(
+            "StreamingRecorder: every candidate failed for name=%r. "
+            "First error: %s. Last error: %s",
+            self._device_name, first_error, last_error,
+        )
+        assert last_error is not None  # candidate list always non-empty (system default appended)
+        raise last_error
 
     def open_session(self) -> None:
         """Open the audio stream and start the VAD worker thread.
