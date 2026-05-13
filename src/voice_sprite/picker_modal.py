@@ -117,7 +117,13 @@ class PickerModalWindow:
         self._ensure_window()
         if self._window is None:
             return
-        self._window.set_visible(True)
+        # NB: do NOT call pyglet's set_visible(True). It calls self.activate()
+        # which steals foreground from the user's app — Windows then refuses
+        # the daemon's subsequent SetForegroundWindow because foreground was
+        # taken by the sprite process, not the user. Use ShowWindow(SW_SHOWNA)
+        # (show without activating) directly so the modal renders on top but
+        # never takes the active-window slot.
+        self._window.show_noactivate()
         try:
             self._reposition()
         except Exception:
@@ -205,6 +211,20 @@ else:
                 apply_click_through(self._hwnd)
             except Exception:
                 logger.exception("apply_click_through failed for picker modal")
+
+        def show_noactivate(self) -> None:
+            """Show the modal via Win32 ``SW_SHOWNA`` — visible but never activates.
+
+            Bypasses pyglet's :meth:`set_visible` which calls
+            :meth:`activate` and would steal foreground from whatever app
+            the user is on. Updates pyglet's internal visible flag so its
+            redraw loop still services the window.
+            """
+            import ctypes
+
+            SW_SHOWNA = 8  # ShowWindow flag: show in current state, no activation
+            ctypes.windll.user32.ShowWindow(self._hwnd, SW_SHOWNA)
+            self._visible = True
 
         def refresh(self) -> None:
             # Make this window's GL context current before any GL work.

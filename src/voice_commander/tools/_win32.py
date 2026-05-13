@@ -118,7 +118,17 @@ def _verify_foreground(target_hwnd: int, polls: int = 25, interval_ms: int = 20)
 
 
 def _do_focus(hwnd: int, foreground_tid: int, target_tid: int) -> None:
-    """Core focus sequence: optionally attach threads, BringWindowToTop, SetForegroundWindow."""
+    """Core focus sequence: attach threads, bring to top, foreground + activate + set focus.
+
+    ``SetForegroundWindow`` alone is unreliable when the calling process
+    is not the current foreground process — it commonly returns success
+    while only doing a Z-order bump (window visually rises but isn't the
+    active window, keystrokes still go to the previous app). The
+    workaround is the standard "two-step": after attaching to the
+    foreground thread's input queue we follow ``SetForegroundWindow``
+    with ``SetActiveWindow`` (claims the active slot) and ``SetFocus``
+    (claims keyboard focus) so the target really becomes the input sink.
+    """
     import win32gui
 
     _allow_set_foreground()
@@ -135,6 +145,14 @@ def _do_focus(hwnd: int, foreground_tid: int, target_tid: int) -> None:
     try:
         win32gui.BringWindowToTop(hwnd)
         win32gui.SetForegroundWindow(hwnd)
+        try:
+            win32gui.SetActiveWindow(hwnd)
+        except Exception:
+            logger.debug("SetActiveWindow failed for hwnd=%d", hwnd, exc_info=True)
+        try:
+            win32gui.SetFocus(hwnd)
+        except Exception:
+            logger.debug("SetFocus failed for hwnd=%d", hwnd, exc_info=True)
     finally:
         if not same_thread:
             _attach_thread_input(foreground_tid, target_tid, False)
