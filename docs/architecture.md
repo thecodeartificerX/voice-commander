@@ -962,7 +962,7 @@ Two new SSE events are added to the catalog (see §7):
 | Event type | Payload | Notes |
 |---|---|---|
 | `picker.open` | `{verb: str, items: [{n: int, label: str}]}` | Sprite renders `picker_modal.PickerModalWindow` — centred, always-on-top, numbered list. |
-| `picker.close` | `{verb: str, reason: str}` | Sprite closes the modal; `reason` is `"selected"`, `"cancelled"`, or `"timeout"`. |
+| `picker.close` | `{verb: str, reason: str}` | Sprite closes the modal; `reason` is one of `"select"`, `"word"` (cancel-word match), `"timeout"`, `"abort"` (Scroll Lock during picker), or `"out_of_range"`. |
 
 The `voice_sprite.picker_modal` module owns the pyglet modal window; it shares the same transparent-overlay recipe as the main sprite window (ADR 0050).
 
@@ -970,11 +970,14 @@ The `voice_sprite.picker_modal` module owns the pyglet modal window; it shares t
 
 ```toml
 [picker]
-# Global picker defaults (all optional)
+enabled = true                       # master kill-switch
+timeout_sec = 5                      # auto-cancel after N seconds of silence
+cancel_words = ["cancel", "nevermind", "stop"]
 
 [picker.focus]
-max_items = 5        # number of MRU candidates shown (default 5)
-timeout_s  = 8       # auto-cancel after N seconds of silence (default 8)
+cap = 5                              # max MRU candidates shown (1-9)
+exclude_foreground = true
+exclude_self = true                  # filter daemon + sprite + modal windows
 ```
 
 ### Invariants

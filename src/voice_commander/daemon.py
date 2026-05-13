@@ -474,6 +474,21 @@ class StreamingDaemon:
         with self._tracer.run("") as run:
             start_s = time.perf_counter()
 
+            def _publish_picker_ok(transcript: str) -> None:
+                """Terminal-status emit for picker open / cancel paths so the
+                runs panel does not orphan the utterance."""
+                self._publish(
+                    "plan_outcome",
+                    PlanOutcome(
+                        transcript=transcript,
+                        steps=(),
+                        status="ok",
+                        failed_step_index=None,
+                        error_msg=None,
+                        duration_ms=int((time.perf_counter() - start_s) * 1000),
+                    ).to_event_dict(),
+                )
+
             def _publish_miss(transcript: str) -> None:
                 self._publish(
                     "plan_outcome",
@@ -526,7 +541,9 @@ class StreamingDaemon:
                     self._dispatcher.run_plan(result.text, outcome.plan, self._registry)
                     return
                 elif outcome.kind == "cancel":
+                    run.set_status("ok")
                     self._feedback.on_plan_complete(result.text, 0)
+                    _publish_picker_ok(result.text)
                     return
                 else:  # miss — out-of-range / non-number
                     run.set_status("miss")
@@ -586,7 +603,9 @@ class StreamingDaemon:
                     _publish_miss(result.text)
                     return
                 self._picker_session.open(verb, items)
+                run.set_status("ok")
                 self._feedback.on_plan_complete(result.text, 0)
+                _publish_picker_ok(result.text)
                 return
             if self._registry is None:
                 logger.error("Registry not set — cannot execute plan for '%s'", result.text)
