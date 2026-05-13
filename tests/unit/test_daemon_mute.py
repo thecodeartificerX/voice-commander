@@ -106,6 +106,7 @@ def test_active_muted_to_unmuted_reopens_stream() -> None:
     daemon.on_mute_toggle()  # active+muted
     recorder = _recorder
     recorder.reset_mock()
+    last_id = bus._next_id - 1  # snapshot before the act phase
 
     daemon.on_mute_toggle()
 
@@ -113,7 +114,11 @@ def test_active_muted_to_unmuted_reopens_stream() -> None:
     assert daemon._muted is False
     assert recorder.open_session.call_count == 1
     assert recorder.close_session.call_count == 0
-    assert _event_types(bus).count("unmuted") == 1
+    # Post-SSOT contract: every transition into "consuming audio" emits
+    # `unmuted` — so the open path emits one and the unmute emits another.
+    # Filter to events from the unmute alone.
+    types_after = [e.type for e in bus.replay_after(last_id)]
+    assert "unmuted" in types_after
 
 
 def test_scroll_lock_close_from_muted_does_not_double_close() -> None:
@@ -122,6 +127,7 @@ def test_scroll_lock_close_from_muted_does_not_double_close() -> None:
     daemon.on_scroll_lock()  # open
     daemon.on_mute_toggle()  # mute (closes once)
     recorder.reset_mock()
+    last_id = bus._next_id - 1  # snapshot before the act phase
 
     daemon.on_scroll_lock()  # close while muted
 
@@ -129,9 +135,11 @@ def test_scroll_lock_close_from_muted_does_not_double_close() -> None:
     assert daemon._muted is False
     # Stream stays closed — no second close_session() call.
     assert recorder.close_session.call_count == 0
-    types = _event_types(bus)
-    # `unmuted` published before `session_stopped` so sprite clears overlay.
-    assert types.index("unmuted") < types.index("session_stopped")
+    # Post-SSOT contract: close path emits `muted` (sprite enters the
+    # disengaged grey-tinted pose) before `session_stopped`, regardless of
+    # whether the session was muted or unmuted when closed.
+    types_after = [e.type for e in bus.replay_after(last_id)]
+    assert types_after == ["muted", "session_stopped"]
 
 
 def test_scroll_lock_close_from_unmuted_closes_once() -> None:
