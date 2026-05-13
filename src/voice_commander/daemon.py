@@ -971,11 +971,15 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
 
     # --- Bare-primitive picker (ADR 0083) ---
     from .picker.mru import MruTracker, Win32MruPump
-    from .picker.registry import get_global_picker_registry
+    from .picker.registry import get_global_picker_registry, reset_global_picker_registry
     from .picker.session import PickerSession
     from .tools.focus_picker import FocusPickerSettings, register_focus_picker
 
     picker_session: PickerSession | None = None
+    # Reset the global picker registry so build_streaming_daemon is idempotent —
+    # repeated factory calls (test harness, hot-reload) must not collide on
+    # duplicate `focus` registrations.
+    reset_global_picker_registry()
     picker_registry = get_global_picker_registry()
     mru_tracker: MruTracker | None = None
     mru_pump: Win32MruPump | None = None
