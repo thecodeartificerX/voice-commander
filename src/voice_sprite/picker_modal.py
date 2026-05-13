@@ -201,6 +201,14 @@ else:
                 logger.exception("apply_click_through failed for picker modal")
 
         def refresh(self) -> None:
+            # Make this window's GL context current before any GL work.
+            # refresh() runs from a clock callback whose ambient context is
+            # whichever window pyglet drew last (usually the sprite's main
+            # window). Constructing Labels under the wrong context binds
+            # their VAOs/textures there, then on_draw — which runs under
+            # *this* window's context — hits GL 0x1282 invalid operation.
+            self.switch_to()
+
             # Discard previous labels.
             for lbl in self._labels:
                 lbl.delete()
