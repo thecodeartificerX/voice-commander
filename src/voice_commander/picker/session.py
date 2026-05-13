@@ -12,11 +12,24 @@ import logging
 import threading
 import time
 from collections.abc import Iterable
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Literal, Protocol
 
+from voice_commander.picker.coerce import coerce_number
 from voice_commander.picker.types import PickerItem
+from voice_commander.plan import Plan
 
 logger = logging.getLogger(__name__)
+
+
+OutcomeKind = Literal["select", "cancel", "miss"]
+
+
+@dataclass(frozen=True)
+class PickerOutcome:
+    kind: OutcomeKind
+    plan: Plan | None
+    n: int | None
 
 
 class _BusLike(Protocol):
@@ -31,9 +44,15 @@ class PickerSession:
     interact without races.
     """
 
-    def __init__(self, bus: _BusLike, now: callable = time.monotonic) -> None:  # type: ignore[valid-type]
+    def __init__(
+        self,
+        bus: _BusLike,
+        now: callable = time.monotonic,  # type: ignore[valid-type]
+        cancel_words: tuple[str, ...] = ("cancel", "nevermind", "stop"),
+    ) -> None:
         self._bus = bus
         self._now = now
+        self._cancel_set = frozenset(w.lower().strip() for w in cancel_words if w)
         self._lock = threading.Lock()
         self._active = False
         self._verb = ""
@@ -89,3 +108,34 @@ class PickerSession:
     def cancel(self, reason: str = "word") -> None:
         """Alias for :meth:`close` that emphasises non-selection paths."""
         self.close(reason=reason)
+
+    def handle_transcript(self, text: str) -> PickerOutcome | None:
+        """Resolve a transcript against the open picker.
+
+        Returns ``None`` when the session is inactive. Otherwise returns a
+        :class:`PickerOutcome` describing what happened:
+
+        * ``kind="select"`` — number recognised; picker closed; ``plan`` set.
+        * ``kind="cancel"`` — cancel word recognised; picker closed; ``plan`` is None.
+        * ``kind="miss"`` — non-number or out-of-range; picker stays open;
+          ``plan`` is None.
+        """
+        with self._lock:
+            if not self._active:
+                return None
+            verb = self._verb
+            items = self._items
+
+        normalised = " ".join(text.lower().split()).strip(".,!?")
+        if normalised in self._cancel_set:
+            self.close(reason="word")
+            return PickerOutcome(kind="cancel", plan=None, n=None)
+
+        n = coerce_number(text, len(items))
+        if n is None:
+            logger.info("picker miss verb=%s text=%r", verb, text)
+            return PickerOutcome(kind="miss", plan=None, n=None)
+
+        chosen = items[n - 1]
+        self.close(reason="select")
+        return PickerOutcome(kind="select", plan=chosen.action, n=n)
