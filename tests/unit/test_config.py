@@ -186,3 +186,49 @@ def test_update_user_config_logs_warning_on_legacy_audio_device(tmp_path, caplog
         "device" in msg and ("legacy" in msg.lower() or "adr 0081" in msg.lower())
         for msg in warning_messages
     ), f"Expected legacy-device warning, got: {warning_messages}"
+
+
+# ---------------------------------------------------------------------------
+# Picker config (ADR 0083)
+# ---------------------------------------------------------------------------
+
+
+def test_picker_defaults(tmp_path):
+    """[picker] missing entirely → safe defaults."""
+    from voice_commander.config import Config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("")
+    cfg = Config.load(cfg_path)
+    assert cfg.picker.enabled is True
+    assert cfg.picker.timeout_sec == 5
+    assert cfg.picker.cancel_words == ("cancel", "nevermind", "stop")
+    assert cfg.picker.focus.cap == 5
+    assert cfg.picker.focus.exclude_foreground is True
+    assert cfg.picker.focus.exclude_self is True
+
+
+def test_picker_overrides(tmp_path):
+    from voice_commander.config import Config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+[picker]
+enabled = false
+timeout_sec = 8
+cancel_words = ["cancel", "abort"]
+
+[picker.focus]
+cap = 7
+exclude_foreground = false
+exclude_self = false
+"""
+    )
+    cfg = Config.load(cfg_path)
+    assert cfg.picker.enabled is False
+    assert cfg.picker.timeout_sec == 8
+    assert cfg.picker.cancel_words == ("cancel", "abort")
+    assert cfg.picker.focus.cap == 7
+    assert cfg.picker.focus.exclude_foreground is False
+    assert cfg.picker.focus.exclude_self is False

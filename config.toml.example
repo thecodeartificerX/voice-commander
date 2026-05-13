@@ -69,3 +69,16 @@ width_px = 220
 
 [perception]
 ocr_engine = "auto"
+
+# --- Bare-primitive picker (ADR 0083) ---
+# Saying a primitive verb alone (e.g. "focus") opens a numbered modal of
+# candidate targets. The next utterance picks one by number.
+[picker]
+enabled = true
+timeout_sec = 5
+cancel_words = ["cancel", "nevermind", "stop"]
+
+[picker.focus]
+cap = 5                  # max items shown (1-9)
+exclude_foreground = true
+exclude_self = true      # filter daemon + sprite + modal windows

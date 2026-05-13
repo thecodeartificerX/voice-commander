@@ -118,6 +118,21 @@ class ObservabilityConfig:
 
 
 @dataclass(frozen=True)
+class PickerFocusConfig:
+    cap: int = 5
+    exclude_foreground: bool = True
+    exclude_self: bool = True
+
+
+@dataclass(frozen=True)
+class PickerConfig:
+    enabled: bool = True
+    timeout_sec: int = 5
+    cancel_words: tuple[str, ...] = ("cancel", "nevermind", "stop")
+    focus: PickerFocusConfig = field(default_factory=PickerFocusConfig)
+
+
+@dataclass(frozen=True)
 class Config:
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
@@ -129,6 +144,7 @@ class Config:
     sprite: SpriteConfig = field(default_factory=SpriteConfig)
     perception: PerceptionConfig = field(default_factory=PerceptionConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
+    picker: PickerConfig = field(default_factory=PickerConfig)
 
     @classmethod
     def load(cls, path: Path) -> Config:
@@ -147,6 +163,14 @@ class Config:
         vad_raw = raw.get("vad", {})
         gates_raw = vad_raw.pop("gates", {})
 
+        picker_raw = dict(raw.get("picker", {}))
+        focus_raw = picker_raw.pop("focus", {})
+        cancel_raw = picker_raw.pop("cancel_words", None)
+        if cancel_raw is not None:
+            if not isinstance(cancel_raw, list) or not all(isinstance(w, str) for w in cancel_raw):
+                raise TypeError("Config picker.cancel_words must be a list of strings")
+            picker_raw["cancel_words"] = tuple(cancel_raw)
+
         return cls(
             hotkey=_section(HotkeyConfig, raw.get("hotkey", {})),
             audio=_section(AudioConfig, raw.get("audio", {})),
@@ -158,6 +182,10 @@ class Config:
             sprite=_section(SpriteConfig, raw.get("sprite", {})),
             perception=_section(PerceptionConfig, raw.get("perception", {})),
             observability=_section(ObservabilityConfig, raw.get("observability", {})),
+            picker=_section(
+                PickerConfig,
+                {**picker_raw, "focus": _section(PickerFocusConfig, focus_raw)},
+            ),
         )
 
 
@@ -214,6 +242,8 @@ def _type_ok(value: Any, expected: Any) -> bool:
         return isinstance(value, bool)
     if expected is str:
         return isinstance(value, str)
+    if getattr(expected, "__origin__", None) is tuple:
+        return isinstance(value, tuple)
     return True
 
 
