@@ -4,10 +4,24 @@ import { useGraphStore } from '@/store/graphStore'
 import { useSchemaStore } from '@/store/schemaStore'
 import type { ToolArgMeta } from '@/types/graph'
 import { KeyRecorder } from './KeyRecorder'
+import { TargetPicker } from './TargetPicker'
 
-// Refs whose `combo` arg should render the click-to-record key recorder
-// instead of a plain text input.
-const KEY_RECORDER_REFS: ReadonlySet<string> = new Set(['pipeline.press'])
+// Backward-compat fallback for primitive/arg pairs whose backend metadata
+// pre-dates the `widget_kind` field. The runtime check prefers
+// `meta.widget_kind` from the palette; this map only fires when it is absent.
+const LEGACY_WIDGET_HINTS: Record<string, Record<string, string>> = {
+  'pipeline.press': { combo: 'key-recorder' },
+  'pipeline.focus': { target: 'window-picker' },
+  'pipeline.open': { target: 'app-picker' },
+}
+
+function resolveWidgetKind(
+  nodeRef: string,
+  argKey: string,
+  meta: ToolArgMeta,
+): string | undefined {
+  return meta.widget_kind ?? LEGACY_WIDGET_HINTS[nodeRef]?.[argKey]
+}
 
 interface KwargsFormProps {
   nodeId: string
@@ -118,6 +132,9 @@ export function KwargsForm({ nodeId, kwargs, nodeRef }: KwargsFormProps) {
         const value = kwargs[key]
         const required = meta.required ?? false
         const typeLabel = meta.type || kind
+        const widget = resolveWidgetKind(nodeRef, key, meta)
+        const setString = (next: string) =>
+          updateKwarg(key, next === '' ? { value: undefined, drop: true } : { value: next, drop: false })
         return (
           <div key={key} className="flex flex-col gap-0.5">
             <label className="text-[10px] text-muted-foreground">
@@ -125,12 +142,22 @@ export function KwargsForm({ nodeId, kwargs, nodeRef }: KwargsFormProps) {
               <span className="ml-1 text-muted-foreground/60">({typeLabel})</span>
               {required ? <span className="ml-1 text-red-400">*</span> : null}
             </label>
-            {KEY_RECORDER_REFS.has(nodeRef) && key === 'combo' ? (
+            {widget === 'key-recorder' ? (
               <KeyRecorder
                 value={typeof value === 'string' ? value : ''}
-                onChange={(combo) =>
-                  updateKwarg(key, combo === '' ? { value: undefined, drop: true } : { value: combo, drop: false })
-                }
+                onChange={setString}
+              />
+            ) : widget === 'window-picker' ? (
+              <TargetPicker
+                kind="window"
+                value={typeof value === 'string' ? value : ''}
+                onChange={setString}
+              />
+            ) : widget === 'app-picker' ? (
+              <TargetPicker
+                kind="app"
+                value={typeof value === 'string' ? value : ''}
+                onChange={setString}
               />
             ) : kind === 'bool' ? (
               <input

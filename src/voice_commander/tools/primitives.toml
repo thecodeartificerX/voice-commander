@@ -19,6 +19,7 @@ internal = true
 description = "Window to focus (e.g. 'notepad', 'chrome', 'spotify'). Fuzzy-matched against process names and window titles."
 required = true
 type = "string"
+widget_kind = "window-picker"
 
 [tools.focus.returns.hwnd]
 type = "integer"
@@ -49,6 +50,7 @@ internal = true
 description = "Application name ('spotify'), URI ('https://example.com'), or file path."
 required = true
 type = "string"
+widget_kind = "app-picker"
 
 [tools.open.returns.hwnd]
 type = "integer"

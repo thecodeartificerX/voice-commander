@@ -223,6 +223,55 @@ def attach_admin_routes(
         return JSONResponse(content=results)
 
     # ------------------------------------------------------------------
+    # Builder pickers — windows + apps
+    # ------------------------------------------------------------------
+
+    @app.get("/windows/active")
+    async def windows_active() -> JSONResponse:
+        """``GET /windows/active`` — live snapshot of focus-target candidates.
+
+        Returns the same canonical window list that ``resolver.resolve_window``
+        scores against at runtime (SSOT). Each entry: ``{hwnd, pid,
+        proc_name, title}``. Used by the Builder UI window picker so the
+        selected process name is guaranteed to fuzzy-match at runtime.
+        """
+        from .. import resolver
+
+        try:
+            entries = resolver.enumerate_windows()
+        except Exception:
+            logger.exception("windows_active: enumerate_windows() failed")
+            return JSONResponse(
+                content=[],
+                headers={"Warning": '199 - "Window enumeration failed"'},
+            )
+        entries.sort(key=lambda e: (e.get("proc_name", "").lower(), e.get("title", "").lower()))
+        return JSONResponse(content=entries)
+
+    @app.get("/apps/installed")
+    async def apps_installed() -> JSONResponse:
+        """``GET /apps/installed`` — Start-Menu + AppsFolder catalogue.
+
+        Returns the same canonical app catalogue that ``resolver.resolve_app``
+        scores against at runtime (SSOT). Each entry: ``{display, token}``.
+        Used by the Builder UI app picker. The picker stores ``display`` so
+        the runtime resolver re-matches it against the same cache and
+        guarantees WRatio==100 on the exact match path.
+        """
+        from .. import resolver
+
+        try:
+            entries = resolver.enumerate_apps()
+        except Exception:
+            logger.exception("apps_installed: enumerate_apps() failed")
+            return JSONResponse(
+                content=[],
+                headers={"Warning": '199 - "App enumeration failed"'},
+            )
+        entries.sort(key=lambda e: e.get("display", "").lower())
+        return JSONResponse(content=entries)
+
+    # ------------------------------------------------------------------
     # Config
     # ------------------------------------------------------------------
 

@@ -58,14 +58,21 @@ def describe_tool_for_builder(entry: ToolEntry) -> dict[str, Any]:
             "settle_ms": 200,
         }
     """
+    def _arg(v: ArgMetadata) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "type": v.type_str,
+            "description": v.description,
+            "required": v.required,
+        }
+        if v.widget_kind is not None:
+            out["widget_kind"] = v.widget_kind
+        return out
+
     return {
         "ref": f"pipeline.{entry.name}",
         "name": entry.name,
         "description": entry.docstring or "",
-        "args": {
-            k: {"type": v.type_str, "description": v.description, "required": v.required}
-            for k, v in (entry.args_meta or {}).items()
-        },
+        "args": {k: _arg(v) for k, v in (entry.args_meta or {}).items()},
         "returns": entry.returns_meta or {},
         "settle_ms": getattr(entry, "settle_ms", 0),
     }

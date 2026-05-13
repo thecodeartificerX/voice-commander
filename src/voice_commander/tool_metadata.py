@@ -24,6 +24,13 @@ class ArgMetadata:
     description: str
     required: bool
     default: str | None
+    # Builder-UI widget hint. ``None`` → render the default widget for the
+    # arg's Python type. Recognised values today: ``"window-picker"``
+    # (live window list, stores process name), ``"app-picker"`` (Start-Menu
+    # + AppsFolder catalogue, stores display name), ``"key-recorder"``
+    # (click-to-record keystroke combo). Unknown values fall back to the
+    # default text input — adding a new hint is a frontend-only change.
+    widget_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -189,6 +196,11 @@ class ToolMetadataStore:
                         "description": arg_md.description,
                         "required": arg_md.required,
                         **({"default": arg_md.default} if arg_md.default is not None else {}),
+                        **(
+                            {"widget_kind": arg_md.widget_kind}
+                            if arg_md.widget_kind is not None
+                            else {}
+                        ),
                     }
                     for arg_name, arg_md in md.args.items()
                 }
@@ -268,12 +280,14 @@ def _parse_tool(
         if isinstance(args_raw, dict):
             for arg_name, arg_data in args_raw.items():
                 if isinstance(arg_data, dict):
+                    widget_raw = arg_data.get("widget_kind")
                     args[arg_name] = ArgMetadata(
                         name=arg_name,
                         type_str=str(arg_data.get("type", "")),
                         description=str(arg_data.get("description", "")),
                         required=bool(arg_data.get("required", True)),
                         default=str(arg_data["default"]) if "default" in arg_data else None,
+                        widget_kind=str(widget_raw) if widget_raw else None,
                     )
 
         returns: dict[str, dict[str, str]] = {}

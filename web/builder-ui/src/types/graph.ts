@@ -59,6 +59,16 @@ export interface ToolArgMeta {
   type: string
   description?: string
   required?: boolean
+  /**
+   * Optional Builder-UI widget hint emitted by the backend palette
+   * (`primitives.toml::tools.<n>.args.<k>.widget_kind`). Recognised values:
+   * - `"window-picker"` — focus.target: live window list, stores process name
+   * - `"app-picker"` — open.target: Start-Menu + AppsFolder, stores display name
+   * - `"key-recorder"` — press.combo: click-to-record keystroke combo
+   * Unknown values fall back to the default text input. Adding a new hint is
+   * a frontend-only change (add a registry entry in KwargsForm).
+   */
+  widget_kind?: string
 }
 
 /**

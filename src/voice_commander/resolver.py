@@ -76,6 +76,57 @@ def _open_threshold() -> int:
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
+def enumerate_windows() -> list[dict[str, Any]]:
+    """Enumerate every visible top-level window with a non-empty title.
+
+    Single source of truth for the focus-target candidate set: used by
+    :func:`resolve_window` for fuzzy scoring at runtime *and* by the
+    ``GET /windows/active`` admin route that powers the Builder UI window
+    picker. Both paths see the exact same canonical list, so a target the
+    picker can show is a target the resolver can match.
+
+    Returns a list of dicts with keys ``hwnd`` (int), ``pid`` (int),
+    ``proc_name`` (str — process image base name, e.g. ``"chrome.exe"``),
+    and ``title`` (str — current window title). Order matches Windows'
+    ``EnumWindows`` z-order traversal.
+
+    Returns an empty list if pywin32 is unavailable.
+    """
+    try:
+        import win32gui
+        import win32process
+    except ImportError:
+        logger.debug("pywin32 not available; enumerate_windows returning []")
+        return []
+
+    entries: list[dict[str, Any]] = []
+
+    def _enum(hwnd: int, _: object) -> bool:
+        if not win32gui.IsWindowVisible(hwnd):
+            return True
+        title = win32gui.GetWindowText(hwnd) or ""
+        if not title:
+            # Skip windows without a title — too noisy for fuzzy scoring and
+            # they are usually tooltips / system surfaces the user can't name.
+            return True
+        try:
+            _tid, pid = win32process.GetWindowThreadProcessId(hwnd)
+        except Exception:
+            pid = 0
+        entries.append(
+            {
+                "hwnd": int(hwnd),
+                "pid": int(pid),
+                "proc_name": _get_process_name(pid),
+                "title": title,
+            }
+        )
+        return True
+
+    win32gui.EnumWindows(_enum, None)
+    return entries
+
+
 def resolve_window(target: str) -> int:
     """Fuzzy-match *target* to a visible window; return its hwnd.
 
@@ -88,56 +139,25 @@ def resolve_window(target: str) -> int:
         If no candidate clears the threshold. The error message carries the
         top-3 candidates so the user can see why a call missed.
     """
-    try:
-        import win32api
-        import win32con  # noqa: F401  (imported for side effects / parity)
-        import win32gui
-        import win32process
-    except ImportError as exc:
-        raise FocusWindowError("pywin32 not available; cannot enumerate windows") from exc
-
-    candidates: list[tuple[int, str, str, int]] = []
-
-    def _enum(hwnd: int, _: object) -> bool:
-        if not win32gui.IsWindowVisible(hwnd):
-            return True
-        title = win32gui.GetWindowText(hwnd) or ""
-        if not title:
-            # Skip windows without a title — too noisy for fuzzy scoring and
-            # they are usually tooltips / system surfaces the user can't name.
-            return True
-
-        try:
-            _tid, pid = win32process.GetWindowThreadProcessId(hwnd)
-        except Exception:
-            pid = 0
-
-        proc_name = _get_process_name(pid)
-
-        proc_score = int(WRatio(target, proc_name)) if proc_name else 0
-        title_score = int(WRatio(target, title)) if title else 0
-        score = max(proc_score, title_score)
-
-        candidates.append((hwnd, proc_name, title, score))
-        return True
-
-    win32gui.EnumWindows(_enum, None)
-
-    if not candidates:
+    entries = enumerate_windows()
+    if not entries:
         raise FocusWindowError(
             f"no window matching {target!r}; no visible windows with titles enumerated"
         )
 
-    # Sort descending by score for top-3 reporting.
+    candidates: list[tuple[int, str, str, int]] = []
+    for e in entries:
+        proc_name = e["proc_name"]
+        title = e["title"]
+        proc_score = int(WRatio(target, proc_name)) if proc_name else 0
+        title_score = int(WRatio(target, title)) if title else 0
+        candidates.append((e["hwnd"], proc_name, title, max(proc_score, title_score)))
+
     candidates.sort(key=lambda c: c[3], reverse=True)
     top3 = candidates[:3]
     best_hwnd, best_proc, best_title, best_score = top3[0]
 
     threshold = _focus_threshold()
-
-    # Suppress unused-warning without affecting runtime.
-    _ = win32api
-
     if best_score < threshold:
         top3_display = [(p, t, s) for _hwnd, p, t, s in top3]
         raise FocusWindowError(
@@ -205,6 +225,23 @@ _URI_RE = re.compile(r"^[a-z][a-z0-9+\-.]*://", re.IGNORECASE)
 # Daemon-lifetime cache. Populated on first resolve_app() call that needs it.
 _cache: dict[str, list[tuple[str, str]] | None] = {"apps": None}
 _cache_lock = threading.Lock()
+
+
+def enumerate_apps() -> list[dict[str, str]]:
+    """Return the cached app catalog as a list of ``{display, token}`` dicts.
+
+    Single source of truth for the open-target candidate set: used by
+    :func:`resolve_app` for fuzzy scoring at runtime *and* by the
+    ``GET /apps/installed`` admin route that powers the Builder UI app
+    picker. The picker stores the display name; the runtime resolver then
+    re-matches that exact display against the same cache, so the picker's
+    selection is guaranteed to clear the fuzzy threshold (WRatio==100 on
+    an exact match).
+
+    Triggers Start-Menu + AppsFolder enumeration on first call (subsequent
+    calls hit the daemon-lifetime cache).
+    """
+    return [{"display": display, "token": token} for display, token in _get_app_cache()]
 
 
 def resolve_app(target: str) -> str:
