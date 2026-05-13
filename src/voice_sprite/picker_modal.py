@@ -81,30 +81,52 @@ class PickerModalWindow:
         return self._state
 
     def show(self, verb: str, items: list[dict[str, Any]]) -> None:
+        """Open the modal. Safe to call from any thread.
+
+        State mutation happens here; window creation + GL work is deferred to
+        the pyglet main thread via :func:`pyglet.clock.schedule_once` so the
+        SSE handler thread never touches a GL context.
+        """
         self._state.open(verb, items)
+        self._schedule_on_main(self._do_show)
+
+    def hide(self) -> None:
+        """Hide the modal. Safe to call from any thread (see :meth:`show`)."""
+        self._state.close()
+        self._schedule_on_main(self._do_hide)
+
+    # ---- pyglet wiring (runs on the pyglet main thread only) ----
+
+    def _schedule_on_main(self, fn: Any) -> None:
+        try:
+            import pyglet
+        except ImportError:
+            logger.warning("pyglet not available; picker modal will not render")
+            return
+        # schedule_once is the canonical pyglet-2 way to marshal a callable
+        # back onto the event-loop thread that owns every GL context.
+        pyglet.clock.schedule_once(lambda _dt: fn(), 0.0)
+
+    def _do_show(self) -> None:
         self._ensure_window()
         if self._window is None:
             return
         self._window.set_visible(True)
-        # Re-position on the current cursor's monitor (best-effort).
         try:
             self._reposition()
         except Exception:
             logger.exception("modal repositioning failed")
         self._window.refresh()
 
-    def hide(self) -> None:
-        self._state.close()
+    def _do_hide(self) -> None:
         if self._window is not None:
             self._window.set_visible(False)
-
-    # ---- pyglet wiring ----
 
     def _ensure_window(self) -> None:
         if self._window is not None:
             return
         try:
-            import pyglet
+            import pyglet  # noqa: F401
         except ImportError:
             logger.warning("pyglet not available; picker modal will not render")
             return
