@@ -12,9 +12,17 @@ plan's literal T0 content would eager-import unwritten modules and break
 all downstream tests.
 """
 
+from voice_commander.picker.registry import (
+    BarePickerRegistry,
+    bare_picker,
+    get_global_picker_registry,
+)
 from voice_commander.picker.types import PickerItem, PickerProvider
 
 __all__ = [
+    "BarePickerRegistry",
     "PickerItem",
     "PickerProvider",
+    "bare_picker",
+    "get_global_picker_registry",
 ]
