@@ -21,6 +21,7 @@ def _normalize_spoken(text: str) -> str:
     return " ".join(cleaned.split())
 
 if TYPE_CHECKING:
+    from .picker.registry import BarePickerRegistry
     from .registry import ToolRegistry
 
 
@@ -52,6 +53,7 @@ class VerbRouter:
         self,
         rules: tuple[VerbRule, ...],
         registry: "ToolRegistry | None" = None,
+        picker_registry: "BarePickerRegistry | None" = None,
     ) -> None:
         self._rules = {rule.name: rule for rule in rules}
         self._alias_map: dict[str, str] = {}
@@ -63,6 +65,7 @@ class VerbRouter:
         # The registry is mutable (hot-reload), so we hold a reference and
         # query lazily on each utterance rather than snapshotting at init.
         self._registry = registry
+        self._picker_registry = picker_registry
 
     def route(self, transcript: str) -> Plan | None:
         text = transcript.strip().rstrip(".,!?")
@@ -86,8 +89,22 @@ class VerbRouter:
             return None
         verb = self._rules[verb_name]
 
-        if not tail and verb.default_target is not None:
-            return self._plan_for(verb.default_target, verb.name, tail)
+        if not tail:
+            # Bare verb with a default target (e.g. "click", "scroll") wins
+            # over the picker so existing behaviour is preserved.
+            if verb.default_target is not None:
+                return self._plan_for(verb.default_target, verb.name, tail)
+            # No default target, no tail — try the bare-primitive picker.
+            if self._picker_registry is not None and self._picker_registry.has(verb.name):
+                return Plan(
+                    steps=(ToolCall(name="__picker.open", kwargs={"verb": verb.name}),),
+                    raw_response={
+                        "router": "verb",
+                        "verb": verb.name,
+                        "tail": "",
+                        "bare_picker": True,
+                    },
+                )
 
         if tail:
             for sub in verb.subcommands:

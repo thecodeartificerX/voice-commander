@@ -75,7 +75,8 @@ def test_press_with_tail():
     assert plan.steps == (ToolCall(name="press", kwargs={"combo": "control t"}),)
 
 
-def test_focus_without_tail_misses():
+def test_focus_without_tail_misses_when_no_picker_registered():
+    """Bare verbs still miss unless a BarePickerRegistry is wired in (Task 12)."""
     assert _router().route("focus") is None
 
 
@@ -305,3 +306,50 @@ def test_legacy_minimize_no_longer_routes():
 
 def test_legacy_new_tab_no_longer_routes():
     assert _router().route("new tab") is None
+
+
+# ---------------------------------------------------------------------------
+# Bare primitive picker (ADR 0083)
+# ---------------------------------------------------------------------------
+
+
+def test_bare_focus_with_no_picker_still_misses():
+    """Existing behaviour preserved when no picker registry is wired."""
+    router = VerbRouter(build_default_rules())
+    assert router.route("focus") is None
+
+
+def test_bare_focus_with_picker_registry_routes_to_picker_open():
+    from voice_commander.picker.registry import BarePickerRegistry
+    from voice_commander.picker.types import PickerItem
+
+    reg = BarePickerRegistry()
+    reg.register("focus", lambda: [])
+    router = VerbRouter(build_default_rules(), picker_registry=reg)
+    plan = router.route("focus")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="__picker.open", kwargs={"verb": "focus"}),)
+    assert plan.raw_response["router"] == "verb"
+    assert plan.raw_response["bare_picker"] is True
+
+
+def test_bare_focus_with_picker_tolerates_punctuation():
+    from voice_commander.picker.registry import BarePickerRegistry
+
+    reg = BarePickerRegistry()
+    reg.register("focus", lambda: [])
+    router = VerbRouter(build_default_rules(), picker_registry=reg)
+    assert router.route("Focus.") is not None
+    assert router.route("FOCUS!") is not None
+
+
+def test_focus_with_tail_still_routes_to_focus_primitive():
+    """Adding a picker registry must not change the existing tail-routing path."""
+    from voice_commander.picker.registry import BarePickerRegistry
+
+    reg = BarePickerRegistry()
+    reg.register("focus", lambda: [])
+    router = VerbRouter(build_default_rules(), picker_registry=reg)
+    plan = router.route("focus chrome")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="focus", kwargs={"target": "chrome"}),)
