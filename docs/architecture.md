@@ -930,6 +930,62 @@ inside a running asyncio loop (e.g., from a FastAPI route), it dispatches to a
 
 ---
 
+## 18. Bare-Primitive Picker Framework (ADR 0083)
+
+The picker framework resolves bare primitive verbs (e.g. `focus` with no argument) into
+a numbered disambiguation modal, replacing what was previously a miss.
+
+### `picker/` — package layout
+
+- **`picker.types`**
+  - `PickerItem(label: str, action: Plan)` — frozen dataclass; one numbered candidate.
+  - `PickerProvider = Callable[[], list[PickerItem]]` — callable that returns the current candidate list for a verb.
+- **`picker.registry`**
+  - `BarePickerRegistry` — verb→provider map; singleton accessed via `get_registry()`.
+  - `@bare_picker(verb)` — decorator that registers a `PickerProvider` for a verb on the global registry.
+- **`picker.coerce`**
+  - `coerce_number(text: str, max_n: int) -> int | None` — handles digits, English words, ordinals, prefixed ("number 3"), and suffixed ("third one") forms; returns a 1-based index or `None` on parse failure.
+- **`picker.mru`**
+  - `MruTracker` — thread-safe `deque`-backed ring buffer of `(hwnd, title)` pairs; skips the daemon's own HWND; `top(n, predicate=...)` for filtered snapshots.
+  - `Win32MruPump` — `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` message-pump thread; calls into `MruTracker` on every foreground change; injectable hook + resolver for testing.
+- **`picker.session`**
+  - `PickerSession` — state machine (`open` / `close` / `cancel` / `handle_transcript` / `tick`); publishes `picker.open` and `picker.close` on the `EventBus`; holds the open `PickerProvider` snapshot for the active verb.
+
+### Pipeline integration
+
+The `VerbRouter` returns a synthetic `Plan(steps=(ToolCall("__picker.open", {verb, items}),))` when it sees a bare verb that has a registered `BarePickerProvider`. The daemon's `_process_utterance` intercepts the `__picker.open` step name **before** `Dispatcher.run_plan` and calls `PickerSession.open(verb, items)` instead. While `picker_session.active` is `True`, the pipeline routes the next transcript through `PickerSession.handle_transcript(text)` rather than `VerbRouter.route()`; `handle_transcript` calls `coerce_number`, selects the corresponding `PickerItem.action`, and dispatches it via `Dispatcher`. The session auto-closes on selection, on `cancel`, or on timeout (`tick()` called from the heartbeat thread).
+
+### Sprite rendering
+
+Two new SSE events are added to the catalog (see §7):
+
+| Event type | Payload | Notes |
+|---|---|---|
+| `picker.open` | `{verb: str, items: [{n: int, label: str}]}` | Sprite renders `picker_modal.PickerModalWindow` — centred, always-on-top, numbered list. |
+| `picker.close` | `{verb: str, reason: str}` | Sprite closes the modal; `reason` is `"selected"`, `"cancelled"`, or `"timeout"`. |
+
+The `voice_sprite.picker_modal` module owns the pyglet modal window; it shares the same transparent-overlay recipe as the main sprite window (ADR 0050).
+
+### Config
+
+```toml
+[picker]
+# Global picker defaults (all optional)
+
+[picker.focus]
+max_items = 5        # number of MRU candidates shown (default 5)
+timeout_s  = 8       # auto-cancel after N seconds of silence (default 8)
+```
+
+### Invariants
+
+- `__picker.open` is never registered in `ToolRegistry`; it is a sentinel intercepted in the pipeline only.
+- `focus()` accepts an optional `_hwnd: int` kwarg so picker selections bypass `resolver.resolve_window` fuzzy matching entirely.
+- `MruTracker` runs on the `Win32MruPump` thread; all reads go through the thread-safe `top()` method.
+- `PickerSession` state is owned exclusively by the daemon pipeline worker; it is never mutated from the heartbeat thread (only `tick()` is called there, which is re-entrant safe).
+
+---
+
 ## 9. See Also
 
 - [`../CLAUDE.md`](../CLAUDE.md) — project-wide durable context for agents and contributors
