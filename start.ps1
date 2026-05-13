@@ -258,18 +258,43 @@ if (-not ('VoiceCommander.CancelGuard' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Diagnostics;
+using System.IO;
+using System.Text;
 
 namespace VoiceCommander {
     public static class CancelGuard {
         public static int SupervisorPid;
+        public static string LogPath;
 
         public static void Install() {
             Console.CancelKeyPress += OnCancelKeyPress;
         }
 
+        private static void WriteLog(string line) {
+            try {
+                string path = LogPath;
+                if (string.IsNullOrEmpty(path)) { return; }
+                string dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) {
+                    Directory.CreateDirectory(dir);
+                }
+                File.AppendAllText(
+                    path,
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " " + line + Environment.NewLine,
+                    Encoding.UTF8);
+            } catch {
+                // Never let logging throw.
+            }
+        }
+
         private static void OnCancelKeyPress(object sender, ConsoleCancelEventArgs args) {
             int pid = SupervisorPid;
+            WriteLog("CancelKeyPress fired (SpecialKey=" + args.SpecialKey + ", SupervisorPid=" + pid + ")");
+            try {
+                WriteLog("  stack=" + Environment.StackTrace.Replace("\n", " | "));
+            } catch {}
             if (pid <= 0) {
+                WriteLog("  no supervisor running; letting PS abort normally");
                 return; // No supervisor running — let PS abort the TUI normally.
             }
             try {
@@ -277,13 +302,16 @@ namespace VoiceCommander {
                 try {
                     target = Process.GetProcessById(pid);
                 } catch (ArgumentException) {
+                    WriteLog("  target pid already gone");
                     return; // Already gone.
                 }
                 if (target.HasExited) {
+                    WriteLog("  target already HasExited");
                     return;
                 }
                 Console.Error.WriteLine();
                 Console.Error.WriteLine("Ctrl+C received - tearing down voice-commander tree...");
+                WriteLog("  invoking taskkill /PID " + pid + " /T /F");
                 Process killer = new Process();
                 killer.StartInfo.FileName = "taskkill.exe";
                 killer.StartInfo.Arguments = "/PID " + pid + " /T /F";
@@ -293,10 +321,12 @@ namespace VoiceCommander {
                 killer.StartInfo.RedirectStandardError = true;
                 killer.Start();
                 killer.WaitForExit(3000);
+                WriteLog("  taskkill exit=" + killer.ExitCode);
                 // Suppress the default abort so the PS try/finally runs and
                 // the script reports the supervisor exit code cleanly.
                 args.Cancel = true;
-            } catch {
+            } catch (Exception ex) {
+                WriteLog("  handler exception: " + ex.GetType().Name + ": " + ex.Message);
                 // Best-effort: never let this handler throw.
             }
         }
@@ -304,6 +334,7 @@ namespace VoiceCommander {
 }
 '@
 }
+[VoiceCommander.CancelGuard]::LogPath = Join-Path $PSScriptRoot 'outputs\cancel_guard.log'
 [VoiceCommander.CancelGuard]::Install()
 
 # Phase banner shown in Show-VoiceBanner. Extracted so phase bumps touch one place.
@@ -823,9 +854,19 @@ function Start-VoiceSupervisor {
     $script:SupervisorProc = $proc
     [VoiceCommander.CancelGuard]::SupervisorPid = $proc.Id
 
+    # CRITICAL: touch .Handle before WaitForExit so .ExitCode populates after
+    # the process exits. Without this, Start-Process -PassThru returns a
+    # Process object whose handle is not cached, and $proc.ExitCode reads $null
+    # once the process is gone — masking real crash codes as empty parens in
+    # the user-facing message at the bottom of this script.
+    $null = $proc.Handle
+    Write-Verbose "Supervisor PID=$($proc.Id) Handle cached"
+
     try {
         $proc.WaitForExit()
-        return $proc.ExitCode
+        $code = $proc.ExitCode
+        Write-Verbose "Supervisor exited: ExitCode=$code HasExited=$($proc.HasExited)"
+        return $code
     }
     finally {
         Stop-VoiceSupervisorTree -Process $proc

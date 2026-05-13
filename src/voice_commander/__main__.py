@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import faulthandler
 import logging
 import os
 import platform
+import signal
 import sys
+import threading
+import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -14,6 +18,85 @@ from .daemon import build_streaming_daemon
 from .single_instance import AlreadyRunning, SingleInstanceLock
 
 logger = logging.getLogger(__name__)
+
+
+def _install_exit_diagnostics(cfg: Config) -> None:
+    """Trace every path the daemon can leave by.
+
+    Three hooks:
+
+    * ``atexit`` — runs on normal interpreter teardown (sys.exit, return from main,
+      unhandled exception that propagates out of main). Captures cause + thread snapshot.
+    * ``sys.excepthook`` — last-resort logger for unhandled exceptions on the main
+      thread that would otherwise vanish into a tracestream.
+    * ``signal`` handlers for SIGINT/SIGTERM/SIGBREAK — logs the signal name before
+      the existing handler (registered later in daemon.run) takes over.
+
+    Does NOT replace ``faulthandler`` (signals like SIGSEGV stay on the C-level
+    dump path). This is the soft-exit complement.
+    """
+    exit_log = Path(cfg.logging.file).with_suffix(".exit.log").open(
+        "a", buffering=1, encoding="utf-8",
+    )
+
+    def _stamp() -> str:
+        import datetime
+        return datetime.datetime.now().isoformat(timespec="milliseconds")
+
+    def _on_exit() -> None:
+        try:
+            exit_log.write(f"\n=== {_stamp()} pid={os.getpid()} atexit ===\n")
+            exit_log.write(f"sys.exc_info()={sys.exc_info()}\n")
+            for tid, frame in sys._current_frames().items():
+                exit_log.write(f"\n--- Thread {tid} ---\n")
+                exit_log.write("".join(traceback.format_stack(frame)))
+            exit_log.flush()
+        except Exception:
+            pass
+
+    atexit.register(_on_exit)
+
+    def _excepthook(exc_type, exc_value, exc_tb):  # type: ignore[no-untyped-def]
+        try:
+            exit_log.write(f"\n=== {_stamp()} pid={os.getpid()} unhandled ===\n")
+            traceback.print_exception(exc_type, exc_value, exc_tb, file=exit_log)
+            exit_log.flush()
+        except Exception:
+            pass
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _excepthook
+
+    def _log_signal(signum: int, _frame: object) -> None:
+        try:
+            name = signal.Signals(signum).name  # type: ignore[attr-defined]
+        except Exception:
+            name = str(signum)
+        try:
+            exit_log.write(f"\n=== {_stamp()} pid={os.getpid()} signal={name} ===\n")
+            for tid, frame in sys._current_frames().items():
+                exit_log.write(f"\n--- Thread {tid} ---\n")
+                exit_log.write("".join(traceback.format_stack(frame)))
+            exit_log.flush()
+        except Exception:
+            pass
+        # Re-raise default behaviour so the daemon's own handler in run() still fires.
+        raise KeyboardInterrupt(name)
+
+    # Only log; the daemon installs its own SIGINT/SIGBREAK -> shutdown() inside run().
+    # We register here too so signals that arrive BEFORE run() does are captured.
+    for _signame in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        _sig = getattr(signal, _signame, None)
+        if _sig is not None:
+            try:
+                signal.signal(_sig, _log_signal)
+            except (ValueError, OSError):
+                pass  # not the main thread, or unsupported
+
+    logger.info(
+        "exit diagnostics enabled: atexit + excepthook + signal logger -> %s",
+        exit_log.name,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -133,6 +216,7 @@ def main() -> None:
         return
 
     _enable_crash_reporting(cfg)
+    _install_exit_diagnostics(cfg)
     _log_environment(cfg)
     lock = SingleInstanceLock(Path("outputs/.daemon.lock"))
     try:

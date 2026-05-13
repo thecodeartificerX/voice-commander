@@ -44,6 +44,7 @@ def run(
     try:
         while True:
             daemon = daemon_factory()
+            logger.info("Supervisor waiting on daemon.wait()")
             try:
                 code = daemon.wait()
             except KeyboardInterrupt:
@@ -51,6 +52,7 @@ def run(
                 daemon.terminate(grace_s=SHUTDOWN_GRACE_S)
                 raise
 
+            logger.info("daemon.wait() returned code=%d", code)
             if code == EXIT_RESTART:
                 logger.info("Daemon requested restart (code=%d); respawning", code)
                 continue
@@ -60,4 +62,5 @@ def run(
             logger.error("Daemon crashed (code=%d); supervisor exiting", code)
             return code
     finally:
+        logger.info("Supervisor loop finally: terminating sprite")
         sprite.terminate(grace_s=SHUTDOWN_GRACE_S)
