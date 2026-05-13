@@ -237,6 +237,7 @@ class StreamingDaemon:
         self._cfg: Config | None = None
         # Config file watcher — set by build_streaming_daemon; stopped in shutdown().
         self._config_watcher: Any = None
+        self._mru_pump: Any = None
 
     def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         if self._event_bus is not None:
@@ -877,6 +878,14 @@ class StreamingDaemon:
                 logger.exception("Error stopping config watcher")
             self._config_watcher = None
 
+        # Stop MRU pump (ADR 0083 — picker framework).
+        if self._mru_pump is not None:
+            try:
+                self._mru_pump.stop()
+            except Exception:
+                logger.exception("Error stopping MRU pump")
+            self._mru_pump = None
+
         # Stop observability store.
         if self._store is not None:
             try:
@@ -960,6 +969,47 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
 
     event_bus = EventBus()
 
+    # --- Bare-primitive picker (ADR 0083) ---
+    from .picker.mru import MruTracker, Win32MruPump
+    from .picker.registry import get_global_picker_registry
+    from .picker.session import PickerSession
+    from .tools.focus_picker import FocusPickerSettings, register_focus_picker
+
+    picker_session: PickerSession | None = None
+    picker_registry = get_global_picker_registry()
+    mru_tracker: MruTracker | None = None
+    mru_pump: Win32MruPump | None = None
+
+    if cfg.picker.enabled:
+        mru_tracker = MruTracker(capacity=max(8, cfg.picker.focus.cap * 4))
+
+        def _foreground_hwnd() -> int:
+            try:
+                import win32gui
+
+                return int(win32gui.GetForegroundWindow() or 0)
+            except Exception:
+                return 0
+
+        register_focus_picker(
+            tracker=mru_tracker,
+            settings=FocusPickerSettings(
+                cap=cfg.picker.focus.cap,
+                exclude_foreground=cfg.picker.focus.exclude_foreground,
+                exclude_self=cfg.picker.focus.exclude_self,
+            ),
+            foreground_hwnd=_foreground_hwnd,
+        )
+
+        picker_session = PickerSession(
+            bus=event_bus,
+            cancel_words=tuple(cfg.picker.cancel_words),
+            timeout_sec=float(cfg.picker.timeout_sec),
+        )
+
+        mru_pump = Win32MruPump(tracker=mru_tracker)
+        mru_pump.start()
+
     # Backend keyboard recorder for the Builder UI's `press` combo capture.
     # Single instance, lazy listener (one record session at a time).
     from voice_commander.recorder import KeyRecorder
@@ -1038,8 +1088,14 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         recorder=None,
         transcriber=transcriber,
         dispatcher=dispatcher,
-        verb_router=VerbRouter(build_default_rules(), registry=registry),
+        verb_router=VerbRouter(
+            build_default_rules(),
+            registry=registry,
+            picker_registry=picker_registry if cfg.picker.enabled else None,
+        ),
         registry=registry,
+        picker_session=picker_session,
+        picker_registry=picker_registry if cfg.picker.enabled else None,
         min_confidence=cfg.transcription.min_confidence,
         min_word_count=cfg.vad.gates.min_word_count,
         max_no_speech_prob=cfg.vad.gates.max_no_speech_prob,
@@ -1049,6 +1105,7 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         tracer=_obs_tracer,
         store=_obs_store,
     )
+    daemon._mru_pump = mru_pump
     daemon._recorder = StreamingRecorder(
         device=cfg.audio.device if cfg.audio.device >= 0 else None,
         channels=cfg.audio.channels,
