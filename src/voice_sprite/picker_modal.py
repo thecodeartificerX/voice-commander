@@ -213,17 +213,44 @@ else:
                 logger.exception("apply_click_through failed for picker modal")
 
         def show_noactivate(self) -> None:
-            """Show the modal via Win32 ``SW_SHOWNA`` — visible but never activates.
+            """Show the modal without activating it.
 
-            Bypasses pyglet's :meth:`set_visible` which calls
-            :meth:`activate` and would steal foreground from whatever app
-            the user is on. Updates pyglet's internal visible flag so its
-            redraw loop still services the window.
+            Mirrors pyglet's :meth:`set_visible(True)` (which uses
+            ``SetWindowPos`` with ``SWP_SHOWWINDOW``) but adds
+            ``SWP_NOACTIVATE`` and skips the ``self.activate()`` call —
+            both of which would otherwise steal foreground from the
+            user's app and break the daemon's subsequent focus call.
+
+            ``HWND_TOPMOST`` keeps the modal above the user's windows
+            without needing them to lose foreground.
             """
             import ctypes
 
-            SW_SHOWNA = 8  # ShowWindow flag: show in current state, no activation
-            ctypes.windll.user32.ShowWindow(self._hwnd, SW_SHOWNA)
+            HWND_TOPMOST = -1
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_SHOWWINDOW = 0x0040
+            SWP_NOACTIVATE = 0x0010
+            user32 = ctypes.windll.user32
+            ok = user32.SetWindowPos(
+                self._hwnd,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE,
+            )
+            logger.info(
+                "picker_modal.show_noactivate hwnd=%d SetWindowPos=%s",
+                self._hwnd,
+                bool(ok),
+            )
+            try:
+                self.dispatch_event("_on_internal_resize", self._width, self._height)
+                self.dispatch_event("on_show")
+            except Exception:
+                logger.exception("dispatch_event during show_noactivate failed")
             self._visible = True
 
         def refresh(self) -> None:
