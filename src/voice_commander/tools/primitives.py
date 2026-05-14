@@ -404,3 +404,36 @@ def scroll(direction: str, amount: int = 3) -> None:
     pyautogui.scroll(clicks)
 
 
+# ---------------------------------------------------------------------------
+# tabs  (Chromium browser tab activation, picker-only)
+# ---------------------------------------------------------------------------
+
+
+@tool
+def tabs(_browser_hwnd: int = 0, _tab_index: int = -1, _tab_title: str = "") -> int:
+    """Activate a tab in the Chromium browser at ``_browser_hwnd``.
+
+    Dispatched exclusively by the bare-primitive ``tabs`` picker — saying
+    "tabs." alone opens a numbered modal of the foreground browser's
+    page tabs, and selecting a number invokes this tool with the chosen
+    tab's index and title hint pre-resolved.
+
+    ``_tab_title`` is the tab's title at picker-build time. If the tab
+    strip has shifted between picker open and selection, the activator
+    falls back to a title scan before giving up.
+
+    Returns 1 on successful activation, 0 otherwise. The return is a
+    convenience for plan_outcome telemetry — the side-effect is the
+    user-visible tab switch.
+    """
+    from .tabs_uia import invoke_chromium_tab
+
+    if not _browser_hwnd or _tab_index < 0:
+        logger.warning(
+            "tabs() requires _browser_hwnd and _tab_index from the picker"
+        )
+        return 0
+    ok = invoke_chromium_tab(int(_browser_hwnd), int(_tab_index), _tab_title)
+    return 1 if ok else 0
+
+

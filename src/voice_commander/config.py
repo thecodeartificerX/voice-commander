@@ -125,11 +125,17 @@ class PickerFocusConfig:
 
 
 @dataclass(frozen=True)
+class PickerTabsConfig:
+    cap: int = 9
+
+
+@dataclass(frozen=True)
 class PickerConfig:
     enabled: bool = True
     timeout_sec: int = 5
     cancel_words: tuple[str, ...] = ("cancel", "nevermind", "stop")
     focus: PickerFocusConfig = field(default_factory=PickerFocusConfig)
+    tabs: PickerTabsConfig = field(default_factory=PickerTabsConfig)
 
 
 @dataclass(frozen=True)
@@ -165,6 +171,7 @@ class Config:
 
         picker_raw = dict(raw.get("picker", {}))
         focus_raw = picker_raw.pop("focus", {})
+        tabs_raw = picker_raw.pop("tabs", {})
         cancel_raw = picker_raw.pop("cancel_words", None)
         if cancel_raw is not None:
             if not isinstance(cancel_raw, list) or not all(isinstance(w, str) for w in cancel_raw):
@@ -184,7 +191,11 @@ class Config:
             observability=_section(ObservabilityConfig, raw.get("observability", {})),
             picker=_section(
                 PickerConfig,
-                {**picker_raw, "focus": _section(PickerFocusConfig, focus_raw)},
+                {
+                    **picker_raw,
+                    "focus": _section(PickerFocusConfig, focus_raw),
+                    "tabs": _section(PickerTabsConfig, tabs_raw),
+                },
             ),
         )
 

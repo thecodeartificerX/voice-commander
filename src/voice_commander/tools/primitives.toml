@@ -121,3 +121,33 @@ description = "Number of scroll clicks."
 required = false
 type = "integer"
 default = 3
+
+[tools.tabs]
+phrases = []
+description = "Activate a page tab in a Chromium-derived browser (Chrome, Edge, Brave, Comet, ...). Dispatched only by the bare-primitive 'tabs' picker — never called directly by the LLM or user."
+enabled = true
+settle_ms = 100
+llm_only = true
+internal = true
+
+[tools.tabs.args._browser_hwnd]
+description = "Win32 window handle of the browser. Resolved by the picker at enumeration time."
+required = false
+type = "integer"
+default = 0
+
+[tools.tabs.args._tab_index]
+description = "Zero-based index of the tab in the strip at enumeration time."
+required = false
+type = "integer"
+default = -1
+
+[tools.tabs.args._tab_title]
+description = "Tab title captured at enumeration time. Used as a fallback match when the strip shifts between picker open and selection."
+required = false
+type = "string"
+default = ""
+
+[tools.tabs.returns.ok]
+type = "integer"
+description = "1 if the tab was activated, 0 on failure."

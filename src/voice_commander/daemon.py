@@ -993,6 +993,7 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
     from .picker.registry import get_global_picker_registry, reset_global_picker_registry
     from .picker.session import PickerSession
     from .tools.focus_picker import FocusPickerSettings, register_focus_picker
+    from .tools.tabs_picker import TabsPickerSettings, register_tabs_picker
 
     picker_session: PickerSession | None = None
     # Reset the global picker registry so build_streaming_daemon is idempotent —
@@ -1022,6 +1023,14 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
                 exclude_self=cfg.picker.focus.exclude_self,
             ),
             foreground_hwnd=_foreground_hwnd,
+        )
+
+        # Tabs picker — saying "tabs." opens a numbered modal of the
+        # foreground Chromium browser's page tabs. Shares the foreground
+        # accessor with focus so both pickers see the same active window.
+        register_tabs_picker(
+            foreground_hwnd=_foreground_hwnd,
+            settings=TabsPickerSettings(cap=cfg.picker.tabs.cap),
         )
 
         picker_session = PickerSession(

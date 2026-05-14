@@ -43,6 +43,7 @@ dependencies = [
     "httpx-sse>=0.4.0",
     "rapidfuzz>=3.14.5",
     "watchdog>=6.0.0",
+    "uiautomation>=2.0.29",
 ]
 
 [project.urls]

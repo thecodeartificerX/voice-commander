@@ -353,3 +353,35 @@ def test_focus_with_tail_still_routes_to_focus_primitive():
     plan = router.route("focus chrome")
     assert plan is not None
     assert plan.steps == (ToolCall(name="focus", kwargs={"target": "chrome"}),)
+
+
+def test_bare_tabs_with_picker_registry_routes_to_picker_open():
+    """Saying 'tabs.' alone opens the tabs picker (browser tab list)."""
+    from voice_commander.picker.registry import BarePickerRegistry
+
+    reg = BarePickerRegistry()
+    reg.register("tabs", lambda: [])
+    router = VerbRouter(build_default_rules(), picker_registry=reg)
+    plan = router.route("tabs.")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="__picker.open", kwargs={"verb": "tabs"}),)
+    assert plan.raw_response["router"] == "verb"
+    assert plan.raw_response["bare_picker"] is True
+
+
+def test_bare_tabs_with_no_picker_misses():
+    """Without a registered tabs picker, bare 'tabs' has no tail and no
+    default target — falls through to None so the daemon miss-chimes."""
+    router = VerbRouter(build_default_rules())
+    assert router.route("tabs") is None
+
+
+def test_tabs_with_tail_still_misses():
+    """``tabs`` is bare-only — there's no raw_tail_tool, so 'tabs chrome'
+    doesn't accidentally route somewhere unexpected."""
+    from voice_commander.picker.registry import BarePickerRegistry
+
+    reg = BarePickerRegistry()
+    reg.register("tabs", lambda: [])
+    router = VerbRouter(build_default_rules(), picker_registry=reg)
+    assert router.route("tabs chrome") is None

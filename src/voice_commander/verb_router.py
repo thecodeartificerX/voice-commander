@@ -204,6 +204,11 @@ def build_default_rules() -> tuple[VerbRule, ...]:
             ),
         ),
         VerbRule("focus", ("focus",), raw_tail_tool="focus", raw_tail_arg="target"),
+        # ``tabs`` is bare-only: no default_target and no raw_tail_tool, so it
+        # always falls through to the bare-primitive picker. The tabs picker
+        # decides at runtime whether the foreground window has tabs (Chromium
+        # browser) or not (anything else → empty list → miss-chime).
+        VerbRule("tabs", ("tabs",)),
         VerbRule("open", ("open",), raw_tail_tool="open", raw_tail_arg="target"),
         VerbRule("type", ("type",), raw_tail_tool="type", raw_tail_arg="text"),
         VerbRule("press", ("press",), raw_tail_tool="press", raw_tail_arg="combo"),
