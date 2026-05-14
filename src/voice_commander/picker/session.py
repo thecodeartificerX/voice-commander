@@ -91,7 +91,15 @@ class PickerSession:
             self._opened_at = self._now()
         payload = {
             "verb": verb,
-            "items": [{"n": i + 1, "label": it.label} for i, it in enumerate(items_tuple)],
+            "items": [
+                {
+                    "n": i + 1,
+                    "label": it.label,
+                    "app": it.app,
+                    "title": it.title,
+                }
+                for i, it in enumerate(items_tuple)
+            ],
         }
         self._bus.publish("picker.open", payload)
 

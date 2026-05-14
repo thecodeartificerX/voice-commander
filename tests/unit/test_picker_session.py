@@ -40,8 +40,8 @@ def test_open_sets_active_and_emits_event():
     payload = bus.events[0][1]
     assert payload["verb"] == "focus"
     assert payload["items"] == [
-        {"n": 1, "label": "Chrome"},
-        {"n": 2, "label": "VS Code"},
+        {"n": 1, "label": "Chrome", "app": "", "title": ""},
+        {"n": 2, "label": "VS Code", "app": "", "title": ""},
     ]
 
 

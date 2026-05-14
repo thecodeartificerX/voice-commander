@@ -24,26 +24,45 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class FocusPickerSettings:
-    cap: int = 5
+    cap: int = 7
     exclude_foreground: bool = True
     exclude_self: bool = True
 
 
 def format_label(entry: MruEntry, max_len: int = 60) -> str:
     """Render an MRU entry as ``"<Pretty-Proc> — <title>"``, truncated."""
+    app, title = format_app_title(entry)
+    if app and title:
+        label = f"{app} — {title}"
+    elif app:
+        label = app
+    else:
+        label = title
+    if len(label) > max_len:
+        label = label[: max_len - 1].rstrip() + "…"
+    return label
+
+
+def format_app_title(entry: MruEntry, max_title_len: int = 70) -> tuple[str, str]:
+    """Split an MRU entry into ``(pretty_app, truncated_title)`` for two-line cards."""
     proc = entry.proc_name
     if proc.lower().endswith(".exe"):
         proc = proc[:-4]
     proc = proc[:1].upper() + proc[1:] if proc else ""
-    if proc and entry.title:
-        label = f"{proc} — {entry.title}"
-    elif proc:
-        label = proc
-    else:
-        label = entry.title
-    if len(label) > max_len:
-        label = label[: max_len - 1].rstrip() + "…"
-    return label
+
+    title = entry.title or ""
+    # Strip noisy " - <App>" suffixes so the title line doesn't repeat the app cell.
+    if proc:
+        suffix = f" - {proc}"
+        if title.endswith(suffix):
+            title = title[: -len(suffix)].rstrip()
+        suffix_em = f" — {proc}"
+        if title.endswith(suffix_em):
+            title = title[: -len(suffix_em)].rstrip()
+
+    if len(title) > max_title_len:
+        title = title[: max_title_len - 1].rstrip() + "…"
+    return proc, title
 
 
 def build_focus_picker(
@@ -108,6 +127,7 @@ def build_focus_picker(
         items: list[PickerItem] = []
         for e in entries:
             label = format_label(e)
+            app, title = format_app_title(e)
             plan = Plan(
                 steps=(ToolCall(name="focus", kwargs={"_hwnd": int(e.hwnd)}),),
                 raw_response={
@@ -117,7 +137,7 @@ def build_focus_picker(
                     "hwnd": int(e.hwnd),
                 },
             )
-            items.append(PickerItem(label=label, action=plan))
+            items.append(PickerItem(label=label, action=plan, app=app, title=title))
         return items
 
     return _provider
