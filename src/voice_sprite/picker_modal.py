@@ -225,6 +225,7 @@ else:
             without needing them to lose foreground.
             """
             import ctypes
+            from ctypes import wintypes
 
             HWND_TOPMOST = -1
             SWP_NOMOVE = 0x0002
@@ -232,6 +233,20 @@ else:
             SWP_SHOWWINDOW = 0x0040
             SWP_NOACTIVATE = 0x0010
             user32 = ctypes.windll.user32
+            # MUST set argtypes — ctypes' default int → c_int (32-bit)
+            # silently truncates HWND on x64. HWND_TOPMOST=-1 then arrives
+            # as 0x????????FFFFFFFF instead of all-FFs, SetWindowPos can't
+            # match it in the Z-order and returns FALSE → modal never shows.
+            user32.SetWindowPos.argtypes = [
+                wintypes.HWND,
+                wintypes.HWND,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                wintypes.UINT,
+            ]
+            user32.SetWindowPos.restype = wintypes.BOOL
             ok = user32.SetWindowPos(
                 self._hwnd,
                 HWND_TOPMOST,
