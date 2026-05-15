@@ -21,6 +21,8 @@ def _normalize_spoken(text: str) -> str:
     return " ".join(cleaned.split())
 
 if TYPE_CHECKING:
+    # Runtime import of _HEAD_ALIASES is deferred into route() to break the
+    # circular import (chain.py imports VerbRule from this module).
     from .chain import ChainParser
     from .picker.registry import BarePickerRegistry
     from .registry import ToolRegistry
@@ -80,7 +82,7 @@ class VerbRouter:
         #    to avoid a circular import: chain.py imports VerbRule from this
         #    module, so a module-level import here would catch verb_router
         #    mid-initialisation before VerbRule is defined.
-        head_lower = text.split(" ", 1)[0].lower().rstrip(".,!?")
+        head_lower = text.split(" ", 1)[0].lower()
         if self._chain_parser is not None:
             from .chain import _HEAD_ALIASES as _CHAIN_HEADS  # noqa: PLC0415
             if head_lower in _CHAIN_HEADS:

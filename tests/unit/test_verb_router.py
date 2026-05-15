@@ -391,13 +391,11 @@ def test_tabs_with_tail_still_misses():
 # Chain meta-verb routing (Task 7)
 # ---------------------------------------------------------------------------
 
-from voice_commander.chain import ChainParser
-
-
 def _router_with_chain() -> VerbRouter:
-    rules = build_default_rules()
+    from voice_commander.chain import ChainParser
     from voice_commander.registry import ToolRegistry
 
+    rules = build_default_rules()
     reg = ToolRegistry()
     return VerbRouter(rules, registry=reg, chain_parser=ChainParser(reg, rules))
 
@@ -426,3 +424,8 @@ def test_chain_without_parser_falls_through_to_miss():
 def test_chain_head_rejected_payload_returns_none():
     plan = _router_with_chain().route("chain open click")
     assert plan is None  # forbidden verb mid-chain
+
+
+def test_chain_bare_with_parser_misses():
+    # head "chain" but no tail -> parser receives empty string -> None.
+    assert _router_with_chain().route("chain") is None
