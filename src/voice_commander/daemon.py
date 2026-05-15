@@ -30,6 +30,7 @@ from .observability import Store, Tracer
 from .picker.registry import BarePickerRegistry
 from .picker.session import PickerSession
 from .verb_router import VerbRouter, build_default_rules
+from .chain import ChainParser
 from .observability.errors import classify as _classify_error
 from .plan import Plan, PlanOutcome
 from .registry import ToolRegistry, discover
@@ -1203,6 +1204,10 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
             build_default_rules(),
             registry=registry,
             picker_registry=picker_registry if cfg.picker.enabled else None,
+            chain_parser=ChainParser(
+                registry=registry,
+                verb_rules=build_default_rules(),
+            ),
         ),
         registry=registry,
         picker_session=picker_session,
