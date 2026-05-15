@@ -53,4 +53,120 @@ class ChainParser:
     verb_rules: tuple[VerbRule, ...]
 
     def parse(self, tail: str) -> Plan | None:
-        raise NotImplementedError
+        normalized = _normalize_spoken(tail)
+        if not normalized:
+            return None
+        words = normalized.split()
+        if not words:
+            return None
+
+        candidates = self._build_candidates()
+        if not candidates:
+            return None
+
+        user_steps: list[ToolCall] = []
+        cursor = 0
+        while cursor < len(words):
+            match = self._match_at(words, cursor, candidates)
+            if match is None:
+                return None
+            call, consumed = match
+            user_steps.append(call)
+            cursor += consumed
+
+        if len(user_steps) < 2:
+            return None
+
+        steps: list[ToolCall] = []
+        for i, s in enumerate(user_steps):
+            if i > 0:
+                steps.append(
+                    ToolCall(
+                        name="wait",
+                        kwargs={"ms": INTER_STEP_MS},
+                        internal=True,
+                    )
+                )
+            steps.append(s)
+
+        return Plan(
+            steps=tuple(steps),
+            raw_response={
+                "router": "chain",
+                "tokens": [s.name for s in user_steps],
+            },
+            strict=True,
+        )
+
+    def _build_candidates(self) -> list[tuple[tuple[str, ...], ToolCall, int]]:
+        """Return (spoken_tokens, ToolCall, priority) candidates.
+
+        ``priority`` is 1 for registered command/workflow entries, 0 for
+        primitive verb rules. Ties at equal token count go to the higher
+        priority so registered commands beat nullary primitives.
+        """
+        out: list[tuple[tuple[str, ...], ToolCall, int]] = []
+
+        # Registered commands + workflows. Lazy-import to avoid touching the
+        # registry surface area in tests that don't need entries.
+        for entry in self.registry.all():
+            if not getattr(entry, "enabled", True):
+                continue
+            if getattr(entry, "origin", None) not in ("command", "workflow"):
+                continue
+            name_tokens = tuple(_spoken(entry.name).split())
+            if name_tokens:
+                out.append((name_tokens, ToolCall(name=entry.name, kwargs={}), 1))
+            for phrase in getattr(entry, "phrases", ()):  # synonyms
+                p = tuple(_spoken(phrase).split())
+                if p:
+                    out.append((p, ToolCall(name=entry.name, kwargs={}), 1))
+
+        # Nullary primitive verbs (default_target present, name allowed).
+        for rule in self.verb_rules:
+            if rule.default_target is None:
+                continue
+            if rule.name in _FORBIDDEN:
+                continue
+            for alias in rule.aliases:
+                a = tuple(_spoken(alias).split())
+                if a:
+                    out.append(
+                        (
+                            a,
+                            ToolCall(
+                                name=rule.default_target.tool,
+                                kwargs=dict(rule.default_target.kwargs),
+                            ),
+                            0,
+                        )
+                    )
+
+        # Sort: longest token-count first, then higher priority first.
+        out.sort(key=lambda c: (len(c[0]), c[2]), reverse=True)
+        return out
+
+    def _match_at(
+        self,
+        words: list[str],
+        cursor: int,
+        candidates: list[tuple[tuple[str, ...], ToolCall, int]],
+    ) -> tuple[ToolCall, int] | None:
+        for spoken_tokens, call, _prio in candidates:
+            n = len(spoken_tokens)
+            if cursor + n > len(words):
+                continue
+            if tuple(words[cursor : cursor + n]) == spoken_tokens:
+                # Reject if this match resolves to a forbidden primitive
+                # name. (Defense-in-depth — candidates list already excludes
+                # forbidden verbs, but registered commands could shadow them
+                # at the same token, and we want chain explicitly to refuse.)
+                if call.name in _FORBIDDEN:
+                    return None
+                return call, n
+        # No candidate matched at this cursor: also probe whether the next
+        # token is a forbidden alias so the rejection is unambiguous.
+        head = words[cursor]
+        if head in _FORBIDDEN:
+            return None
+        return None
