@@ -61,7 +61,8 @@ class Dispatcher:
             else contextlib.nullcontext()
         )
         with _plan_ctx as plan_span:
-            self._feedback.on_plan_start(transcript, len(plan.steps))
+            visible_steps = sum(1 for s in plan.steps if not s.internal)
+            self._feedback.on_plan_start(transcript, visible_steps)
             start_s = time.perf_counter()
             executed = 0
             total = len(plan.steps)
@@ -108,7 +109,8 @@ class Dispatcher:
                         ret = tool.func(**step.kwargs)
                         if step_span is not None and hasattr(step_span, "set_output"):
                             step_span.set_output(ret)
-                        self._publish("tool_fired", {"name": step.name})
+                        if not step.internal:
+                            self._publish("tool_fired", {"name": step.name})
                     except Exception as e:
                         cat = _classify_error(e, where="dispatcher")
                         if step_span is not None and hasattr(step_span, "set_error_category"):
