@@ -57,8 +57,6 @@ class ChainParser:
         if not normalized:
             return None
         words = normalized.split()
-        if not words:
-            return None
 
         candidates = self._build_candidates()
         if not candidates:
@@ -110,14 +108,14 @@ class ChainParser:
         # Registered commands + workflows. Lazy-import to avoid touching the
         # registry surface area in tests that don't need entries.
         for entry in self.registry.all():
-            if not getattr(entry, "enabled", True):
+            if not entry.enabled:
                 continue
-            if getattr(entry, "origin", None) not in ("command", "workflow"):
+            if entry.origin not in ("command", "workflow"):
                 continue
             name_tokens = tuple(_spoken(entry.name).split())
             if name_tokens:
                 out.append((name_tokens, ToolCall(name=entry.name, kwargs={}), 1))
-            for phrase in getattr(entry, "phrases", ()):  # synonyms
+            for phrase in entry.phrases:  # synonyms
                 p = tuple(_spoken(phrase).split())
                 if p:
                     out.append((p, ToolCall(name=entry.name, kwargs={}), 1))
@@ -164,9 +162,4 @@ class ChainParser:
                 if call.name in _FORBIDDEN:
                     return None
                 return call, n
-        # No candidate matched at this cursor: also probe whether the next
-        # token is a forbidden alias so the rejection is unambiguous.
-        head = words[cursor]
-        if head in _FORBIDDEN:
-            return None
         return None

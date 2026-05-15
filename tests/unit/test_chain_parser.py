@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-import pytest
-
 from voice_commander.chain import ChainParser, INTER_STEP_MS
-from voice_commander.plan import Plan, ToolCall
-from voice_commander.registry import ToolEntry, ToolRegistry
+from voice_commander.registry import ToolRegistry
 from voice_commander.verb_router import build_default_rules
 
 
@@ -40,6 +35,7 @@ def test_two_nullary_primitives_plan_has_internal_wait():
     assert plan.steps[1].internal is True
     assert plan.steps[1].kwargs == {"ms": INTER_STEP_MS}
     assert plan.steps[2].internal is False
+    assert plan.raw_response == {"router": "chain", "tokens": ["click", "click"]}
 
 
 def test_three_primitives_two_internal_waits():
