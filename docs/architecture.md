@@ -460,8 +460,8 @@ def validate_or_die(registry: ToolRegistry, store: ToolMetadataStore) -> None: .
 4. User speaks. PortAudio callback copies PCM chunks to `raw_q`.
 5. VAD worker drains `raw_q`: `Resampler.process(chunk)` → 16 kHz frames → `VADGate.process(frame)`.
 6. When speech ends (or max-utterance guard fires), `VADGate.process()` returns utterance ndarray.
-7. VAD worker calls `utterance_sink(ndarray)` → `StreamingDaemon._on_utterance()` → `utt_q.put_nowait(ndarray)`.
-8. Pipeline worker picks up utterance: async WAV write to `outputs/last_utterance.wav` (fire-and-forget).
+7. VAD worker calls `utterance_sink(ndarray)` → `StreamingDaemon._on_utterance()` → snapshots `_audio_gen` and `utt_q.put_nowait((ndarray, gen))` (ADR 0025 §10).
+8. Pipeline worker picks up utterance, unpacks `(audio, gen)`, runs the pre-transcribe stale-gen check (drop silently if `gen != _audio_gen`), then async WAV write to `outputs/last_utterance.wav` (fire-and-forget).
 9. `Transcriber.transcribe(utterance)` → `TranscriptionResult`.
 10. `feedback.on_transcript(...)` logs transcript.
 11. Word-count gate: drop if fewer than `min_word_count` words.

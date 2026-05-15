@@ -149,8 +149,8 @@ def test_pipeline_processes_utterance(tmp_path):
     pipeline_done = threading.Event()
     original_process = daemon._process_utterance
 
-    def _patched_process(utt):
-        original_process(utt)
+    def _patched_process(utt, **kwargs):
+        original_process(utt, **kwargs)
         pipeline_done.set()
 
     daemon._process_utterance = _patched_process
@@ -397,8 +397,8 @@ def _run_process_utterance(daemon: StreamingDaemon, tmp_path) -> None:
     done = threading.Event()
     original = daemon._process_utterance
 
-    def _patched(utt):
-        original(utt)
+    def _patched(utt, **kwargs):
+        original(utt, **kwargs)
         done.set()
 
     daemon._process_utterance = _patched

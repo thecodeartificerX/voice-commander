@@ -231,8 +231,8 @@ def test_pipeline_waits_for_transcriber_ready_event(tmp_path):
     pipeline_done = threading.Event()
     original_process = daemon._process_utterance
 
-    def _patched_process(utt):
-        original_process(utt)
+    def _patched_process(utt, **kwargs):
+        original_process(utt, **kwargs)
         pipeline_done.set()
 
     daemon._process_utterance = _patched_process
@@ -293,8 +293,8 @@ def test_pipeline_skips_when_transcriber_not_ready_within_timeout(tmp_path):
     # Track the pipeline processing completion
     original_process = daemon._process_utterance
 
-    def _patched_process(utt):
-        original_process(utt)
+    def _patched_process(utt, **kwargs):
+        original_process(utt, **kwargs)
         skip_done.set()
 
     daemon._process_utterance = _patched_process

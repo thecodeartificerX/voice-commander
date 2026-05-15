@@ -209,7 +209,9 @@ class StreamingDaemon:
         )
         self._store = store
 
-        self._utt_q: queue.Queue[npt.NDArray[np.float32] | None] = queue.Queue(maxsize=8)
+        self._utt_q: queue.Queue[
+            tuple[npt.NDArray[np.float32], int] | npt.NDArray[np.float32] | None
+        ] = queue.Queue(maxsize=8)
         self._pipeline_thread: threading.Thread | None = None
         self._heartbeat_thread: threading.Thread | None = None
         self._hotkey: HotkeyController | None = None
@@ -226,6 +228,16 @@ class StreamingDaemon:
         # any in-flight utterances drained. The Scroll Lock session conceptually
         # remains "open" so the user can unmute back into the same session.
         self._muted: bool = False
+        # Audio-generation counter. Bumped on every state transition that
+        # ends audio capture (mute, scroll-lock close) or restarts it
+        # (unmute, scroll-lock open). Each utterance is tagged with the
+        # generation in which it was *enqueued*; the pipeline drops
+        # utterances whose tag does not match the current generation.
+        # This closes the race where _muted is read True only AFTER
+        # transcribe() returns — by then the utterance is already past the
+        # boolean guard, but its generation has been invalidated and it
+        # is dropped anyway. See ADR 0025.
+        self._audio_gen: int = 0
         self._verb_router = verb_router
         self._picker_session = picker_session
         self._picker_registry = picker_registry
@@ -320,6 +332,10 @@ class StreamingDaemon:
             return
         if self._session_active:
             was_muted = self._muted
+            # Bump audio generation BEFORE close + drain so any utterance the
+            # VAD worker is mid-finalize on, or the pipeline thread already
+            # popped, is dropped on its post-transcribe gen check.
+            self._audio_gen += 1
             # In muted sub-state the audio stream is already torn down — do not
             # call close_session() again (would log a misleading warning and
             # potentially raise).
@@ -340,6 +356,10 @@ class StreamingDaemon:
             self._publish("session_stopped")
             logger.info("Session closed")
         else:
+            # Bump generation on session open too, so any leftover utterance
+            # from the previous session (e.g. queued just before close that
+            # raced past _drain_utt_q) is invalidated.
+            self._audio_gen += 1
             try:
                 self._recorder.open_session()
                 self._session_active = True
@@ -376,6 +396,9 @@ class StreamingDaemon:
         if self._recorder is None:
             return
         if self._muted:
+            # Bump generation on unmute so any utterance still in the
+            # pipeline tagged with the muted-period generation is dropped.
+            self._audio_gen += 1
             try:
                 self._recorder.open_session()
                 self._muted = False
@@ -387,6 +410,16 @@ class StreamingDaemon:
                 # try again. Surface via feedback so the chime is consistent.
                 self._feedback.on_error("recorder.open_session", e)
         else:
+            # Bump generation FIRST. The pipeline worker may have already
+            # popped an utterance from _utt_q before the call to
+            # _drain_utt_q() below; that utterance is now mid-transcribe()
+            # holding _audio_gen=N. After this bump, _audio_gen=N+1; when
+            # transcribe() returns the post-transcribe gen check fires
+            # and the utterance is dropped silently. This is the layer
+            # the boolean _muted check could not provide because _muted
+            # is only written *after* close_session() returns (which
+            # itself blocks on the VAD worker join).
+            self._audio_gen += 1
             try:
                 self._recorder.close_session()
             except Exception:
@@ -415,11 +448,19 @@ class StreamingDaemon:
 
     def _pipeline_loop(self) -> None:
         while True:
-            utterance = self._utt_q.get()
-            if utterance is None:
+            item = self._utt_q.get()
+            if item is None:
                 break
+            # Items enqueued by _on_utterance are (audio, gen) tuples.
+            # Tests inject bare ndarrays directly — treat those as gen=None
+            # (skip the generation check, fall through to the legacy
+            # _muted boolean guard) for backward compatibility.
+            if isinstance(item, tuple):
+                utterance, gen = item
+            else:
+                utterance, gen = item, None
             try:
-                self._process_utterance(utterance)
+                self._process_utterance(utterance, gen=gen)
             except MemoryError:
                 raise
             except Exception as e:
@@ -427,7 +468,12 @@ class StreamingDaemon:
                 logger.exception("unhandled exception in utterance processing (category=%s)", cat)
                 self._feedback.on_error("pipeline", e)
 
-    def _process_utterance(self, utterance: npt.NDArray[np.float32]) -> None:
+    def _process_utterance(
+        self,
+        utterance: npt.NDArray[np.float32],
+        *,
+        gen: int | None = None,
+    ) -> None:
         """Single-utterance hot path: transcribe → gate → route → dispatch.
 
         Thread context: called exclusively on the **``vc-pipeline`` worker thread**
@@ -463,6 +509,17 @@ class StreamingDaemon:
         """
         # Async write for post-mortem debugging
         self._write_utterance_async(utterance)
+
+        # Pre-transcribe generation check: cheap escape when mute / scroll-lock
+        # close has already invalidated this utterance. Saves the transcribe()
+        # cost and avoids any side-effects.
+        if gen is not None and gen != self._audio_gen:
+            logger.debug(
+                "Stale-gen drop (pre-transcribe): utt gen=%s, current=%s",
+                gen,
+                self._audio_gen,
+            )
+            return
 
         # Gate: wait for transcriber model to finish loading.  On timeout (30 s)
         # the utterance is dropped with a miss chime — the daemon stays up.
@@ -511,10 +568,27 @@ class StreamingDaemon:
 
             self._tracer.update_transcript(run.run_id, result.text)
 
-            # Mute guard (ADR 0025): an utterance may have been mid-transcription
-            # when the user toggled mute. Drop it silently — no transcript event,
-            # no feedback, no plan_outcome — so the muted state is honoured even
-            # for in-flight audio.
+            # Stale-generation guard (ADR 0025): mute or scroll-lock-close
+            # bumps _audio_gen. Any utterance whose enqueue-time gen differs
+            # from the current gen was captured under a now-invalid audio
+            # session and must be dropped silently. This catches the race
+            # window where transcribe() finishes BEFORE _muted is written
+            # to True (close_session() blocks on the VAD worker join, so
+            # _muted=True is set ~hundreds of ms after the user pressed
+            # the mute key, while transcribe() may finish sooner on a
+            # warm GPU).
+            if gen is not None and gen != self._audio_gen:
+                logger.debug(
+                    "Stale-gen drop (post-transcribe): utt gen=%s, current=%s, text=%r",
+                    gen,
+                    self._audio_gen,
+                    result.text,
+                )
+                return
+
+            # Mute guard (ADR 0025): defence in depth. Catches utterances
+            # injected directly via _process_utterance (no gen tag) when
+            # _muted has been set.
             if self._muted:
                 logger.debug(
                     "Mute guard: dropping utterance '%s' (muted during pipeline)",
@@ -673,8 +747,13 @@ class StreamingDaemon:
             utterance: 1-D float32 ndarray at 16 kHz representing the complete
                 utterance segment produced by the VAD gate.
         """
+        # Snapshot _audio_gen at enqueue time. The pipeline worker uses this
+        # to drop utterances whose generation has been invalidated by a
+        # concurrent mute / scroll-lock-close before they reach (or after
+        # they pass) transcribe(). Reading an int is atomic in CPython.
+        gen = self._audio_gen
         try:
-            self._utt_q.put_nowait(utterance)
+            self._utt_q.put_nowait((utterance, gen))
         except queue.Full:
             logger.warning("utt_q full — dropping utterance (%d samples)", len(utterance))
             self._feedback.on_miss("(queue overflow)", ())

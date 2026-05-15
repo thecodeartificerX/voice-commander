@@ -1,7 +1,8 @@
 # ADR 0025: Mute Hotkey for External Dictation Coexistence
 
-**Status:** Superseded by [ADR 0072](0072-speak-dictation-toggle.md)
+**Status:** Active. Originally superseded by [ADR 0072](0072-speak-dictation-toggle.md), but that approach was itself dropped when the LLM router was removed (ADR 0082) — speak-mode depended on LLM-based fuzzy wake-word matching. The pre-0072 design (this ADR) is the live implementation again, amended below by §10 to close a transcribe-vs-mute race that the original two-layer guard could not catch.
 **Date:** 2026-04-21
+**Amended:** 2026-05-15 (§10 — generation-counter race fix)
 
 ## Context
 
@@ -21,12 +22,18 @@ Currently there is no mid-session pause mechanism — the only option is to pres
 8. The `pynput` Listener keeps `suppress=False` (observational) so the external dictation app still receives the Right Ctrl keystroke.
 9. `ctrl_r` and `ctrl_l` are added to `KEY_ALIASES` in `hotkey.py` so they can be named in `config.toml` without requiring users to use `pynput` internal key names.
 
+10. **(Amendment 2026-05-15)** A monotonically-increasing `_audio_gen` int on `StreamingDaemon` is the third stale-utterance layer:
+    - **Bumped** on the listener thread immediately *before* `recorder.close_session()` in both mute and scroll-lock-close paths, and immediately *before* `recorder.open_session()` in the unmute and scroll-lock-open paths.
+    - **Snapshotted** at enqueue time inside `_on_utterance` and packed into the `_utt_q` item as a `(audio, gen)` tuple.
+    - **Checked** twice inside `_process_utterance`: once before `transcribe()` (cheap escape — saves the ~200 ms-2 s GPU cost when mute fired before the pipeline popped the utterance), and once after `transcribe()` returns. Either mismatch ⇒ silent drop, no transcript event, no plan_outcome, no chime.
+    - The `_pipeline_loop` accepts both `(audio, gen)` tuples (production path) and bare ndarrays (test injection — gen=None skips the generation check) for backward compatibility.
+
 ### Key rationale
 
 - **Why `ctrl_r` as the suggested default:** Right hand reaches Right Ctrl naturally while left hand stays free; Right Ctrl is also the Windows dictation hotkey, so one keypress simultaneously toggles both apps — the least-friction possible interaction.
 - **Why silent no-op when session inactive:** the mute key doubles as the external dictation app's primary hotkey. Any feedback from voice-commander on that press (chime, log line) would surface every time the user activates dictation outside a voice-commander session, which is confusing and contrary to the non-interruptive feedback policy in ADR 0013.
 - **Why drain queue on mute:** between pressing mute and the PortAudio stream actually halting, VAD may have emitted utterances from pre-mute audio. Without draining, those utterances would dispatch tools from audio the user intended for dictation.
-- **Why two layers of stale-utterance protection:** `_drain_utt_q()` catches utterances still sitting in the queue; the pipeline mute guard in the worker loop catches the utterance already dequeued and mid-transcription at the moment mute was pressed.
+- **Why three layers of stale-utterance protection (amended 2026-05-15):** `_drain_utt_q()` catches utterances still sitting in the queue; the `_audio_gen` generation check (§10) catches the utterance the pipeline worker has already popped and is currently transcribing — the boolean `_muted` cannot, because `_muted = True` is written *after* `recorder.close_session()` returns (which itself blocks on the VAD worker join, ~tens to hundreds of ms), while `transcribe()` can finish on a warm GPU in less time. Bumping `_audio_gen` is synchronous on the listener thread and happens *before* close_session, so the post-transcribe gen check fires deterministically. The legacy `_muted` boolean check remains as a fourth defence-in-depth layer for utterances injected directly via `_process_utterance` in tests (gen=None skips the gen check).
 
 ## Consequences
 

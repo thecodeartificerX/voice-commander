@@ -224,6 +224,157 @@ def test_mute_drains_pending_utterances() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Generation-counter race regression (ADR 0025 §4)
+# ---------------------------------------------------------------------------
+
+
+def test_mute_bumps_audio_gen() -> None:
+    daemon, _feedback, _recorder, _ = _make_daemon()
+    daemon.on_scroll_lock()
+    gen_before = daemon._audio_gen
+
+    daemon.on_mute_toggle()
+
+    assert daemon._audio_gen == gen_before + 1
+
+
+def test_unmute_bumps_audio_gen() -> None:
+    daemon, _feedback, _recorder, _ = _make_daemon()
+    daemon.on_scroll_lock()
+    daemon.on_mute_toggle()
+    gen_muted = daemon._audio_gen
+
+    daemon.on_mute_toggle()  # unmute
+
+    assert daemon._audio_gen == gen_muted + 1
+
+
+def test_scroll_lock_close_bumps_audio_gen() -> None:
+    daemon, _feedback, _recorder, _ = _make_daemon()
+    daemon.on_scroll_lock()  # open
+    gen_open = daemon._audio_gen
+
+    daemon.on_scroll_lock()  # close
+
+    assert daemon._audio_gen == gen_open + 1
+
+
+def test_pipeline_drops_utterance_when_gen_stale_pre_transcribe() -> None:
+    """Pre-transcribe gen check: if mute has invalidated the utterance
+    BEFORE the pipeline calls transcribe(), the transcribe call must not
+    happen at all (cost saving + side-effect prevention)."""
+    bus = EventBus()
+    daemon, _feedback, _recorder, dispatcher = _make_daemon(event_bus=bus)
+    daemon.on_scroll_lock()
+    captured_gen = daemon._audio_gen
+
+    # Simulate: mute fires AFTER VAD enqueued the utterance but BEFORE the
+    # pipeline pops it.
+    daemon._audio_gen += 1
+
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32), gen=captured_gen)
+
+    daemon._transcriber.transcribe.assert_not_called()
+    assert dispatcher.run_plan.call_count == 0
+    assert "transcript" not in _event_types(bus)
+
+
+def test_pipeline_drops_utterance_when_gen_bumped_during_transcribe() -> None:
+    """Post-transcribe gen check: this is the actual race the user reported.
+    transcribe() finishes BEFORE _muted is set to True (close_session blocks
+    on the VAD worker join). _audio_gen is bumped synchronously on the
+    hotkey thread BEFORE close_session, so the post-transcribe gen check
+    fires even though _muted is still False at the moment we read it."""
+    bus = EventBus()
+    daemon, _feedback, _recorder, dispatcher = _make_daemon(event_bus=bus)
+    daemon.on_scroll_lock()
+    captured_gen = daemon._audio_gen
+
+    # Patch transcribe() to bump _audio_gen mid-call — simulating the
+    # mute hotkey firing on the listener thread DURING transcription.
+    # _muted stays False (mimicking the real race where _muted=True is
+    # written only after close_session() returns, which is after transcribe).
+    original_transcribe = daemon._transcriber.transcribe
+
+    def _race(audio):
+        daemon._audio_gen += 1  # mute bumped gen on listener thread
+        return original_transcribe.return_value
+
+    daemon._transcriber.transcribe = _race
+
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32), gen=captured_gen)
+
+    # Stale gen detected post-transcribe — utterance dropped silently.
+    assert dispatcher.run_plan.call_count == 0
+    assert "transcript" not in _event_types(bus)
+
+
+def test_pipeline_processes_utterance_with_matching_gen() -> None:
+    """Sanity: an utterance whose gen matches current _audio_gen runs through
+    the pipeline normally."""
+    bus = EventBus()
+    daemon, _feedback, _recorder, dispatcher = _make_daemon(event_bus=bus)
+    daemon.on_scroll_lock()
+
+    daemon._process_utterance(
+        np.zeros(16000, dtype=np.float32),
+        gen=daemon._audio_gen,
+    )
+
+    assert dispatcher.run_plan.call_count == 1
+    assert "transcript" in _event_types(bus)
+
+
+def test_on_utterance_tags_with_current_gen() -> None:
+    """_on_utterance must enqueue (audio, gen) tuples so the pipeline can
+    detect stale generations."""
+    daemon, _feedback, _recorder, _ = _make_daemon()
+    daemon.on_scroll_lock()
+
+    daemon._on_utterance(np.zeros(8000, dtype=np.float32))
+
+    item = daemon._utt_q.get_nowait()
+    assert isinstance(item, tuple), f"expected (audio, gen) tuple, got {type(item)}"
+    audio, gen = item
+    assert isinstance(audio, np.ndarray)
+    assert gen == daemon._audio_gen
+
+
+def test_pipeline_loop_unpacks_tuple_and_bare_ndarray() -> None:
+    """_pipeline_loop must accept BOTH (audio, gen) tuples (production path)
+    AND bare ndarrays (test injection path) for backward compatibility."""
+    daemon, _feedback, _recorder, dispatcher = _make_daemon()
+    daemon.on_scroll_lock()
+
+    import threading
+
+    processed = threading.Event()
+    original_process = daemon._process_utterance
+    seen: list[tuple[bool, int | None]] = []
+
+    def _spy(utt, *, gen=None):
+        seen.append((isinstance(utt, np.ndarray), gen))
+        original_process(utt, gen=gen)
+        if len(seen) == 2:
+            processed.set()
+
+    daemon._process_utterance = _spy
+
+    thread = threading.Thread(target=daemon._pipeline_loop, daemon=True)
+    thread.start()
+    try:
+        daemon._utt_q.put_nowait(np.zeros(8000, dtype=np.float32))  # bare
+        daemon._utt_q.put_nowait((np.zeros(8000, dtype=np.float32), 7))  # tuple
+        assert processed.wait(timeout=5.0)
+    finally:
+        daemon._utt_q.put(None)
+        thread.join(timeout=3.0)
+
+    assert seen[0] == (True, None), "bare ndarray must arrive with gen=None"
+    assert seen[1] == (True, 7), "tuple must arrive with its gen"
+
+
+# ---------------------------------------------------------------------------
 # Shutdown handling
 # ---------------------------------------------------------------------------
 
