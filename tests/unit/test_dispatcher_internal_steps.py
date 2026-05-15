@@ -2,50 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
 
-import pytest
-
 from voice_commander.dispatcher import Dispatcher
-from voice_commander.feedback import FeedbackSink
+from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.plan import Plan, ToolCall
 from voice_commander.registry import ToolEntry, ToolRegistry
-
-
-class _RecordingFeedback:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, tuple[Any, ...]]] = []
-
-    def on_recording_start(self) -> None:
-        self.calls.append(("on_recording_start", ()))
-
-    def on_recording_stop(self) -> None:
-        self.calls.append(("on_recording_stop", ()))
-
-    def on_transcript(self, text: str, confidence: float) -> None:
-        self.calls.append(("on_transcript", (text, confidence)))
-
-    def on_match(self, tool: str, phrase: str, score: float) -> None:
-        self.calls.append(("on_match", (tool, phrase, score)))
-
-    def on_session_start(self) -> None:
-        self.calls.append(("on_session_start", ()))
-
-    def on_session_end(self) -> None:
-        self.calls.append(("on_session_end", ()))
-
-    def on_plan_start(self, transcript: str, step_count: int) -> None:
-        self.calls.append(("on_plan_start", (transcript, step_count)))
-
-    def on_plan_complete(self, transcript: str, steps_executed: int) -> None:
-        self.calls.append(("on_plan_complete", (transcript, steps_executed)))
-
-    def on_miss(self, transcript: str, candidates: Sequence[tuple[str, str, float]]) -> None:
-        self.calls.append(("on_miss", (transcript,)))
-
-    def on_error(self, where: str, exc: BaseException) -> None:
-        self.calls.append(("on_error", (where, type(exc).__name__)))
 
 
 class _RecordingBus:
@@ -81,7 +43,7 @@ def test_internal_step_does_not_publish_tool_fired():
         pass
 
     reg = _registry_with(("click", _click), ("wait", _wait))
-    fb = _RecordingFeedback()
+    fb = CapturingFeedbackSink()
     bus = _RecordingBus()
     dsp = Dispatcher(feedback=fb, event_bus=bus)
 
@@ -106,7 +68,7 @@ def test_internal_step_excluded_from_on_plan_start_count():
     def _wait(*, ms: int) -> None: ...
 
     reg = _registry_with(("click", _click), ("wait", _wait))
-    fb = _RecordingFeedback()
+    fb = CapturingFeedbackSink()
     dsp = Dispatcher(feedback=fb, event_bus=None)
 
     plan = Plan(
@@ -123,14 +85,14 @@ def test_internal_step_excluded_from_on_plan_start_count():
     assert starts == [("on_plan_start", ("chain click click", 2))]
 
 
-def test_internal_step_still_executes(monkeypatch: pytest.MonkeyPatch):
+def test_internal_step_still_executes():
     called: list[int] = []
 
     def _wait(*, ms: int) -> None:
         called.append(ms)
 
     reg = _registry_with(("wait", _wait))
-    dsp = Dispatcher(feedback=_RecordingFeedback(), event_bus=None)
+    dsp = Dispatcher(feedback=CapturingFeedbackSink(), event_bus=None)
 
     plan = Plan(
         steps=(ToolCall(name="wait", kwargs={"ms": 255}, internal=True),),
@@ -138,3 +100,23 @@ def test_internal_step_still_executes(monkeypatch: pytest.MonkeyPatch):
     )
     dsp.run_plan("internal-only", plan, reg)
     assert called == [255]
+
+
+def test_internal_step_error_still_publishes_tool_error():
+    def _bad_wait(*, ms: int) -> None:
+        raise RuntimeError("simulated wait failure")
+
+    reg = _registry_with(("wait", _bad_wait))
+    bus = _RecordingBus()
+    dsp = Dispatcher(feedback=CapturingFeedbackSink(), event_bus=bus)
+
+    plan = Plan(
+        steps=(ToolCall(name="wait", kwargs={"ms": 255}, internal=True),),
+        raw_response={"router": "chain"},
+    )
+    outcome = dsp.run_plan("internal-error", plan, reg)
+
+    errors = [e for e in bus.events if e[0] == "tool_error"]
+    assert len(errors) == 1
+    assert errors[0][1]["name"] == "wait"
+    assert outcome.status == "error"
