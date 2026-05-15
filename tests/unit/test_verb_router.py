@@ -385,3 +385,44 @@ def test_tabs_with_tail_still_misses():
     reg.register("tabs", lambda: [])
     router = VerbRouter(build_default_rules(), picker_registry=reg)
     assert router.route("tabs chrome") is None
+
+
+# ---------------------------------------------------------------------------
+# Chain meta-verb routing (Task 7)
+# ---------------------------------------------------------------------------
+
+from voice_commander.chain import ChainParser
+
+
+def _router_with_chain() -> VerbRouter:
+    rules = build_default_rules()
+    from voice_commander.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    return VerbRouter(rules, registry=reg, chain_parser=ChainParser(reg, rules))
+
+
+def test_chain_head_routes_to_chain_parser():
+    plan = _router_with_chain().route("chain click click")
+    assert plan is not None
+    assert [s.name for s in plan.steps] == ["click", "wait", "click"]
+    assert plan.steps[1].internal is True
+
+
+def test_chain_head_alias_chained():
+    plan = _router_with_chain().route("chained click click")
+    assert plan is not None
+    assert [s.name for s in plan.steps] == ["click", "wait", "click"]
+
+
+def test_chain_without_parser_falls_through_to_miss():
+    # If chain_parser is None the router must not crash; head is unrecognised
+    # so this routes to None like any other miss.
+    rules = build_default_rules()
+    router = VerbRouter(rules)  # no chain_parser
+    assert router.route("chain click click") is None
+
+
+def test_chain_head_rejected_payload_returns_none():
+    plan = _router_with_chain().route("chain open click")
+    assert plan is None  # forbidden verb mid-chain

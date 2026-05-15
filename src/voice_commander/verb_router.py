@@ -21,6 +21,7 @@ def _normalize_spoken(text: str) -> str:
     return " ".join(cleaned.split())
 
 if TYPE_CHECKING:
+    from .chain import ChainParser
     from .picker.registry import BarePickerRegistry
     from .registry import ToolRegistry
 
@@ -54,6 +55,7 @@ class VerbRouter:
         rules: tuple[VerbRule, ...],
         registry: "ToolRegistry | None" = None,
         picker_registry: "BarePickerRegistry | None" = None,
+        chain_parser: "ChainParser | None" = None,
     ) -> None:
         self._rules = {rule.name: rule for rule in rules}
         self._alias_map: dict[str, str] = {}
@@ -66,11 +68,24 @@ class VerbRouter:
         # query lazily on each utterance rather than snapshotting at init.
         self._registry = registry
         self._picker_registry = picker_registry
+        self._chain_parser = chain_parser
 
     def route(self, transcript: str) -> Plan | None:
         text = transcript.strip().rstrip(".,!?")
         if not text:
             return None
+
+        # 0. Chain meta-verb intercept — highest precedence so a user-authored
+        #    command named "chain" can never shadow it.  We use a local import
+        #    to avoid a circular import: chain.py imports VerbRule from this
+        #    module, so a module-level import here would catch verb_router
+        #    mid-initialisation before VerbRule is defined.
+        head_lower = text.split(" ", 1)[0].lower().rstrip(".,!?")
+        if self._chain_parser is not None:
+            from .chain import _HEAD_ALIASES as _CHAIN_HEADS  # noqa: PLC0415
+            if head_lower in _CHAIN_HEADS:
+                _, _, chain_tail = text.partition(" ")
+                return self._chain_parser.parse(chain_tail.strip().rstrip(".,!?"))
 
         # 1. Try registered command / workflow names (multi-word allowed,
         #    longest match wins). Lets the user author a "close" command
