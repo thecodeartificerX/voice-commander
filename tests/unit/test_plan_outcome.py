@@ -57,6 +57,30 @@ def test_plan_outcome_error_round_trip():
     assert restored == outcome
 
 
+def test_plan_outcome_internal_flag_not_in_sse_wire():
+    # The `internal` flag is a daemon-local concern (HUD suppression).
+    # It is intentionally omitted from the SSE wire contract so that sprite
+    # consumers are never coupled to dispatcher internals.  This test pins
+    # that lossy-but-deliberate behavior so a future reader doesn't mistake
+    # the absence of the key for a bug.
+    outcome = PlanOutcome(
+        transcript="wait",
+        steps=(ToolCall(name="wait", kwargs={"ms": 255}, internal=True),),
+        status="ok",
+        failed_step_index=None,
+        error_msg=None,
+        duration_ms=255,
+    )
+    event = outcome.to_event_dict()
+    assert "internal" not in event["steps"][0], (
+        "internal flag must not appear in the SSE event dict"
+    )
+    restored = PlanOutcome.from_event_dict(event)
+    assert restored.steps[0].internal is False, (
+        "reconstructed step must default internal to False"
+    )
+
+
 def test_plan_outcome_is_frozen():
     outcome = PlanOutcome(
         transcript="x",

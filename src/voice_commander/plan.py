@@ -56,6 +56,8 @@ class PlanOutcome:
     duration_ms: int
 
     def to_event_dict(self) -> dict[str, Any]:
+        # internal flag is intentionally not serialized — it is a daemon-local
+        # concern (HUD suppression), not part of the SSE wire contract.
         return {
             "transcript": self.transcript,
             "steps": [{"name": s.name, "kwargs": dict(s.kwargs)} for s in self.steps],

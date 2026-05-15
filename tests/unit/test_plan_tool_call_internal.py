@@ -1,3 +1,5 @@
+"""Unit tests for ToolCall.internal flag (Task 1 — chain-primitive plan)."""
+
 from voice_commander.plan import ToolCall
 
 
