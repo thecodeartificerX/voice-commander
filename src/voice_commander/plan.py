@@ -8,10 +8,17 @@ from typing import Any, Literal
 
 @dataclass(frozen=True)
 class ToolCall:
-    """A single tool invocation within a plan."""
+    """A single tool invocation within a plan.
+
+    ``internal=True`` marks a step that the Dispatcher must execute but must
+    NOT surface to the FeedbackSink, EventBus, or the visible step counter.
+    Used by the chain parser for synthetic 255 ms ``wait`` separators that
+    should not appear in the HUD.
+    """
 
     name: str
     kwargs: dict[str, Any]
+    internal: bool = False
 
 
 @dataclass(frozen=True)
