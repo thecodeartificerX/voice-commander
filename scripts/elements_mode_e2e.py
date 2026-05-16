@@ -40,12 +40,14 @@ Exits 0 only when all hard checkpoints pass.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import queue
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -108,8 +110,6 @@ def _record(
 # Stub transcriber that returns fixed TranscriptionResult objects
 # ---------------------------------------------------------------------------
 
-from dataclasses import dataclass
-
 
 @dataclass
 class _StubTranscriber:
@@ -120,7 +120,7 @@ class _StubTranscriber:
     def load(self) -> None: ...
     def unload(self) -> None: ...
 
-    def transcribe(self, _audio: "np.ndarray") -> Any:
+    def transcribe(self, _audio: np.ndarray) -> Any:
         if self._queue:
             return self._queue.pop(0)
         # Fallback — low confidence, noise
@@ -164,7 +164,7 @@ def _make_fake_elements(n: int = 5):
 # ---------------------------------------------------------------------------
 
 
-def _drain_events(eq: "queue.Queue", timeout_s: float = 0.0) -> list[Any]:
+def _drain_events(eq: queue.Queue, timeout_s: float = 0.0) -> list[Any]:
     """Pull all currently queued events; optionally wait up to timeout_s for the first."""
     events = []
     if timeout_s > 0:
@@ -523,14 +523,10 @@ def run() -> int:
                 log.warning("error shutting down pipeline thread", exc_info=True)
 
         # Shutdown remaining executors
-        try:
+        with contextlib.suppress(Exception):
             daemon._wav_executor.shutdown(wait=False)
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             daemon._dictation_executor.shutdown(wait=False)
-        except Exception:
-            pass
 
         log.info("cleanup complete")
 

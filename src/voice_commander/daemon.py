@@ -26,10 +26,10 @@ from .chain import ChainParser
 from .config import Config
 from .dictation.session import DictationSession
 from .dictation.store import DictationStore
+from .dispatcher import Dispatcher
 from .elements import clicker, desktop, scanner
 from .elements.session import ENTRY_WORDS, ElementsSession, ElementsState
 from .elements.uia import uia_available
-from .dispatcher import Dispatcher
 from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
@@ -813,7 +813,7 @@ class StreamingDaemon:
             self._elements_session.fail()
             self._feedback.on_miss("(elements: scan error)", ())
 
-    def _do_element_click(self, element: "scanner.Element") -> None:
+    def _do_element_click(self, element: scanner.Element) -> None:
         """Worker-thread click: left-click the chosen element's center."""
         try:
             clicker.click_point(*element.center)
@@ -1086,6 +1086,7 @@ class StreamingDaemon:
         # Shut down the WAV writer executor.
         self._wav_executor.shutdown(wait=False)
         self._dictation_executor.shutdown(wait=False)
+        self._elements_executor.shutdown(wait=False)
 
         # Stop config file watcher.
         if self._config_watcher is not None:
