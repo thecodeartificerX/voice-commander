@@ -1117,6 +1117,12 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         mru_pump = Win32MruPump(tracker=mru_tracker)
         mru_pump.start()
 
+    # --- Dictation mode (ADR 0086) ---
+    dictation_session = DictationSession(
+        bus=event_bus,
+        end_word=cfg.dictation.end_word,
+    )
+
     # Backend keyboard recorder for the Builder UI's `press` combo capture.
     # Single instance, lazy listener (one record session at a time).
     from voice_commander.recorder import KeyRecorder
@@ -1207,6 +1213,8 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         registry=registry,
         picker_session=picker_session,
         picker_registry=picker_registry if cfg.picker.enabled else None,
+        dictation_session=dictation_session,
+        dictation_endpoint=cfg.dictation.endpoint,
         min_confidence=cfg.transcription.min_confidence,
         min_word_count=cfg.vad.gates.min_word_count,
         max_no_speech_prob=cfg.vad.gates.max_no_speech_prob,
