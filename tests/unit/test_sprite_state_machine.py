@@ -15,3 +15,18 @@ def test_dictation_end_clears_flag():
     result = sm.on_event("dictation.end", {})
     assert result is None
     assert sm.dictating is False
+
+
+def test_dictation_end_without_prior_start_is_idempotent():
+    sm = StateMachine()
+    result = sm.on_event("dictation.end", {})
+    assert result is None
+    assert sm.dictating is False
+
+
+def test_repeated_dictation_start_is_idempotent():
+    sm = StateMachine()
+    sm.on_event("dictation.start", {})
+    result = sm.on_event("dictation.start", {})
+    assert result is None
+    assert sm.dictating is True
