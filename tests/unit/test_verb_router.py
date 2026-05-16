@@ -429,3 +429,28 @@ def test_chain_head_rejected_payload_returns_none():
 def test_chain_bare_with_parser_misses():
     # head "chain" but no tail -> parser receives empty string -> None.
     assert _router_with_chain().route("chain") is None
+
+
+# ---------------------------------------------------------------------------
+# Dictation mode — bare "type" enters dictation (ADR 0086)
+# ---------------------------------------------------------------------------
+
+def test_bare_type_routes_to_dictation_start():
+    from voice_commander.verb_router import VerbRouter, build_default_rules
+
+    router = VerbRouter(build_default_rules())
+    plan = router.route("type")
+    assert plan is not None
+    assert len(plan.steps) == 1
+    assert plan.steps[0].name == "__dictation.start"
+    assert plan.raw_response.get("dictation") is True
+
+
+def test_type_with_tail_still_routes_to_type_primitive():
+    from voice_commander.verb_router import VerbRouter, build_default_rules
+
+    router = VerbRouter(build_default_rules())
+    plan = router.route("type hello world")
+    assert plan is not None
+    assert plan.steps[0].name == "type"
+    assert plan.steps[0].kwargs == {"text": "hello world"}
