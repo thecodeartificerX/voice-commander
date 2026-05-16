@@ -100,6 +100,17 @@ def _run_supervisor_with_fakes(fixture: Path, sprite_pid_file: Path) -> int:
     state_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["VC_STATE_DIR"] = str(state_dir)
+    # The bootstrap runs in a fresh subprocess that does not inherit pytest's
+    # ``pythonpath = ["src"]`` config, so it must locate ``voice_commander``
+    # itself. Relying on a global editable install is fragile — it points at a
+    # single checkout and breaks under git worktrees. Put the repo's ``src`` on
+    # PYTHONPATH so the bootstrap (and the children ``spawn`` propagates the
+    # environment to) import the code under test.
+    src_dir = str(REPO_ROOT / "src")
+    existing_pp = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        src_dir + os.pathsep + existing_pp if existing_pp else src_dir
+    )
 
     proc = subprocess.run(
         [sys.executable, str(script)],
