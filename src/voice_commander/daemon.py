@@ -31,6 +31,8 @@ from .picker.registry import BarePickerRegistry
 from .picker.session import PickerSession
 from .verb_router import VerbRouter, build_default_rules
 from .chain import ChainParser
+from .dictation.session import DictationSession
+from .dictation.store import DictationStore
 from .observability.errors import classify as _classify_error
 from .plan import Plan, PlanOutcome
 from .registry import ToolRegistry, discover
@@ -142,6 +144,8 @@ class StreamingDaemon:
         registry: ToolRegistry | None = None,
         picker_session: PickerSession | None = None,
         picker_registry: BarePickerRegistry | None = None,
+        dictation_session: DictationSession | None = None,
+        dictation_endpoint: str = "",
         min_confidence: float = 0.30,
         min_word_count: int = 1,
         max_no_speech_prob: float = 0.6,
@@ -236,6 +240,12 @@ class StreamingDaemon:
         self._verb_router = verb_router
         self._picker_session = picker_session
         self._picker_registry = picker_registry
+        self._dictation_session = dictation_session
+        self._dictation_endpoint = dictation_endpoint
+        self._dictation_store = DictationStore(self._output_dir / "dictation")
+        self._dictation_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="dictation",
+        )
         # Set when Transcriber.load() completes successfully in the background thread.
         # Pipeline worker waits on this before calling transcribe().
         self._transcriber_ready: threading.Event = threading.Event()
@@ -245,8 +255,6 @@ class StreamingDaemon:
         # Config file watcher — set by build_streaming_daemon; stopped in shutdown().
         self._config_watcher: Any = None
         self._mru_pump: Any = None
-        # Dictation session — set by build_streaming_daemon (Task 8); None until then.
-        self._dictation_session: Any = None
 
     def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         if self._event_bus is not None:
@@ -873,6 +881,7 @@ class StreamingDaemon:
 
         # Shut down the WAV writer executor.
         self._wav_executor.shutdown(wait=False)
+        self._dictation_executor.shutdown(wait=False)
 
         # Stop config file watcher.
         if self._config_watcher is not None:
