@@ -81,6 +81,29 @@ class DictationSession:
         self._bus.publish("dictation.end", {"reason": "done"})
         logger.info("dictation: finished")
 
+    def take_and_finish(self) -> npt.NDArray[np.float32] | None:
+        """Atomically capture the buffered audio and end dictation.
+
+        Holds the lock across the buffer read AND the deactivation, so a
+        concurrent end-word finalize (pipeline thread) and a hardware
+        toggle-off (hotkey thread) cannot both capture the same audio and
+        double-submit it for transcription.
+
+        Returns the concatenated buffered audio, or ``None`` when there is
+        nothing to finalize — either the buffer was empty, or the session
+        was already inactive because the other thread won the race. In both
+        ``None`` cases the caller must NOT submit anything.
+        """
+        with self._lock:
+            if not self._active:
+                return None
+            self._active = False
+            audio = np.concatenate(self._buffer) if self._buffer else None
+            self._buffer = []
+        self._bus.publish("dictation.end", {"reason": "done"})
+        logger.info("dictation: finished")
+        return audio
+
     def cancel(self) -> None:
         """Abort dictation (e.g. scroll-lock closed the session); drop the buffer."""
         with self._lock:

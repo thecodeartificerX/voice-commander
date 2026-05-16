@@ -92,3 +92,31 @@ def test_finish_when_inactive_is_noop():
     s.finish()  # never started
     assert not s.active
     assert bus.events == []
+
+
+def test_take_and_finish_returns_audio_and_deactivates():
+    bus = _FakeBus()
+    s = DictationSession(bus)
+    s.start()
+    s.handle_utterance(_audio(), "hello")
+    audio = s.take_and_finish()
+    assert audio is not None
+    assert audio.shape[0] == 8000
+    assert not s.active
+    assert ("dictation.end", {"reason": "done"}) in bus.events
+
+
+def test_take_and_finish_empty_buffer_returns_none():
+    bus = _FakeBus()
+    s = DictationSession(bus)
+    s.start()
+    assert s.take_and_finish() is None
+    assert not s.active
+
+
+def test_take_and_finish_when_inactive_returns_none_and_is_silent():
+    bus = _FakeBus()
+    s = DictationSession(bus)
+    # never started — the "lost the race" case
+    assert s.take_and_finish() is None
+    assert bus.events == []

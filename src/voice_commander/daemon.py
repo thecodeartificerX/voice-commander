@@ -377,8 +377,7 @@ class StreamingDaemon:
         if self._dictation_session is None:
             return
         if self._dictation_session.active:
-            audio = self._dictation_session.take_audio()
-            self._dictation_session.finish()
+            audio = self._dictation_session.take_and_finish()
             if audio is not None:
                 self._dictation_executor.submit(self._finalize_dictation, audio)
         else:
@@ -548,8 +547,7 @@ class StreamingDaemon:
             if self._dictation_session is not None and self._dictation_session.active:
                 kind = self._dictation_session.handle_utterance(utterance, result.text)
                 if kind == "end":
-                    audio = self._dictation_session.take_audio()
-                    self._dictation_session.finish()
+                    audio = self._dictation_session.take_and_finish()
                     if audio is not None:
                         self._dictation_executor.submit(self._finalize_dictation, audio)
                 run.set_status("ok")

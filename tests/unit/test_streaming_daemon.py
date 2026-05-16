@@ -439,9 +439,9 @@ def test_active_dictation_buffers_utterance(tmp_path):
 
 
 def test_active_dictation_end_word_submits_finalize(tmp_path):
-    """When handle_utterance returns 'end' and take_audio() has data,
-    finish() is called and _dictation_executor.submit is called with
-    _finalize_dictation and the captured audio."""
+    """When handle_utterance returns 'end' and take_and_finish() has data,
+    _dictation_executor.submit is called with _finalize_dictation and the
+    captured audio."""
     daemon, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._transcriber.transcribe.return_value = _fake_transcription_result(
         "stop dictation", confidence=0.95
@@ -451,21 +451,21 @@ def test_active_dictation_end_word_submits_finalize(tmp_path):
     fake_session = MagicMock()
     fake_session.active = True
     fake_session.handle_utterance.return_value = "end"
-    fake_session.take_audio.return_value = fake_audio
+    fake_session.take_and_finish.return_value = fake_audio
     daemon._dictation_session = fake_session
     daemon._dictation_executor = MagicMock()
 
     daemon._process_utterance(np.zeros(16000, dtype=np.float32))
 
-    fake_session.finish.assert_called_once()
+    fake_session.take_and_finish.assert_called_once()
     daemon._dictation_executor.submit.assert_called_once_with(
         daemon._finalize_dictation, fake_audio
     )
 
 
 def test_active_dictation_end_word_no_audio_skips_submit(tmp_path):
-    """When handle_utterance returns 'end' but take_audio() returns None
-    (nothing was buffered), finish() is still called but _dictation_executor
+    """When handle_utterance returns 'end' but take_and_finish() returns None
+    (nothing was buffered, or the other thread won the race), _dictation_executor
     is NOT used to submit any finalization work."""
     daemon, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._transcriber.transcribe.return_value = _fake_transcription_result(
@@ -475,13 +475,13 @@ def test_active_dictation_end_word_no_audio_skips_submit(tmp_path):
     fake_session = MagicMock()
     fake_session.active = True
     fake_session.handle_utterance.return_value = "end"
-    fake_session.take_audio.return_value = None
+    fake_session.take_and_finish.return_value = None
     daemon._dictation_session = fake_session
     daemon._dictation_executor = MagicMock()
 
     daemon._process_utterance(np.zeros(16000, dtype=np.float32))
 
-    fake_session.finish.assert_called_once()
+    fake_session.take_and_finish.assert_called_once()
     daemon._dictation_executor.submit.assert_not_called()
 
 
@@ -503,19 +503,20 @@ def test_dictation_toggle_starts_when_session_active(tmp_path):
 
 
 def test_dictation_toggle_finishes_when_already_dictating(tmp_path):
-    """Pressing the dictation key while dictation IS active calls finish() and
-    submits _finalize_dictation to the executor when audio is available."""
+    """Pressing the dictation key while dictation IS active calls take_and_finish()
+    and submits _finalize_dictation to the executor when audio is available."""
     daemon, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._session_active = True
     fake_session = MagicMock()
     fake_session.active = True
-    fake_session.take_audio.return_value = np.zeros(8000, dtype=np.float32)
+    fake_audio = np.zeros(8000, dtype=np.float32)
+    fake_session.take_and_finish.return_value = fake_audio
     daemon._dictation_session = fake_session
     daemon._dictation_executor = MagicMock()
     daemon.on_dictation_toggle()
-    fake_session.finish.assert_called_once()
+    fake_session.take_and_finish.assert_called_once()
     daemon._dictation_executor.submit.assert_called_once_with(
-        daemon._finalize_dictation, fake_session.take_audio.return_value
+        daemon._finalize_dictation, fake_audio
     )
 
 
