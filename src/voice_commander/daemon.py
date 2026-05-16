@@ -48,7 +48,7 @@ from .transcriber import (
 )
 from .vad_gate import VADGate
 from .validator import validate_config_or_die, validate_or_die
-from .verb_router import VerbRouter, build_default_rules
+from .verb_router import VerbRouter, _normalize_spoken, build_default_rules
 from .web.app import create_app
 from .web.server import WebServer
 
@@ -371,6 +371,8 @@ class StreamingDaemon:
             self._session_active = False
             if self._dictation_session is not None and self._dictation_session.active:
                 self._dictation_session.cancel()
+            if self._elements_session is not None and self._elements_session.active:
+                self._elements_session.cancel()
             self._feedback.on_recording_stop()
             self._publish("muted")
             self._publish("session_stopped")
@@ -595,6 +597,26 @@ class StreamingDaemon:
                 run.set_status("ok")
                 return
 
+            # Elements mode (ADR 0087): while a scan is in flight or hints are
+            # shown, every utterance belongs to elements mode — never a command.
+            if self._elements_session is not None:
+                state = self._elements_session.state
+                if state is ElementsState.SCANNING:
+                    run.set_status("ok")
+                    return
+                if state is ElementsState.HINTS_SHOWN:
+                    element = self._elements_session.handle_utterance(result.text)
+                    if element is not None:
+                        self._elements_executor.submit(self._do_element_click, element)
+                    run.set_status("ok")
+                    return
+                if _normalize_spoken(result.text) in ENTRY_WORDS:
+                    self._elements_session.begin_scan()
+                    self._feedback.on_recording_start()  # scan-start chime
+                    self._elements_executor.submit(self._do_element_scan)
+                    run.set_status("ok")
+                    return
+
             # Picker sub-state (ADR 0083): if a bare-primitive picker is open,
             # the next utterance is a selection, not a new command.
             if self._picker_session is not None and self._picker_session.active:
@@ -764,6 +786,40 @@ class StreamingDaemon:
         self._publish("transcript", {"text": text, "confidence": 1.0})
         self._publish("dictation.result", {"text": text})
         logger.info("dictation: pasted %d chars", len(text))
+
+    def _do_element_scan(self) -> None:
+        """Worker-thread scan: enumerate the foreground window's elements."""
+        if self._elements_session is None:
+            return
+        try:
+            hwnd = desktop.foreground_window()
+            if hwnd == 0:
+                self._elements_session.fail()
+                self._feedback.on_miss("(elements: no active window)", ())
+                return
+            monitor = desktop.monitor_rect(hwnd)
+            elements = scanner.scan_window(
+                hwnd,
+                max_elements=self._elements_max_elements,
+                timeout_s=self._elements_scan_timeout_s,
+            )
+            if not elements:
+                self._elements_session.fail()
+                self._feedback.on_miss("(elements: nothing clickable found)", ())
+                return
+            self._elements_session.show(elements, monitor)
+        except Exception:
+            logger.exception("elements scan failed")
+            self._elements_session.fail()
+            self._feedback.on_miss("(elements: scan error)", ())
+
+    def _do_element_click(self, element: "scanner.Element") -> None:
+        """Worker-thread click: left-click the chosen element's center."""
+        try:
+            clicker.click_point(*element.center)
+        except Exception:
+            logger.exception("elements click failed")
+            self._feedback.on_miss("(elements: click error)", ())
 
     def _write_utterance_async(self, utterance: npt.NDArray[np.float32]) -> None:
         path = self._output_dir / "last_utterance.wav"
