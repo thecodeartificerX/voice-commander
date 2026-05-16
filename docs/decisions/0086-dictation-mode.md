@@ -78,7 +78,7 @@ These files are overwritten on every dictation. They are the single retained art
 
 If encoding, the remote POST, or the clipboard paste fails:
 
-1. A `dictation.error` SSE event is published (payload: `{message: <error string>}`).
+1. A `dictation.error` SSE event is published (payload: `{reason: "encode" | "endpoint" | "clipboard"}` — one of these three string values depending on which step failed).
 2. A miss chime fires (`winsound`).
 3. `last.wav` is still written (if encoding succeeded) so the user can retry via `/page/dictation`.
 
@@ -88,7 +88,7 @@ The daemon continues normally; the dictation sub-state is cleaned up regardless 
 
 `HotkeyConfig.mute_key` is renamed `dictation_key`. The `on_mute_toggle` callback and all stream-close/reopen machinery (ADR 0025 §§1–3: `_drain_utt_q()`, the pipeline `_muted` guard, `recorder.close_session()` / `recorder.open_session()` calls in the mute path) are deleted. The generation-counter amendment (ADR 0025 §10) is retained because it guards the scroll-lock-close path, not only the mute path.
 
-The `muted` / `unmuted` EventBus events are removed. The sprite `muted` state and badge are removed.
+The `muted` / `unmuted` EventBus events are **retained** — `on_scroll_lock` still publishes `"muted"` on session close and `"unmuted"` on session open; the sprite still consumes them for grey-out. Only the in-session mute *toggle* (`on_mute_toggle` callback and `_muted` pipeline guard) is removed. The sprite `muted` badge that was tied to the now-deleted mid-session mute state is removed.
 
 ## Consequences
 
@@ -123,4 +123,4 @@ The `muted` / `unmuted` EventBus events are removed. The sprite `muted` state an
 - [ADR 0083](0083-bare-primitive-picker.md) — bare-primitive picker sub-state (pattern mirrored by dictation)
 - [ADR 0073](0073-remote-transcription-backend.md) — remote whisper.cpp wire format (reused here)
 - [ADR 0085](0085-chain-primitive.md) — `ToolCall.internal` flag used by synthetic `__dictation.start` step
-- Implementation: `src/voice_commander/dictation/`, `src/voice_commander/daemon.py`, `src/voice_commander/config.py`, `src/voice_commander/web/routes/dictation.py`, `web/templates/dictation.html`
+- Implementation: `src/voice_commander/dictation/`, `src/voice_commander/daemon.py`, `src/voice_commander/config.py`, `src/voice_commander/web/app.py` (routes `GET /page/dictation` and `POST /dictation/retranscribe` added inline), `src/voice_commander/web/templates/page_dictation.html`, `src/voice_commander/web/templates/_dictation_result.html`

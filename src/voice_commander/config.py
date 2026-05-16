@@ -185,8 +185,16 @@ class Config:
                 raise TypeError("Config picker.cancel_words must be a list of strings")
             picker_raw["cancel_words"] = tuple(cancel_raw)
 
+        hotkey_raw = dict(raw.get("hotkey", {}))
+        if "mute_key" in hotkey_raw:
+            logger.warning(
+                "[hotkey] mute_key was renamed to dictation_key (ADR 0086); "
+                "the stale key is ignored — please update your config.toml"
+            )
+            hotkey_raw.pop("mute_key")
+
         return cls(
-            hotkey=_section(HotkeyConfig, raw.get("hotkey", {})),
+            hotkey=_section(HotkeyConfig, hotkey_raw),
             audio=_section(AudioConfig, raw.get("audio", {})),
             transcription=_section(TranscriptionConfig, raw.get("transcription", {})),
             feedback=_section(FeedbackConfig, raw.get("feedback", {})),

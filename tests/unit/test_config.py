@@ -268,3 +268,21 @@ def test_dictation_config_override(tmp_path):
     cfg = Config.load(cfg_file)
     assert cfg.dictation.endpoint == "http://1.2.3.4:9/x"
     assert cfg.dictation.end_word == "finish"
+
+
+def test_stale_mute_key_warns_and_is_ignored(tmp_path, caplog):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        "[hotkey]\nkey = \"scroll_lock\"\nmute_key = \"ctrl_r\"\n",
+        encoding="utf-8",
+    )
+    import logging
+
+    from voice_commander.config import Config
+
+    with caplog.at_level(logging.WARNING):
+        cfg = Config.load(cfg_file)
+    # Stale key is ignored, daemon still loads, dictation_key keeps its default.
+    assert cfg.hotkey.dictation_key == "ctrl_r"
+    assert not hasattr(cfg.hotkey, "mute_key")
+    assert any("mute_key" in r.message for r in caplog.records)
