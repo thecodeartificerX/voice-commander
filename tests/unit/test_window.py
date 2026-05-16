@@ -344,7 +344,7 @@ def test_on_draw_dictating_draws_badge():
         "● DICTATING",
         font_name="Segoe UI",
         font_size=9,
-        bold=True,
+        weight="bold",
         x=50,
         y=2,
         anchor_x="center",

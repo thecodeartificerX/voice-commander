@@ -406,7 +406,7 @@ def test_dictation_start_step_starts_session(tmp_path):
     daemon, *_ = _make_daemon(output_dir=str(tmp_path))
     # Wire a fresh transcription result so the utterance clears all gates.
     daemon._transcriber.transcribe.return_value = _fake_transcription_result(
-        "type", confidence=0.95
+        "dictate", confidence=0.95
     )
 
     fake_session = MagicMock()

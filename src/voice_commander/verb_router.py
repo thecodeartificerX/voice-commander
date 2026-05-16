@@ -107,16 +107,16 @@ class VerbRouter:
         verb = self._rules[verb_name]
 
         if not tail:
-            # Bare "type" enters dictation mode (ADR 0086). A synthetic
+            # Bare "dictate" enters dictation mode (ADR 0086). A synthetic
             # __dictation.start step the daemon intercepts — same convention
-            # as __picker.open. "type X" with a tail is unaffected and still
-            # routes to the type_text primitive below.
-            if verb.name == "type":
+            # as __picker.open. "dictate" is bare-only; "type X" with a tail
+            # still routes to the type_text primitive below.
+            if verb.name == "dictate":
                 return Plan(
                     steps=(ToolCall(name="__dictation.start", kwargs={}),),
                     raw_response={
                         "router": "verb",
-                        "verb": "type",
+                        "verb": "dictate",
                         "tail": "",
                         "dictation": True,
                     },
@@ -242,6 +242,10 @@ def build_default_rules() -> tuple[VerbRule, ...]:
         VerbRule("tabs", ("tabs",)),
         VerbRule("open", ("open",), raw_tail_tool="open", raw_tail_arg="target"),
         VerbRule("type", ("type",), raw_tail_tool="type", raw_tail_arg="text"),
+        # ``dictate`` is bare-only — saying it enters dictation mode (ADR 0086).
+        # "type" was the original trigger but Whisper mishears it as "tight";
+        # "dictate" transcribes reliably. The Right Ctrl hotkey is unchanged.
+        VerbRule("dictate", ("dictate",)),
         VerbRule("press", ("press",), raw_tail_tool="press", raw_tail_arg="combo"),
         VerbRule(
             "wait",

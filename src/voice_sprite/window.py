@@ -270,7 +270,7 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
                     "● DICTATING",
                     font_name="Segoe UI",
                     font_size=9,
-                    bold=True,
+                    weight="bold",
                     x=self.width // 2,
                     y=2,
                     anchor_x="center",

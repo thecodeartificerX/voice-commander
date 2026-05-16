@@ -8,7 +8,7 @@
 
 ADR 0025 solved external-dictation crosstalk by closing the audio stream on Right Ctrl (mute toggle). That design's premise was that voice-commander and an *external* dictation app (Windows voice typing) would share the microphone — so the stream had to be silenced while the other app was active.
 
-The new direction eliminates the external app entirely: voice-commander itself becomes the dictation engine. Users say "type" (or press Right Ctrl during a session) to enter a sub-state where subsequent utterances are treated as free-form text rather than commands. The accumulated audio is encoded and sent to a remote whisper.cpp server for high-quality transcription, and the result is inserted at the cursor via a clipboard round-trip.
+The new direction eliminates the external app entirely: voice-commander itself becomes the dictation engine. Users say "dictate" (or press Right Ctrl during a session) to enter a sub-state where subsequent utterances are treated as free-form text rather than commands. The accumulated audio is encoded and sent to a remote whisper.cpp server for high-quality transcription, and the result is inserted at the cursor via a clipboard round-trip.
 
 This makes the mute toggle unnecessary. The `HotkeyConfig.mute_key` field and all stream-close/reopen machinery (§§ 1–3 of ADR 0025) are removed. `ctrl_r` is repurposed as `dictation_key`.
 
@@ -21,7 +21,7 @@ Dictation mirrors the picker sub-state introduced in ADR 0083. The microphone st
 ### D2 — Entry
 
 Two entry paths:
-1. **Bare "type" utterance.** `VerbRouter` detects a transcript that normalises to the single token `type` with no argument. It emits a synthetic `__dictation.start` step (analogous to `__picker.open`). `daemon.py` intercepts the step name before calling `Dispatcher` and activates `DictationSession`.
+1. **Bare "dictate" utterance.** `VerbRouter` detects a transcript that normalises to the single token `dictate` with no argument. It emits a synthetic `__dictation.start` step (analogous to `__picker.open`). `daemon.py` intercepts the step name before calling `Dispatcher` and activates `DictationSession`. The trigger word is `dictate` rather than `type` because Whisper consistently mishears "type" as "tight"; the `type` verb stays reserved for literal text entry (`type X`).
 2. **Right Ctrl keypress** (`dictation_key`, default `ctrl_r`) during an active voice session. `HotkeyController` fires `on_dictation_toggle`; if a session is active and dictation is not yet running, `DictationSession` starts.
 
 ### D3 — Buffering while active
@@ -48,7 +48,7 @@ endpoint = "http://192.168.4.200:8765/inference"   # default
 end_word  = "done"
 ```
 
-The POST uses `verbose_json` response type. The `text` field of the JSON response is the transcription. This is the same wire format as `RemoteTranscriber` (ADR 0073), reused here without that backend toggle.
+The POST uses `response_format=json`. The `text` field of the JSON response is the transcription. `verbose_json` was rejected: dictation needs only `text`, and `verbose_json` makes whisper.cpp additionally compute per-segment confidence + token timestamps — measured at ~+1.2s on a 36s clip on the reference box (RX 5700 XT / ROCm) for data the pipeline discards.
 
 ### D6 — Clipboard round-trip paste
 

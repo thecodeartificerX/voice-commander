@@ -432,18 +432,29 @@ def test_chain_bare_with_parser_misses():
 
 
 # ---------------------------------------------------------------------------
-# Dictation mode — bare "type" enters dictation (ADR 0086)
+# Dictation mode — bare "dictate" enters dictation (ADR 0086)
 # ---------------------------------------------------------------------------
 
-def test_bare_type_routes_to_dictation_start():
+def test_bare_dictate_routes_to_dictation_start():
     from voice_commander.verb_router import VerbRouter, build_default_rules
 
     router = VerbRouter(build_default_rules())
-    plan = router.route("type")
+    plan = router.route("dictate")
     assert plan is not None
     assert len(plan.steps) == 1
     assert plan.steps[0].name == "__dictation.start"
     assert plan.raw_response.get("dictation") is True
+    assert plan.raw_response.get("verb") == "dictate"
+
+
+def test_bare_type_no_longer_routes_to_dictation():
+    """The dictation trigger moved from "type" to "dictate" (Whisper mishears
+    "type" as "tight"). Bare "type" has no tail, no default target and no
+    picker, so it now misses."""
+    from voice_commander.verb_router import VerbRouter, build_default_rules
+
+    router = VerbRouter(build_default_rules())
+    assert router.route("type") is None
 
 
 def test_type_with_tail_still_routes_to_type_primitive():

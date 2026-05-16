@@ -60,7 +60,7 @@ def send_paste() -> None:
     pyautogui.hotkey("ctrl", "v")
 
 
-def paste_via_clipboard(text: str, settle_ms: int = 200) -> None:
+def paste_via_clipboard(text: str, settle_ms: int = 100) -> None:
     """Set clipboard to *text*, paste into the foreground window, restore original.
 
     *settle_ms* is the pause after the clipboard set (before paste) and after

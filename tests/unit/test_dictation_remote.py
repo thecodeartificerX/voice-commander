@@ -30,8 +30,22 @@ def test_post_audio_success(monkeypatch):
     assert captured["url"] == "http://x/inference"
     assert captured["files"]["file"][0] == "audio.wav"
     assert captured["files"]["file"][2] == "audio/wav"
-    assert captured["data"]["response_format"] == "verbose_json"
+    assert captured["data"]["response_format"] == "json"
     assert captured["data"]["temperature"] == "0.0"
+
+
+def test_post_audio_collapses_segment_newlines(monkeypatch):
+    """whisper.cpp inserts a newline at every segment boundary. post_audio
+    must collapse all whitespace runs so a multi-segment clip pastes as one
+    continuous block with no spurious mid-sentence line breaks."""
+    monkeypatch.setattr(
+        "voice_commander.dictation.remote.httpx.post",
+        lambda url, **kw: _FakeResponse(
+            200, {"text": "\nThis is a dictation test\n of the fox\n"}
+        ),
+    )
+    result = post_audio(b"RIFFfake", "http://x/inference")
+    assert result == "This is a dictation test of the fox"
 
 
 def test_post_audio_non_200_raises(monkeypatch):

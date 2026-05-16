@@ -107,7 +107,7 @@ def test_dictation_enter_buffer_finalize(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     daemon, dictation_session, feedback, bus = _make_daemon(
         transcripts=[
-            _Transcription("type"),
+            _Transcription("dictate"),
             _Transcription("hello this is dictated prose"),
             _Transcription("done"),
         ],
@@ -116,7 +116,7 @@ def test_dictation_enter_buffer_finalize(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     audio = np.zeros(16000, dtype=np.float32)
 
-    # 1. "type" → __dictation.start → session active
+    # 1. "dictate" → __dictation.start → session active
     daemon._process_utterance(audio)
     assert dictation_session.active is True
 
@@ -156,7 +156,7 @@ def test_dictation_endpoint_failure_chimes_and_keeps_audio(
 
     daemon, dictation_session, feedback, bus = _make_daemon(
         transcripts=[
-            _Transcription("type"),
+            _Transcription("dictate"),
             _Transcription("some words"),
             _Transcription("done"),
         ],
@@ -164,7 +164,7 @@ def test_dictation_endpoint_failure_chimes_and_keeps_audio(
     )
 
     audio = np.zeros(16000, dtype=np.float32)
-    daemon._process_utterance(audio)   # "type" → starts dictation
+    daemon._process_utterance(audio)   # "dictate" → starts dictation
     daemon._process_utterance(audio)   # "some words" → buffered
     daemon._process_utterance(audio)   # "done" → finalize submitted
 
