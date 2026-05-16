@@ -231,10 +231,11 @@ def main() -> None:
         if result is not None:
             renderer.set_state(result)
             logger.info("State → %s", result.value)
+        # Grey tint + IDLE-animation freeze apply whenever muted OR dictating.
         grey = sm.muted or sm.dictating
         window.set_muted(grey)
         renderer.set_muted(grey)
-        window.set_dictating(sm.dictating)
+        window.set_dictating(sm.dictating)  # badge only; renderer uses grey above
         if event_type == "tool_fired":
             handle_tool_fired(data, chat_log)
             if "name" in data:
