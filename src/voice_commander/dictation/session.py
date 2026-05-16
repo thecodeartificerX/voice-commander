@@ -40,11 +40,38 @@ class DictationSession:
         self._lock = threading.Lock()
         self._active = False
         self._buffer: list[npt.NDArray[np.float32]] = []
+        self._pending_end = threading.Event()
 
     @property
     def active(self) -> bool:
         with self._lock:
             return self._active
+
+    @property
+    def pending_end(self) -> bool:
+        """True when the hotkey-end path has requested finalisation.
+
+        Set by :meth:`request_end`; cleared by :meth:`take_and_finish` and
+        :meth:`cancel`.  Safe to read from any thread without holding the lock
+        because :class:`threading.Event.is_set` is atomic in CPython.
+        """
+        return self._pending_end.is_set()
+
+    def request_end(self) -> None:
+        """Signal that the hotkey-end path wants to finalise dictation.
+
+        Called from the hotkey thread.  Does NOT deactivate the session — the
+        pipeline thread polls :attr:`pending_end` and calls
+        :meth:`take_and_finish` after draining in-flight utterances.
+
+        A no-op (with no logging) when the session is already inactive — covers
+        the race where scroll-lock close wins first.
+        """
+        with self._lock:
+            if not self._active:
+                return
+            self._pending_end.set()
+        logger.debug("dictation: pending_end requested")
 
     def start(self) -> None:
         """Enter dictation mode; clear any previous buffer."""
@@ -106,6 +133,7 @@ class DictationSession:
             if not self._active:
                 return None
             self._active = False
+            self._pending_end.clear()
             audio = np.concatenate(self._buffer) if self._buffer else None
             self._buffer = []
         self._bus.publish("dictation.end", {"reason": "done"})
@@ -117,6 +145,7 @@ class DictationSession:
         with self._lock:
             was_active = self._active
             self._active = False
+            self._pending_end.clear()
             self._buffer = []
         if was_active:
             self._bus.publish("dictation.end", {"reason": "cancel"})

@@ -51,6 +51,11 @@ from .web.server import WebServer
 
 logger = logging.getLogger(__name__)
 
+# Time to wait for a new utterance when dictation pending-end is set.
+# After this window with no new audio the pipeline considers the queue drained
+# and calls _finalize_pending_dictation_end().
+_DICTATION_DRAIN_TIMEOUT_S = 0.25
+
 
 def _provenance_banner(cfg: Config, result: SelfTestResult) -> list[str]:
     """Return two banner lines describing resolved startup state.
@@ -378,9 +383,8 @@ class StreamingDaemon:
         if self._dictation_session is None:
             return
         if self._dictation_session.active:
-            audio = self._dictation_session.take_and_finish()
-            if audio is not None:
-                self._dictation_executor.submit(self._finalize_dictation, audio)
+            self._dictation_session.request_end()
+            logger.info("dictation: hotkey-end requested; pipeline will drain and finalize")
         else:
             self._dictation_session.start()
 
@@ -402,7 +406,25 @@ class StreamingDaemon:
 
     def _pipeline_loop(self) -> None:
         while True:
-            item = self._utt_q.get()
+            # When a hotkey-end is pending we use a short timeout so the pipeline
+            # can detect a drained queue and finalise without waiting indefinitely
+            # for audio that will never arrive.  Non-dictation path is unchanged:
+            # a plain blocking get() so no spurious CPU spin.
+            pending = (
+                self._dictation_session is not None
+                and self._dictation_session.pending_end
+            )
+            try:
+                if pending:
+                    item = self._utt_q.get(timeout=_DICTATION_DRAIN_TIMEOUT_S)
+                else:
+                    item = self._utt_q.get(timeout=None)
+            except queue.Empty:
+                # Timed out while waiting for more audio during hotkey-end drain.
+                # The queue is empty; finalise the dictation now.
+                self._finalize_pending_dictation_end()
+                continue
+
             if item is None:
                 break
             # Items enqueued by _on_utterance are (audio, gen) tuples.
@@ -656,6 +678,31 @@ class StreamingDaemon:
                 return
             self._dispatcher.run_plan(result.text, plan, self._registry)
             self._write_plan_async(result.text, plan)
+
+    def _finalize_pending_dictation_end(self) -> None:
+        """Called on the pipeline thread when the hotkey-end drain window expires.
+
+        Atomically captures the buffered audio (take_and_finish) and submits it to
+        the dictation executor.  Returns immediately — all heavy work (encode, POST,
+        paste) happens off-thread.
+
+        If the "done" word path won the race (take_and_finish returns None because
+        the session is already inactive), this is a no-op.  No double-submit risk:
+        take_and_finish holds the lock across deactivation + buffer clear.
+        """
+        if self._dictation_session is None:
+            return
+        audio = self._dictation_session.take_and_finish()
+        if audio is not None:
+            logger.info(
+                "dictation: hotkey-end drain complete — submitting %d samples", len(audio)
+            )
+            self._dictation_executor.submit(self._finalize_dictation, audio)
+        else:
+            logger.info(
+                "dictation: hotkey-end drain complete — buffer empty "
+                "(session closed or no audio)"
+            )
 
     def _finalize_dictation(self, audio: npt.NDArray[np.float32]) -> None:
         """Worker-thread finalize: encode → POST → clipboard paste.

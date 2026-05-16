@@ -182,3 +182,217 @@ def test_dictation_endpoint_failure_chimes_and_keeps_audio(
     assert daemon._dictation_store.read_audio() is not None, (
         "Audio WAV should be persisted on disk even when endpoint POST fails"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 3: hotkey-end with in-flight utterances — the core regression fix
+# ---------------------------------------------------------------------------
+
+
+def test_hotkey_end_with_in_flight_utterance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Hotkey-end after queuing 2 utterances must still capture & submit audio.
+
+    Simulates the race: hotkey fires (request_end) while audio is already in
+    the queue but hasn't been processed yet. The pipeline must drain the
+    utterances first, THEN call _finalize_pending_dictation_end().
+    """
+    pasted: list[str] = []
+
+    monkeypatch.setattr(
+        "voice_commander.dictation.remote.post_audio",
+        lambda wav_bytes, endpoint, **kw: "HOTKEY TEXT",
+    )
+    monkeypatch.setattr(
+        "voice_commander.dictation.clipboard.paste_via_clipboard",
+        lambda text, **kw: pasted.append(text),
+    )
+
+    daemon, dictation_session, feedback, bus = _make_daemon(
+        transcripts=[
+            _Transcription("hello world"),   # utterance 1 (buffered)
+            _Transcription("more content"),  # utterance 2 (buffered)
+        ],
+        tmp_path=tmp_path,
+    )
+
+    audio = np.zeros(16000, dtype=np.float32)
+    dictation_session.start()
+
+    # Simulate: request_end() fires from hotkey thread BEFORE pipeline processes
+    dictation_session.request_end()
+
+    # Both utterances are processed by the pipeline AFTER the hotkey end request
+    daemon._process_utterance(audio)   # "hello world" → buffered
+    daemon._process_utterance(audio)   # "more content" → buffered
+
+    # Pipeline drain finalises (simulating what the modified _pipeline_loop does)
+    daemon._finalize_pending_dictation_end()
+
+    # Wait for dictation executor to finish
+    daemon._dictation_executor.shutdown(wait=True)
+    daemon._wav_executor.shutdown(wait=True)
+
+    assert pasted == ["HOTKEY TEXT"], (
+        f"expected clipboard paste after hotkey-end drain, got: {pasted}"
+    )
+    assert not dictation_session.active, "session must be inactive after finalize"
+    assert not dictation_session.pending_end, "pending_end must be cleared after finalize"
+
+
+# ---------------------------------------------------------------------------
+# Test 4: hotkey-end with empty buffer — must not crash
+# ---------------------------------------------------------------------------
+
+
+def test_hotkey_end_empty_buffer_no_crash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """request_end() followed by _finalize_pending_dictation_end() with no audio
+    must not crash and must not call post_audio."""
+    posted: list[bytes] = []
+
+    monkeypatch.setattr(
+        "voice_commander.dictation.remote.post_audio",
+        lambda wav_bytes, endpoint, **kw: (posted.append(wav_bytes), "X")[1],
+    )
+    pasted: list[str] = []
+    monkeypatch.setattr(
+        "voice_commander.dictation.clipboard.paste_via_clipboard",
+        lambda text, **kw: pasted.append(text),
+    )
+
+    daemon, dictation_session, feedback, bus = _make_daemon(
+        transcripts=[],
+        tmp_path=tmp_path,
+    )
+
+    dictation_session.start()
+    dictation_session.request_end()
+    # No utterances processed — buffer is empty
+    daemon._finalize_pending_dictation_end()
+    daemon._dictation_executor.shutdown(wait=True)
+    daemon._wav_executor.shutdown(wait=True)
+
+    assert posted == [], "post_audio must not be called when buffer is empty"
+    assert pasted == [], "paste must not be called when buffer is empty"
+    assert not dictation_session.active, "session must be inactive after finalize"
+
+
+# ---------------------------------------------------------------------------
+# Test 5: scroll-lock cancel wins the race — pending_end cleared
+# ---------------------------------------------------------------------------
+
+
+def test_hotkey_end_scroll_lock_cancel_wins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """If cancel() is called after request_end() (scroll-lock wins the race),
+    pending_end must be False and nothing must be submitted."""
+    posted: list[bytes] = []
+
+    monkeypatch.setattr(
+        "voice_commander.dictation.remote.post_audio",
+        lambda wav_bytes, endpoint, **kw: (posted.append(wav_bytes), "X")[1],
+    )
+    pasted: list[str] = []
+    monkeypatch.setattr(
+        "voice_commander.dictation.clipboard.paste_via_clipboard",
+        lambda text, **kw: pasted.append(text),
+    )
+
+    daemon, dictation_session, feedback, bus = _make_daemon(
+        transcripts=[],
+        tmp_path=tmp_path,
+    )
+
+    dictation_session.start()
+    dictation_session.request_end()
+    assert dictation_session.pending_end  # sanity
+
+    # Scroll-lock fires cancel (races with pipeline drain)
+    dictation_session.cancel()
+
+    assert not dictation_session.pending_end, "cancel must clear pending_end"
+    assert not dictation_session.active, "cancel must deactivate session"
+
+    # Even if pipeline calls _finalize_pending_dictation_end now, it must be a no-op
+    daemon._finalize_pending_dictation_end()
+    daemon._dictation_executor.shutdown(wait=True)
+    daemon._wav_executor.shutdown(wait=True)
+
+    assert posted == [], "post_audio must not be called after cancel wins"
+    assert pasted == [], "paste must not be called after cancel wins"
+
+
+# ---------------------------------------------------------------------------
+# Test 6: end-to-end pipeline loop drains before finalise
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_loop_drains_before_finalize(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Full pipeline-loop regression: start dictation, put utterances in _utt_q,
+    call on_dictation_toggle(), wait, assert text was pasted.
+
+    This is the end-to-end regression test for the original race condition.
+    """
+    import threading
+
+    pasted: list[str] = []
+
+    monkeypatch.setattr(
+        "voice_commander.dictation.remote.post_audio",
+        lambda wav_bytes, endpoint, **kw: "PIPELINE DRAINED",
+    )
+    monkeypatch.setattr(
+        "voice_commander.dictation.clipboard.paste_via_clipboard",
+        lambda text, **kw: pasted.append(text),
+    )
+
+    # Two utterances that will be buffered in dictation mode
+    daemon, dictation_session, feedback, bus = _make_daemon(
+        transcripts=[
+            _Transcription("spoken line one"),
+            _Transcription("spoken line two"),
+        ],
+        tmp_path=tmp_path,
+    )
+
+    # Start the pipeline loop thread
+    pipeline_thread = threading.Thread(
+        target=daemon._pipeline_loop, name="vc-pipeline-test", daemon=True
+    )
+    pipeline_thread.start()
+
+    audio = np.zeros(16000, dtype=np.float32)
+
+    # Simulate an open voice session (on_dictation_toggle guards on _session_active)
+    daemon._session_active = True
+
+    # Enter dictation mode
+    dictation_session.start()
+
+    # Queue 2 utterances BEFORE triggering hotkey-end
+    daemon._utt_q.put((audio, daemon._audio_gen))
+    daemon._utt_q.put((audio, daemon._audio_gen))
+
+    # Hotkey-end: uses the new request_end() path (not take_and_finish directly)
+    daemon.on_dictation_toggle()
+
+    # Wait up to 2 s for the paste to happen
+    deadline = __import__("time").monotonic() + 2.0
+    while __import__("time").monotonic() < deadline and not pasted:
+        __import__("time").sleep(0.05)
+
+    # Shutdown pipeline
+    daemon._utt_q.put(None)
+    pipeline_thread.join(timeout=3.0)
+    daemon._dictation_executor.shutdown(wait=True)
+    daemon._wav_executor.shutdown(wait=True)
+
+    assert pasted == ["PIPELINE DRAINED"], (
+        f"hotkey-end should have pasted after pipeline drained; got: {pasted}"
+    )

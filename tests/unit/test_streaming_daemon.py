@@ -143,8 +143,6 @@ def test_pipeline_processes_utterance(tmp_path):
     result = _fake_transcription_result("copy", confidence=0.95)
     transcriber.transcribe.return_value = result
 
-    plan = Plan(steps=(ToolCall(name="press", kwargs={"combo": "ctrl+c"}),), raw_response={})
-
     # Start pipeline thread.
     pipeline_done = threading.Event()
     original_process = daemon._process_utterance
@@ -503,21 +501,21 @@ def test_dictation_toggle_starts_when_session_active(tmp_path):
 
 
 def test_dictation_toggle_finishes_when_already_dictating(tmp_path):
-    """Pressing the dictation key while dictation IS active calls take_and_finish()
-    and submits _finalize_dictation to the executor when audio is available."""
+    """Pressing the dictation key while dictation IS active calls request_end()
+    on the session (not take_and_finish directly). The pipeline thread drains
+    in-flight audio and calls _finalize_pending_dictation_end after the drain
+    window expires — preventing the race where the hotkey fires before VAD/pipeline
+    audio has been buffered (fix: dictation-hotkey-end-race).
+    """
     daemon, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._session_active = True
     fake_session = MagicMock()
     fake_session.active = True
-    fake_audio = np.zeros(8000, dtype=np.float32)
-    fake_session.take_and_finish.return_value = fake_audio
     daemon._dictation_session = fake_session
-    daemon._dictation_executor = MagicMock()
     daemon.on_dictation_toggle()
-    fake_session.take_and_finish.assert_called_once()
-    daemon._dictation_executor.submit.assert_called_once_with(
-        daemon._finalize_dictation, fake_audio
-    )
+    # New behaviour: request_end() signals the pipeline; no direct take_and_finish call
+    fake_session.request_end.assert_called_once()
+    fake_session.take_and_finish.assert_not_called()
 
 
 def test_dictation_toggle_no_session_is_miss(tmp_path):
