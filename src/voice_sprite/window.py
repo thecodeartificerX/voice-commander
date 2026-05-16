@@ -277,6 +277,10 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
                     anchor_y="bottom",
                     color=(245, 194, 66, 255),
                 )
+            # Re-centre every frame: CursorDock resizes the window when the
+            # sprite crosses a monitor with a different DPI, so a width
+            # captured once at label creation goes stale mid-dictation.
+            self._badge_label.x = self.width // 2
             self._badge_label.draw()
 
     def apply_win32_flags(self) -> None:
