@@ -26,6 +26,9 @@ from .chain import ChainParser
 from .config import Config
 from .dictation.session import DictationSession
 from .dictation.store import DictationStore
+from .elements import clicker, desktop, scanner
+from .elements.session import ENTRY_WORDS, ElementsSession, ElementsState
+from .elements.uia import uia_available
 from .dispatcher import Dispatcher
 from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
@@ -152,6 +155,9 @@ class StreamingDaemon:
         picker_registry: BarePickerRegistry | None = None,
         dictation_session: DictationSession | None = None,
         dictation_endpoint: str = "",
+        elements_session: ElementsSession | None = None,
+        elements_max_elements: int = 200,
+        elements_scan_timeout_s: float = 3.0,
         min_confidence: float = 0.30,
         min_word_count: int = 1,
         max_no_speech_prob: float = 0.6,
@@ -253,6 +259,19 @@ class StreamingDaemon:
             max_workers=1,
             thread_name_prefix="dictation",
         )
+        # --- Elements mode (ADR 0087) ---
+        self._elements_session = elements_session
+        self._elements_max_elements = elements_max_elements
+        self._elements_scan_timeout_s = elements_scan_timeout_s
+        self._elements_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="elements",
+        )
+        if elements_session is not None and not uia_available():
+            logger.warning(
+                "Elements mode is configured but the 'uiautomation' library "
+                "is unavailable — the entry word will be ignored."
+            )
         # Set when Transcriber.load() completes successfully in the background thread.
         # Pipeline worker waits on this before calling transcribe().
         self._transcriber_ready: threading.Event = threading.Event()
