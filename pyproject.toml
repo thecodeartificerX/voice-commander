@@ -124,6 +124,7 @@ module = [
     "httpx_sse.*",
     "winrt.*",
     "win32clipboard.*",
+    "uiautomation",
 ]
 ignore_missing_imports = true
 

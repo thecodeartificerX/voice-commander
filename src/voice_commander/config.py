@@ -31,6 +31,15 @@ class DictationConfig:
 
 
 @dataclass(frozen=True)
+class ElementsConfig:
+    """Elements mode — voice-driven UIA element click (ADR 0087)."""
+
+    max_elements: int = 200
+    scan_timeout_s: float = 3.0
+    hint_timeout_s: float = 8.0
+
+
+@dataclass(frozen=True)
 class AudioConfig:
     channels: int = 1
     device: int = -1
@@ -158,6 +167,7 @@ class Config:
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     picker: PickerConfig = field(default_factory=PickerConfig)
     dictation: DictationConfig = field(default_factory=DictationConfig)
+    elements: ElementsConfig = field(default_factory=ElementsConfig)
 
     @classmethod
     def load(cls, path: Path) -> Config:
@@ -213,6 +223,7 @@ class Config:
                 },
             ),
             dictation=_section(DictationConfig, raw.get("dictation", {})),
+            elements=_section(ElementsConfig, raw.get("elements", {})),
         )
 
 

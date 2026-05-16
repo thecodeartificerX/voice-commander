@@ -86,3 +86,10 @@ cancel_words = ["cancel", "nevermind", "stop"]
 cap = 5                  # max items shown (1-9)
 exclude_foreground = true
 exclude_self = true      # filter daemon + sprite + modal windows
+
+[elements]
+# Elements mode (ADR 0087) — say "element"/"elements" to scan the foreground
+# window for clickable controls, then say a number to click one.
+max_elements = 200      # cap on hint tags drawn (bounds scan cost + clutter)
+scan_timeout_s = 3.0    # hard cap on the UIA tree walk
+hint_timeout_s = 8.0    # overlay auto-dismisses after this many seconds of silence
