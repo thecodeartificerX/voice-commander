@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Literal
+from typing import Any, Literal, Protocol
 
 import numpy as np
 import numpy.typing as npt
@@ -18,7 +18,15 @@ from ..verb_router import _normalize_spoken
 
 logger = logging.getLogger(__name__)
 
-_BusLike = object  # anything with .publish(event_type, data)
+
+class _BusLike(Protocol):
+    """The minimal EventBus surface DictationSession depends on.
+
+    Structurally satisfied by :class:`~voice_commander.event_bus.EventBus`.
+    """
+
+    def publish(self, event_type: str, data: dict[str, Any] | None = None) -> None: ...
+
 
 UtteranceKind = Literal["buffered", "end"]
 

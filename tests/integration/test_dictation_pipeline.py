@@ -14,15 +14,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pytest
 
+from voice_commander.dictation.session import DictationSession
 from voice_commander.event_bus import EventBus
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.verb_router import VerbRouter, build_default_rules
-from voice_commander.dictation.session import DictationSession
+
+if TYPE_CHECKING:
+    from voice_commander.daemon import StreamingDaemon
 
 
 @dataclass
@@ -45,15 +48,15 @@ class _StubTranscriber:
 def _make_daemon(
     transcripts: list[_Transcription],
     tmp_path: Path,
-) -> tuple["StreamingDaemon", DictationSession, CapturingFeedbackSink, EventBus]:
+) -> tuple[StreamingDaemon, DictationSession, CapturingFeedbackSink, EventBus]:
     """Build a stripped-down daemon for dictation pipeline testing.
 
     Returns (daemon, dictation_session, feedback, bus).
     """
     from voice_commander.daemon import StreamingDaemon
     from voice_commander.dispatcher import Dispatcher
-    from voice_commander.registry import get_global_registry, reset_global_registry
     from voice_commander.picker.registry import reset_global_picker_registry
+    from voice_commander.registry import get_global_registry, reset_global_registry
 
     reset_global_registry()
     reset_global_picker_registry()

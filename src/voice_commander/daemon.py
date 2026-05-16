@@ -18,22 +18,22 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
+
 from voice_commander.vad_onnx import load_silero_vad
 
 from . import resolver as param_resolver
+from .chain import ChainParser
 from .config import Config
+from .dictation.session import DictationSession
+from .dictation.store import DictationStore
 from .dispatcher import Dispatcher
 from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
 from .observability import Store, Tracer
+from .observability.errors import classify as _classify_error
 from .picker.registry import BarePickerRegistry
 from .picker.session import PickerSession
-from .verb_router import VerbRouter, build_default_rules
-from .chain import ChainParser
-from .dictation.session import DictationSession
-from .dictation.store import DictationStore
-from .observability.errors import classify as _classify_error
 from .plan import Plan, PlanOutcome
 from .registry import ToolRegistry, discover
 from .streaming_recorder import SelfTestResult, StreamingRecorder
@@ -45,6 +45,7 @@ from .transcriber import (
 )
 from .vad_gate import VADGate
 from .validator import validate_config_or_die, validate_or_die
+from .verb_router import VerbRouter, build_default_rules
 from .web.app import create_app
 from .web.server import WebServer
 
@@ -656,7 +657,7 @@ class StreamingDaemon:
             self._dispatcher.run_plan(result.text, plan, self._registry)
             self._write_plan_async(result.text, plan)
 
-    def _finalize_dictation(self, audio: "npt.NDArray[np.float32]") -> None:
+    def _finalize_dictation(self, audio: npt.NDArray[np.float32]) -> None:
         """Worker-thread finalize: encode → POST → clipboard paste.
 
         Runs on ``self._dictation_executor`` so the pipeline thread is never

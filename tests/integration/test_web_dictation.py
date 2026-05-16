@@ -91,8 +91,10 @@ def test_retranscribe_sets_clipboard(
     assert sets == ["re-done text"]
 
 
-def test_retranscribe_no_audio_renders_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """POST /dictation/retranscribe with no last.wav returns 200 with error text, not 500."""
+def test_retranscribe_no_audio_renders_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No last.wav -> /dictation/retranscribe returns 200 with error text, not 500."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config.toml").write_text(
         "[hotkey]\nkey = \"scroll_lock\"\n",
@@ -110,7 +112,7 @@ def test_retranscribe_no_audio_renders_error(tmp_path: Path, monkeypatch: pytest
 def test_retranscribe_remote_error_renders_error(
     app_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """POST /dictation/retranscribe when remote raises DictationRemoteError returns 200 with error, not 500."""
+    """Remote DictationRemoteError -> retranscribe returns 200 with error, not 500."""
     from voice_commander.dictation.remote import DictationRemoteError
 
     def _raise(wav, endpoint, **kw):  # noqa: ANN001, ANN202
