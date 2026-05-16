@@ -8,7 +8,8 @@ Drives the dictation finalize pipeline the way a real user would:
      endpoint (or a stub), and clipboard-pastes the result into Notepad.
   3. Evidence capture — screenshots written to ``outputs/dictation_e2e/``.
 
-10 checkpoints. Exits non-zero if any hard checkpoint fails.
+10 checkpoints (plus a non-blocking badge row). Exits non-zero if any hard
+checkpoint fails.
 
 Usage:
   python scripts/dictation_visual_e2e.py               # live endpoint (config.toml)
@@ -18,11 +19,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import os
 import queue
-import socket
 import subprocess
 import sys
 import threading
@@ -31,6 +32,8 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # Repo root + path setup
@@ -62,12 +65,19 @@ _TEST_WAV = ROOT / "tests" / "test-audio" / "test-wav.wav"
 # Checkpoint registry
 # ---------------------------------------------------------------------------
 
-_checkpoints: list[tuple[int, str, bool | None]] = []
-# (n, description, result)  — result=None means SKIPPED
+_checkpoints: list[tuple[int, str, bool | None, bool]] = []
+# (n, description, result, blocking)  — result=None means SKIPPED
 
 
-def _record(n: int, label: str, result: bool | None, *, skip_msg: str = "") -> None:
-    _checkpoints.append((n, label, result))
+def _record(
+    n: int,
+    label: str,
+    result: bool | None,
+    *,
+    skip_msg: str = "",
+    blocking: bool = True,
+) -> None:
+    _checkpoints.append((n, label, result, blocking))
     if result is None:
         log.info("CHECKPOINT %d: SKIPPED — %s", n, skip_msg)
     elif result:
@@ -77,16 +87,8 @@ def _record(n: int, label: str, result: bool | None, *, skip_msg: str = "") -> N
 
 
 # ---------------------------------------------------------------------------
-# Fake SSE server (copied from picker_visual_e2e.py)
+# SSE server (Fix 4: OS-assigned port — no TOCTOU race)
 # ---------------------------------------------------------------------------
-
-
-def _free_port() -> int:
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 class _SSEHandler(BaseHTTPRequestHandler):
@@ -125,7 +127,7 @@ class _SSEHandler(BaseHTTPRequestHandler):
                     f"id: {ev_id}\n"
                     f"event: {ev['type']}\n"
                     f"data: {json.dumps(ev['data'])}\n\n"
-                ).encode("utf-8")
+                ).encode()
                 try:
                     self.wfile.write(payload)
                     self.wfile.flush()
@@ -136,14 +138,16 @@ class _SSEHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
-def _start_sse_server(port: int) -> ThreadingHTTPServer:
-    srv = ThreadingHTTPServer(("127.0.0.1", port), _SSEHandler)
+def _start_sse_server() -> tuple[ThreadingHTTPServer, int]:
+    """Bind to an OS-assigned port; return (server, actual_port)."""
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _SSEHandler)
+    port = srv.server_address[1]
     srv.queue = queue.Queue()  # type: ignore[attr-defined]
     srv.connected = threading.Event()  # type: ignore[attr-defined]
     srv.shutdown_flag = threading.Event()  # type: ignore[attr-defined]
     t = threading.Thread(target=srv.serve_forever, daemon=True, name="fake-sse")
     t.start()
-    return srv
+    return srv, port
 
 
 def _emit(srv: ThreadingHTTPServer, type_: str, data: dict[str, Any]) -> None:
@@ -194,7 +198,11 @@ def _find_window_by_pid(pid: int, timeout_s: float = 8.0) -> int:
     found_hwnd: list[int] = []
 
     # WNDENUMPROC callback
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+    WNDENUMPROC = ctypes.WINFUNCTYPE(  # noqa: N806
+        ctypes.wintypes.BOOL,
+        ctypes.wintypes.HWND,
+        ctypes.wintypes.LPARAM,
+    )
 
     def _enum_cb(hwnd: int, _lp: int) -> bool:
         window_pid = ctypes.wintypes.DWORD(0)
@@ -216,7 +224,11 @@ def _find_window_by_pid(pid: int, timeout_s: float = 8.0) -> int:
 
 
 def _capture_window(hwnd: int, png_path: Path) -> bool:
-    """Capture *hwnd* via PrintWindow(PW_RENDERFULLCONTENT) and write PNG."""
+    """Capture *hwnd* via PrintWindow(PW_RENDERFULLCONTENT) and write PNG.
+
+    GDI handles are released in a finally block so they never leak even
+    when img.save() or BitBlt raises.
+    """
     try:
         import ctypes
         from ctypes import wintypes
@@ -238,36 +250,40 @@ def _capture_window(hwnd: int, png_path: Path) -> bool:
         bmp.CreateCompatibleBitmap(src, w, h)
         mem.SelectObject(bmp)
 
-        user32 = ctypes.windll.user32
-        user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
-        user32.PrintWindow.restype = wintypes.BOOL
-        ok = user32.PrintWindow(hwnd, mem.GetSafeHdc(), 0x2)  # PW_RENDERFULLCONTENT
-        if not ok:
-            log.warning("PrintWindow returned 0; falling back to BitBlt")
-            desktop_hwnd = win32gui.GetDesktopWindow()
-            ddc = win32gui.GetWindowDC(desktop_hwnd)
-            dsrc = win32ui.CreateDCFromHandle(ddc)
-            mem.BitBlt((0, 0), (w, h), dsrc, (rect[0], rect[1]), 0x00CC0020)
-            dsrc.DeleteDC()
-            win32gui.ReleaseDC(desktop_hwnd, ddc)
+        try:
+            user32 = ctypes.windll.user32
+            user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+            user32.PrintWindow.restype = wintypes.BOOL
+            pw_ok = user32.PrintWindow(hwnd, mem.GetSafeHdc(), 0x2)  # PW_RENDERFULLCONTENT
+            if not pw_ok:
+                log.warning("PrintWindow returned 0; falling back to BitBlt")
+                desktop_hwnd = win32gui.GetDesktopWindow()
+                ddc = win32gui.GetWindowDC(desktop_hwnd)
+                dsrc = win32ui.CreateDCFromHandle(ddc)
+                try:
+                    mem.BitBlt((0, 0), (w, h), dsrc, (rect[0], rect[1]), 0x00CC0020)
+                finally:
+                    dsrc.DeleteDC()
+                    win32gui.ReleaseDC(desktop_hwnd, ddc)
 
-        bmpinfo = bmp.GetInfo()
-        bmpstr = bmp.GetBitmapBits(True)
-        img = Image.frombuffer(
-            "RGB",
-            (bmpinfo["bmWidth"], bmpinfo["bmHeight"]),
-            bmpstr,
-            "raw",
-            "BGRX",
-            0,
-            1,
-        )
-        img.save(png_path)
+            bmpinfo = bmp.GetInfo()
+            bmpstr = bmp.GetBitmapBits(True)
+            img = Image.frombuffer(
+                "RGB",
+                (bmpinfo["bmWidth"], bmpinfo["bmHeight"]),
+                bmpstr,
+                "raw",
+                "BGRX",
+                0,
+                1,
+            )
+            img.save(png_path)
+        finally:
+            win32gui.DeleteObject(bmp.GetHandle())
+            mem.DeleteDC()
+            src.DeleteDC()
+            win32gui.ReleaseDC(hwnd, hdc)
 
-        win32gui.DeleteObject(bmp.GetHandle())
-        mem.DeleteDC()
-        src.DeleteDC()
-        win32gui.ReleaseDC(hwnd, hdc)
         return True
     except Exception:
         log.exception("PrintWindow capture failed")
@@ -306,11 +322,13 @@ def _has_gold_badge_pixels(png_path: Path, sample: int = 400) -> bool:
 
 
 def _take_screenshot(name: str) -> Path:
-    """Capture the entire screen to the evidence dir (fallback when no hwnd)."""
+    """Capture the entire screen to the evidence dir (fallback when no hwnd).
+
+    GDI handles are released in a finally block so they never leak even when
+    img.save() raises.
+    """
     path = OUT_DIR / name
     try:
-        import ctypes
-
         import win32gui  # type: ignore
         import win32ui  # type: ignore
         from PIL import Image  # type: ignore
@@ -325,17 +343,28 @@ def _take_screenshot(name: str) -> Path:
         bmp = win32ui.CreateBitmap()
         bmp.CreateCompatibleBitmap(src, w, h)
         mem.SelectObject(bmp)
-        mem.BitBlt((0, 0), (w, h), src, (0, 0), 0x00CC0020)
 
-        bmpinfo = bmp.GetInfo()
-        bmpstr = bmp.GetBitmapBits(True)
-        img = Image.frombuffer("RGB", (bmpinfo["bmWidth"], bmpinfo["bmHeight"]), bmpstr, "raw", "BGRX", 0, 1)
-        img.save(path)
+        try:
+            mem.BitBlt((0, 0), (w, h), src, (0, 0), 0x00CC0020)
 
-        win32gui.DeleteObject(bmp.GetHandle())
-        mem.DeleteDC()
-        src.DeleteDC()
-        win32gui.ReleaseDC(desktop, hdc)
+            bmpinfo = bmp.GetInfo()
+            bmpstr = bmp.GetBitmapBits(True)
+            img = Image.frombuffer(
+                "RGB",
+                (bmpinfo["bmWidth"], bmpinfo["bmHeight"]),
+                bmpstr,
+                "raw",
+                "BGRX",
+                0,
+                1,
+            )
+            img.save(path)
+        finally:
+            win32gui.DeleteObject(bmp.GetHandle())
+            mem.DeleteDC()
+            src.DeleteDC()
+            win32gui.ReleaseDC(desktop, hdc)
+
         log.info("screenshot: %s", path)
     except Exception:
         log.exception("screenshot failed: %s", name)
@@ -347,16 +376,20 @@ def _take_screenshot(name: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def launch_notepad_sink() -> int:
+def launch_notepad_sink() -> tuple[int, subprocess.Popen[bytes]]:
+    """Launch Notepad and return (hwnd, popen).
+
+    Returns (0, proc) if the window could not be found.
+    """
     import win32gui  # type: ignore
 
-    subprocess.Popen(["notepad.exe"])
+    proc = subprocess.Popen(["notepad.exe"])
     time.sleep(1.5)
     hwnd = win32gui.FindWindow("Notepad", None)
-    assert hwnd, "could not find Notepad window"
-    win32gui.SetForegroundWindow(hwnd)
-    time.sleep(0.3)
-    return hwnd
+    if hwnd:
+        win32gui.SetForegroundWindow(hwnd)
+        time.sleep(0.3)
+    return hwnd, proc
 
 
 def _find_edit_control(hwnd: int) -> int:
@@ -384,10 +417,8 @@ def _find_edit_control(hwnd: int) -> int:
     fallback: list[int] = []
     all_hwnds: list[int] = []
 
-    try:
+    with contextlib.suppress(Exception):
         win32gui.EnumChildWindows(hwnd, lambda h, _: all_hwnds.append(h) or True, None)
-    except Exception:
-        pass
 
     for h in all_hwnds:
         try:
@@ -460,11 +491,8 @@ def transcription_is_second_in_history(expected: str) -> bool | None:
 # ---------------------------------------------------------------------------
 
 
-def _load_test_wav_as_float32() -> "npt.NDArray[np.float32]":
+def _load_test_wav_as_float32() -> np.ndarray:
     """Read test-wav.wav and resample to 16 kHz mono float32 if needed."""
-    import numpy as np
-    import numpy.typing as npt  # noqa: F401
-
     with wave.open(str(_TEST_WAV), "rb") as wf:
         ch = wf.getnchannels()
         sw = wf.getsampwidth()
@@ -506,9 +534,7 @@ def _load_test_wav_as_float32() -> "npt.NDArray[np.float32]":
 
 
 def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
-    """Run all 10 checkpoints. Returns 0 if all hard checkpoints pass."""
-    import numpy as np  # type: ignore
-
+    """Run all checkpoints. Returns 0 if all hard checkpoints pass."""
     from voice_commander.dictation import clipboard
     from voice_commander.dictation.store import DictationStore, encode_wav
 
@@ -516,9 +542,9 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
     # Step 1: set up infrastructure
     # ------------------------------------------------------------------
 
-    port = _free_port()
+    # Fix 4: bind to port 0 — OS assigns a free port, eliminating TOCTOU race.
+    srv, port = _start_sse_server()
     log.info("fake SSE server on port %d", port)
-    srv = _start_sse_server(port)
     cfg_path = _write_temp_config(port)
 
     env = os.environ.copy()
@@ -542,6 +568,7 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
 
     # Notepad and DictationStore setup
     notepad_hwnd: int = 0
+    notepad_proc: subprocess.Popen[bytes] | None = None
     dictation_store = DictationStore(OUT_DIR / "store")
 
     # We'll intercept clipboard to record what was set at paste time
@@ -552,7 +579,6 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
         """Wrapper: records clipboard state at paste time and ensures Notepad is foreground."""
         import ctypes
 
-        import win32con  # type: ignore
         import win32gui  # type: ignore
 
         # Ensure Notepad has focus before setting the clipboard.
@@ -619,7 +645,6 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
 
     threading.Thread(target=_sse_listener, daemon=True, name="sse-listener").start()
 
-    ok = True
     try:
         # ------------------------------------------------------------------
         # Wait for sprite to connect
@@ -647,7 +672,8 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
         )
 
         # ------------------------------------------------------------------
-        # CHECKPOINT 1: dictation.start SSE event + sprite gold badge
+        # CHECKPOINT 1: dictation.start SSE event (hard / blocking)
+        # CHECKPOINT 1b: sprite gold badge visible (non-blocking visual evidence)
         # ------------------------------------------------------------------
         _emit(srv, "dictation.start", {})
         # Give sprite time to process + render badge
@@ -660,28 +686,49 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
         sprite_hwnd = _find_window_by_pid(sprite_proc.pid, timeout_s=6.0)
         log.info("sprite hwnd=%d", sprite_hwnd)
 
-        cp1_badge = False
         sprite_png = OUT_DIR / "01_sprite_dictating_badge.png"
         if sprite_hwnd:
             captured = _capture_window(sprite_hwnd, sprite_png)
             if captured:
                 cp1_badge = _has_gold_badge_pixels(sprite_png)
                 log.info("badge pixel check: %s", "PASS" if cp1_badge else "FAIL")
+                # Non-blocking: records PASS or FAIL but does not count toward hard_fail
+                _record(
+                    1,
+                    "sprite gold badge visible (non-blocking visual evidence)",
+                    cp1_badge,
+                    blocking=False,
+                )
             else:
-                # Fallback: screenshot the whole screen
+                # PrintWindow failed — fall back to whole-screen screenshot
                 _take_screenshot("01_sprite_screen_fallback.png")
                 log.warning("PrintWindow failed — screenshot saved as fallback")
+                _record(
+                    1,
+                    "sprite gold badge visible (non-blocking visual evidence)",
+                    None,
+                    skip_msg=(
+                        "sprite overlay HWND not capturable — "
+                        "verify badge manually from the screenshot"
+                    ),
+                    blocking=False,
+                )
         else:
             _take_screenshot("01_sprite_screen_fallback.png")
             log.warning("sprite HWND not found — screenshot saved as fallback")
+            _record(
+                1,
+                "sprite gold badge visible (non-blocking visual evidence)",
+                None,
+                skip_msg=(
+                    "sprite overlay HWND not capturable — "
+                    "verify badge manually from the screenshot"
+                ),
+                blocking=False,
+            )
 
-        # Checkpoint 1 passes if the SSE event was seen by our listener
-        # The badge pixel assertion is a best-effort visual (sprite window is
-        # transparent/composited and PrintWindow may not capture gold pixels
-        # on all drivers — the pixel check provides evidence, not a hard gate).
+        # Hard (blocking) checkpoint: SSE event seen by our listener
         _record(1, "dictation.start SSE event seen", cp1_sse)
-        if not cp1_sse:
-            ok = False
 
         # ------------------------------------------------------------------
         # CHECKPOINT 2-4: encode test-wav.wav → last.wav; assert WAV params
@@ -692,7 +739,6 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
             _record(2, "test-wav.wav exists", False)
             _record(3, "last.wav written", False)
             _record(4, "last.wav is 16 kHz mono s16le", False)
-            ok = False
         else:
             _record(2, "test-wav.wav exists", True)
             audio_f32 = _load_test_wav_as_float32()
@@ -701,8 +747,6 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
 
             last_wav = dictation_store.audio_path
             _record(3, f"last.wav written to {last_wav}", last_wav.exists())
-            if not last_wav.exists():
-                ok = False
 
             # Verify WAV params
             cp4 = False
@@ -720,17 +764,18 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
                 except Exception:
                     log.exception("could not read last.wav")
             _record(4, "last.wav is 16 kHz mono s16le", cp4)
-            if not cp4:
-                ok = False
 
         # ------------------------------------------------------------------
         # CHECKPOINT 5: remote POST returns non-empty text
         # ------------------------------------------------------------------
         log.info("launching Notepad sink")
         try:
-            notepad_hwnd = launch_notepad_sink()
-            log.info("notepad hwnd=%d", notepad_hwnd)
-        except AssertionError as e:
+            notepad_hwnd, notepad_proc = launch_notepad_sink()
+            if notepad_hwnd:
+                log.info("notepad hwnd=%d pid=%d", notepad_hwnd, notepad_proc.pid)
+            else:
+                log.error("notepad launched but window not found")
+        except Exception as e:
             log.error("notepad launch failed: %s", e)
             notepad_hwnd = 0
 
@@ -749,9 +794,7 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
 
         cp5 = bool(transcription)
         _record(5, f"remote returned non-empty text: {transcription!r}", cp5)
-        if not cp5:
-            ok = False
-        else:
+        if cp5:
             log.info("transcription: %r", transcription)
             dictation_store.save_text(transcription)
 
@@ -779,15 +822,14 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
             log.warning("paste was never called (_clipboard_at_paste empty)")
 
         _record(7, "clipboard == transcription at paste time", cp7)
-        if not cp7:
-            ok = False
 
         # ------------------------------------------------------------------
         # CHECKPOINT 8: Notepad text == transcription
+        # Fix 1: SKIP (not hard-fail) when Notepad is unavailable
         # ------------------------------------------------------------------
         _take_screenshot("08_notepad_after_paste.png")
-        cp8 = False
         if notepad_hwnd and cp5:
+            cp8: bool | None = False
             try:
                 import win32gui  # type: ignore
                 # Make sure Notepad is still the foreground so the read is fresh
@@ -802,12 +844,17 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
                 log.info("notepad contains transcription: %s", "PASS" if cp8 else "FAIL")
             except Exception:
                 log.exception("read_notepad_text failed")
+            _record(8, "Notepad text == transcription", cp8)
         else:
+            # Notepad not available or transcription empty — infrastructure issue,
+            # not a dictation defect.  Record as SKIP.
             log.warning("skipping notepad text check — hwnd=%d cp5=%s", notepad_hwnd, cp5)
-
-        _record(8, "Notepad text == transcription", cp8)
-        if not cp8 and notepad_hwnd and cp5:
-            ok = False
+            _record(
+                8,
+                "Notepad text == transcription",
+                None,
+                skip_msg=f"notepad_hwnd={notepad_hwnd} cp5={cp5}",
+            )
 
         # ------------------------------------------------------------------
         # CHECKPOINT 9: clipboard restored to sentinel (original)
@@ -819,8 +866,6 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
             current_clipboard, _SENTINEL_CLIPBOARD, "PASS" if cp9 else "FAIL",
         )
         _record(9, "clipboard restored to sentinel (original)", cp9)
-        if not cp9:
-            ok = False
 
         # ------------------------------------------------------------------
         # CHECKPOINT 10: transcription is 2nd in Win+V history
@@ -840,8 +885,6 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
                 )
             else:
                 _record(10, "transcription is 2nd in Win+V history", cp10)
-                if not cp10:
-                    ok = False
         else:
             _record(
                 10,
@@ -883,20 +926,17 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
         except Exception:
             sprite_proc.kill()
 
-        # Close Notepad (don't save)
-        if notepad_hwnd:
+        # Fix 5: force-kill Notepad via taskkill (Win11 save dialog is a XAML
+        # ContentDialog, not a #32770 dialog, so WM_CLOSE cannot dismiss it).
+        if notepad_proc is not None:
             try:
-                import win32con  # type: ignore
-                import win32gui  # type: ignore
-
-                win32gui.PostMessage(notepad_hwnd, win32con.WM_CLOSE, 0, 0)
-                time.sleep(0.5)
-                # Dismiss "Save?" dialog if it appears
-                dlg = win32gui.FindWindow("#32770", None)
-                if dlg:
-                    win32gui.PostMessage(dlg, win32con.WM_CLOSE, 0, 0)
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(notepad_proc.pid)],
+                    capture_output=True,
+                )
+                log.info("taskkill notepad pid=%d", notepad_proc.pid)
             except Exception:
-                log.warning("could not close Notepad cleanly")
+                log.warning("could not taskkill Notepad", exc_info=True)
 
         log.info("cleanup complete")
 
@@ -907,15 +947,17 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
     print("DICTATION VISUAL E2E — CHECKPOINT SUMMARY")
     print("=" * 60)
     hard_fail = 0
-    for n, label, result in _checkpoints:
+    for n, label, result, blocking in _checkpoints:
         if result is None:
             status = "SKIPPED"
         elif result:
             status = "PASS"
         else:
             status = "FAIL"
-            hard_fail += 1
-        print(f"  CP {n:>2}: {status:<8}  {label}")
+            if blocking:
+                hard_fail += 1
+        nb_tag = " [non-blocking]" if not blocking else ""
+        print(f"  CP {n:>2}: {status:<8}  {label}{nb_tag}")
     print("=" * 60)
     evidence = list(OUT_DIR.glob("*.png"))
     print(f"Evidence dir: {OUT_DIR}")
