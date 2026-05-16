@@ -1190,6 +1190,12 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         end_word=cfg.dictation.end_word,
     )
 
+    # --- Elements mode (ADR 0087) ---
+    elements_session = ElementsSession(
+        bus=event_bus,
+        hint_timeout_s=cfg.elements.hint_timeout_s,
+    )
+
     # Backend keyboard recorder for the Builder UI's `press` combo capture.
     # Single instance, lazy listener (one record session at a time).
     from voice_commander.recorder import KeyRecorder
@@ -1282,6 +1288,9 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         picker_registry=picker_registry if cfg.picker.enabled else None,
         dictation_session=dictation_session,
         dictation_endpoint=cfg.dictation.endpoint,
+        elements_session=elements_session,
+        elements_max_elements=cfg.elements.max_elements,
+        elements_scan_timeout_s=cfg.elements.scan_timeout_s,
         min_confidence=cfg.transcription.min_confidence,
         min_word_count=cfg.vad.gates.min_word_count,
         max_no_speech_prob=cfg.vad.gates.max_no_speech_prob,
