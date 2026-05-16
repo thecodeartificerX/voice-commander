@@ -392,6 +392,52 @@ def test_process_utterance_calls_on_miss_when_plan_is_none(tmp_path):
     )
 
 
+# ---------------------------------------------------------------------------
+# Dictation sub-state tests (ADR 0086)
+# ---------------------------------------------------------------------------
+
+
+def test_dictation_start_step_starts_session(tmp_path):
+    """A plan with a single __dictation.start step calls session.start()."""
+    from unittest.mock import MagicMock
+
+    from voice_commander.plan import Plan, ToolCall
+
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    # Wire a fresh transcription result so the utterance clears all gates.
+    daemon._transcriber.transcribe.return_value = _fake_transcription_result(
+        "type", confidence=0.95
+    )
+
+    fake_session = MagicMock()
+    fake_session.active = False
+    daemon._dictation_session = fake_session
+    daemon._verb_router.route.return_value = Plan(
+        steps=(ToolCall(name="__dictation.start", kwargs={}),),
+        raw_response={"dictation": True},
+    )
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32))
+    fake_session.start.assert_called_once()
+
+
+def test_active_dictation_buffers_utterance(tmp_path):
+    """While dictation is active, every utterance is routed to the session
+    (not VerbRouter)."""
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._transcriber.transcribe.return_value = _fake_transcription_result(
+        "hello world", confidence=0.95
+    )
+
+    fake_session = MagicMock()
+    fake_session.active = True
+    fake_session.handle_utterance.return_value = "buffered"
+    daemon._dictation_session = fake_session
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32))
+    fake_session.handle_utterance.assert_called_once()
+    # VerbRouter is bypassed while dictation is active.
+    daemon._verb_router.route.assert_not_called()
+
+
 def _run_process_utterance(daemon: StreamingDaemon, tmp_path) -> None:
     """Run _process_utterance synchronously via the pipeline thread."""
     done = threading.Event()

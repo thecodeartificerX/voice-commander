@@ -522,6 +522,18 @@ class StreamingDaemon:
                 {"text": result.text, "confidence": result.confidence},
             )
 
+            # Dictation sub-state (ADR 0086): while active, every utterance is
+            # dictation content (buffered) or the end word — never a command.
+            if self._dictation_session is not None and self._dictation_session.active:
+                kind = self._dictation_session.handle_utterance(utterance, result.text)
+                if kind == "end":
+                    audio = self._dictation_session.take_audio()
+                    self._dictation_session.finish()
+                    if audio is not None:
+                        self._dictation_executor.submit(self._finalize_dictation, audio)
+                run.set_status("ok")
+                return
+
             # Picker sub-state (ADR 0083): if a bare-primitive picker is open,
             # the next utterance is a selection, not a new command.
             if self._picker_session is not None and self._picker_session.active:
@@ -597,6 +609,13 @@ class StreamingDaemon:
                     _publish_miss(result.text)
                     return
                 self._picker_session.open(verb, items)
+                run.set_status("ok")
+                self._feedback.on_plan_complete(result.text, 0)
+                _publish_picker_ok(result.text)
+                return
+            if len(plan.steps) == 1 and plan.steps[0].name == "__dictation.start":
+                if self._dictation_session is not None:
+                    self._dictation_session.start()
                 run.set_status("ok")
                 self._feedback.on_plan_complete(result.text, 0)
                 _publish_picker_ok(result.text)
