@@ -224,20 +224,14 @@ class StreamingDaemon:
             thread_name_prefix="wav-writer",
         )
         self._session_active: bool = False
-        # ADR 0025 — secondary hotkey toggles mute *within* an active session.
-        # Muted means: audio stream torn down via recorder.close_session() and
-        # any in-flight utterances drained. The Scroll Lock session conceptually
-        # remains "open" so the user can unmute back into the same session.
-        self._muted: bool = False
         # Audio-generation counter. Bumped on every state transition that
-        # ends audio capture (mute, scroll-lock close) or restarts it
-        # (unmute, scroll-lock open). Each utterance is tagged with the
+        # ends audio capture (scroll-lock close) or restarts it
+        # (scroll-lock open). Each utterance is tagged with the
         # generation in which it was *enqueued*; the pipeline drops
         # utterances whose tag does not match the current generation.
-        # This closes the race where _muted is read True only AFTER
-        # transcribe() returns — by then the utterance is already past the
-        # boolean guard, but its generation has been invalidated and it
-        # is dropped anyway. See ADR 0025.
+        # This closes the race where a stale utterance is read only AFTER
+        # transcribe() returns — by then its generation has been invalidated
+        # and it is dropped anyway.
         self._audio_gen: int = 0
         self._verb_router = verb_router
         self._picker_session = picker_session
@@ -251,6 +245,8 @@ class StreamingDaemon:
         # Config file watcher — set by build_streaming_daemon; stopped in shutdown().
         self._config_watcher: Any = None
         self._mru_pump: Any = None
+        # Dictation session — set by build_streaming_daemon (Task 8); None until then.
+        self._dictation_session: Any = None
 
     def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         if self._event_bus is not None:
@@ -332,104 +328,31 @@ class StreamingDaemon:
             logger.warning("on_scroll_lock called but recorder is not yet initialised; ignoring")
             return
         if self._session_active:
-            was_muted = self._muted
-            # Bump audio generation BEFORE close + drain so any utterance the
-            # VAD worker is mid-finalize on, or the pipeline thread already
-            # popped, is dropped on its post-transcribe gen check.
             self._audio_gen += 1
-            # In muted sub-state the audio stream is already torn down — do not
-            # call close_session() again (would log a misleading warning and
-            # potentially raise).
-            if not was_muted:
-                try:
-                    self._recorder.close_session()
-                except Exception:
-                    logger.exception("close_session() failed during scroll-lock close")
+            try:
+                self._recorder.close_session()
+            except Exception:
+                logger.exception("close_session() failed during scroll-lock close")
             self._drain_utt_q()
             self._session_active = False
-            self._muted = False
+            if self._dictation_session is not None and self._dictation_session.active:
+                self._dictation_session.cancel()
             self._feedback.on_recording_stop()
-            # Single source of truth for the sprite's "disengaged" look: the
-            # `muted` SSE event fires whenever the daemon is not consuming
-            # audio, regardless of whether the cause is full session close
-            # (here) or in-session mute (on_mute_toggle).
             self._publish("muted")
             self._publish("session_stopped")
             logger.info("Session closed")
         else:
-            # Bump generation on session open too, so any leftover utterance
-            # from the previous session (e.g. queued just before close that
-            # raced past _drain_utt_q) is invalidated.
             self._audio_gen += 1
             try:
                 self._recorder.open_session()
                 self._session_active = True
-                self._muted = False
                 self._feedback.on_recording_start()
                 self._publish("session_started")
                 self._publish("unmuted")
                 logger.info("Session opened")
             except Exception as e:
                 self._session_active = False
-                self._muted = False
                 self._feedback.on_error("recorder.open_session", e)
-
-    def on_mute_toggle(self) -> None:
-        """Toggle mute within an active session. No-op when session is inactive.
-
-        Thread context: called exclusively on the **pynput hotkey-listener thread**.
-        pynput serialises key callbacks, so concurrent invocations cannot happen.
-
-        State transitions (ADR 0025):
-
-        * **Active+unmuted → active+muted**: closes the audio stream via
-          ``recorder.close_session()``, drains ``_utt_q`` (so any utterance
-          mid-pipeline is discarded once the pipeline guard fires), publishes
-          ``muted`` for the sprite.
-        * **Active+muted → active+unmuted**: reopens the audio stream via
-          ``recorder.open_session()``, publishes ``unmuted``.
-        * **Inactive → no-op**: silent return. The right-Ctrl key is also a
-          common dictation push-to-talk; pressing it outside an open session
-          must not produce any voice-commander side-effect.
-        """
-        if not self._session_active:
-            return
-        if self._recorder is None:
-            return
-        if self._muted:
-            # Bump generation on unmute so any utterance still in the
-            # pipeline tagged with the muted-period generation is dropped.
-            self._audio_gen += 1
-            try:
-                self._recorder.open_session()
-                self._muted = False
-                self._publish("unmuted")
-                self._feedback.on_recording_start()
-                logger.info("Session unmuted")
-            except Exception as e:
-                # Stream did not reopen — leave muted flag set so the user can
-                # try again. Surface via feedback so the chime is consistent.
-                self._feedback.on_error("recorder.open_session", e)
-        else:
-            # Bump generation FIRST. The pipeline worker may have already
-            # popped an utterance from _utt_q before the call to
-            # _drain_utt_q() below; that utterance is now mid-transcribe()
-            # holding _audio_gen=N. After this bump, _audio_gen=N+1; when
-            # transcribe() returns the post-transcribe gen check fires
-            # and the utterance is dropped silently. This is the layer
-            # the boolean _muted check could not provide because _muted
-            # is only written *after* close_session() returns (which
-            # itself blocks on the VAD worker join).
-            self._audio_gen += 1
-            try:
-                self._recorder.close_session()
-            except Exception:
-                logger.exception("close_session() failed during mute; treating as muted")
-            self._drain_utt_q()
-            self._muted = True
-            self._publish("muted")
-            self._feedback.on_recording_stop()
-            logger.info("Session muted")
 
     def _drain_utt_q(self) -> None:
         """Discard all pending utterances from the queue."""
@@ -454,8 +377,7 @@ class StreamingDaemon:
                 break
             # Items enqueued by _on_utterance are (audio, gen) tuples.
             # Tests inject bare ndarrays directly — treat those as gen=None
-            # (skip the generation check, fall through to the legacy
-            # _muted boolean guard) for backward compatibility.
+            # (skip the generation check) for backward compatibility.
             if isinstance(item, tuple):
                 utterance, gen = item
             else:
@@ -569,30 +491,18 @@ class StreamingDaemon:
 
             self._tracer.update_transcript(run.run_id, result.text)
 
-            # Stale-generation guard (ADR 0025): mute or scroll-lock-close
-            # bumps _audio_gen. Any utterance whose enqueue-time gen differs
-            # from the current gen was captured under a now-invalid audio
-            # session and must be dropped silently. This catches the race
-            # window where transcribe() finishes BEFORE _muted is written
-            # to True (close_session() blocks on the VAD worker join, so
-            # _muted=True is set ~hundreds of ms after the user pressed
-            # the mute key, while transcribe() may finish sooner on a
-            # warm GPU).
+            # Stale-generation guard: scroll-lock-close bumps _audio_gen.
+            # Any utterance whose enqueue-time gen differs from the current
+            # gen was captured under a now-invalid audio session and must be
+            # dropped silently. This catches the race window where
+            # transcribe() finishes BEFORE close_session() returns (which
+            # blocks on the VAD worker join) — the utterance is already past
+            # the enqueue check, but its generation has been invalidated.
             if gen is not None and gen != self._audio_gen:
                 logger.debug(
                     "Stale-gen drop (post-transcribe): utt gen=%s, current=%s, text=%r",
                     gen,
                     self._audio_gen,
-                    result.text,
-                )
-                return
-
-            # Mute guard (ADR 0025): defence in depth. Catches utterances
-            # injected directly via _process_utterance (no gen tag) when
-            # _muted has been set.
-            if self._muted:
-                logger.debug(
-                    "Mute guard: dropping utterance '%s' (muted during pipeline)",
                     result.text,
                 )
                 return
@@ -772,7 +682,7 @@ class StreamingDaemon:
     # Run / shutdown
     # ------------------------------------------------------------------
 
-    def run(self, hotkey_key: str, mute_key: str = "") -> None:
+    def run(self, hotkey_key: str, dictation_key: str = "") -> None:
         """Blocking entry point — warm up models, start all threads, block until shutdown.
 
         Thread context: **must be called from the main thread** so that the
@@ -802,8 +712,8 @@ class StreamingDaemon:
 
         Args:
             hotkey_key: Key name for session toggle (e.g. ``"scroll_lock"``).
-            mute_key: Optional secondary key name (e.g. ``"ctrl_r"``) bound to
-                :meth:`on_mute_toggle`. Empty string disables the binding.
+            dictation_key: Optional secondary key name (e.g. ``"ctrl_r"``) bound to
+                :meth:`on_dictation_toggle`. Empty string disables the binding.
 
         Raises:
             Exception: Re-raises only if :meth:`HotkeyController.start` fails
@@ -860,15 +770,14 @@ class StreamingDaemon:
         # Start hotkey listener.
         try:
             bindings: dict[str, Callable[[], None]] = {hotkey_key: self.on_scroll_lock}
-            if mute_key:
-                if mute_key == hotkey_key:
+            if dictation_key:
+                if dictation_key == hotkey_key:
                     logger.warning(
-                        "mute_key %r equals hotkey %r; mute binding ignored",
-                        mute_key,
-                        hotkey_key,
+                        "dictation_key %r equals hotkey %r; dictation binding ignored",
+                        dictation_key, hotkey_key,
                     )
                 else:
-                    bindings[mute_key] = self.on_mute_toggle
+                    bindings[dictation_key] = self.on_dictation_toggle
             self._hotkey = HotkeyController(bindings)
             self._hotkey.start()
         except Exception as e:
@@ -935,17 +844,13 @@ class StreamingDaemon:
             except Exception:
                 logger.exception("Error stopping web server during shutdown")
 
-        # Close any open session. When muted, the audio stream was already
-        # torn down by on_mute_toggle — skip close_session() to avoid a
-        # spurious warning about closing an already-closed session.
+        # Close any open session.
         if self._recorder is not None and self._session_active:
-            if not self._muted:
-                try:
-                    self._recorder.close_session()
-                except Exception:
-                    logger.exception("Error closing session during shutdown")
+            try:
+                self._recorder.close_session()
+            except Exception:
+                logger.exception("Error closing session during shutdown")
             self._session_active = False
-            self._muted = False
 
         # Stop hotkey listener.
         if self._hotkey is not None:
