@@ -485,6 +485,55 @@ def test_active_dictation_end_word_no_audio_skips_submit(tmp_path):
     daemon._dictation_executor.submit.assert_not_called()
 
 
+# ---------------------------------------------------------------------------
+# on_dictation_toggle tests (ADR 0086)
+# ---------------------------------------------------------------------------
+
+
+def test_dictation_toggle_starts_when_session_active(tmp_path):
+    """Pressing the dictation key while a voice session is open and dictation
+    is NOT yet active calls session.start()."""
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._session_active = True
+    fake_session = MagicMock()
+    fake_session.active = False
+    daemon._dictation_session = fake_session
+    daemon.on_dictation_toggle()
+    fake_session.start.assert_called_once()
+
+
+def test_dictation_toggle_finishes_when_already_dictating(tmp_path):
+    """Pressing the dictation key while dictation IS active calls finish() and
+    submits _finalize_dictation to the executor when audio is available."""
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._session_active = True
+    fake_session = MagicMock()
+    fake_session.active = True
+    fake_session.take_audio.return_value = np.zeros(8000, dtype=np.float32)
+    daemon._dictation_session = fake_session
+    daemon._dictation_executor = MagicMock()
+    daemon.on_dictation_toggle()
+    fake_session.finish.assert_called_once()
+    daemon._dictation_executor.submit.assert_called_once_with(
+        daemon._finalize_dictation, fake_session.take_audio.return_value
+    )
+
+
+def test_dictation_toggle_no_session_is_miss(tmp_path):
+    """Pressing the dictation key when NO voice session is open fires a miss
+    chime and does NOT call session.start()."""
+    daemon, feedback, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._session_active = False
+    fake_session = MagicMock()
+    daemon._dictation_session = fake_session
+    daemon.on_dictation_toggle()
+    # No voice session open → miss chime fired, dictation not started.
+    fake_session.start.assert_not_called()
+    assert any(c[0] == "on_miss" for c in feedback.calls), (
+        f"Expected an on_miss call on the feedback sink; got {feedback.calls}"
+    )
+
+
 def _run_process_utterance(daemon: StreamingDaemon, tmp_path) -> None:
     """Run _process_utterance synchronously via the pipeline thread."""
     done = threading.Event()

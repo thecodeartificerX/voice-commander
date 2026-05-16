@@ -363,6 +363,27 @@ class StreamingDaemon:
                 self._session_active = False
                 self._feedback.on_error("recorder.open_session", e)
 
+    def on_dictation_toggle(self) -> None:
+        """Right-control callback: toggle dictation mode within an active session.
+
+        Press once to start dictation, press again to end it (an alternative to
+        saying the end word). A no-op + miss chime if no voice session is open —
+        dictation is a sub-state of an active session.
+        """
+        if not self._session_active:
+            logger.info("on_dictation_toggle: no active session — ignoring")
+            self._feedback.on_miss("(dictation: no active session)", ())
+            return
+        if self._dictation_session is None:
+            return
+        if self._dictation_session.active:
+            audio = self._dictation_session.take_audio()
+            self._dictation_session.finish()
+            if audio is not None:
+                self._dictation_executor.submit(self._finalize_dictation, audio)
+        else:
+            self._dictation_session.start()
+
     def _drain_utt_q(self) -> None:
         """Discard all pending utterances from the queue."""
         drained = 0
