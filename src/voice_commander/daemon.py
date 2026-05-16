@@ -618,6 +618,48 @@ class StreamingDaemon:
             self._dispatcher.run_plan(result.text, plan, self._registry)
             self._write_plan_async(result.text, plan)
 
+    def _finalize_dictation(self, audio: "npt.NDArray[np.float32]") -> None:
+        """Worker-thread finalize: encode → POST → clipboard paste.
+
+        Runs on ``self._dictation_executor`` so the pipeline thread is never
+        blocked by the network round-trip. All failures surface as a
+        ``dictation.error`` event + miss chime; the audio stays on disk for
+        the web re-transcribe button.
+        """
+        from .dictation import clipboard, remote
+        from .dictation.store import encode_wav
+
+        try:
+            wav_bytes = encode_wav(audio)
+            self._dictation_store.save_audio(wav_bytes)
+        except Exception:
+            logger.exception("dictation: failed to encode/save audio")
+            self._publish("dictation.error", {"reason": "encode"})
+            self._feedback.on_miss("(dictation: encode error)", ())
+            return
+
+        try:
+            text = remote.post_audio(wav_bytes, self._dictation_endpoint)
+        except remote.DictationRemoteError as e:
+            logger.warning("dictation: remote transcription failed: %s", e)
+            self._publish("dictation.error", {"reason": "endpoint"})
+            self._feedback.on_miss("(dictation: endpoint error)", ())
+            return
+
+        self._dictation_store.save_text(text)
+
+        try:
+            clipboard.paste_via_clipboard(text)
+        except Exception:
+            logger.exception("dictation: clipboard paste failed")
+            self._publish("dictation.error", {"reason": "clipboard"})
+            self._feedback.on_miss("(dictation: clipboard error)", ())
+            return
+
+        self._publish("transcript", {"text": text, "confidence": 1.0})
+        self._publish("dictation.result", {"text": text})
+        logger.info("dictation: pasted %d chars", len(text))
+
     def _write_utterance_async(self, utterance: npt.NDArray[np.float32]) -> None:
         path = self._output_dir / "last_utterance.wav"
 
