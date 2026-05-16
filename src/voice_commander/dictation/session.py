@@ -51,8 +51,10 @@ class DictationSession:
     ) -> UtteranceKind:
         """Classify an utterance: ``"end"`` if it is the end word, else ``"buffered"``.
 
-        End-word utterances are NOT appended to the buffer. A no-op returning
-        ``"buffered"`` when inactive (lost race with finish/cancel).
+        End-word utterances are NOT appended to the buffer. This method never
+        changes session state — on an ``"end"`` result the caller MUST call
+        ``finish()`` to deactivate the session and publish the end event. A
+        no-op returning ``"buffered"`` when inactive (lost race with finish/cancel).
         """
         with self._lock:
             if not self._active:
@@ -72,6 +74,8 @@ class DictationSession:
     def finish(self) -> None:
         """End dictation normally (end word reached)."""
         with self._lock:
+            if not self._active:
+                return
             self._active = False
             self._buffer = []
         self._bus.publish("dictation.end", {"reason": "done"})

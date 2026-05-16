@@ -84,3 +84,11 @@ def test_handle_utterance_when_inactive_is_noop():
     s = DictationSession(_FakeBus())
     assert s.handle_utterance(_audio(), "anything") == "buffered"
     assert s.take_audio() is None
+
+
+def test_finish_when_inactive_is_noop():
+    bus = _FakeBus()
+    s = DictationSession(bus)
+    s.finish()  # never started
+    assert not s.active
+    assert bus.events == []
