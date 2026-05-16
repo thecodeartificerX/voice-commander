@@ -94,7 +94,7 @@ class ElementsOverlayWindow(pyglet.window.Window):  # type: ignore[misc]
             text = str(element["index"])
             tag_w = _tag_width(text)
             x, y = tag_xy(
-                tuple(element["rect"]),  # type: ignore[arg-type]
+                tuple(element["rect"]),
                 monitor_rect,
                 tag_w=tag_w,
                 tag_h=_TAG_H,
@@ -105,7 +105,7 @@ class ElementsOverlayWindow(pyglet.window.Window):  # type: ignore[misc]
                 )
             )
             self._labels.append(
-                pyglet.text.Label(
+                pyglet.text.Label(  # type: ignore[call-arg]  # pyglet stub lacks bold=
                     text,
                     font_size=11,
                     bold=True,

@@ -219,7 +219,7 @@ def main() -> None:
     def _hide_elements_now() -> None:
         while _elements_overlay:
             window_to_close = _elements_overlay.pop()
-            try:
+            try:  # noqa: SIM105 - suppress() hides the BLE001 noqa; keep explicit try/except
                 window_to_close.close()
             except Exception:  # noqa: BLE001 - teardown must never raise
                 pass
@@ -231,7 +231,7 @@ def main() -> None:
             elements = data.get("elements", [])
             if len(monitor) != 4 or not elements:
                 return
-            overlay = ElementsOverlayWindow(monitor, elements)  # type: ignore[arg-type]
+            overlay = ElementsOverlayWindow(monitor, elements)
             overlay.apply_win32_flags()
             overlay.set_visible(True)
             _elements_overlay.append(overlay)
