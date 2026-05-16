@@ -244,7 +244,8 @@ class StreamingDaemon:
         self._dictation_endpoint = dictation_endpoint
         self._dictation_store = DictationStore(self._output_dir / "dictation")
         self._dictation_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="dictation",
+            max_workers=1,
+            thread_name_prefix="dictation",
         )
         # Set when Transcriber.load() completes successfully in the background thread.
         # Pipeline worker waits on this before calling transcribe().
