@@ -214,8 +214,10 @@ def test_factory_wires_dictation(base_cfg: Config) -> None:
         f"Expected _dictation_endpoint={custom_endpoint!r}, "
         f"got {daemon._dictation_endpoint!r}"
     )
-
-
+    assert daemon._dictation_session._end_word == "finish", (
+        "DictationSession end_word not propagated from cfg; "
+        f"got {daemon._dictation_session._end_word!r}"
+    )
 
 
 
