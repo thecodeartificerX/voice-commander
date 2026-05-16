@@ -438,6 +438,53 @@ def test_active_dictation_buffers_utterance(tmp_path):
     daemon._verb_router.route.assert_not_called()
 
 
+def test_active_dictation_end_word_submits_finalize(tmp_path):
+    """When handle_utterance returns 'end' and take_audio() has data,
+    finish() is called and _dictation_executor.submit is called with
+    _finalize_dictation and the captured audio."""
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._transcriber.transcribe.return_value = _fake_transcription_result(
+        "stop dictation", confidence=0.95
+    )
+
+    fake_audio = np.zeros(16000, dtype=np.float32)
+    fake_session = MagicMock()
+    fake_session.active = True
+    fake_session.handle_utterance.return_value = "end"
+    fake_session.take_audio.return_value = fake_audio
+    daemon._dictation_session = fake_session
+    daemon._dictation_executor = MagicMock()
+
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32))
+
+    fake_session.finish.assert_called_once()
+    daemon._dictation_executor.submit.assert_called_once_with(
+        daemon._finalize_dictation, fake_audio
+    )
+
+
+def test_active_dictation_end_word_no_audio_skips_submit(tmp_path):
+    """When handle_utterance returns 'end' but take_audio() returns None
+    (nothing was buffered), finish() is still called but _dictation_executor
+    is NOT used to submit any finalization work."""
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._transcriber.transcribe.return_value = _fake_transcription_result(
+        "stop dictation", confidence=0.95
+    )
+
+    fake_session = MagicMock()
+    fake_session.active = True
+    fake_session.handle_utterance.return_value = "end"
+    fake_session.take_audio.return_value = None
+    daemon._dictation_session = fake_session
+    daemon._dictation_executor = MagicMock()
+
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32))
+
+    fake_session.finish.assert_called_once()
+    daemon._dictation_executor.submit.assert_not_called()
+
+
 def _run_process_utterance(daemon: StreamingDaemon, tmp_path) -> None:
     """Run _process_utterance synchronously via the pipeline thread."""
     done = threading.Event()
