@@ -61,3 +61,15 @@ def test_post_audio_missing_text_key_raises(monkeypatch):
     )
     with pytest.raises(DictationRemoteError, match="text"):
         post_audio(b"x", "http://x/inference")
+
+
+def test_post_audio_non_httperror_exception_is_wrapped(monkeypatch):
+    """A non-HTTPError exception from httpx.post must still surface as DictationRemoteError."""
+    import httpx
+
+    def fake_post(url, **kw):
+        raise httpx.InvalidURL("scheme missing")
+
+    monkeypatch.setattr("voice_commander.dictation.remote.httpx.post", fake_post)
+    with pytest.raises(DictationRemoteError, match="request failed"):
+        post_audio(b"x", "bad-endpoint-no-scheme")

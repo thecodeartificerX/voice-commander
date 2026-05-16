@@ -34,8 +34,8 @@ def post_audio(wav_bytes: bytes, endpoint: str, timeout: float = _TIMEOUT_S) -> 
             data={"response_format": "verbose_json", "temperature": "0.0"},
             timeout=timeout,
         )
-    except httpx.HTTPError as e:
-        raise DictationRemoteError(f"endpoint unreachable: {e}") from e
+    except Exception as e:
+        raise DictationRemoteError(f"endpoint request failed: {e}") from e
 
     if resp.status_code != 200:
         raise DictationRemoteError(
