@@ -107,6 +107,20 @@ class VerbRouter:
         verb = self._rules[verb_name]
 
         if not tail:
+            # Bare "type" enters dictation mode (ADR 0086). A synthetic
+            # __dictation.start step the daemon intercepts — same convention
+            # as __picker.open. "type X" with a tail is unaffected and still
+            # routes to the type_text primitive below.
+            if verb.name == "type":
+                return Plan(
+                    steps=(ToolCall(name="__dictation.start", kwargs={}),),
+                    raw_response={
+                        "router": "verb",
+                        "verb": "type",
+                        "tail": "",
+                        "dictation": True,
+                    },
+                )
             # Bare verb with a default target (e.g. "click", "scroll") wins
             # over the picker so existing behaviour is preserved.
             if verb.default_target is not None:

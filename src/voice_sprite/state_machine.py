@@ -64,6 +64,7 @@ class StateMachine:
         self.current_state = SpriteState.WARMUP
         self.target_state = SpriteState.WARMUP
         self.muted = False
+        self.dictating = False
         self._heartbeat_timeout_s = heartbeat_timeout_ms / 1000.0
         self._last_heartbeat: float = 0.0
         self._hold_timer: float | None = None
@@ -92,6 +93,14 @@ class StateMachine:
 
         if event_type == "unmuted":
             self.muted = False
+            return None
+
+        if event_type == "dictation.start":
+            self.dictating = True
+            return None
+
+        if event_type == "dictation.end":
+            self.dictating = False
             return None
 
         # vad_speech only triggers on active=true

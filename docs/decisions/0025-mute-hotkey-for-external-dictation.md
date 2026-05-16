@@ -1,6 +1,6 @@
 # ADR 0025: Mute Hotkey for External Dictation Coexistence
 
-**Status:** Active. Originally superseded by [ADR 0072](0072-speak-dictation-toggle.md), but that approach was itself dropped when the LLM router was removed (ADR 0082) — speak-mode depended on LLM-based fuzzy wake-word matching. The pre-0072 design (this ADR) is the live implementation again, amended below by §10 to close a transcribe-vs-mute race that the original two-layer guard could not catch.
+**Status:** Superseded by [ADR 0086](0086-dictation-mode.md) — the mute toggle and all stream-close/reopen machinery are removed; `ctrl_r` is repurposed as `dictation_key`. Originally superseded by [ADR 0072](0072-speak-dictation-toggle.md), but that approach was itself dropped when the LLM router was removed (ADR 0082) — speak-mode depended on LLM-based fuzzy wake-word matching. The pre-0072 design (this ADR) was the live implementation again (amended below by §10) until ADR 0086 replaced it entirely.
 **Date:** 2026-04-21
 **Amended:** 2026-05-15 (§10 — generation-counter race fix)
 

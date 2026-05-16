@@ -227,7 +227,7 @@ def main() -> None:
     try:
         build_streaming_daemon(cfg, config_path=Path("config.toml")).run(
             cfg.hotkey.key,
-            mute_key=cfg.hotkey.mute_key,
+            dictation_key=cfg.hotkey.dictation_key,
         )
     finally:
         lock.release()

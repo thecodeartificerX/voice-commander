@@ -232,3 +232,57 @@ exclude_self = false
     assert cfg.picker.focus.cap == 7
     assert cfg.picker.focus.exclude_foreground is False
     assert cfg.picker.focus.exclude_self is False
+
+
+# ---------------------------------------------------------------------------
+# dictation_key rename + DictationConfig (ADR 0086)
+# ---------------------------------------------------------------------------
+
+
+def test_hotkey_dictation_key_default(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[hotkey]\nkey = \"scroll_lock\"\n", encoding="utf-8")
+    from voice_commander.config import Config
+    cfg = Config.load(cfg_file)
+    assert cfg.hotkey.dictation_key == "ctrl_r"
+    assert not hasattr(cfg.hotkey, "mute_key")
+
+
+def test_dictation_config_defaults(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[hotkey]\nkey = \"scroll_lock\"\n", encoding="utf-8")
+    from voice_commander.config import Config
+    cfg = Config.load(cfg_file)
+    assert cfg.dictation.endpoint == "http://192.168.4.200:8765/inference"
+    assert cfg.dictation.end_word == "done"
+
+
+def test_dictation_config_override(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        "[hotkey]\nkey = \"scroll_lock\"\n"
+        "[dictation]\nendpoint = \"http://1.2.3.4:9/x\"\nend_word = \"finish\"\n",
+        encoding="utf-8",
+    )
+    from voice_commander.config import Config
+    cfg = Config.load(cfg_file)
+    assert cfg.dictation.endpoint == "http://1.2.3.4:9/x"
+    assert cfg.dictation.end_word == "finish"
+
+
+def test_stale_mute_key_warns_and_is_ignored(tmp_path, caplog):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        "[hotkey]\nkey = \"scroll_lock\"\nmute_key = \"ctrl_r\"\n",
+        encoding="utf-8",
+    )
+    import logging
+
+    from voice_commander.config import Config
+
+    with caplog.at_level(logging.WARNING):
+        cfg = Config.load(cfg_file)
+    # Stale key is ignored, daemon still loads, dictation_key keeps its default.
+    assert cfg.hotkey.dictation_key == "ctrl_r"
+    assert not hasattr(cfg.hotkey, "mute_key")
+    assert any("mute_key" in r.message for r in caplog.records)

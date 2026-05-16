@@ -30,6 +30,8 @@ def _make_window(
     win._image = image
     win._sprite = None
     win._label = None
+    win._badge_label = None
+    win._dictating = False
     win._muted = False
     win._mute_color = (128, 128, 128)
     win._cached_frame_key = None
@@ -316,6 +318,60 @@ def test_on_draw_muted_color():
         win.on_draw()
 
     assert fake_sprite.color == (128, 128, 128)
+
+
+def test_on_draw_dictating_draws_badge():
+    """on_draw with _dictating=True lazily creates and draws the DICTATING badge."""
+    renderer = MagicMock()
+    renderer.frame_region = (0, 0, 32, 48)
+    bubble = MagicMock()
+    bubble.visible = False
+
+    with patch.object(_mod, "pyglet") as pg:
+        fake_image = MagicMock()
+        fake_image.height = 96
+        fake_image.get_region.return_value = MagicMock()
+        pg.sprite.Sprite.return_value = MagicMock()
+        fake_badge = MagicMock()
+        pg.text.Label.return_value = fake_badge
+
+        win = _make_window(renderer, bubble, image=fake_image)
+        win._dictating = True
+        win.clear = MagicMock()
+        win.on_draw()
+
+    pg.text.Label.assert_called_once_with(
+        "● DICTATING",
+        font_name="Segoe UI",
+        font_size=9,
+        bold=True,
+        x=50,
+        y=2,
+        anchor_x="center",
+        anchor_y="bottom",
+        color=(245, 194, 66, 255),
+    )
+    fake_badge.draw.assert_called_once()
+
+
+def test_on_draw_not_dictating_skips_badge():
+    """on_draw with _dictating=False never creates the badge label."""
+    renderer = MagicMock()
+    renderer.frame_region = (0, 0, 32, 48)
+    bubble = MagicMock()
+    bubble.visible = False
+
+    with patch.object(_mod, "pyglet") as pg:
+        fake_image = MagicMock()
+        fake_image.height = 96
+        fake_image.get_region.return_value = MagicMock()
+        pg.sprite.Sprite.return_value = MagicMock()
+
+        win = _make_window(renderer, bubble, image=fake_image)
+        win.clear = MagicMock()
+        win.on_draw()
+
+    pg.text.Label.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

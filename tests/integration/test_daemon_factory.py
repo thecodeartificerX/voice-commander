@@ -37,6 +37,7 @@ import pytest
 from voice_commander.config import (
     AudioConfig,
     Config,
+    DictationConfig,
     HotkeyConfig,
     TranscriptionConfig,
     WebConfig,
@@ -182,8 +183,41 @@ def test_factory_propagates_recorder_device_minus_one(base_cfg: Config) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Dictation wiring (ADR 0086)
+# ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
+def test_factory_wires_dictation(base_cfg: Config) -> None:
+    """build_streaming_daemon constructs a DictationSession and wires the endpoint.
+
+    Asserts:
+    - ``daemon._dictation_session`` is not None (session always constructed).
+    - ``daemon._dictation_endpoint`` matches ``cfg.dictation.endpoint``.
+    """
+    custom_endpoint = "http://10.0.0.1:9999/inference"
+    cfg = replace(
+        base_cfg,
+        dictation=DictationConfig(
+            endpoint=custom_endpoint,
+            end_word="finish",
+        ),
+    )
+    with _full_patches(**_base_patch_kwargs()):
+        daemon = build_streaming_daemon(cfg)
+
+    assert daemon._dictation_session is not None, (
+        "_dictation_session must be set by the factory"
+    )
+    assert daemon._dictation_endpoint == custom_endpoint, (
+        f"Expected _dictation_endpoint={custom_endpoint!r}, "
+        f"got {daemon._dictation_endpoint!r}"
+    )
+    assert daemon._dictation_session._end_word == "finish", (
+        "DictationSession end_word not propagated from cfg; "
+        f"got {daemon._dictation_session._end_word!r}"
+    )
 
 
 

@@ -153,6 +153,59 @@ def create_app(
             {"groups": grouped},
         )
 
+    @app.get("/page/dictation", response_class=HTMLResponse)
+    async def page_dictation(request: Request) -> HTMLResponse:
+        """``GET /page/dictation`` — last dictation + re-transcribe button."""
+        from ..dictation.store import DictationStore
+
+        last_text = DictationStore(Path("outputs/dictation")).read_text() or ""
+        return templates.TemplateResponse(
+            request, "page_dictation.html", {"last_text": last_text}
+        )
+
+    @app.post("/dictation/retranscribe", response_class=HTMLResponse)
+    async def dictation_retranscribe(request: Request) -> HTMLResponse:
+        """``POST /dictation/retranscribe`` — re-POST saved audio, set clipboard.
+
+        All blocking work (file I/O, config load, the HTTP round-trip, the
+        Win32 clipboard write with its retry sleeps) runs in a worker thread so
+        the event loop is never stalled. Any failure renders the error partial.
+        """
+
+        def _retranscribe_sync() -> tuple[str | None, str | None]:
+            """Run the whole retranscribe off the event loop.
+
+            Returns ``(text, error)`` — exactly one is non-None.
+            """
+            from ..config import Config
+            from ..dictation import clipboard, remote
+            from ..dictation.store import DictationStore
+
+            store = DictationStore(Path("outputs/dictation"))
+            wav = store.read_audio()
+            if wav is None:
+                return None, "no audio recorded yet"
+            endpoint = Config.load(Path("config.toml")).dictation.endpoint
+            try:
+                text = remote.post_audio(wav, endpoint)
+            except remote.DictationRemoteError as e:
+                return None, str(e)
+            store.save_text(text)
+            clipboard.set_clipboard_text(text)
+            return text, None
+
+        loop = asyncio.get_running_loop()
+        try:
+            text, error = await loop.run_in_executor(None, _retranscribe_sync)
+        except Exception as e:  # noqa: BLE001 — surface any failure as the error partial
+            logger.exception("dictation retranscribe failed")
+            text, error = None, f"unexpected error: {e}"
+
+        ctx = {"error": error} if error else {"text": text}
+        return HTMLResponse(
+            templates.get_template("_dictation_result.html").render(ctx)
+        )
+
     @app.get("/api/tools")
     async def api_tools() -> JSONResponse:
         """``GET /api/tools`` — return JSON list of primitive tools.

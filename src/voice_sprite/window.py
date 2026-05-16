@@ -156,6 +156,8 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._image: pyglet.image.AbstractImage | None = None
         self._sprite: pyglet.sprite.Sprite | None = None
         self._label: pyglet.text.Label | None = None
+        self._badge_label: pyglet.text.Label | None = None
+        self._dictating = False
         self._muted = False
         self._mute_color = (128, 128, 128)
 
@@ -186,6 +188,9 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
 
     def set_muted(self, muted: bool) -> None:
         self._muted = muted
+
+    def set_dictating(self, dictating: bool) -> None:
+        self._dictating = dictating
 
     def on_draw(self) -> None:
         # Re-assert transparent clear color every frame. Canonical Windows
@@ -258,6 +263,25 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
                 self._label.text = self._bubble.text
                 self._label.color = lc
             self._label.draw()
+
+        if self._dictating:
+            if self._badge_label is None:
+                self._badge_label = pyglet.text.Label(
+                    "● DICTATING",
+                    font_name="Segoe UI",
+                    font_size=9,
+                    bold=True,
+                    x=self.width // 2,
+                    y=2,
+                    anchor_x="center",
+                    anchor_y="bottom",
+                    color=(245, 194, 66, 255),
+                )
+            # Re-centre every frame: CursorDock resizes the window when the
+            # sprite crosses a monitor with a different DPI, so a width
+            # captured once at label creation goes stale mid-dictation.
+            self._badge_label.x = self.width // 2
+            self._badge_label.draw()
 
     def apply_win32_flags(self) -> None:
         """Apply click-through, topmost, no-taskbar flags (Windows only).

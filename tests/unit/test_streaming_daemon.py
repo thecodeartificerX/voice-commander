@@ -392,6 +392,149 @@ def test_process_utterance_calls_on_miss_when_plan_is_none(tmp_path):
     )
 
 
+# ---------------------------------------------------------------------------
+# Dictation sub-state tests (ADR 0086)
+# ---------------------------------------------------------------------------
+
+
+def test_dictation_start_step_starts_session(tmp_path):
+    """A plan with a single __dictation.start step calls session.start()."""
+    from unittest.mock import MagicMock
+
+    from voice_commander.plan import Plan, ToolCall
+
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    # Wire a fresh transcription result so the utterance clears all gates.
+    daemon._transcriber.transcribe.return_value = _fake_transcription_result(
+        "type", confidence=0.95
+    )
+
+    fake_session = MagicMock()
+    fake_session.active = False
+    daemon._dictation_session = fake_session
+    daemon._verb_router.route.return_value = Plan(
+        steps=(ToolCall(name="__dictation.start", kwargs={}),),
+        raw_response={"dictation": True},
+    )
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32))
+    fake_session.start.assert_called_once()
+
+
+def test_active_dictation_buffers_utterance(tmp_path):
+    """While dictation is active, every utterance is routed to the session
+    (not VerbRouter)."""
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._transcriber.transcribe.return_value = _fake_transcription_result(
+        "hello world", confidence=0.95
+    )
+
+    fake_session = MagicMock()
+    fake_session.active = True
+    fake_session.handle_utterance.return_value = "buffered"
+    daemon._dictation_session = fake_session
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32))
+    fake_session.handle_utterance.assert_called_once()
+    # VerbRouter is bypassed while dictation is active.
+    daemon._verb_router.route.assert_not_called()
+
+
+def test_active_dictation_end_word_submits_finalize(tmp_path):
+    """When handle_utterance returns 'end' and take_and_finish() has data,
+    _dictation_executor.submit is called with _finalize_dictation and the
+    captured audio."""
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._transcriber.transcribe.return_value = _fake_transcription_result(
+        "stop dictation", confidence=0.95
+    )
+
+    fake_audio = np.zeros(16000, dtype=np.float32)
+    fake_session = MagicMock()
+    fake_session.active = True
+    fake_session.handle_utterance.return_value = "end"
+    fake_session.take_and_finish.return_value = fake_audio
+    daemon._dictation_session = fake_session
+    daemon._dictation_executor = MagicMock()
+
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32))
+
+    fake_session.take_and_finish.assert_called_once()
+    daemon._dictation_executor.submit.assert_called_once_with(
+        daemon._finalize_dictation, fake_audio
+    )
+
+
+def test_active_dictation_end_word_no_audio_skips_submit(tmp_path):
+    """When handle_utterance returns 'end' but take_and_finish() returns None
+    (nothing was buffered, or the other thread won the race), _dictation_executor
+    is NOT used to submit any finalization work."""
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._transcriber.transcribe.return_value = _fake_transcription_result(
+        "stop dictation", confidence=0.95
+    )
+
+    fake_session = MagicMock()
+    fake_session.active = True
+    fake_session.handle_utterance.return_value = "end"
+    fake_session.take_and_finish.return_value = None
+    daemon._dictation_session = fake_session
+    daemon._dictation_executor = MagicMock()
+
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32))
+
+    fake_session.take_and_finish.assert_called_once()
+    daemon._dictation_executor.submit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# on_dictation_toggle tests (ADR 0086)
+# ---------------------------------------------------------------------------
+
+
+def test_dictation_toggle_starts_when_session_active(tmp_path):
+    """Pressing the dictation key while a voice session is open and dictation
+    is NOT yet active calls session.start()."""
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._session_active = True
+    fake_session = MagicMock()
+    fake_session.active = False
+    daemon._dictation_session = fake_session
+    daemon.on_dictation_toggle()
+    fake_session.start.assert_called_once()
+
+
+def test_dictation_toggle_finishes_when_already_dictating(tmp_path):
+    """Pressing the dictation key while dictation IS active calls take_and_finish()
+    and submits _finalize_dictation to the executor when audio is available."""
+    daemon, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._session_active = True
+    fake_session = MagicMock()
+    fake_session.active = True
+    fake_audio = np.zeros(8000, dtype=np.float32)
+    fake_session.take_and_finish.return_value = fake_audio
+    daemon._dictation_session = fake_session
+    daemon._dictation_executor = MagicMock()
+    daemon.on_dictation_toggle()
+    fake_session.take_and_finish.assert_called_once()
+    daemon._dictation_executor.submit.assert_called_once_with(
+        daemon._finalize_dictation, fake_audio
+    )
+
+
+def test_dictation_toggle_no_session_is_miss(tmp_path):
+    """Pressing the dictation key when NO voice session is open fires a miss
+    chime and does NOT call session.start()."""
+    daemon, feedback, *_ = _make_daemon(output_dir=str(tmp_path))
+    daemon._session_active = False
+    fake_session = MagicMock()
+    daemon._dictation_session = fake_session
+    daemon.on_dictation_toggle()
+    # No voice session open → miss chime fired, dictation not started.
+    fake_session.start.assert_not_called()
+    assert any(c[0] == "on_miss" for c in feedback.calls), (
+        f"Expected an on_miss call on the feedback sink; got {feedback.calls}"
+    )
+
+
 def _run_process_utterance(daemon: StreamingDaemon, tmp_path) -> None:
     """Run _process_utterance synchronously via the pipeline thread."""
     done = threading.Event()
