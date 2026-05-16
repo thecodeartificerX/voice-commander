@@ -68,10 +68,14 @@ def paste_via_clipboard(text: str, settle_ms: int = 200) -> None:
     """
     original = read_clipboard_text()
     set_clipboard_text(text)
-    time.sleep(settle_ms / 1000.0)
-    send_paste()
-    time.sleep(settle_ms / 1000.0)
-    if original is not None:
-        set_clipboard_text(original)
-    else:
-        logger.debug("dictation: original clipboard held no text; not restored")
+    try:
+        time.sleep(settle_ms / 1000.0)
+        send_paste()
+        time.sleep(settle_ms / 1000.0)
+    finally:
+        if original is not None:
+            set_clipboard_text(original)
+        else:
+            logger.warning(
+                "dictation: original clipboard held no text and was not restored"
+            )

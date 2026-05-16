@@ -26,3 +26,17 @@ def test_paste_via_clipboard_restores_original(preserve_clipboard, monkeypatch):
     assert pastes == ["NEW TRANSCRIPTION"]
     # ...and the original is restored afterward.
     assert clipboard.read_clipboard_text() == "ORIGINAL"
+
+
+def test_paste_via_clipboard_restores_original_on_send_paste_error(
+    preserve_clipboard, monkeypatch
+):
+    def boom():
+        raise RuntimeError("paste failed")
+
+    monkeypatch.setattr(clipboard, "send_paste", boom)
+    clipboard.set_clipboard_text("ORIGINAL")
+    with pytest.raises(RuntimeError, match="paste failed"):
+        clipboard.paste_via_clipboard("NEW TRANSCRIPTION", settle_ms=10)
+    # Despite the failure, the original clipboard content is restored.
+    assert clipboard.read_clipboard_text() == "ORIGINAL"
