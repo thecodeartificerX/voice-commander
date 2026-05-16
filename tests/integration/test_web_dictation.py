@@ -89,3 +89,35 @@ def test_retranscribe_sets_clipboard(
     assert resp.status_code == 200
     assert "re-done text" in resp.text
     assert sets == ["re-done text"]
+
+
+def test_retranscribe_no_audio_renders_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """POST /dictation/retranscribe with no last.wav returns 200 with error text, not 500."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.toml").write_text(
+        "[hotkey]\nkey = \"scroll_lock\"\n",
+        encoding="utf-8",
+    )
+    # outputs/dictation exists but last.wav is absent
+    (tmp_path / "outputs" / "dictation").mkdir(parents=True)
+
+    client = _make_client(tmp_path)
+    resp = client.post("/dictation/retranscribe", headers=HX)
+    assert resp.status_code == 200
+    assert "no audio recorded yet" in resp.text
+
+
+def test_retranscribe_remote_error_renders_error(
+    app_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POST /dictation/retranscribe when remote raises DictationRemoteError returns 200 with error, not 500."""
+    from voice_commander.dictation.remote import DictationRemoteError
+
+    def _raise(wav, endpoint, **kw):  # noqa: ANN001, ANN202
+        raise DictationRemoteError("endpoint down")
+
+    monkeypatch.setattr("voice_commander.dictation.remote.post_audio", _raise)
+
+    resp = app_client.post("/dictation/retranscribe", headers=HX)
+    assert resp.status_code == 200
+    assert "endpoint down" in resp.text
