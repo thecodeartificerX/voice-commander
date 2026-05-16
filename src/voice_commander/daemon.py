@@ -433,7 +433,7 @@ class StreamingDaemon:
         # Async write for post-mortem debugging
         self._write_utterance_async(utterance)
 
-        # Pre-transcribe generation check: cheap escape when mute / scroll-lock
+        # Pre-transcribe generation check: cheap escape when scroll-lock
         # close has already invalidated this utterance. Saves the transcribe()
         # cost and avoids any side-effects.
         if gen is not None and gen != self._audio_gen:
@@ -660,7 +660,7 @@ class StreamingDaemon:
         """
         # Snapshot _audio_gen at enqueue time. The pipeline worker uses this
         # to drop utterances whose generation has been invalidated by a
-        # concurrent mute / scroll-lock-close before they reach (or after
+        # concurrent scroll-lock-close before they reach (or after
         # they pass) transcribe(). Reading an int is atomic in CPython.
         gen = self._audio_gen
         try:
