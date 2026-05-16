@@ -2,7 +2,11 @@
 
 [hotkey]
 key = "scroll_lock"
-mute_key = "ctrl_r"
+dictation_key = "ctrl_r"
+
+[dictation]
+endpoint = "http://192.168.4.200:8765/inference"
+end_word = "done"
 
 [audio]
 device_name = ""

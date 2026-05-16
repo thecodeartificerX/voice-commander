@@ -16,12 +16,18 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class HotkeyConfig:
     key: str = "scroll_lock"
-    # Secondary hotkey that toggles mute *within* an active session
-    # (ADR 0025). Default ``ctrl_r`` so the right Ctrl key — already a
-    # common dictation push-to-talk — flips voice-commander into a
-    # muted state with the audio stream torn down. Empty string disables
-    # the secondary binding entirely.
-    mute_key: str = "ctrl_r"
+    # Secondary hotkey that toggles dictation mode within an active session
+    # (ADR 0086). Default ``ctrl_r`` — right Ctrl. Empty string disables the
+    # secondary binding entirely.
+    dictation_key: str = "ctrl_r"
+
+
+@dataclass(frozen=True)
+class DictationConfig:
+    """Dictation mode — remote whisper.cpp transcription (ADR 0086)."""
+
+    endpoint: str = "http://192.168.4.200:8765/inference"
+    end_word: str = "done"
 
 
 @dataclass(frozen=True)
@@ -151,6 +157,7 @@ class Config:
     perception: PerceptionConfig = field(default_factory=PerceptionConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     picker: PickerConfig = field(default_factory=PickerConfig)
+    dictation: DictationConfig = field(default_factory=DictationConfig)
 
     @classmethod
     def load(cls, path: Path) -> Config:
@@ -197,6 +204,7 @@ class Config:
                     "tabs": _section(PickerTabsConfig, tabs_raw),
                 },
             ),
+            dictation=_section(DictationConfig, raw.get("dictation", {})),
         )
 
 
