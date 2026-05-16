@@ -21,7 +21,6 @@ import pytest
 
 from voice_commander.event_bus import EventBus
 from voice_commander.feedback import CapturingFeedbackSink
-from voice_commander.picker.registry import BarePickerRegistry
 from voice_commander.verb_router import VerbRouter, build_default_rules
 from voice_commander.dictation.session import DictationSession
 
@@ -78,11 +77,7 @@ def _make_daemon(
         output_dir=str(tmp_path),
     )
     daemon._transcriber_ready.set()
-    # _dictation_session is already set via the constructor kwarg (Task 12), but
-    # we also assign it here explicitly — mirrors how test_picker_pipeline.py
-    # assigns daemon._picker_session — to make the wiring obvious.
-    daemon._dictation_session = dictation_session
-
+    # _dictation_session is wired by the StreamingDaemon constructor kwarg above.
     return daemon, dictation_session, feedback, bus
 
 
@@ -130,8 +125,10 @@ def test_dictation_enter_buffer_finalize(monkeypatch: pytest.MonkeyPatch, tmp_pa
     daemon._process_utterance(audio)
     assert dictation_session.active is False
 
-    # 4. finalize runs on the executor — wait for it to complete
+    # 4. finalize runs on the executor — wait for it to complete; also drain
+    #    the async WAV-writer so no background write races tmp_path teardown.
     daemon._dictation_executor.shutdown(wait=True)
+    daemon._wav_executor.shutdown(wait=True)
 
     assert posted.get("wav_len", 0) > 0, "post_audio was not called or wav was empty"
     assert pasted == ["DICTATED TEXT"], f"paste_via_clipboard was not called correctly: {pasted}"
@@ -168,8 +165,9 @@ def test_dictation_endpoint_failure_chimes_and_keeps_audio(
     daemon._process_utterance(audio)   # "some words" → buffered
     daemon._process_utterance(audio)   # "done" → finalize submitted
 
-    # Wait for the finalize worker to finish
+    # Wait for the finalize worker to finish; drain the WAV-writer too.
     daemon._dictation_executor.shutdown(wait=True)
+    daemon._wav_executor.shutdown(wait=True)
 
     # Endpoint failed → on_miss was called
     assert any(c[0] == "on_miss" for c in feedback.calls), (
