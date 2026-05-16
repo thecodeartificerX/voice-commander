@@ -120,6 +120,7 @@ def main() -> None:
         fade_ms=cfg.hud.fade_ms,
     )
 
+    from .elements_overlay import ElementsOverlayWindow
     from .picker_modal import PickerModalWindow
 
     picker_modal = PickerModalWindow()
@@ -210,8 +211,44 @@ def main() -> None:
 
     pyglet.clock.schedule_interval(check_hot_reload, 2.0)
 
+    # Elements-mode overlay (ADR 0087). pyglet windows must be created and
+    # closed on the event-loop thread, so SSE events are marshalled via
+    # pyglet.clock.schedule_once — the same pattern as the picker modal.
+    _elements_overlay: list[ElementsOverlayWindow] = []  # holds 0 or 1 window
+
+    def _hide_elements_now() -> None:
+        while _elements_overlay:
+            window_to_close = _elements_overlay.pop()
+            try:
+                window_to_close.close()
+            except Exception:  # noqa: BLE001 - teardown must never raise
+                pass
+
+    def _show_elements(data: dict[str, Any]) -> None:
+        def _create(_dt: float) -> None:
+            _hide_elements_now()
+            monitor = tuple(data.get("monitor", [0, 0, 0, 0]))
+            elements = data.get("elements", [])
+            if len(monitor) != 4 or not elements:
+                return
+            overlay = ElementsOverlayWindow(monitor, elements)  # type: ignore[arg-type]
+            overlay.apply_win32_flags()
+            overlay.set_visible(True)
+            _elements_overlay.append(overlay)
+
+        pyglet.clock.schedule_once(_create, 0.0)
+
+    def _hide_elements() -> None:
+        pyglet.clock.schedule_once(lambda _dt: _hide_elements_now(), 0.0)
+
     # SSE event handler
     def on_event(event_type: str, data: dict[str, Any]) -> None:
+        if event_type == "elements.show":
+            _show_elements(data)
+            return
+        if event_type == "elements.hide":
+            _hide_elements()
+            return
         if event_type == "picker.open":
             try:
                 verb = str(data.get("verb", ""))
