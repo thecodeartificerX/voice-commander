@@ -231,10 +231,18 @@ self._buffer.append(audio)
 return "buffered"
 ```
 
-The existing `cancel()` method (currently used only by the scroll-lock close path) is
-reused verbatim — it holds the lock, sets `_active = False`, clears `_pending_end`,
-clears `_buffer`, and publishes `dictation.end` with `{"reason": "cancel"}`. The only
-change is that the pipeline thread now also calls it on a spoken cancel.
+A new `cancel()` method is added to `DictationSession` — it does not exist today.
+The current public methods are `start`, `handle_utterance`, `request_end`,
+`take_and_finish`, plus the `pending_end` and `active` properties. The new method
+signature is:
+
+```python
+def cancel(self) -> bool:
+```
+
+Behaviour: under `self._lock`, if `not self._active` return `False`; else set
+`_active = False`, `_pending_end.clear()`, `_buffer = []`; then OUTSIDE the lock
+publish the `dictation.cancelled` event and log; return `True`.
 
 **`daemon.py` changes** (in `_process_utterance`, the dictation dispatch block):
 
@@ -252,10 +260,11 @@ return
 ```
 
 **Feedback:** no chime on spoken cancel — the cancellation is deliberate and silent.
-The existing `dictation.end` SSE event (with `reason: "cancel"`) is the only
-signal. The sprite process already handles `dictation.end`; it must additionally
-handle `reason == "cancel"` and render a cancelled state (distinct from the normal
-finish animation). This update ships in the same change.
+The new `dictation.cancelled` SSE event (payload `{"reason": "spoken"}`) is the only
+signal. This is a NEW event type — it must be created, not reused from `dictation.end`.
+The sprite process must gain a handler for `dictation.cancelled` that renders a
+cancelled state distinct from the normal `dictation.end` finish animation. This update
+ships in the same change.
 
 **Config:** `DictationConfig` gains:
 
@@ -309,11 +318,11 @@ outcome, and both paths guard on `_active` before proceeding.
 - Non-exact matches (partial, superset phrase) are buffered normally.
 - Spoken cancel when session inactive returns `"buffered"` (lost-race no-op — mirrors
   existing `handle_utterance` idle behaviour).
-- `cancel()` clears buffer, deactivates, returns without raising; idempotent (second
-  call is a no-op). Whether `cancel()` returns a `bool` was-active flag is deferred
-  to the open questions section; the test must assert on the observable side-effects
-  (buffer cleared, `_active == False`, event published) rather than the return value
-  until that decision is resolved.
+- `cancel() -> bool`: first call on an active session clears buffer, sets
+  `_active = False`, publishes `dictation.cancelled` with `{"reason": "spoken"}`,
+  and returns `True`; second call (session already inactive) returns `False` with no
+  side effects (idempotent no-op). Tests assert both the return value AND the
+  observable side-effects (buffer cleared, `_active == False`, event published).
 - `take_and_finish()` after `cancel()` returns `None`.
 - End-word + cancel-word equality → config-load warning + spoken cancel disabled.
 
@@ -344,8 +353,10 @@ with no further utterance produced. Assert that dictation is finalized within 50
 **Spoken cancel** (`tests/integration/test_dictation_cancel.py`):
 
 - Say cancel word during active dictation → no `_finalize_dictation` call, no HTTP
-  POST, no clipboard paste; `dictation.end` event emitted with `reason == "cancel"`.
-- Spoken cancel after hotkey-end-pending: assert cancel wins, no audio submitted.
+  POST, no clipboard paste; `dictation.cancelled` event emitted with
+  `{"reason": "spoken"}`.
+- Spoken cancel after hotkey-end-pending: assert cancel wins (`cancel() -> True`),
+  no audio submitted.
 
 ### Visual E2E (mandatory — `docs/agents/visual-e2e-testing.md`)
 
@@ -361,9 +372,10 @@ The harness must:
    via `SendInput` or `pynput` injection, assert that `dictation.end` SSE event
    arrives within 1 s with no trailing audio sent from the test.
 3. **Spoken cancel test**: open a dictation session, inject the cancel-word transcript,
-   assert `dictation.end` (reason=cancel) SSE event arrives; assert no clipboard
-   change (the paste never happens).
-4. Capture screenshots as evidence; assert on `reason` field in the SSE payload.
+   assert `dictation.cancelled` SSE event arrives with payload `{"reason": "spoken"}`;
+   assert no clipboard change (the paste never happens).
+4. Capture screenshots as evidence; assert on the event type (`dictation.cancelled`)
+   and `reason` field (`"spoken"`) in the SSE payload.
 5. Log all assertions to a test-evidence file.
 
 Patterns to copy: `scripts/picker_modal_smoke.py` (in-process render), `scripts/picker_visual_e2e.py` (subprocess + SSE + PrintWindow).
@@ -388,7 +400,7 @@ Patterns to copy: `scripts/picker_modal_smoke.py` (in-process render), `scripts/
 |------|-----------|------------|
 | 300 ms debounce swallows a fast intentional re-press | Low — real gap is multi-second | Constant chosen conservatively; promotable to config if users report it |
 | Sentinel lost if queue is full at press time | Very low — maxsize=8 and pipeline drains fast | `put_nowait` catches `queue.Full`; logs warning; falls back to short-timeout `put` |
-| `dictation.end` (reason: `"cancel"`) silently ignored by sprite without update | Likely without this change | Ship sprite update in the same PR; integration test asserts on the SSE reason field |
+| `dictation.cancelled` event silently ignored by sprite without update | Likely without this change | Ship sprite `dictation.cancelled` handler in the same PR; integration test asserts on event type and `{"reason": "spoken"}` payload |
 | Cancel word false-trigger in spoken prose | Low — user-configurable | User chooses a phrase unlikely in their dictation; word-boundary match prevents mid-word hits |
 | Sentinel identity check fragile if queue item type changes | Negligible | Module-level `object()` with identity (`is`) check is Python-idiomatic and immune to equality overrides |
 
@@ -416,13 +428,5 @@ contradicts the code is a defect:
 
 ## Open questions (deferred to implementation plan)
 
-- Whether `cancel()` should return a `bool` (was-active flag) or remain `-> None`.
-  The current implementation is `-> None`; the design above proposes `-> bool` for
-  test assertability. Resolve in the plan.
-- Whether the `dictation.end` event's `reason` field should be renamed
-  `dictation.cancelled` (a new event type) or reuse the existing event with
-  `reason: "cancel"`. Current `cancel()` already publishes `dictation.end` with
-  `{"reason": "cancel"}` — reuse is the simpler path and is the default unless the
-  sprite update requires a distinct event type.
 - Exact `put_nowait` / `put(timeout)` fallback policy for a full utterance queue at
   sentinel-enqueue time — document in the ADR's implementation notes.
