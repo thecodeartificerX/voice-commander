@@ -79,7 +79,11 @@ class ElementsOverlayWindow(pyglet.window.Window):  # type: ignore[misc]
     2. ``style=WINDOW_STYLE_OVERLAY`` wires ``WS_POPUP | WS_EX_LAYERED |
        WS_EX_TRANSPARENT`` and calls DwmEnableBlurBehindWindow — borderless,
        click-through, topmost, per-pixel-alpha in one flag.
-    3. ``glClearColor(0, 0, 0, 0)`` is set every frame inside ``on_draw``
+    3. ``glEnable(GL_BLEND)`` + ``glBlendFuncSeparate`` with ``GL_ONE`` for
+       the alpha source so tag pixels composite over the transparent clear
+       without collapsing the framebuffer alpha channel. Without this,
+       Windows DWM composites the whole window as opaque black.
+    4. ``glClearColor(0, 0, 0, 0)`` is set every frame inside ``on_draw``
        before ``window.clear()`` — canonical Windows transparent-overlay
        pattern per pyglet issue #1271 (pyglet internals can reset the clear
        color between frames).
@@ -109,6 +113,33 @@ class ElementsOverlayWindow(pyglet.window.Window):  # type: ignore[misc]
             vsync=False,
             visible=False,
         )
+        # Alpha compositing — tag pixels blend over the transparent clear.
+        # The separate alpha blend (GL_ONE for the alpha source) is critical
+        # on Windows layered windows: a plain glBlendFunc(SRC_ALPHA,
+        # ONE_MINUS_SRC_ALPHA) multiplies destination alpha toward zero and
+        # DWM ends up compositing the whole window as opaque black instead
+        # of transparent. Mirrors SpriteWindow.__init__ in window.py.
+        gl = pyglet.gl
+        gl.glEnable(gl.GL_BLEND)
+        gl.glBlendFuncSeparate(
+            gl.GL_SRC_ALPHA,
+            gl.GL_ONE_MINUS_SRC_ALPHA,
+            gl.GL_ONE,
+            gl.GL_ONE_MINUS_SRC_ALPHA,
+        )
+        gl.glClearColor(0, 0, 0, 0)
+
+        # Verify the driver actually granted an alpha-enabled framebuffer.
+        # On some Windows GPUs / RDP sessions alpha_size=8 is silently
+        # downgraded to 0, leaving no alpha channel to composite from — an
+        # opaque black background no matter what glClearColor is set. If
+        # this logs 0, the fix is not in Python.
+        granted_alpha = getattr(self.context.config, "alpha_size", None)
+        logger.info(
+            "elements overlay GL config granted alpha_size=%s (need 8 for transparency)",
+            granted_alpha,
+        )
+
         self.set_location(ml, mt)
         self._batch = pyglet.graphics.Batch()
         self._shapes: list[Any] = []
