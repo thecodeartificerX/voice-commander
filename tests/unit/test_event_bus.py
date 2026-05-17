@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import queue
 
-from voice_commander.event_bus import Event, EventBus
+from voice_commander.event_bus import Event, EventBus, TRANSIENT_EVENT_TYPES
 
 
 def _drain(q: queue.Queue[Event]) -> list[Event]:
@@ -107,3 +107,50 @@ def test_subscribe_with_replay_atomic():
     events = _drain(q)
     assert len(events) == 1
     assert events[0].type == "d"
+
+
+# ---------------------------------------------------------------------------
+# Transient-event replay exclusion (Bug 2 fix)
+# ---------------------------------------------------------------------------
+
+
+def test_transient_events_not_in_replay_buffer():
+    """elements.show and elements.hide must not enter the replay ring buffer."""
+    bus = EventBus(max_buffer=100)
+
+    # Publish a mix of durable and transient events.
+    bus.publish("session_started")
+    bus.publish("elements.show", {"monitor": [0, 0, 1920, 1080], "elements": []})
+    bus.publish("elements.hide", {})
+    bus.publish("muted")
+
+    # A late subscriber replaying from id=0 should only see the durable events.
+    _q, replay = bus.subscribe_with_replay(0)
+    replay_types = [e.type for e in replay]
+    assert "elements.show" not in replay_types
+    assert "elements.hide" not in replay_types
+    assert "session_started" in replay_types
+    assert "muted" in replay_types
+
+
+def test_transient_events_delivered_live():
+    """elements.show / elements.hide must still reach currently-connected
+    subscribers even though they are excluded from the replay buffer."""
+    bus = EventBus(max_buffer=100)
+
+    # Subscribe BEFORE publishing so we are a live subscriber.
+    q = bus.subscribe()
+
+    bus.publish("elements.show", {"monitor": [0, 0, 1920, 1080], "elements": []})
+    bus.publish("elements.hide", {})
+
+    events = _drain(q)
+    live_types = [e.type for e in events]
+    assert "elements.show" in live_types
+    assert "elements.hide" in live_types
+
+
+def test_transient_event_types_set_contains_expected():
+    """Sanity-check the exported constant used by callers."""
+    assert "elements.show" in TRANSIENT_EVENT_TYPES
+    assert "elements.hide" in TRANSIENT_EVENT_TYPES

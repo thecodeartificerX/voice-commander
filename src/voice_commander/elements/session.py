@@ -40,6 +40,11 @@ class ElementsSession:
         self._state = ElementsState.IDLE
         self._elements: list[Element] = []
         self._timer: threading.Timer | None = None
+        # Scan-generation counter: incremented on every begin_scan(). Timer
+        # callbacks capture the generation at arm-time and bail if it no longer
+        # matches, preventing a stale timer from a previous scan from
+        # publishing elements.hide into a subsequent scan's lifecycle.
+        self._generation: int = 0
 
     @property
     def state(self) -> ElementsState:
@@ -56,6 +61,7 @@ class ElementsSession:
         with self._lock:
             if self._state is not ElementsState.IDLE:
                 return
+            self._generation += 1
             self._state = ElementsState.SCANNING
 
     def show(self, elements: list[Element], monitor_rect: tuple[int, int, int, int]) -> None:
@@ -117,9 +123,17 @@ class ElementsSession:
         if was_shown:
             self._bus.publish("elements.hide", {})
 
-    def _on_timeout(self) -> None:
-        """Auto-dismiss callback: fired by the timer after hint_timeout_s."""
+    def _on_timeout(self, generation: int) -> None:
+        """Auto-dismiss callback: fired by the timer after hint_timeout_s.
+
+        ``generation`` is captured at timer-arm time. If the session has moved
+        on to a new scan (``_generation`` advanced), the callback is stale and
+        does nothing — preventing a timer from scan #N from publishing
+        ``elements.hide`` into scan #N+1's lifecycle.
+        """
         with self._lock:
+            if generation != self._generation:
+                return  # stale timer from a previous scan — discard
             if self._state is not ElementsState.HINTS_SHOWN:
                 return
             self._state = ElementsState.IDLE
@@ -130,7 +144,11 @@ class ElementsSession:
     def _start_timer_locked(self) -> None:
         if self._hint_timeout_s <= 0:
             return
-        self._timer = threading.Timer(self._hint_timeout_s, self._on_timeout)
+        # Capture the current generation so the callback can detect staleness.
+        generation = self._generation
+        self._timer = threading.Timer(
+            self._hint_timeout_s, self._on_timeout, args=(generation,)
+        )
         self._timer.daemon = True
         self._timer.start()
 

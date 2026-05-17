@@ -145,6 +145,48 @@ def test_timeout_hides_overlay() -> None:
     session = ElementsSession(bus, hint_timeout_s=0.0)
     session.begin_scan()
     session.show(_elements(2), MONITOR)
-    session._on_timeout()
+    session._on_timeout(session._generation)
+    assert session.state is ElementsState.IDLE
+    assert bus.events[-1] == ("elements.hide", {})
+
+
+def test_stale_timer_generation_guard() -> None:
+    """A timer captured during scan #1 must not publish elements.hide if scan
+    #2 has already started (i.e. _generation has advanced)."""
+    bus = _FakeBus()
+    session = ElementsSession(bus, hint_timeout_s=0.0)
+
+    # Scan #1: begin, show, capture generation, then cancel (simulates
+    # handle_utterance / cancel returning to IDLE before the timer fires).
+    session.begin_scan()
+    session.show(_elements(2), MONITOR)
+    gen_1 = session._generation  # == 1
+    session.cancel()  # → IDLE, clears elements, publishes elements.hide
+
+    # Scan #2: begin (increments generation to 2).
+    session.begin_scan()
+    gen_2 = session._generation  # == 2
+    assert gen_2 == gen_1 + 1
+
+    # Simulate the stale timer from scan #1 firing now.
+    events_before = list(bus.events)
+    session._on_timeout(gen_1)  # stale generation — should be a no-op
+
+    # State machine must remain in SCANNING (scan #2 is still in flight).
+    assert session.state is ElementsState.SCANNING
+    # No new events must have been published.
+    assert bus.events == events_before
+
+
+def test_current_generation_timer_fires_correctly() -> None:
+    """A timer with the *current* generation must still dismiss the overlay."""
+    bus = _FakeBus()
+    session = ElementsSession(bus, hint_timeout_s=0.0)
+    session.begin_scan()
+    session.show(_elements(2), MONITOR)
+    gen = session._generation
+
+    session._on_timeout(gen)
+
     assert session.state is ElementsState.IDLE
     assert bus.events[-1] == ("elements.hide", {})

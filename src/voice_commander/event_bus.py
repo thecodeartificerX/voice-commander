@@ -10,6 +10,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Event types that represent transient overlay commands and must NOT be stored
+# in the replay ring buffer.  Live subscribers still receive them the moment
+# they are published; they are only excluded from the replay-on-reconnect path.
+# Replaying these to a late/reconnecting subscriber would wrongly re-open or
+# re-close the overlay for a scan cycle that has already ended.
+TRANSIENT_EVENT_TYPES: frozenset[str] = frozenset({"elements.show", "elements.hide"})
+
 
 @dataclass(frozen=True)
 class Event:
@@ -50,9 +57,14 @@ class EventBus:
                 id=self._next_id,
             )
             self._next_id += 1
-            self._buffer.append(event)
-            if len(self._buffer) > self._max_buffer:
-                self._buffer = self._buffer[-self._max_buffer :]
+            # Transient events (e.g. elements.show / elements.hide) are
+            # delivered live but deliberately excluded from the replay buffer so
+            # that reconnecting SSE subscribers do not receive stale overlay
+            # open/close commands from a scan cycle that has already ended.
+            if event_type not in TRANSIENT_EVENT_TYPES:
+                self._buffer.append(event)
+                if len(self._buffer) > self._max_buffer:
+                    self._buffer = self._buffer[-self._max_buffer :]
             for q in self._subscribers:
                 try:
                     q.put_nowait(event)
