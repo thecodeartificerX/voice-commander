@@ -121,7 +121,7 @@ class _SSEHandler(BaseHTTPRequestHandler):
                     f"id: {ev_id}\n"
                     f"event: {ev['type']}\n"
                     f"data: {json.dumps(ev['data'])}\n\n"
-                ).encode("utf-8")
+                ).encode()
                 try:
                     self.wfile.write(payload)
                     self.wfile.flush()
@@ -225,11 +225,15 @@ def _find_sprite_hwnd_by_pid(pid: int, timeout_s: float = 15.0) -> int:
         candidates = _candidate_pids(pid)
         found: list[int] = []
 
-        def _enum_cb(hwnd: int, _lp: int, _cands: set[int] = candidates) -> bool:
+        def _enum_cb(  # bind loop vars now to avoid late-binding (B023)
+            hwnd: int, _lp: int,
+            _cands: set[int] = candidates,
+            _found: list[int] = found,
+        ) -> bool:
             wpid = ctypes.wintypes.DWORD(0)
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
             if wpid.value in _cands and user32.IsWindowVisible(hwnd):
-                found.append(hwnd)
+                _found.append(hwnd)
                 return False  # stop — first visible window is sufficient
             return True  # continue
 

@@ -15,6 +15,7 @@ Outputs:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sys
@@ -147,10 +148,8 @@ def phase_a(tmp_path: Path) -> bool:
         _remote.post_audio = original_post
         _clipboard.paste_via_clipboard = original_paste
         if daemon is not None:
-            try:
+            with contextlib.suppress(Exception):
                 daemon._utt_q.put(None)
-            except Exception:
-                pass
             if pipeline_thread is not None:
                 pipeline_thread.join(timeout=3.0)
             daemon._dictation_executor.shutdown(wait=False)

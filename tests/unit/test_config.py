@@ -1,7 +1,6 @@
 import logging
 import os
 import textwrap
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -140,7 +139,10 @@ def test_update_user_config_strips_audio_device_key(tmp_path):
     assert 'device_name = "X"' in text
     # Legacy device int must have been stripped — no bare "device = ..." line
     lines = text.splitlines()
-    device_lines = [l for l in lines if l.strip().startswith("device") and "device_name" not in l]
+    device_lines = [
+        ln for ln in lines
+        if ln.strip().startswith("device") and "device_name" not in ln
+    ]
     assert device_lines == [], f"Unexpected legacy device lines: {device_lines}"
 
     # Also confirm via Config.load that device_name reads back correctly
