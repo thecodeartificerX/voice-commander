@@ -65,6 +65,7 @@ class StateMachine:
         self.target_state = SpriteState.WARMUP
         self.muted = False
         self.dictating = False
+        self.cancelled_cue: bool = False  # True when last dictation.end had reason="cancel"
         self._heartbeat_timeout_s = heartbeat_timeout_ms / 1000.0
         self._last_heartbeat: float = 0.0
         self._hold_timer: float | None = None
@@ -97,10 +98,18 @@ class StateMachine:
 
         if event_type == "dictation.start":
             self.dictating = True
+            self.cancelled_cue = False  # clear any prior cancel cue on new session
             return None
 
         if event_type == "dictation.end":
             self.dictating = False
+            reason = data.get("reason")  # defensive: some publishers may omit "reason"
+            # Surface a distinct cancelled visual when reason == "cancel".
+            # This covers both spoken cancel AND scroll-lock cancel — both
+            # paths call DictationSession.cancel() which emits reason="cancel".
+            # Renderer (voice_sprite/__main__.py or equivalent) reads
+            # self.cancelled_cue to show a brief "cancelled" text badge.
+            self.cancelled_cue = reason == "cancel"
             return None
 
         # vad_speech only triggers on active=true

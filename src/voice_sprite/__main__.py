@@ -34,6 +34,41 @@ def _should_reload(mtime_old: float, mtime_new: float, threshold: float = 0.0) -
     return abs(mtime_new - mtime_old) > threshold
 
 
+# Duration the "CANCELLED" badge stays visible before auto-clearing.
+_CANCELLED_CUE_DURATION_S: float = 2.5
+
+
+def _apply_cancelled_cue(
+    sm: Any,
+    window: Any,
+    schedule_fn: Any,
+) -> None:
+    """Show or clear the cancelled-cue badge on *window* based on *sm.cancelled_cue*.
+
+    When ``sm.cancelled_cue`` is ``True`` the badge is made visible and a
+    timer is scheduled (via *schedule_fn*, which must accept a ``(delay,
+    callback)`` signature matching ``pyglet.clock.schedule_once``) to
+    auto-clear it after ``_CANCELLED_CUE_DURATION_S`` seconds.  The auto-
+    clear also resets ``sm.cancelled_cue`` so subsequent ticks do not
+    re-schedule.
+
+    When ``sm.cancelled_cue`` is ``False`` the badge is hidden immediately.
+
+    This helper is module-level (not a closure) so it can be unit-tested
+    without spinning up a full pyglet window.
+    """
+    if sm.cancelled_cue:
+        window.set_cancelled_cue(True)
+
+        def _clear_cue(_dt: float) -> None:
+            sm.cancelled_cue = False
+            window.set_cancelled_cue(False)
+
+        schedule_fn(_CANCELLED_CUE_DURATION_S, _clear_cue)
+    else:
+        window.set_cancelled_cue(False)
+
+
 def _make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="voice-sprite",
@@ -287,6 +322,10 @@ def main() -> None:
         window.set_muted(grey)
         renderer.set_muted(grey)
         window.set_dictating(sm.dictating)  # badge only; renderer uses grey above
+        # Transient "CANCELLED" badge: shown for _CANCELLED_CUE_DURATION_S after a
+        # dictation.end {reason:"cancel"} event.  The badge is the user's ONLY
+        # feedback that dictation was discarded (no chime on cancel).
+        _apply_cancelled_cue(sm, window, pyglet.clock.schedule_once)
         if event_type == "tool_fired":
             handle_tool_fired(data, chat_log)
             if "name" in data:

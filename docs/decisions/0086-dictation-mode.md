@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-05-16
 **Supersedes:** [ADR 0025](0025-mute-hotkey-for-external-dictation.md) — mute hotkey for external dictation coexistence
+**Successor:** [ADR 0089](0089-dictation-hotkey-sentinel-cancel-debounce.md) — patches the hotkey-end race condition, adds 50 ms debounce, and adds the spoken cancel path. ADR 0086 remains authoritative for the initial dictation-mode design; ADR 0089 is the reliability and UX patch.
 
 ## Context
 

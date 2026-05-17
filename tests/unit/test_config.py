@@ -1,7 +1,6 @@
 import logging
 import os
 import textwrap
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -140,7 +139,10 @@ def test_update_user_config_strips_audio_device_key(tmp_path):
     assert 'device_name = "X"' in text
     # Legacy device int must have been stripped — no bare "device = ..." line
     lines = text.splitlines()
-    device_lines = [l for l in lines if l.strip().startswith("device") and "device_name" not in l]
+    device_lines = [
+        ln for ln in lines
+        if ln.strip().startswith("device") and "device_name" not in ln
+    ]
     assert device_lines == [], f"Unexpected legacy device lines: {device_lines}"
 
     # Also confirm via Config.load that device_name reads back correctly
@@ -268,6 +270,27 @@ def test_dictation_config_override(tmp_path):
     cfg = Config.load(cfg_file)
     assert cfg.dictation.endpoint == "http://1.2.3.4:9/x"
     assert cfg.dictation.end_word == "finish"
+
+
+def test_dictation_config_cancel_word_default(tmp_path):
+    """DictationConfig.cancel_word defaults to 'cancel' when not specified."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("", encoding="utf-8")
+    from voice_commander.config import Config
+    cfg = Config.load(cfg_file)
+    assert cfg.dictation.cancel_word == "cancel"
+
+
+def test_dictation_config_cancel_word_override(tmp_path):
+    """DictationConfig.cancel_word can be overridden via [dictation] section."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        "[dictation]\ncancel_word = \"abort\"\n",
+        encoding="utf-8",
+    )
+    from voice_commander.config import Config
+    cfg = Config.load(cfg_file)
+    assert cfg.dictation.cancel_word == "abort"
 
 
 def test_stale_mute_key_warns_and_is_ignored(tmp_path, caplog):

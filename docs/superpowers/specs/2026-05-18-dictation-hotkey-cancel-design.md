@@ -292,7 +292,6 @@ def handle_utterance(
 
         # Guard 2 — end word: existing path, unchanged
         if normalized == self._end_word:
-            self._pending_end.set()
             return "end"
 
         # Guard 3 — cancel word: new path; do NOT append to buffer

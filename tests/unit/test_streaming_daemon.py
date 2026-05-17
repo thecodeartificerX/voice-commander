@@ -554,3 +554,110 @@ def _run_process_utterance(daemon: StreamingDaemon, tmp_path) -> None:
         thread.join(timeout=3.0)
 
     assert not thread.is_alive(), "pipeline thread did not exit after poison pill"
+
+
+# ---------------------------------------------------------------------------
+# Sentinel wake tests (Task 6 — ADR 0089)
+# Each test is fully self-contained — stub types defined inside the function.
+# ---------------------------------------------------------------------------
+
+
+def test_dictation_wake_sentinel_skipped_in_pipeline_loop(tmp_path):
+    """The _DICTATION_WAKE sentinel is identity-checked and skipped via
+    `continue` — _process_utterance is never called for it.
+
+    Fully self-contained: uses the existing _make_daemon() MagicMock helper.
+    The daemon is not started; _pipeline_loop() is driven directly on a thread.
+    """
+    import threading
+
+    from voice_commander.daemon import _DICTATION_WAKE
+
+    # Use the existing _make_daemon helper (MagicMock transcriber, no GPU)
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
+        output_dir=str(tmp_path)
+    )
+
+    processed: list[str] = []
+    original_process = daemon._process_utterance
+
+    def _spy(utterance, *, gen=None):
+        processed.append("called")
+        return original_process(utterance, gen=gen)
+
+    daemon._process_utterance = _spy
+
+    # Queue: sentinel first, then shutdown sentinel
+    daemon._utt_q.put(_DICTATION_WAKE)
+    daemon._utt_q.put(None)
+
+    t = threading.Thread(target=daemon._pipeline_loop, daemon=True)
+    t.start()
+    t.join(timeout=2.0)
+
+    assert not t.is_alive(), "Pipeline loop did not exit within 2 s"
+    assert processed == [], (
+        f"_process_utterance should NOT be called for the sentinel; got: {processed}"
+    )
+
+
+def test_dictation_wake_sentinel_real_utterance_processed_before_sentinel(tmp_path):
+    """A real utterance queued BEFORE the sentinel is processed; sentinel is then
+    skipped. FIFO order guarantee: real audio → sentinel → shutdown.
+
+    Fully self-contained: inline stub transcriber defined inside this function.
+    """
+    import threading
+    from dataclasses import dataclass
+
+    import numpy as np
+
+    from voice_commander.daemon import _DICTATION_WAKE
+
+    # Inline stub transcriber — no module-level symbol needed
+    @dataclass
+    class _InlineTranscription:
+        text: str
+        confidence: float = 0.95
+        no_speech_prob: float = 0.05
+
+    class _InlineStub:
+        def __init__(self, results):
+            self._results = list(results)
+
+        def load(self) -> None: ...
+        def unload(self) -> None: ...
+
+        def transcribe(self, _audio):
+            return self._results.pop(0)
+
+    # Build daemon with the existing helper but swap out the MagicMock transcriber
+    daemon, feedback, recorder, _transcriber_mock, dispatcher = _make_daemon(
+        output_dir=str(tmp_path)
+    )
+    # Replace the MagicMock transcriber with our inline stub
+    stub = _InlineStub(results=[_InlineTranscription("click")])
+    daemon._transcriber = stub
+
+    processed: list[str] = []
+    original_process = daemon._process_utterance
+
+    def _spy(utterance, *, gen=None):
+        processed.append("called")
+        return original_process(utterance, gen=gen)
+
+    daemon._process_utterance = _spy
+
+    audio = np.zeros(16000, dtype=np.float32)
+    daemon._utt_q.put((audio, daemon._audio_gen))  # real utterance FIRST (FIFO)
+    daemon._utt_q.put(_DICTATION_WAKE)              # sentinel SECOND
+    daemon._utt_q.put(None)                         # shutdown THIRD
+
+    t = threading.Thread(target=daemon._pipeline_loop, daemon=True)
+    t.start()
+    t.join(timeout=2.0)
+
+    assert not t.is_alive(), "Pipeline loop did not exit within 2 s"
+    assert processed == ["called"], (
+        f"Expected exactly 1 _process_utterance call for the real utterance; got: {processed}"
+    )

@@ -28,6 +28,7 @@ class DictationConfig:
 
     endpoint: str = "http://192.168.4.200:8765/inference"
     end_word: str = "done"
+    cancel_word: str = "cancel"  # say this word to abort dictation and discard the audio
 
 
 @dataclass(frozen=True)

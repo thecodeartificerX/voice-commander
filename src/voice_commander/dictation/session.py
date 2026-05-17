@@ -2,23 +2,36 @@
 
 While active the daemon routes every utterance here instead of the VerbRouter.
 Non-end utterances have their audio appended to a buffer.  Finalisation happens
-via one of two exit paths:
+via one of three exit paths:
 
 (a) **End-word path** — the pipeline thread recognises the configured end word
     (default ``"done"``), calls :meth:`take_and_finish`, captures the buffer,
     deactivates the session, and submits audio for transcription.
 
 (b) **Hotkey-end path** — the hotkey thread calls :meth:`request_end`, which
-    sets :attr:`pending_end` without deactivating the session.  The pipeline
-    thread polls :attr:`pending_end`; while it is set, the pipeline uses a
-    short timed get on the utterance queue (``_DICTATION_DRAIN_TIMEOUT_S``).
-    Once the queue drains (timeout expires with no new item), the pipeline
-    calls ``_finalize_pending_dictation_end`` → :meth:`take_and_finish`,
-    which atomically captures the buffer and deactivates the session.
+    sets :attr:`pending_end` without deactivating the session.  The hotkey
+    thread also enqueues a ``_DICTATION_WAKE`` sentinel via ``put_nowait``
+    to unblock the pipeline thread from ``get(timeout=None)`` immediately
+    (ADR 0089 — eliminates the race where ``pending_end`` is set while the
+    thread is already inside ``get``).  While ``pending_end`` is set, the
+    pipeline uses a short timed get on the utterance queue
+    (``_DICTATION_DRAIN_TIMEOUT_S``).  Once the queue drains (timeout
+    expires with no new item), the pipeline calls
+    ``_finalize_pending_dictation_end`` → :meth:`take_and_finish`, which
+    atomically captures the buffer and deactivates the session.
 
-Both paths converge on :meth:`take_and_finish`, which holds the lock across
-deactivation and buffer capture, preventing double-submit if both paths
-race.  Mirrors PickerSession's role as a voice-session sub-state.
+(c) **Spoken-cancel path** — :meth:`handle_utterance` recognises the configured
+    cancel word (default ``"cancel"``; exact normalized match only — a longer
+    phrase containing the cancel word is buffered, not cancelled) and returns
+    ``"cancel"``.  The pipeline thread calls :meth:`cancel` to drop the buffer
+    and abort the session without any transcription or paste.  The cancel word
+    is validated against the end word at construction time; a collision disables
+    spoken cancel (logged as a WARNING) to prevent ambiguity.
+
+All paths converge on either :meth:`take_and_finish` (paths a and b) or
+:meth:`cancel` (path c), both of which hold the lock across deactivation and
+buffer disposal, preventing double-action races.  Mirrors PickerSession's role
+as a voice-session sub-state.
 """
 
 from __future__ import annotations
@@ -44,19 +57,47 @@ class _BusLike(Protocol):
     def publish(self, event_type: str, data: dict[str, Any] | None = None) -> None: ...
 
 
-UtteranceKind = Literal["buffered", "end"]
+UtteranceKind = Literal["buffered", "end", "cancel"]
 
 
 class DictationSession:
     """Holds dictation state + the in-memory audio buffer for one dictation."""
 
-    def __init__(self, bus: _BusLike, end_word: str = "done") -> None:
+    def __init__(
+        self,
+        bus: _BusLike,
+        end_word: str = "done",
+        cancel_word: str = "cancel",
+    ) -> None:
         self._bus = bus
         self._end_word = _normalize_spoken(end_word)
         self._lock = threading.Lock()
         self._active = False
         self._buffer: list[npt.NDArray[np.float32]] = []
         self._pending_end = threading.Event()
+
+        # Validate cancel_word against end_word and emptiness.
+        # Cross-field validation lives here (not in config loader — no cross-field
+        # stage exists there; precedent: dictation_key == hotkey_key warn-and-degrade
+        # in daemon.py).
+        normalized_cancel = _normalize_spoken(cancel_word)
+        if not normalized_cancel:
+            logger.warning(
+                "dictation: cancel_word %r is empty after normalization; "
+                "spoken cancel disabled",
+                cancel_word,
+            )
+            self._cancel_word: str | None = None
+        elif normalized_cancel == self._end_word:
+            logger.warning(
+                "dictation: cancel_word %r collides with end_word %r; "
+                "spoken cancel disabled to avoid ambiguity",
+                cancel_word,
+                end_word,
+            )
+            self._cancel_word = None
+        else:
+            self._cancel_word = normalized_cancel
 
     @property
     def active(self) -> bool:
@@ -100,19 +141,35 @@ class DictationSession:
     def handle_utterance(
         self, audio: npt.NDArray[np.float32], text: str
     ) -> UtteranceKind:
-        """Classify an utterance: ``"end"`` if it is the end word, else ``"buffered"``.
+        """Classify an utterance: ``"end"``, ``"cancel"``, or ``"buffered"``.
 
-        End-word utterances are NOT appended to the buffer. This method never
-        changes session state — on an ``"end"`` result the caller MUST call
-        :meth:`take_and_finish` to atomically capture the buffer, deactivate
-        the session, and publish the end event. A no-op returning ``"buffered"``
-        when inactive (lost race with take_and_finish/cancel).
+        * ``"end"`` — transcript is the end word (exact normalized match).
+          NOT appended to the buffer; caller MUST call :meth:`take_and_finish`.
+        * ``"cancel"`` — transcript is the cancel word (exact normalized match,
+          when ``_cancel_word`` is not ``None``). NOT appended to the buffer;
+          caller MUST call :meth:`cancel` to discard the session.
+        * ``"buffered"`` — audio appended to buffer; session stays active.
+
+        A no-op returning ``"buffered"`` when inactive (lost race with
+        take_and_finish/cancel).
         """
         with self._lock:
+            # Guard 1 — session inactive: no-op, matches existing behaviour
+            # for lost races with take_and_finish / cancel.
             if not self._active:
                 return "buffered"
-            if _normalize_spoken(text) == self._end_word:
+
+            normalized = _normalize_spoken(text)
+
+            # Guard 2 — end word: existing path, unchanged.
+            if normalized == self._end_word:
                 return "end"
+
+            # Guard 3 — cancel word: new path (ADR 0089); do NOT buffer.
+            if self._cancel_word is not None and normalized == self._cancel_word:
+                return "cancel"
+
+            # Default — buffer the audio.
             self._buffer.append(audio)
             return "buffered"
 
