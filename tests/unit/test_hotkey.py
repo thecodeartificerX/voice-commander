@@ -133,7 +133,9 @@ def test_debounce_different_keys_are_independent(monkeypatch):
 
     Rapid alternation between scroll_lock and ctrl_r should dispatch one
     callback each (two total), never suppressing the other key.
-    Uses a fake monotonic clock; both presses at t=0 are simultaneous.
+    Uses a fake monotonic clock; both presses are simultaneous at a realistic
+    monotonic base (1000.0 s) so the never-fired sentinel (0.0) does not
+    falsely debounce either key.
     """
     import voice_commander.hotkey as _hotkey_mod
 
@@ -155,9 +157,10 @@ def test_debounce_different_keys_are_independent(monkeypatch):
 
     from pynput.keyboard import Key
 
-    # Fire both at exactly t=0 (simultaneous — well within 50 ms of each other
-    # on a per-key basis, but they are DIFFERENT keys so independent timers apply)
-    _clock[0] = 0.0
+    # Fire both at t=1000.0 (realistic monotonic base — well above the 50 ms
+    # debounce window so the never-fired sentinel of 0.0 does not falsely
+    # suppress either key; both are DIFFERENT keys so independent timers apply)
+    _clock[0] = 1000.0
     ctrl._on_release(Key.scroll_lock)
     ctrl._on_release(Key.ctrl_r)
 
