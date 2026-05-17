@@ -125,7 +125,12 @@ class VocabStore:
         )
 
     def save(self, vocab: Vocabulary) -> None:
-        """Serialise *vocab* to ``vocab.json``, creating parent directories as needed."""
+        """Serialise *vocab* to ``vocab.json``, creating parent directories as needed.
+
+        The write is atomic: the JSON is written to a sibling ``.tmp`` file and
+        then ``Path.replace``'d over the target, so a crash mid-write can never
+        leave a half-written (corrupt) ``vocab.json`` behind.
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "vocab": list(vocab.vocab),
@@ -136,4 +141,6 @@ class VocabStore:
                 {"phrase": cmd.phrase, "action": cmd.action} for cmd in vocab.commands
             ],
         }
-        self._path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp = self._path.with_name(self._path.name + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(self._path)

@@ -285,9 +285,37 @@ def test_post_vocab_returns_result_fragment_on_success(app_env, tmp_path, monkey
         headers={"HX-Request": "true"},
     )
     assert resp.status_code == 200
-    # Fragment must mention saved successfully and include token estimate
+    # Fragment must confirm the save and the captured Vocabulary must reflect
+    # the posted vocab words, the parsed correction, and the parsed command.
     body = resp.text
-    assert "saved" in body.lower() or "vocab" in body.lower()
+    assert "Vocabulary saved." in body
+    assert len(saved_vocabs) == 1
+    assert saved_vocabs[0].vocab == ("Supabase", "n8n")
+    assert saved_vocabs[0].corrections[0].wrong == "supa base"
+    assert saved_vocabs[0].commands[0].phrase == "next line"
+
+
+def test_post_vocab_malformed_json_falls_back_gracefully(app_env, tmp_path, monkeypatch):
+    """POST /dictation/vocab with malformed corrections/commands JSON still saves.
+
+    The route's ``except`` clauses fall back to empty correction/command lists,
+    so the save succeeds and the success fragment is returned.
+    """
+    monkeypatch.setattr(
+        "voice_commander.web.app.Path",
+        lambda *a, **kw: (
+            (tmp_path / a[0]) if a and a[0] == "outputs/dictation" else __import__("pathlib").Path(*a, **kw)
+        ),
+    )
+
+    client, _, _ = app_env
+    resp = client.post(
+        "/dictation/vocab",
+        data={"vocab": "word", "corrections": "not-valid-json", "commands": "{bad"},
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+    assert "Vocabulary saved." in resp.text
 
 
 def test_post_vocab_csrf_blocked_without_hx_header(app_env):

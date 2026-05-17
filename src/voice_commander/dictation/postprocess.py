@@ -15,6 +15,9 @@ from collections.abc import Sequence
 
 from .vocab import Command, Correction, Vocabulary
 
+# whisper.cpp's initial-prompt token cap.
+_WHISPER_TOKEN_LIMIT = 224
+
 # ~200 tokens at ~4 chars/token; safely under whisper.cpp's 224-token hard limit.
 _PROMPT_CHAR_CAP = 800
 

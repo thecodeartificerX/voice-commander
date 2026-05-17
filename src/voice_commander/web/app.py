@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.responses import Response as StarletteResponse
 
+from ..dictation.postprocess import _WHISPER_TOKEN_LIMIT
 from ..registry import ToolRegistry
 from ..tool_metadata import ToolMetadata, ToolMetadataError, ToolMetadataStore
 from .admin import attach_admin_routes
@@ -33,6 +34,12 @@ logger = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
+
+# Dictation output paths. Built with forward-slash literals so the dictation
+# routes can pass ``.as_posix()`` back through ``Path`` at request time (tests
+# monkeypatch the module-level ``Path`` to redirect these under a tmp dir).
+_DICTATION_DIR = Path("outputs/dictation")
+_VOCAB_PATH = _DICTATION_DIR / "vocab.json"
 
 
 def create_app(
@@ -155,13 +162,24 @@ def create_app(
 
     @app.get("/page/dictation", response_class=HTMLResponse)
     async def page_dictation(request: Request) -> HTMLResponse:
-        """``GET /page/dictation`` — last dictation + re-transcribe button + vocab editor."""
+        """``GET /page/dictation`` — last dictation + re-transcribe button + vocab editor.
+
+        The two file reads (last-dictation text + ``vocab.json``) are offloaded
+        to a worker thread so the event loop is never stalled on disk I/O.
+        """
         from ..dictation.postprocess import build_prompt
         from ..dictation.store import DictationStore
-        from ..dictation.vocab import VocabStore
+        from ..dictation.vocab import Vocabulary, VocabStore
 
-        last_text = DictationStore(Path("outputs/dictation")).read_text() or ""
-        vocab = VocabStore(Path("outputs/dictation") / "vocab.json").load()
+        def _read() -> tuple[str, Vocabulary]:
+            last_text = DictationStore(Path(_DICTATION_DIR.as_posix())).read_text() or ""
+            vocab = VocabStore(
+                Path(_DICTATION_DIR.as_posix()) / "vocab.json"
+            ).load()
+            return last_text, vocab
+
+        loop = asyncio.get_running_loop()
+        last_text, vocab = await loop.run_in_executor(None, _read)
         estimated_tokens = len(build_prompt(vocab)) // 4
         return templates.TemplateResponse(
             request,
@@ -170,7 +188,7 @@ def create_app(
                 "last_text": last_text,
                 "vocab": vocab,
                 "estimated_tokens": estimated_tokens,
-                "token_limit": 224,
+                "token_limit": _WHISPER_TOKEN_LIMIT,
             },
         )
 
@@ -226,18 +244,20 @@ def create_app(
             new_vocab = Vocabulary(vocab=words, corrections=corrections, commands=commands)
 
             def _do_save() -> None:
-                VocabStore(Path("outputs/dictation") / "vocab.json").save(new_vocab)
+                VocabStore(
+                    Path(_DICTATION_DIR.as_posix()) / "vocab.json"
+                ).save(new_vocab)
 
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, _do_save)
             estimated_tokens = len(build_prompt(new_vocab)) // 4
         except Exception as exc:  # noqa: BLE001
             logger.exception("vocab save failed")
-            error = f"save failed: {exc}"
+            error = str(exc)
 
         ctx = {"error": error} if error else {
             "estimated_tokens": estimated_tokens,
-            "token_limit": 224,
+            "token_limit": _WHISPER_TOKEN_LIMIT,
         }
         return HTMLResponse(
             templates.get_template("_vocab_result.html").render(ctx)
@@ -264,13 +284,13 @@ def create_app(
             from ..dictation.store import DictationStore
             from ..dictation.vocab import VocabStore
 
-            store = DictationStore(Path("outputs/dictation"))
+            store = DictationStore(Path(_DICTATION_DIR.as_posix()))
             wav = store.read_audio()
             if wav is None:
                 return None, "no audio recorded yet"
 
             # Hot-reload vocabulary — same four-step pipeline as _finalize_dictation.
-            vocab = VocabStore(Path("outputs/dictation") / "vocab.json").load()
+            vocab = VocabStore(Path(_DICTATION_DIR.as_posix()) / "vocab.json").load()
             prompt = build_prompt(vocab)
 
             endpoint = Config.load(Path("config.toml")).dictation.endpoint
