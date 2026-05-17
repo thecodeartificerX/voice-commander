@@ -226,6 +226,23 @@ and the scroll-lock session-close path (both call `DictationSession.cancel()` an
 emit `dictation.end {"reason": "cancel"}`). `cancelled_cue` is cleared to `False` on
 `dictation.start`.
 
+The rendering path in `voice_sprite/__main__.py` calls the module-level helper
+`_apply_cancelled_cue(sm, window, pyglet.clock.schedule_once)` after every SSE event
+that passes through `sm.on_event()`. When `sm.cancelled_cue` is `True`, the helper:
+
+1. Calls `window.set_cancelled_cue(True)` to show the badge immediately.
+2. Schedules a `pyglet.clock.schedule_once` callback at `_CANCELLED_CUE_DURATION_S`
+   (2.5 s) that resets `sm.cancelled_cue = False` and calls
+   `window.set_cancelled_cue(False)` to hide the badge.
+
+`SpriteWindow.set_cancelled_cue()` in `src/voice_sprite/window.py` sets the
+`_cancelled_cue` flag. `on_draw()` renders a "✕ CANCELLED" `pyglet.text.Label` in
+red-orange `(255, 90, 90, 255)` at the bottom-centre of the sprite window when
+`_cancelled_cue` is `True` — the same position and style as the existing
+"● DICTATING" badge (yellow), but with distinct text and colour so the user can
+tell at a glance that dictation was discarded.  The label is created lazily on first
+draw and re-centred every frame (to handle CursorDock window resizes).
+
 #### Race — simultaneous hotkey-end + spoken cancel
 
 If `pending_end` is set and the cancel word arrives as the next utterance:
