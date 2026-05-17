@@ -118,3 +118,35 @@ def test_post_audio_omits_prompt_fields_when_prompt_empty(monkeypatch):
     post_audio(b"RIFFfake", "http://x/inference")
     assert "prompt" not in captured["data"]
     assert "carry_initial_prompt" not in captured["data"]
+
+
+def test_post_audio_sends_prompt_verbatim_including_unicode_and_whitespace(monkeypatch):
+    """post_audio must forward the prompt string byte-for-byte: no trimming,
+    no whitespace collapsing, and non-ASCII characters preserved intact."""
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):
+        captured["data"] = kwargs["data"]
+        return _FakeResponse(200, {"text": "hello"})
+
+    monkeypatch.setattr("voice_commander.dictation.remote.httpx.post", fake_post)
+    prompt = "  hello  Ångström, café  "
+    post_audio(b"RIFFfake", "http://x/inference", prompt=prompt)
+    assert captured["data"]["prompt"] == "  hello  Ångström, café  "
+    assert captured["data"]["carry_initial_prompt"] == "true"
+
+
+def test_post_audio_whitespace_only_prompt_is_sent_as_is(monkeypatch):
+    """A whitespace-only prompt is truthy, so the `if prompt:` guard passes it
+    through unmodified rather than dropping the prompt fields."""
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):
+        captured["data"] = kwargs["data"]
+        return _FakeResponse(200, {"text": "hello"})
+
+    monkeypatch.setattr("voice_commander.dictation.remote.httpx.post", fake_post)
+    post_audio(b"RIFFfake", "http://x/inference", prompt="   ")
+    # Documents current behavior: build_prompt never returns whitespace-only, so the if-prompt guard need not strip.
+    assert captured["data"]["prompt"] == "   "
+    assert captured["data"]["carry_initial_prompt"] == "true"
