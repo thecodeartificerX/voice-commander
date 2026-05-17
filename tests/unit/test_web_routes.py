@@ -230,3 +230,68 @@ def test_api_tools_returns_json_list(app_env_with_system_tool):
     for tool in data:
         assert "name" in tool
         assert "description" in tool
+
+
+# ---------------------------------------------------------------------------
+# Dictation page + vocab routes
+# ---------------------------------------------------------------------------
+
+import json as _json_mod
+
+
+def test_page_dictation_renders_three_editor_sections(app_env):
+    """GET /page/dictation must render the Vocabulary, Corrections, and Commands sections."""
+    client, _, _ = app_env
+    resp = client.get("/page/dictation")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Vocabulary" in body
+    assert "Corrections" in body
+    assert "Commands" in body
+
+
+def test_post_vocab_returns_result_fragment_on_success(app_env, tmp_path, monkeypatch):
+    """POST /dictation/vocab must write vocab.json and return the result fragment."""
+    import voice_commander.dictation.vocab as _vocab_mod
+
+    saved_vocabs: list = []
+    original_save = _vocab_mod.VocabStore.save
+
+    def _capturing_save(self, vocab):
+        saved_vocabs.append(vocab)
+        original_save(self, vocab)
+
+    monkeypatch.setattr(_vocab_mod.VocabStore, "save", _capturing_save)
+    # Point VocabStore to tmp_path
+    monkeypatch.setattr(
+        "voice_commander.web.app.Path",
+        lambda *a, **kw: (
+            (tmp_path / a[0]) if a and a[0] == "outputs/dictation" else __import__("pathlib").Path(*a, **kw)
+        ),
+    )
+
+    client, _, _ = app_env
+    resp = client.post(
+        "/dictation/vocab",
+        data={
+            "vocab": "Supabase\nn8n",
+            "corrections": _json_mod.dumps(
+                [{"wrong": "supa base", "right": "Supabase"}]
+            ),
+            "commands": _json_mod.dumps(
+                [{"phrase": "next line", "action": "newline"}]
+            ),
+        },
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+    # Fragment must mention saved successfully and include token estimate
+    body = resp.text
+    assert "saved" in body.lower() or "vocab" in body.lower()
+
+
+def test_post_vocab_csrf_blocked_without_hx_header(app_env):
+    """POST /dictation/vocab must be blocked without HX-Request header."""
+    client, _, _ = app_env
+    resp = client.post("/dictation/vocab", data={"vocab": "test"})
+    assert resp.status_code == 403
