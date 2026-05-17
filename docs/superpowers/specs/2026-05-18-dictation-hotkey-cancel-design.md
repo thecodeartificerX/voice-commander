@@ -36,27 +36,37 @@ The pipeline worker (`vc-pipeline` thread) runs `_pipeline_loop()`. At the top o
 each loop iteration it evaluates whether `pending_end` is set and, if so, uses a
 short `_DICTATION_DRAIN_TIMEOUT_S` (0.25 s) timeout instead of `get(timeout=None)`.
 
-The race condition is:
+**Precise root cause:** the pipeline worker thread is blocked INSIDE
+`_utt_q.get(timeout=None)`, a call carried over from a previous loop iteration when
+`pending_end` was `False`. `pending_end` is only evaluated at the TOP of the loop,
+before the `get()`. So a hotkey-end press that lands while the thread sits in that
+blocking `get()` is invisible until something else unblocks the call — the next real
+utterance, or the daemon-shutdown `None` sentinel.
+
+This is NOT a "permanently hung" pipeline — it is hung until the next utterance or
+shutdown. The thread will eventually resume, but only when a queue item arrives.
+
+The race condition in detail:
 
 1. The pipeline thread has already entered `self._utt_q.get(timeout=None)` — it is
-   blocked inside the `Queue.get` syscall.
+   blocked inside the `Queue.get` call, waiting indefinitely.
 2. The user presses Right Ctrl. The hotkey thread calls `request_end()`, which sets
    `_pending_end`.
-3. `_pending_end` is now `True`, but the `pending` variable evaluated at the
-   **top of the previous iteration** was `False`. The pipeline thread is stuck inside
-   `get(timeout=None)` and will not re-evaluate `pending` until `get()` returns.
+3. `_pending_end` is now `True`, but the pipeline thread re-evaluates the `pending`
+   variable only at the **top of its next iteration**, which cannot happen until
+   `get()` returns.
 4. If the user stops speaking after the press (the normal case), no new utterance
-   arrives. `get(timeout=None)` **never returns**. The pipeline is permanently
-   blocked. Dictation is effectively hung.
+   arrives. `get(timeout=None)` does not return. The pipeline remains blocked until
+   the next utterance or daemon shutdown.
 
-**Why "done" always works:** the spoken word itself is an utterance that wakes the
-blocked `get()`. Once `get()` returns, the loop re-evaluates `pending`, routes
-through `handle_utterance`, recognises `"done"`, and finalises.
+**Why "done" always works:** the spoken word itself is an utterance that unblocks
+`get()`. Once `get()` returns, the loop re-evaluates `pending`, routes through
+`handle_utterance`, recognises `"done"`, and finalises.
 
 **Why hotkey-end sometimes works ("hit" cases):** a stray VAD noise event or one
 more spoken word produces an utterance, waking `get()`. The loop then sees
 `pending_end == True`, switches to the timed drain, and eventually finalises.
-Silence after the key press = permanent hang.
+Silence after the key press = hung pipeline until next utterance or shutdown.
 
 ### Additional issues identified
 
@@ -73,16 +83,17 @@ Silence after the key press = permanent hang.
 
 | Symbol | File | Lines (approx) |
 |--------|------|----------------|
-| `_DICTATION_DRAIN_TIMEOUT_S` | `daemon.py` | L61 |
-| `_pipeline_loop` | `daemon.py` | L430–449 |
-| `on_dictation_toggle` | `daemon.py` | L395–412 |
-| `_finalize_pending_dictation_end` | `daemon.py` | L725–748 |
-| `_finalize_dictation` | `daemon.py` | L750–813 |
-| `DictationSession` | `dictation/session.py` | entire file |
-| `UtteranceKind` | `dictation/session.py` | L47 |
-| `HotkeyController._on_release` | `hotkey.py` | L52–60 |
-| `DictationConfig` | `config.py` | L26–35 |
-| `HotkeyConfig` | `config.py` | L17–25 |
+| `_DICTATION_DRAIN_TIMEOUT_S` | `src/voice_commander/daemon.py` | L61 |
+| `_pipeline_loop` | `src/voice_commander/daemon.py` | L430–449 |
+| `on_dictation_toggle` | `src/voice_commander/daemon.py` | L395–412 |
+| `_finalize_pending_dictation_end` | `src/voice_commander/daemon.py` | L725–748 |
+| `_finalize_dictation` | `src/voice_commander/daemon.py` | L750–813 |
+| `DictationSession` | `src/voice_commander/dictation/session.py` | entire file |
+| `UtteranceKind` | `src/voice_commander/dictation/session.py` | L47 |
+| `DictationSession.cancel` | `src/voice_commander/dictation/session.py` | L160–169 |
+| `HotkeyController._on_release` | `src/voice_commander/hotkey.py` | L52–60 |
+| `DictationConfig` | `src/voice_commander/config.py` | L26–35 |
+| `HotkeyConfig` | `src/voice_commander/config.py` | L17–25 |
 
 ---
 
@@ -116,9 +127,9 @@ Silence after the key press = permanent hang.
 thread is already inside `get(timeout=None)`, so the flag is never checked until an
 utterance (or the shutdown `None` sentinel) naturally unblocks the queue.
 
-**Chosen approach (A):** `on_dictation_toggle`, in the branch where dictation is
-active, enqueues a module-level sentinel object immediately after calling
-`request_end()`:
+**Chosen approach (A):** `on_dictation_toggle` in `src/voice_commander/daemon.py`,
+in the branch where dictation is active, enqueues a module-level sentinel object
+immediately after calling `request_end()`:
 
 ```python
 # daemon.py — module level
@@ -127,25 +138,49 @@ _DICTATION_WAKE = object()
 # on_dictation_toggle (abridged):
 if self._dictation_session.active:
     self._dictation_session.request_end()
-    self._utt_q.put_nowait(_DICTATION_WAKE)   # ← new
+    try:
+        self._utt_q.put_nowait(_DICTATION_WAKE)   # ← new
+    except queue.Full:
+        # A full queue means the pipeline is already non-idle and will
+        # re-evaluate pending_end within a few iterations without help.
+        logger.warning("dictation: _utt_q full — sentinel not needed; pipeline already active")
     logger.info("dictation: hotkey-end requested; pipeline will drain and finalize")
 ```
 
-The pipeline loop, on receiving an item, checks the sentinel by identity before the
-existing `isinstance(item, tuple)` branch:
+**`put_nowait` full-queue policy (decided — not deferred):** on `queue.Full`, log a
+warning and do nothing. Do NOT fall back to `put(timeout=...)`. A full queue means
+the pipeline is already non-idle and processing items; it will naturally exit the
+blocking `get()` very soon and re-evaluate `pending_end` within a few iterations.
+The sentinel's only purpose is to wake an IDLE pipeline; it is redundant when the
+pipeline is already active. The pynput listener thread must never block.
+
+The pipeline loop, after its existing `None` shutdown-sentinel check, adds an
+identity check for the wake sentinel BEFORE the tuple/ndarray item handling:
 
 ```python
+if item is None:
+    break  # existing shutdown path, unchanged
+
 if item is _DICTATION_WAKE:
     continue   # re-enter loop top; pending_end is now True → short-timeout drain
+
+# existing item handling (isinstance(item, tuple) etc.) follows unchanged
 ```
 
 The `continue` returns to the top of the loop, where `pending` is re-evaluated as
 `True`. The pipeline immediately switches to `get(timeout=_DICTATION_DRAIN_TIMEOUT_S)`,
 and the first timeout after an empty queue triggers `_finalize_pending_dictation_end()`.
 
+**`_utt_q` type annotation widening (required change):** the queue is currently typed
+as `queue.Queue[tuple[ndarray, int] | ndarray | None]`. Adding `_DICTATION_WAKE`
+(type `object`) requires widening this to
+`queue.Queue[tuple[ndarray, int] | ndarray | None | object]` — or more precisely,
+introducing a sentinel type alias. This annotation change is mandatory; do not leave
+the type annotation stale.
+
 **Why not approach B** (replace `get(timeout=None)` with a polling loop on
-`pending_end`): constant thread wakeups every N ms even when no dictation is active;
-increases idle CPU usage; adds complexity to the non-dictation hot path.
+`pending_end`): constant thread wakeups even when no dictation is active; increases
+idle CPU usage; adds complexity to the non-dictation hot path.
 
 **Why not approach C** (finalize directly in `request_end()` / `on_dictation_toggle`):
 skips the in-flight-utterance drain; races with concurrent buffer appends from the
@@ -161,20 +196,13 @@ called.
 singleton. Identity comparison (`item is _DICTATION_WAKE`) is safe — no risk of a
 real utterance array being mistaken for the sentinel.
 
-**`put_nowait` safety:** the utterance queue has `maxsize=8`. The sentinel is added
-once per hotkey press. A queue full at the point of the press (≥8 pending utterances)
-raises `queue.Full`; this should be caught and logged (not raised) with a fallback of
-calling `_utt_q.put(_DICTATION_WAKE)` with a short timeout (50 ms). In practice a
-full queue means the pipeline is already processing speech, so it will naturally exit
-the blocking `get()` soon anyway.
-
 ---
 
 ### Change 2 — Per-key debounce in `HotkeyController`
 
-`HotkeyController` stores a `dict[keyboard.Key, float]` mapping each bound key to the
-`time.monotonic()` of its last dispatched release. In `_on_release`, before invoking
-the callback:
+`HotkeyController` in `src/voice_commander/hotkey.py` stores a
+`dict[keyboard.Key, float]` mapping each bound key to the `time.monotonic()` of its
+last dispatched release. In `_on_release`, before invoking the callback:
 
 ```python
 now = time.monotonic()
@@ -185,66 +213,100 @@ if now - last < _DEBOUNCE_S:
 self._last_fire[key] = now
 ```
 
-`_DEBOUNCE_S = 0.30` (300 ms). This value is:
+`_DEBOUNCE_S = 0.050` (50 ms). Rationale:
 
-- **Short enough** not to swallow real intentional presses: dictation toggle presses
-  are always several seconds apart in normal use; even rapid users pause at least 400 ms.
-- **Long enough** to absorb driver bounce: hardware bounce typically resolves within
-  10–50 ms; 300 ms gives a 6× safety margin.
+- **This is bounce/double-fire rejection only** — hardware key bounce and driver
+  double-release events resolve well under 50 ms. The window is explicitly NOT meant
+  to suppress intentional rapid re-presses by the user.
+- **Safe for `scroll_lock`:** even the fastest "open session, oops, close" mis-press
+  correction is far longer than 50 ms in practice — the user's hand is still moving.
+  50 ms never eats a legitimate scroll-lock toggle.
+- **Safe for `dictation_key`:** same reasoning — a deliberate double-press to
+  open-then-close dictation is always many hundreds of milliseconds, not 50 ms.
 
-The debounce applies uniformly to all bound keys, including `scroll_lock`. Each key
-has its own independent timer in `_last_fire`, so fast alternation between two keys
-(e.g. Scroll Lock then Right Ctrl) is unaffected.
+The debounce applies uniformly to all bound keys. Each key has its own independent
+timer in `_last_fire`, so fast alternation between two keys (e.g. Scroll Lock then
+Right Ctrl) is unaffected.
 
-No new configuration key is introduced; the 300 ms constant is internal. If tuning is
+No new configuration key is introduced; the 50 ms constant is internal. If tuning is
 needed in the future, it can be promoted to config at that point.
 
 ---
 
-### Change 3 — Spoken cancel word
+### Change 3 — Spoken cancel word (collapses to existing `cancel()`)
 
-**`DictationSession` changes:**
+#### What already exists
 
-`UtteranceKind` gains a `"cancel"` member:
+`DictationSession` at `src/voice_commander/dictation/session.py` (lines ~160–169)
+already has a `cancel(self) -> None` method. It:
+
+- Deactivates the session (`_active = False`).
+- Clears `_pending_end`.
+- Clears `_buffer`.
+- Publishes `dictation.end` with `{"reason": "cancel"}` when the session was active.
+
+This method is currently called by the scroll-lock-close path. **It is not new, not
+modified, and not re-signatured by this change.** The spoken-cancel path reuses it
+exactly as-is.
+
+#### `UtteranceKind` — add `"cancel"`
 
 ```python
+# dictation/session.py line 47
 UtteranceKind = Literal["buffered", "end", "cancel"]
 ```
 
-`DictationSession.__init__` gains a `cancel_word` parameter (default `"cancel"`),
-normalized the same way as `end_word`:
+#### `DictationSession.__init__` — add `cancel_word` parameter
 
 ```python
 def __init__(self, bus: _BusLike, end_word: str = "done",
              cancel_word: str = "cancel") -> None:
     ...
-    self._cancel_word = _normalize_spoken(cancel_word)
+    self._cancel_word: str | None = _normalize_spoken(cancel_word)
 ```
 
-`handle_utterance` checks for the cancel word after the end-word check, and does NOT
-append the matched utterance to the buffer:
+Cross-field validation lives HERE in `__init__`, not in the config loader (the config
+loader has no cross-field stage; the precedent is the daemon-level
+`dictation_key == hotkey_key` warn-and-degrade):
+
+- If the normalized `cancel_word` equals the normalized `end_word`: log a WARNING and
+  set `self._cancel_word = None`, disabling spoken cancel.
+- If `cancel_word` is empty or whitespace after normalization: log a WARNING and set
+  `self._cancel_word = None`, disabling spoken cancel.
+
+#### `handle_utterance` — complete method body (implementer must not drop any guard)
+
+The complete method body after this change is shown here so no guard can be silently
+omitted:
 
 ```python
-if _normalize_spoken(text) == self._cancel_word:
-    return "cancel"
-self._buffer.append(audio)
-return "buffered"
+def handle_utterance(
+    self, audio: ndarray, text: str
+) -> UtteranceKind:
+    with self._lock:
+        # Guard 1 — session inactive: no-op, matches existing behaviour for lost races
+        if not self._active:
+            return "buffered"
+
+        normalized = _normalize_spoken(text)
+
+        # Guard 2 — end word: existing path, unchanged
+        if normalized == self._end_word:
+            self._pending_end.set()
+            return "end"
+
+        # Guard 3 — cancel word: new path; do NOT append to buffer
+        if self._cancel_word is not None and normalized == self._cancel_word:
+            return "cancel"
+
+        # Default — buffer the audio
+        self._buffer.append(audio)
+        return "buffered"
 ```
 
-A new `cancel()` method is added to `DictationSession` — it does not exist today.
-The current public methods are `start`, `handle_utterance`, `request_end`,
-`take_and_finish`, plus the `pending_end` and `active` properties. The new method
-signature is:
+#### `daemon.py` — dictation dispatch block
 
-```python
-def cancel(self) -> bool:
-```
-
-Behaviour: under `self._lock`, if `not self._active` return `False`; else set
-`_active = False`, `_pending_end.clear()`, `_buffer = []`; then OUTSIDE the lock
-publish the `dictation.cancelled` event and log; return `True`.
-
-**`daemon.py` changes** (in `_process_utterance`, the dictation dispatch block):
+Where the pipeline currently handles `kind == "end"`, add the `"cancel"` branch:
 
 ```python
 kind = self._dictation_session.handle_utterance(utterance, result.text)
@@ -253,35 +315,46 @@ if kind == "end":
     if audio is not None:
         self._dictation_executor.submit(self._finalize_dictation, audio)
 elif kind == "cancel":
-    self._dictation_session.cancel()
+    self._dictation_session.cancel()   # existing method, reused unchanged
 # "buffered" → fall through, nothing to do
 run.set_status("ok")
 return
 ```
 
-**Feedback:** no chime on spoken cancel — the cancellation is deliberate and silent.
-The new `dictation.cancelled` SSE event (payload `{"reason": "spoken"}`) is the only
-signal. This is a NEW event type — it must be created, not reused from `dictation.end`.
-The sprite process must gain a handler for `dictation.cancelled` that renders a
-cancelled state distinct from the normal `dictation.end` finish animation. This update
-ships in the same change.
+#### Feedback — silent + visual only
 
-**Config:** `DictationConfig` gains:
+No chime on spoken cancel — the cancellation is deliberate. The `dictation.end` event
+with `{"reason": "cancel"}` is the only signal (this is the same event already emitted
+by the scroll-lock-cancel path — there is NO new `dictation.cancelled` event).
+
+The `dictation.end` handler in `src/voice_sprite/state_machine.py` (lines 98–104)
+currently handles `dictation.end` → `dictating = False` without reading `data["reason"]`.
+It must be updated to read `data["reason"]`; when `reason == "cancel"` it surfaces a
+distinct "cancelled" visual cue IN ADDITION to setting `dictating = False`. The
+mechanism follows existing sprite chat-log / cue patterns (implementer's discretion).
+This retroactively improves the scroll-lock-cancel visual as well as covering spoken
+cancel. Ship this sprite update in the same PR.
+
+#### Config — `DictationConfig` gains `cancel_word`
+
+`DictationConfig` in `src/voice_commander/config.py` gains:
 
 ```python
 cancel_word: str = "cancel"
 ```
 
-Validation at config-load time: if `cancel_word == end_word`, log a WARNING and reset
-`cancel_word` to `""` (disabling spoken cancel), consistent with how the existing
-`dictation_key == hotkey_key` clash is handled (warn + ignore the conflicting binding).
+Note: the config `_section()` parser rejects unknown keys. The config key and the
+Python field must be added together; they cannot be deployed independently.
+
+Wherever `DictationSession(...)` is constructed in `src/voice_commander/daemon.py`,
+pass `cfg.dictation.cancel_word` through.
 
 `config.toml.example` gains the key in the `[dictation]` section:
 
 ```toml
 [dictation]
-endpoint = "http://192.168.4.200:8765/inference"
-end_word  = "done"
+endpoint    = "http://192.168.4.200:8765/inference"
+end_word    = "done"
 cancel_word = "cancel"   # say this word to abort dictation and discard the audio
 ```
 
@@ -289,20 +362,28 @@ cancel_word = "cancel"   # say this word to abort dictation and discard the audi
 
 ### Race: simultaneous hotkey-end + spoken cancel
 
-If `pending_end` is set (hotkey pressed) and the next utterance to arrive is the
-cancel word:
+If a Ctrl hotkey-end is pending (`pending_end` set, sentinel already enqueued) and
+the next utterance arriving in the queue is the cancel word:
 
-1. `handle_utterance` returns `"cancel"` — the cancel word is NOT buffered.
-2. The pipeline calls `self._dictation_session.cancel()`.
-3. Inside `cancel()`, the lock is held: `_active` is set `False`, `_pending_end` is
-   cleared, `_buffer` is discarded.
-4. Later, when the sentinel or timeout fires, `_finalize_pending_dictation_end` calls
-   `take_and_finish()`, which immediately returns `None` because `_active` is already
-   `False`. No audio is submitted — no double-submit, no transcription.
+1. The sentinel is consumed first (FIFO — it was enqueued before the user finished
+   speaking "cancel"); the pipeline calls `continue`, re-evaluating `pending_end`.
+2. The cancel utterance then arrives via `handle_utterance`, which returns `"cancel"`.
+3. The pipeline calls `self._dictation_session.cancel()`.
+4. Inside `cancel()`, the lock is held: `_active = False`, `_pending_end` cleared,
+   `_buffer` discarded.
+5. Later, when the drain timeout fires, `_finalize_pending_dictation_end` calls
+   `take_and_finish()`, which returns `None` because `_active` is already `False`.
+   No audio is submitted — no double-submit, no transcription.
 
 **Cancel wins.** The atomic lock across both `cancel()` and `take_and_finish()` makes
-this guarantee unconditional: whichever path holds the lock first determines the
-outcome, and both paths guard on `_active` before proceeding.
+this guarantee unconditional.
+
+### Picker interaction
+
+Dictation and the picker (ADR 0083) are mutually-exclusive voice-session sub-states.
+`handle_utterance` runs only while dictation is active; picker selection is a
+separate routing path. The dictation `cancel_word` and `PickerConfig.cancel_words`
+therefore never conflict.
 
 ---
 
@@ -312,31 +393,25 @@ outcome, and both paths guard on `_active` before proceeding.
 
 **`DictationSession` cancel word (`tests/unit/test_dictation_session.py`):**
 
-- `handle_utterance` returns `"cancel"` when the utterance exactly matches
-  `cancel_word` (normalized).
-- Cancel-word utterance is NOT appended to the buffer.
+- `handle_utterance` returns `"cancel"` on exact cancel-word match (normalized) and
+  does NOT append audio to the buffer.
 - Non-exact matches (partial, superset phrase) are buffered normally.
-- Spoken cancel when session inactive returns `"buffered"` (lost-race no-op — mirrors
-  existing `handle_utterance` idle behaviour).
-- `cancel() -> bool`: first call on an active session clears buffer, sets
-  `_active = False`, publishes `dictation.cancelled` with `{"reason": "spoken"}`,
-  and returns `True`; second call (session already inactive) returns `False` with no
-  side effects (idempotent no-op). Tests assert both the return value AND the
-  observable side-effects (buffer cleared, `_active == False`, event published).
-- `take_and_finish()` after `cancel()` returns `None`.
-- End-word + cancel-word equality → config-load warning + spoken cancel disabled.
+- Spoken cancel when session inactive returns `"buffered"` (existing inactive guard
+  preserved — lost-race no-op).
+- `cancel_word == end_word` collision: `__init__` logs a WARNING and sets
+  `self._cancel_word = None`; subsequent `handle_utterance` with the collision word
+  buffers normally (spoken cancel disabled).
 
 **`HotkeyController` debounce (`tests/unit/test_hotkey.py`):**
 
-- Two rapid releases of the same key within `_DEBOUNCE_S` dispatch the callback once.
-- Two releases spaced beyond `_DEBOUNCE_S` dispatch the callback twice.
-- Different keys are independently debounced (rapid alternation between two keys each
-  dispatches once, regardless of inter-key timing).
+- Two rapid releases of the same key within 50 ms dispatch the callback exactly once.
+- Two releases spaced more than 50 ms apart dispatch the callback twice.
+- Different keys are independently debounced: rapid alternation between two keys each
+  dispatches its own callback once, regardless of inter-key timing.
 
-**Sentinel wake (`tests/unit/test_pipeline.py` or
-`tests/unit/test_daemon.py`):**
+**Sentinel wake (`tests/unit/test_pipeline.py` or `tests/unit/test_daemon.py`):**
 
-- `_DICTATION_WAKE` sentinel in the queue is recognized by identity and triggers a
+- `_DICTATION_WAKE` sentinel in the queue is recognized by identity and triggers
   `continue` without calling `_process_utterance`.
 - A real utterance tuple queued before the sentinel is processed; the sentinel then
   arrives and is skipped.
@@ -348,15 +423,14 @@ outcome, and both paths guard on `_active` before proceeding.
 The core regression test for the reported bug. Drive the pipeline with a stub
 transcriber. Start dictation, buffer one utterance, then call `on_dictation_toggle()`
 with no further utterance produced. Assert that dictation is finalized within 500 ms
-(≪ infinite). This is the definitive integration gate for Change 1.
+(not infinite). This is the definitive integration gate for Change 1.
 
 **Spoken cancel** (`tests/integration/test_dictation_cancel.py`):
 
 - Say cancel word during active dictation → no `_finalize_dictation` call, no HTTP
-  POST, no clipboard paste; `dictation.cancelled` event emitted with
-  `{"reason": "spoken"}`.
-- Spoken cancel after hotkey-end-pending: assert cancel wins (`cancel() -> True`),
-  no audio submitted.
+  POST, no clipboard paste; `dictation.end` event emitted with `{"reason": "cancel"}`.
+- Spoken cancel after hotkey-end-pending: assert cancel wins, no audio submitted,
+  `dictation.end` emitted with `{"reason": "cancel"}`.
 
 ### Visual E2E (mandatory — `docs/agents/visual-e2e-testing.md`)
 
@@ -368,17 +442,17 @@ The harness must:
 
 1. Start the daemon + sprite (subprocess), verify the sprite window is visible
    (`PrintWindow` / `GetForegroundWindow`).
-2. **Hotkey-end test**: open a dictation session, send audio, fire the `dictation_key`
+2. **Hotkey-end test:** open a dictation session, send audio, fire the `dictation_key`
    via `SendInput` or `pynput` injection, assert that `dictation.end` SSE event
    arrives within 1 s with no trailing audio sent from the test.
-3. **Spoken cancel test**: open a dictation session, inject the cancel-word transcript,
-   assert `dictation.cancelled` SSE event arrives with payload `{"reason": "spoken"}`;
-   assert no clipboard change (the paste never happens).
-4. Capture screenshots as evidence; assert on the event type (`dictation.cancelled`)
-   and `reason` field (`"spoken"`) in the SSE payload.
-5. Log all assertions to a test-evidence file.
+3. **Spoken cancel test:** open a dictation session, inject the cancel-word transcript,
+   assert `dictation.end` SSE event arrives with payload `{"reason": "cancel"}`; assert
+   no clipboard change (the paste never happens).
+4. Assert the sprite renders a distinct "cancelled" cue on `dictation.end {reason:"cancel"}`.
+5. Capture screenshots as evidence; log all assertions to a test-evidence file.
 
-Patterns to copy: `scripts/picker_modal_smoke.py` (in-process render), `scripts/picker_visual_e2e.py` (subprocess + SSE + PrintWindow).
+Patterns to copy: `scripts/picker_modal_smoke.py` (in-process render),
+`scripts/picker_visual_e2e.py` (subprocess + SSE + PrintWindow).
 
 ### Manual validation (HITL gate)
 
@@ -398,11 +472,11 @@ Patterns to copy: `scripts/picker_modal_smoke.py` (in-process render), `scripts/
 
 | Risk | Likelihood | Mitigation |
 |------|-----------|------------|
-| 300 ms debounce swallows a fast intentional re-press | Low — real gap is multi-second | Constant chosen conservatively; promotable to config if users report it |
-| Sentinel lost if queue is full at press time | Very low — maxsize=8 and pipeline drains fast | `put_nowait` catches `queue.Full`; logs warning; falls back to short-timeout `put` |
-| `dictation.cancelled` event silently ignored by sprite without update | Likely without this change | Ship sprite `dictation.cancelled` handler in the same PR; integration test asserts on event type and `{"reason": "spoken"}` payload |
-| Cancel word false-trigger in spoken prose | Low — user-configurable | User chooses a phrase unlikely in their dictation; word-boundary match prevents mid-word hits |
-| Sentinel identity check fragile if queue item type changes | Negligible | Module-level `object()` with identity (`is`) check is Python-idiomatic and immune to equality overrides |
+| 50 ms debounce swallows a fast intentional re-press | Negligible — 50 ms is bounce-rejection only; deliberate re-presses are always >100 ms | Constant is well below any intentional press interval; does not affect scroll-lock |
+| Sentinel lost if queue is full at press time | Very low — maxsize=8, pipeline drains fast | `put_nowait` catches `queue.Full`, logs warning, does nothing; full queue = pipeline already active, no sentinel needed |
+| Spoken cancel false-trigger in prose | Low — user-configurable | User chooses a phrase unlikely in their dictation; match is exact-normalized, not substring |
+| Sentinel type annotation stale | Low | Spec explicitly calls out the annotation widening as a required change |
+| Sprite `dictation.end {reason:"cancel"}` silently unhandled | Likely without this change | Sprite update ships in same PR; integration test asserts on SSE event + reason field |
 
 ---
 
@@ -412,21 +486,15 @@ The following must be updated in the same PR as the implementation — a doc tha
 contradicts the code is a defect:
 
 - **New ADR** `docs/decisions/0089-dictation-hotkey-sentinel-cancel-debounce.md` —
-  records the sentinel-wake approach, the debounce constant, and the spoken-cancel
-  design decision; cites ADR 0086 as the dictation-mode predecessor.
+  records the sentinel-wake approach (including `put_nowait` full-queue policy), the
+  50 ms debounce constant and its rationale, and the spoken-cancel design (reuse of
+  existing `cancel()`); cites ADR 0086 as the dictation-mode predecessor.
 - **`docs/agents/technical-decisions.md`** — add the ADR 0089 row.
 - **`CLAUDE.md` "Current state" dictation paragraph** — describe sentinel-wake
-  hotkey-end, 300 ms debounce on all hotkeys, and the spoken `cancel_word` exit path.
+  hotkey-end, 50 ms debounce on all hotkeys, and the spoken `cancel_word` exit path.
 - **`config.toml.example`** — add `cancel_word = "cancel"` to `[dictation]` with
   the inline comment shown in Change 3 above.
 - **ADR 0086** — add a "Successor" note citing ADR 0089 for the hotkey-end reliability
-  fix. The core dictation design is unchanged; ADR 0086 remains authoritative for
-  the initial design; ADR 0089 is the patch.
+  fix. The core dictation design is unchanged; ADR 0086 remains authoritative for the
+  initial design; ADR 0089 is the patch.
 - **`docs/index.md`** — no new overview doc is warranted; the ADR suffices.
-
----
-
-## Open questions (deferred to implementation plan)
-
-- Exact `put_nowait` / `put(timeout)` fallback policy for a full utterance queue at
-  sentinel-enqueue time — document in the ADR's implementation notes.
