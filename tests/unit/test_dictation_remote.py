@@ -87,3 +87,34 @@ def test_post_audio_non_httperror_exception_is_wrapped(monkeypatch):
     monkeypatch.setattr("voice_commander.dictation.remote.httpx.post", fake_post)
     with pytest.raises(DictationRemoteError, match="request failed"):
         post_audio(b"x", "bad-endpoint-no-scheme")
+
+
+def test_post_audio_sends_prompt_and_carry_flag_when_prompt_nonempty(monkeypatch):
+    """When prompt is non-empty, post_audio must include 'prompt' and
+    'carry_initial_prompt' form fields in the multipart POST."""
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):
+        captured["data"] = kwargs["data"]
+        return _FakeResponse(200, {"text": "hello"})
+
+    monkeypatch.setattr("voice_commander.dictation.remote.httpx.post", fake_post)
+    result = post_audio(b"RIFFfake", "http://x/inference", prompt="Supabase, n8n")
+    assert result == "hello"
+    assert captured["data"]["prompt"] == "Supabase, n8n"
+    assert captured["data"]["carry_initial_prompt"] == "true"
+
+
+def test_post_audio_omits_prompt_fields_when_prompt_empty(monkeypatch):
+    """When prompt is empty (default), neither 'prompt' nor 'carry_initial_prompt'
+    must appear in the POST data."""
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):
+        captured["data"] = kwargs["data"]
+        return _FakeResponse(200, {"text": "hello"})
+
+    monkeypatch.setattr("voice_commander.dictation.remote.httpx.post", fake_post)
+    post_audio(b"RIFFfake", "http://x/inference")
+    assert "prompt" not in captured["data"]
+    assert "carry_initial_prompt" not in captured["data"]
