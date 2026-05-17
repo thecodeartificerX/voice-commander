@@ -9,12 +9,16 @@ via one of three exit paths:
     deactivates the session, and submits audio for transcription.
 
 (b) **Hotkey-end path** — the hotkey thread calls :meth:`request_end`, which
-    sets :attr:`pending_end` without deactivating the session.  The pipeline
-    thread polls :attr:`pending_end`; while it is set, the pipeline uses a
-    short timed get on the utterance queue (``_DICTATION_DRAIN_TIMEOUT_S``).
-    Once the queue drains (timeout expires with no new item), the pipeline
-    calls ``_finalize_pending_dictation_end`` → :meth:`take_and_finish`,
-    which atomically captures the buffer and deactivates the session.
+    sets :attr:`pending_end` without deactivating the session.  The hotkey
+    thread also enqueues a ``_DICTATION_WAKE`` sentinel via ``put_nowait``
+    to unblock the pipeline thread from ``get(timeout=None)`` immediately
+    (ADR 0089 — eliminates the race where ``pending_end`` is set while the
+    thread is already inside ``get``).  While ``pending_end`` is set, the
+    pipeline uses a short timed get on the utterance queue
+    (``_DICTATION_DRAIN_TIMEOUT_S``).  Once the queue drains (timeout
+    expires with no new item), the pipeline calls
+    ``_finalize_pending_dictation_end`` → :meth:`take_and_finish`, which
+    atomically captures the buffer and deactivates the session.
 
 (c) **Spoken-cancel path** — :meth:`handle_utterance` recognises the configured
     cancel word (default ``"cancel"``; exact normalized match only — a longer
