@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.responses import Response as StarletteResponse
 
-from ..dictation.postprocess import _WHISPER_TOKEN_LIMIT
+from ..dictation.postprocess import WHISPER_TOKEN_LIMIT
 from ..registry import ToolRegistry
 from ..tool_metadata import ToolMetadata, ToolMetadataError, ToolMetadataStore
 from .admin import attach_admin_routes
@@ -190,7 +190,7 @@ def create_app(
                 "last_text": last_text,
                 "vocab": vocab,
                 "estimated_tokens": estimated_tokens,
-                "token_limit": _WHISPER_TOKEN_LIMIT,
+                "token_limit": WHISPER_TOKEN_LIMIT,
             },
         )
 
@@ -259,7 +259,7 @@ def create_app(
 
         ctx = {"error": error} if error else {
             "estimated_tokens": estimated_tokens,
-            "token_limit": _WHISPER_TOKEN_LIMIT,
+            "token_limit": WHISPER_TOKEN_LIMIT,
         }
         return HTMLResponse(
             templates.get_template("_vocab_result.html").render(ctx)

@@ -24,7 +24,7 @@
   </button>
 
   <!-- Vocabulary editor -->
-  <form hx-post="/dictation/vocab" hx-target="#vocab-result" hx-swap="outerHTML"
+  <form id="vocab-form" hx-post="/dictation/vocab" hx-target="#vocab-result" hx-swap="outerHTML"
         hx-headers='{"HX-Request": "true"}' class="mt-8">
 
     <!-- Vocabulary section -->
@@ -108,8 +108,7 @@
     <!-- Save button + result fragment target -->
     <div class="flex items-center gap-4">
       <button type="submit"
-              class="text-sm px-4 py-2 rounded bg-emerald-900 hover:bg-emerald-800 text-emerald-300"
-              onclick="serializeEditors(this.closest('form'))">
+              class="text-sm px-4 py-2 rounded bg-emerald-900 hover:bg-emerald-800 text-emerald-300">
         Save
       </button>
       <div id="vocab-result"></div>
@@ -118,27 +117,25 @@
 </div>
 
 <script>
-  // Serialize dynamic correction/command rows into the hidden JSON fields before submit.
-  function serializeEditors(form) {
+  // Serialize dynamic correction/command rows into the outgoing HTMX request
+  // parameters. Fires for EVERY submit trigger (click AND Enter keypress) so
+  // pressing Enter inside a text field never bypasses serialization.
+  document.getElementById('vocab-form').addEventListener('htmx:configRequest', function (event) {
     const corrections = [];
-    form.querySelectorAll('.correction-row').forEach(row => {
+    this.querySelectorAll('.correction-row').forEach(row => {
       const wrong = row.querySelector('[name="correction_wrong[]"]').value.trim();
       const right = row.querySelector('[name="correction_right[]"]').value.trim();
-      if (wrong) corrections.push({wrong, right});
+      if (wrong) corrections.push({ wrong, right });
     });
     const commands = [];
-    form.querySelectorAll('.command-row').forEach(row => {
+    this.querySelectorAll('.command-row').forEach(row => {
       const phrase = row.querySelector('[name="command_phrase[]"]').value.trim();
       const action = row.querySelector('[name="command_action[]"]').value;
-      if (phrase) commands.push({phrase, action});
+      if (phrase) commands.push({ phrase, action });
     });
-    let corField = form.querySelector('[name="corrections"]');
-    if (!corField) { corField = document.createElement('input'); corField.type='hidden'; corField.name='corrections'; form.appendChild(corField); }
-    corField.value = JSON.stringify(corrections);
-    let cmdField = form.querySelector('[name="commands"]');
-    if (!cmdField) { cmdField = document.createElement('input'); cmdField.type='hidden'; cmdField.name='commands'; form.appendChild(cmdField); }
-    cmdField.value = JSON.stringify(commands);
-  }
+    event.detail.parameters['corrections'] = JSON.stringify(corrections);
+    event.detail.parameters['commands'] = JSON.stringify(commands);
+  });
 
   function addCorrection() {
     const row = document.createElement('div');

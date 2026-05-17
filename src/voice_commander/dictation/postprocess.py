@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from .vocab import Command, Correction, Vocabulary
 
 # whisper.cpp's initial-prompt token cap.
-_WHISPER_TOKEN_LIMIT = 224
+WHISPER_TOKEN_LIMIT = 224
 
 # ~200 tokens at ~4 chars/token; safely under whisper.cpp's 224-token hard limit.
 _PROMPT_CHAR_CAP = 800
@@ -74,6 +74,11 @@ def apply_commands(text: str, commands: Sequence[Command]) -> str:
     Each ``Command.phrase`` is matched as ``\s*\b<phrase>\b\s*`` with
     ``re.IGNORECASE`` so surrounding whitespace is consumed and the injected
     control character is not padded by stray spaces.
+
+    Assumes *text* contains no embedded newlines — the ``\s*`` whitespace
+    consumption would otherwise silently eat them. ``remote.post_audio``
+    guarantees this invariant by collapsing all whitespace runs (including any
+    segment-boundary newlines emitted by whisper.cpp) via ``" ".join(text.split())``.
 
     Supported actions:
     - ``"newline"``   → ``"\n"``
