@@ -211,40 +211,49 @@ def main() -> None:
 
     pyglet.clock.schedule_interval(check_hot_reload, 2.0)
 
-    # Elements-mode overlay (ADR 0087). pyglet windows must be created and
-    # closed on the event-loop thread, so SSE events are marshalled via
-    # pyglet.clock.schedule_once — the same pattern as the picker modal.
-    _elements_overlay: list[ElementsOverlayWindow] = []  # holds 0 or 1 window
+    # Elements-mode overlay (ADR 0087). ONE persistent ElementsOverlayWindow
+    # is created lazily on the first elements.show and then REUSED across all
+    # subsequent show/hide cycles via update_and_show() / hide() — it is never
+    # destroyed between scans. This mirrors PickerModalWindow's lifecycle and
+    # eliminates the DWM async-destruction race (Finding 1 in the adversarial
+    # sweep) that caused opaque-black rendering on the 2nd+ invocation when the
+    # old code called overlay.close() + ElementsOverlayWindow() inside the same
+    # clock callback.
+    #
+    # pyglet windows must be created and manipulated on the event-loop thread,
+    # so SSE events are marshalled via pyglet.clock.schedule_once — the same
+    # pattern as the picker modal.
+    _elements_overlay: ElementsOverlayWindow | None = None
 
-    def _hide_elements_now() -> None:
-        while _elements_overlay:
-            window_to_close = _elements_overlay.pop()
-            try:  # noqa: SIM105 - suppress() hides the BLE001 noqa; keep explicit try/except
-                window_to_close.close()
-            except Exception:  # noqa: BLE001 - teardown must never raise
-                pass
+    def _ensure_elements_overlay() -> ElementsOverlayWindow:
+        nonlocal _elements_overlay
+        if _elements_overlay is None:
+            _elements_overlay = ElementsOverlayWindow()
+        return _elements_overlay
 
     def _show_elements(data: dict[str, Any]) -> None:
-        def _create(_dt: float) -> None:
-            _hide_elements_now()
-            monitor = tuple(data.get("monitor", [0, 0, 0, 0]))
+        def _do_show(_dt: float) -> None:
+            monitor_raw = data.get("monitor", [0, 0, 0, 0])
             elements = data.get("elements", [])
-            if len(monitor) != 4 or not elements:
+            if len(monitor_raw) != 4 or not elements:
                 return
-            # ElementsOverlayWindow is created visible: pyglet's _create()
-            # runs _set_transparency() and shows the window in one step — the
-            # exact lifecycle of the working SpriteWindow. apply_win32_flags()
-            # must run AFTER the window is shown, otherwise SetWindowLongW
-            # drops the layered per-pixel alpha and DWM composites the
-            # overlay as opaque black.
-            overlay = ElementsOverlayWindow(monitor, elements)
-            overlay.apply_win32_flags()
-            _elements_overlay.append(overlay)
+            monitor: tuple[int, int, int, int] = (
+                int(monitor_raw[0]),
+                int(monitor_raw[1]),
+                int(monitor_raw[2]),
+                int(monitor_raw[3]),
+            )
+            overlay = _ensure_elements_overlay()
+            overlay.update_and_show(monitor, elements)
 
-        pyglet.clock.schedule_once(_create, 0.0)
+        pyglet.clock.schedule_once(_do_show, 0.0)
 
     def _hide_elements() -> None:
-        pyglet.clock.schedule_once(lambda _dt: _hide_elements_now(), 0.0)
+        def _do_hide(_dt: float) -> None:
+            if _elements_overlay is not None:
+                _elements_overlay.hide()
+
+        pyglet.clock.schedule_once(_do_hide, 0.0)
 
     # SSE event handler
     def on_event(event_type: str, data: dict[str, Any]) -> None:
@@ -332,6 +341,12 @@ def main() -> None:
         pass
     finally:
         sse.stop()
+        # Close the persistent elements overlay once on real shutdown.
+        if _elements_overlay is not None:
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                _elements_overlay.close()
         logger.info("voice-sprite exiting")
 
 
