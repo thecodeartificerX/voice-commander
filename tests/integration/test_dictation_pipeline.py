@@ -396,3 +396,141 @@ def test_pipeline_loop_drains_before_finalize(
     assert pasted == ["PIPELINE DRAINED"], (
         f"hotkey-end should have pasted after pipeline drained; got: {pasted}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 7: Sentinel wake — hotkey-end finalizes with NO trailing utterance
+#          (core regression for ADR 0089 Change 1)
+# ---------------------------------------------------------------------------
+
+
+def test_hotkey_end_finalizes_without_trailing_utterance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Core regression test for ADR 0089 Change 1.
+
+    Uses two threading.Event objects for deterministic synchronization — no
+    time.sleep for synchronization. The test provably FAILS against unfixed
+    code (pipeline stays blocked in get(timeout=None) forever; 'finalized'
+    is never set; wait(timeout=2.0) returns False → AssertionError).
+
+    Protocol:
+    1. Stub transcriber sets 'processed' when it transcribes the one seeded
+       utterance (guaranteeing the pipeline consumed it and re-entered get()).
+    2. A monkeypatched _finalize_dictation sets 'finalized' when called.
+    3. Seed ONE utterance → wait on 'processed' → tiny fixed sleep (20 ms)
+       so the loop provably re-entered blocking get() → fire on_dictation_toggle()
+       with NO further utterance → assert finalized.wait(timeout=2.0).
+
+    Expected on UNFIXED code: FAIL — pipeline stays blocked in get(timeout=None),
+    'finalized' is never set, the test times out after 2 s.
+    Expected after sentinel fix: PASS quickly (sentinel wakes the thread).
+    """
+    import threading
+
+    # Events for deterministic synchronization
+    processed = threading.Event()
+    finalized = threading.Event()
+
+    # --- Stub transcriber: sets 'processed' after transcribing the utterance ---
+    @dataclass
+    class _SentinelTranscription:
+        text: str
+        confidence: float = 0.95
+        no_speech_prob: float = 0.05
+
+    class _SentinelStub:
+        def __init__(self, result):
+            self._result = result
+
+        def load(self) -> None: ...
+        def unload(self) -> None: ...
+
+        def transcribe(self, _audio: np.ndarray) -> _SentinelTranscription:
+            result = self._result
+            processed.set()   # signal: utterance has been transcribed
+            return result
+
+    # --- Build daemon with stub transcriber ---
+    from voice_commander.daemon import StreamingDaemon
+    from voice_commander.dispatcher import Dispatcher
+    from voice_commander.picker.registry import reset_global_picker_registry
+    from voice_commander.registry import get_global_registry, reset_global_registry
+
+    reset_global_registry()
+    reset_global_picker_registry()
+    registry = get_global_registry()
+    bus = EventBus()
+    feedback = CapturingFeedbackSink()
+    dispatcher = Dispatcher(feedback=feedback, event_bus=bus)
+    verb_router = VerbRouter(build_default_rules(), registry=registry, picker_registry=None)
+    dictation_session = DictationSession(bus=bus, end_word="done")
+
+    daemon = StreamingDaemon(
+        feedback=feedback,
+        recorder=None,
+        transcriber=_SentinelStub(_SentinelTranscription("some dictated content")),
+        dispatcher=dispatcher,
+        verb_router=verb_router,
+        registry=registry,
+        event_bus=bus,
+        dictation_session=dictation_session,
+        output_dir=str(tmp_path),
+    )
+    daemon._transcriber_ready.set()
+
+    # --- Monkeypatch _finalize_dictation to set 'finalized' ---
+    monkeypatch.setattr(
+        "voice_commander.dictation.remote.post_audio",
+        lambda *a, **kw: "FINALIZED TEXT",
+    )
+    monkeypatch.setattr(
+        "voice_commander.dictation.clipboard.paste_via_clipboard",
+        lambda *a, **kw: finalized.set(),
+    )
+
+    # --- Start the pipeline loop in background ---
+    pipeline_thread = threading.Thread(
+        target=daemon._pipeline_loop, name="vc-pipeline-sentinel-test", daemon=True
+    )
+    daemon._session_active = True
+    pipeline_thread.start()
+
+    # --- Enter dictation mode ---
+    dictation_session.start()
+
+    # --- Seed ONE utterance ---
+    audio = np.zeros(16000, dtype=np.float32)
+    daemon._utt_q.put((audio, daemon._audio_gen))
+
+    # --- Wait until the utterance is transcribed (pipeline consumed it and
+    #     re-entered the blocking get()). Use a generous timeout so CI is not flaky. ---
+    assert processed.wait(timeout=5.0), (
+        "Timed out waiting for the stub transcriber to process the utterance"
+    )
+
+    # --- Tiny fixed sleep (20 ms) so the pipeline loop provably re-entered
+    #     get(timeout=None) after processing the utterance. ---
+    import time as _time
+    _time.sleep(0.020)
+
+    # --- Fire hotkey-end with NO further utterances.
+    #     This is the exact scenario that was broken before the sentinel fix. ---
+    daemon.on_dictation_toggle()
+
+    # --- Assert finalized within 2 s.
+    #     UNFIXED: times out — pipeline is still blocked in get(timeout=None).
+    #     FIXED: sentinel wakes pipeline → drain → finalize → finalized.set(). ---
+    assert finalized.wait(timeout=2.0), (
+        "hotkey-end must finalize within 2 s with no trailing utterance. "
+        "This is the ADR 0089 regression gate. If this fails, the sentinel is not working."
+    )
+
+    assert not dictation_session.active, "session must be inactive after finalization"
+    assert not dictation_session.pending_end, "pending_end must be cleared after finalization"
+
+    # Teardown
+    daemon._utt_q.put(None)
+    pipeline_thread.join(timeout=3.0)
+    daemon._dictation_executor.shutdown(wait=True)
+    daemon._wav_executor.shutdown(wait=True)
