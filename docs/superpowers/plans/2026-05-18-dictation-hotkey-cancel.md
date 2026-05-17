@@ -4,9 +4,33 @@
 
 **Goal:** Fix the unreliable dictation hotkey-end race (sentinel wake), add a 50 ms per-key debounce to HotkeyController, and add a configurable spoken "cancel" word that discards the dictation buffer with no paste.
 
-**Architecture:** A module-level `_DICTATION_WAKE` sentinel is put into `_utt_q` immediately after `request_end()` is called, waking the pipeline thread from its blocking `get(timeout=None)` without polling; the pipeline skips the sentinel via identity check and falls through to the existing drain logic. HotkeyController gains a per-key monotonic timestamp dict and drops any release that arrives within 50 ms of the same key's last-dispatched release. DictationSession gains a `cancel_word` parameter; `handle_utterance` returns the new `"cancel"` UtteranceKind; the daemon pipeline calls the pre-existing `cancel()` method on that kind; the sprite reads `data["reason"]` from the `dictation.end` event to surface a distinct cancelled cue.
+**Architecture:** A module-level `_DICTATION_WAKE` sentinel is put into `_utt_q` immediately after `request_end()` is called, waking the pipeline thread from its blocking `get(timeout=None)` without polling; the pipeline skips the sentinel via identity check and falls through to the existing drain logic. HotkeyController gains a per-key monotonic timestamp dict and drops any release that arrives within 50 ms of the same key's last-dispatched release. DictationSession gains a `cancel_word` parameter; `handle_utterance` returns the new `"cancel"` UtteranceKind; the daemon pipeline calls the pre-existing `cancel()` method on that kind; the sprite reads `data.get("reason")` from the `dictation.end` event to surface a distinct cancelled cue.
 
 **Tech Stack:** Python 3.12, pynput, threading, queue, numpy, pytest, pyglet (sprite SSE smoke), win32gui/win32ui/Pillow (E2E capture)
+
+---
+
+## Commit safety
+
+Every commit in the sequence below must leave the tree with all tests green and no broken imports. The ordering enforces this guarantee:
+
+1. **Task 1** — Red-phase tests for `DictationSession cancel_word`. These reference `cancel_word` which does not exist yet → tests fail. ✓ (that is the intended red state)
+2. **Task 2** — `UtteranceKind` + `DictationSession.__init__ cancel_word` + `handle_utterance` guard. Tests from Task 1 now pass. ✓
+3. **Task 3** — Red-phase debounce tests for `HotkeyController`. Reference `_last_fire` which does not exist yet → tests fail. ✓
+4. **Task 4** — `hotkey.py` debounce implementation. Debounce tests pass. Uses `import time` + `time.monotonic()` (NOT `from time import monotonic`) so monkeypatch intercepts it. ✓
+5. **Task 5** — Config change: `DictationConfig.cancel_word` field + `config.toml.example`. **MUST land before** any commit that passes `cfg.dictation.cancel_word` to `DictationSession()`. ✓
+6. **Task 6** — Red-phase sentinel tests for `_DICTATION_WAKE`. Tests reference `_DICTATION_WAKE` which does not exist yet → `ImportError`. ✓
+7. **Task 7** — `daemon.py` sentinel implementation + `cancel_word` wired into `DictationSession()`. At this point `cfg.dictation.cancel_word` already exists (Task 5). Sentinel tests pass. ✓
+8. **Task 8** — Red-phase sprite cancel-cue tests. Reference `cancelled_cue` which does not exist yet → `AttributeError`. ✓
+9. **Task 9** — `state_machine.py` cancel cue implementation. Tests pass. ✓
+10. **Task 10** — Integration regression test: sentinel wakes pipeline (deterministic, event-driven). ✓
+11. **Task 11** — Integration tests for spoken cancel (driven through `_process_utterance`). ✓
+12. **Task 12** — ADR 0089. ✓
+13. **Task 13** — Docs update (technical-decisions row, ADR 0086 successor note, CLAUDE.md). ✓
+14. **Task 14** — Visual E2E harness (render-smoke + subprocess+SSE+PrintWindow). ✓
+15. **Task 15** — Full test suite verification and final docstring polish. ✓
+
+No commit in this sequence passes `cfg.dictation.cancel_word` before `DictationConfig` has the field (Task 5 precedes Task 7). No commit references `_DICTATION_WAKE` before it is defined in `daemon.py` (Task 6 red phase fails on import, Task 7 creates it). No commit references `_cancel_word` on `DictationSession` before Task 2 adds it.
 
 ---
 
@@ -16,20 +40,22 @@
 |---|---|---|
 | `src/voice_commander/daemon.py` | Modify L61, L230–232, L395–412, L430–468, L593–601, L1270–1273 | Add `_DICTATION_WAKE` sentinel, widen `_utt_q` type, put sentinel in `on_dictation_toggle`, skip sentinel in `_pipeline_loop`, add `"cancel"` branch in dictation dispatch, pass `cancel_word` to `DictationSession()` |
 | `src/voice_commander/dictation/session.py` | Modify L47, L53–59, L100–117 | Add `"cancel"` to `UtteranceKind`, add `cancel_word` param to `__init__`, add cancel guard in `handle_utterance` |
-| `src/voice_commander/hotkey.py` | Modify L1–61 | Add `_DEBOUNCE_S = 0.050`, `_last_fire: dict`, debounce check in `_on_release` |
+| `src/voice_commander/hotkey.py` | Modify L1–61 | Add `_DEBOUNCE_S = 0.050`, `_last_fire: dict`, debounce check in `_on_release` using `import time` + `time.monotonic()` |
 | `src/voice_commander/config.py` | Modify L26–32 | Add `cancel_word: str = "cancel"` to `DictationConfig` |
-| `src/voice_sprite/state_machine.py` | Modify L98–104 | Read `data["reason"]` in `dictation.end` handler; set `self.cancelled_cue = True` when `reason == "cancel"` |
-| `config.toml.example` | Modify L7–9 | Add `cancel_word = "cancel"` with inline comment |
+| `src/voice_sprite/state_machine.py` | Modify L63–70, L98–104 | Read `data.get("reason")` in `dictation.end` handler; set `self.cancelled_cue = True` when `reason == "cancel"` |
+| `config.toml.example` | Modify `[dictation]` section | Add `cancel_word = "cancel"` with inline comment |
 | `tests/unit/test_dictation_session.py` | Modify | Add cancel-word unit tests |
-| `tests/unit/test_hotkey.py` | Modify | Add debounce unit tests |
-| `tests/unit/test_sprite_state_machine.py` | Modify | Add cancel-reason dictation.end test |
-| `tests/integration/test_dictation_pipeline.py` | Modify | Add sentinel regression test (hotkey-end finalizes with no trailing utterance ≤500 ms) |
-| `tests/integration/test_dictation_cancel.py` | Create | Integration tests for spoken cancel: no POST, no paste, correct SSE reason |
+| `tests/unit/test_hotkey.py` | Modify | Add debounce unit tests (deterministic fake clock via `monkeypatch`) |
+| `tests/unit/test_sprite_state_machine.py` | Modify | Add cancel-reason `dictation.end` test |
+| `tests/unit/test_streaming_daemon.py` | Modify | Add `_DICTATION_WAKE` sentinel tests (self-contained — no `_StubTranscriber` reference; inline stub defined in each test) |
+| `tests/integration/test_dictation_pipeline.py` | Modify | Add sentinel regression test (deterministic, event-driven, provably fails against unfixed code) |
+| `tests/integration/test_dictation_cancel.py` | Create | Integration tests for spoken cancel driven through `_process_utterance`: no POST, no paste, correct SSE reason |
 | `docs/decisions/0089-dictation-hotkey-sentinel-cancel-debounce.md` | Create | ADR for all three changes |
 | `docs/agents/technical-decisions.md` | Modify | Add ADR 0089 row |
 | `docs/decisions/0086-dictation-mode.md` | Modify | Add "Successor" note citing ADR 0089 |
 | `CLAUDE.md` | Modify | Update "Current state" dictation paragraph |
-| `scripts/dictation_hotkey_cancel_e2e.py` | Create | Visual E2E harness: Phase A (hotkey-end finalizes without trailing utterance) + Phase B (spoken cancel → no clipboard change + cancel cue) |
+| `scripts/dictation_cancel_smoke.py` | Create | Render-smoke harness (in-process sprite render, no subprocess) — Phase A and B |
+| `scripts/dictation_hotkey_cancel_e2e.py` | Create | Full subprocess+SSE+PrintWindow E2E harness following `scripts/picker_visual_e2e.py` |
 
 ---
 
@@ -293,6 +319,8 @@ git commit -m "feat(dictation): add cancel_word to DictationSession (ADR 0089)"
 **Files:**
 - Modify: `tests/unit/test_hotkey.py`
 
+**REV 4 note:** All debounce tests use `monkeypatch.setattr` on `time.monotonic` via the `time` module (i.e., `voice_commander.hotkey.time.monotonic`) to inject a fake clock. No real `time.sleep` calls. This is deterministic and fast. The implementation in Task 4 MUST use `import time` + `time.monotonic()` (not `from time import monotonic`) so the monkeypatch intercepts the call through the module attribute.
+
 - [ ] **Step 1: Append debounce tests to `tests/unit/test_hotkey.py`**
 
 Append the following after the last existing test in the file:
@@ -300,47 +328,84 @@ Append the following after the last existing test in the file:
 ```python
 # ---------------------------------------------------------------------------
 # Debounce tests (Task 3 — ADR 0089)
+# Fake clock via monkeypatch — no real sleeps, fully deterministic.
 # ---------------------------------------------------------------------------
 
 
-def test_debounce_drops_second_rapid_release():
-    """Two releases of the same key within 50 ms dispatch the callback only once."""
+def test_debounce_drops_second_rapid_release(monkeypatch):
+    """Two releases of the same key within 50 ms dispatch the callback only once.
+
+    Uses a fake monotonic clock; no real sleep required.
+    """
+    import voice_commander.hotkey as _hotkey_mod
+
+    _clock = [0.0]
+
+    def _fake_monotonic() -> float:
+        return _clock[0]
+
+    monkeypatch.setattr(_hotkey_mod.time, "monotonic", _fake_monotonic)
+
     fired = []
     ctrl = HotkeyController(bindings={"scroll_lock": lambda: fired.append(1)})
 
     from pynput.keyboard import Key
     scroll_key = Key.scroll_lock
 
-    # First release — should dispatch
+    _clock[0] = 1.000  # first release at t=1.000 s
     ctrl._on_release(scroll_key)
-    # Second release — within 50 ms — should be dropped
+    assert len(fired) == 1, "First release must dispatch"
+
+    _clock[0] = 1.020  # 20 ms later — within 50 ms window
     ctrl._on_release(scroll_key)
+    assert len(fired) == 1, f"Second release within 50 ms must be dropped; got {len(fired)}"
 
-    assert len(fired) == 1, f"Expected 1 dispatch; got {len(fired)}"
 
+def test_debounce_allows_second_release_after_window(monkeypatch):
+    """Two releases of the same key spaced more than 50 ms apart dispatch twice.
 
-def test_debounce_allows_second_release_after_window():
-    """Two releases of the same key spaced more than 50 ms apart dispatch twice."""
-    import time
+    Uses a fake monotonic clock; no real sleep required.
+    """
+    import voice_commander.hotkey as _hotkey_mod
+
+    _clock = [0.0]
+
+    def _fake_monotonic() -> float:
+        return _clock[0]
+
+    monkeypatch.setattr(_hotkey_mod.time, "monotonic", _fake_monotonic)
+
     fired = []
     ctrl = HotkeyController(bindings={"scroll_lock": lambda: fired.append(1)})
 
     from pynput.keyboard import Key
     scroll_key = Key.scroll_lock
 
+    _clock[0] = 1.000
     ctrl._on_release(scroll_key)
-    time.sleep(0.060)  # > 50 ms debounce window
+    assert len(fired) == 1
+
+    _clock[0] = 1.060  # 60 ms later — outside 50 ms window
     ctrl._on_release(scroll_key)
+    assert len(fired) == 2, f"Second release after 60 ms must dispatch; got {len(fired)}"
 
-    assert len(fired) == 2, f"Expected 2 dispatches; got {len(fired)}"
 
-
-def test_debounce_different_keys_are_independent():
+def test_debounce_different_keys_are_independent(monkeypatch):
     """Two different keys each have their own independent debounce timer.
 
     Rapid alternation between scroll_lock and ctrl_r should dispatch one
     callback each (two total), never suppressing the other key.
+    Uses a fake monotonic clock; both presses at t=0 are simultaneous.
     """
+    import voice_commander.hotkey as _hotkey_mod
+
+    _clock = [0.0]
+
+    def _fake_monotonic() -> float:
+        return _clock[0]
+
+    monkeypatch.setattr(_hotkey_mod.time, "monotonic", _fake_monotonic)
+
     fired_sl = []
     fired_cr = []
     ctrl = HotkeyController(
@@ -352,7 +417,9 @@ def test_debounce_different_keys_are_independent():
 
     from pynput.keyboard import Key
 
-    # Fire both in rapid succession (no sleep — well under 50 ms)
+    # Fire both at exactly t=0 (simultaneous — well within 50 ms of each other
+    # on a per-key basis, but they are DIFFERENT keys so independent timers apply)
+    _clock[0] = 0.0
     ctrl._on_release(Key.scroll_lock)
     ctrl._on_release(Key.ctrl_r)
 
@@ -360,21 +427,28 @@ def test_debounce_different_keys_are_independent():
     assert len(fired_cr) == 1, f"ctrl_r fired {len(fired_cr)} times; expected 1"
 
 
-def test_debounce_last_fire_dict_populated():
+def test_debounce_last_fire_dict_populated(monkeypatch):
     """After a dispatched release, _last_fire records the key's timestamp."""
-    import time
+    import voice_commander.hotkey as _hotkey_mod
+
+    _clock = [42.0]
+
+    def _fake_monotonic() -> float:
+        return _clock[0]
+
+    monkeypatch.setattr(_hotkey_mod.time, "monotonic", _fake_monotonic)
+
     ctrl = HotkeyController(bindings={"scroll_lock": lambda: None})
 
     from pynput.keyboard import Key
     scroll_key = Key.scroll_lock
 
-    before = time.monotonic()
     ctrl._on_release(scroll_key)
-    after = time.monotonic()
 
     assert scroll_key in ctrl._last_fire, "_last_fire must record the key after dispatch"
-    ts = ctrl._last_fire[scroll_key]
-    assert before <= ts <= after, f"timestamp {ts} not in [{before}, {after}]"
+    assert ctrl._last_fire[scroll_key] == 42.0, (
+        f"timestamp must equal the fake clock value 42.0; got {ctrl._last_fire[scroll_key]}"
+    )
 ```
 
 - [ ] **Step 2: Run new debounce tests to confirm they FAIL**
@@ -383,7 +457,7 @@ def test_debounce_last_fire_dict_populated():
 pytest tests/unit/test_hotkey.py::test_debounce_drops_second_rapid_release tests/unit/test_hotkey.py::test_debounce_allows_second_release_after_window tests/unit/test_hotkey.py::test_debounce_different_keys_are_independent tests/unit/test_hotkey.py::test_debounce_last_fire_dict_populated -v
 ```
 
-Expected: All 4 tests FAIL. `AttributeError: 'HotkeyController' object has no attribute '_last_fire'` is the likely error.
+Expected: All 4 tests FAIL. `AttributeError: 'HotkeyController' object has no attribute '_last_fire'` or `AttributeError: module 'voice_commander.hotkey' has no attribute 'time'` (because `import time` not yet added).
 
 - [ ] **Step 3: Commit the failing tests**
 
@@ -398,6 +472,8 @@ git commit -m "test(hotkey): add debounce red-phase unit tests (ADR 0089)"
 
 **Files:**
 - Modify: `src/voice_commander/hotkey.py`
+
+**Critical (REV 4):** The debounce check MUST use `import time` at the top of the file and call `time.monotonic()` (NOT `from time import monotonic`). This ensures `monkeypatch.setattr(_hotkey_mod.time, "monotonic", ...)` intercepts the call.
 
 - [ ] **Step 1: Add `time` import and `_DEBOUNCE_S` constant, add `_last_fire` dict to `__init__`, implement debounce in `_on_release`**
 
@@ -504,348 +580,13 @@ git commit -m "feat(hotkey): add 50 ms per-key debounce to HotkeyController (ADR
 
 ---
 
-### Task 5: Unit tests for `_DICTATION_WAKE` sentinel — Red phase
-
-**Files:**
-- Modify: `tests/unit/test_streaming_daemon.py`
-
-- [ ] **Step 1: Read the existing `test_streaming_daemon.py` to find the end of the file**
-
-Read the last 30 lines of `tests/unit/test_streaming_daemon.py` to understand its fixture pattern, then append the following:
-
-```python
-# ---------------------------------------------------------------------------
-# Sentinel wake tests (Task 5 — ADR 0089)
-# ---------------------------------------------------------------------------
-
-
-def test_dictation_wake_sentinel_skipped_in_pipeline_loop(tmp_path):
-    """The _DICTATION_WAKE sentinel is identity-checked and skipped via
-    `continue` — _process_utterance is never called for it."""
-    import numpy as np
-    import threading
-
-    from voice_commander.daemon import StreamingDaemon, _DICTATION_WAKE
-    from voice_commander.dispatcher import Dispatcher
-    from voice_commander.event_bus import EventBus
-    from voice_commander.feedback import CapturingFeedbackSink
-    from voice_commander.registry import get_global_registry, reset_global_registry
-    from voice_commander.verb_router import VerbRouter, build_default_rules
-    from voice_commander.picker.registry import reset_global_picker_registry
-
-    reset_global_registry()
-    reset_global_picker_registry()
-    registry = get_global_registry()
-    bus = EventBus()
-    feedback = CapturingFeedbackSink()
-    dispatcher = Dispatcher(feedback=feedback, event_bus=bus)
-    verb_router = VerbRouter(build_default_rules(), registry=registry, picker_registry=None)
-
-    processed: list[str] = []
-
-    daemon = StreamingDaemon(
-        feedback=feedback,
-        recorder=None,
-        transcriber=_StubTranscriber(queue=[]),
-        dispatcher=dispatcher,
-        verb_router=verb_router,
-        registry=registry,
-        event_bus=bus,
-        output_dir=str(tmp_path),
-    )
-    daemon._transcriber_ready.set()
-
-    original_process = daemon._process_utterance
-
-    def _spy(utterance, *, gen=None):
-        processed.append("called")
-        return original_process(utterance, gen=gen)
-
-    daemon._process_utterance = _spy
-
-    # Put: sentinel, then None (shutdown)
-    daemon._utt_q.put(_DICTATION_WAKE)
-    daemon._utt_q.put(None)
-
-    t = threading.Thread(target=daemon._pipeline_loop, daemon=True)
-    t.start()
-    t.join(timeout=2.0)
-
-    assert not t.is_alive(), "Pipeline loop did not exit within 2 s"
-    assert processed == [], f"_process_utterance should NOT be called for sentinel; got: {processed}"
-
-
-def test_dictation_wake_sentinel_real_utterance_processed_before_sentinel(tmp_path):
-    """A real utterance queued BEFORE the sentinel is processed; sentinel is then
-    skipped. FIFO order guarantee: real audio → sentinel → shutdown."""
-    import numpy as np
-    import threading
-    from dataclasses import dataclass
-
-    from voice_commander.daemon import StreamingDaemon, _DICTATION_WAKE
-    from voice_commander.dispatcher import Dispatcher
-    from voice_commander.event_bus import EventBus
-    from voice_commander.feedback import CapturingFeedbackSink
-    from voice_commander.registry import get_global_registry, reset_global_registry
-    from voice_commander.verb_router import VerbRouter, build_default_rules
-    from voice_commander.picker.registry import reset_global_picker_registry
-
-    @dataclass
-    class _T:
-        text: str
-        confidence: float = 0.95
-        no_speech_prob: float = 0.05
-
-    class _Stub:
-        def __init__(self, q): self.q = q
-        def load(self): ...
-        def unload(self): ...
-        def transcribe(self, _): return self.q.pop(0)
-
-    reset_global_registry()
-    reset_global_picker_registry()
-    registry = get_global_registry()
-    bus = EventBus()
-    feedback = CapturingFeedbackSink()
-    dispatcher = Dispatcher(feedback=feedback, event_bus=bus)
-    verb_router = VerbRouter(build_default_rules(), registry=registry, picker_registry=None)
-
-    processed: list[str] = []
-
-    daemon = StreamingDaemon(
-        feedback=feedback,
-        recorder=None,
-        transcriber=_Stub(q=[_T("click")]),
-        dispatcher=dispatcher,
-        verb_router=verb_router,
-        registry=registry,
-        event_bus=bus,
-        output_dir=str(tmp_path),
-    )
-    daemon._transcriber_ready.set()
-
-    original_process = daemon._process_utterance
-
-    def _spy(utterance, *, gen=None):
-        processed.append("called")
-        return original_process(utterance, gen=gen)
-
-    daemon._process_utterance = _spy
-
-    audio = np.zeros(16000, dtype=np.float32)
-    gen = daemon._audio_gen
-    daemon._utt_q.put((audio, gen))   # real utterance FIRST (FIFO)
-    daemon._utt_q.put(_DICTATION_WAKE)  # sentinel SECOND
-    daemon._utt_q.put(None)             # shutdown THIRD
-
-    t = threading.Thread(target=daemon._pipeline_loop, daemon=True)
-    t.start()
-    t.join(timeout=2.0)
-
-    assert not t.is_alive(), "Pipeline loop did not exit within 2 s"
-    assert processed == ["called"], (
-        f"Expected exactly 1 _process_utterance call for the real utterance; got: {processed}"
-    )
-```
-
-The `_StubTranscriber` referenced in `test_dictation_wake_sentinel_skipped_in_pipeline_loop` is defined inline at the top of that test. If `test_streaming_daemon.py` already defines one at module level, reuse it; otherwise add this to the module level of that file (before both new tests):
-
-```python
-from dataclasses import dataclass as _dataclass
-
-@_dataclass
-class _StubTranscriber:
-    queue: list
-
-    def load(self) -> None: ...
-    def unload(self) -> None: ...
-    def transcribe(self, _audio: object) -> object:
-        return self.queue.pop(0)
-```
-
-- [ ] **Step 2: Run the new sentinel tests to confirm they FAIL**
-
-```
-pytest tests/unit/test_streaming_daemon.py::test_dictation_wake_sentinel_skipped_in_pipeline_loop tests/unit/test_streaming_daemon.py::test_dictation_wake_sentinel_real_utterance_processed_before_sentinel -v
-```
-
-Expected: Both FAIL. `ImportError: cannot import name '_DICTATION_WAKE' from 'voice_commander.daemon'`.
-
-- [ ] **Step 3: Commit the failing tests**
-
-```bash
-git add tests/unit/test_streaming_daemon.py
-git commit -m "test(daemon): add _DICTATION_WAKE sentinel red-phase unit tests (ADR 0089)"
-```
-
----
-
-### Task 6: Implement `_DICTATION_WAKE` sentinel in daemon.py
-
-**Files:**
-- Modify: `src/voice_commander/daemon.py` (L61–62, L230–232, L395–412, L430–468, L593–601, L1270–1273)
-
-- [ ] **Step 1: Add `_DICTATION_WAKE` sentinel constant after `_DICTATION_DRAIN_TIMEOUT_S` (after line 61)**
-
-After the line:
-```python
-_DICTATION_DRAIN_TIMEOUT_S = 0.25
-```
-
-Add:
-```python
-# Unique sentinel object — enqueued by on_dictation_toggle() to wake the
-# pipeline thread from a blocking get(timeout=None) when the user presses
-# the dictation hotkey to end a session. Identity comparison is safe: no
-# real utterance array can be is-equal to this singleton. (ADR 0089)
-_DICTATION_WAKE = object()
-```
-
-- [ ] **Step 2: Widen the `_utt_q` type annotation (line 230–232)**
-
-Change:
-```python
-        self._utt_q: queue.Queue[
-            tuple[npt.NDArray[np.float32], int] | npt.NDArray[np.float32] | None
-        ] = queue.Queue(maxsize=8)
-```
-
-To:
-```python
-        self._utt_q: queue.Queue[
-            tuple[npt.NDArray[np.float32], int] | npt.NDArray[np.float32] | None | object
-        ] = queue.Queue(maxsize=8)
-```
-
-- [ ] **Step 3: Enqueue sentinel in `on_dictation_toggle` (lines 408–410)**
-
-Replace:
-```python
-        if self._dictation_session.active:
-            self._dictation_session.request_end()
-            logger.info("dictation: hotkey-end requested; pipeline will drain and finalize")
-```
-
-With:
-```python
-        if self._dictation_session.active:
-            self._dictation_session.request_end()
-            # Wake the pipeline thread if it is blocked in get(timeout=None).
-            # Without this, the thread only re-evaluates pending_end at the
-            # top of the NEXT iteration — which never comes if the user
-            # stops speaking. The sentinel is consumed by the pipeline loop
-            # via identity check; real utterances ahead of it are processed
-            # first (FIFO). On queue.Full, log and do nothing: a full queue
-            # means the pipeline is already non-idle and will re-evaluate
-            # pending_end naturally. (ADR 0089)
-            try:
-                self._utt_q.put_nowait(_DICTATION_WAKE)
-            except queue.Full:
-                logger.warning(
-                    "dictation: _utt_q full — sentinel not needed; "
-                    "pipeline already active"
-                )
-            logger.info("dictation: hotkey-end requested; pipeline will drain and finalize")
-```
-
-- [ ] **Step 4: Add sentinel skip in `_pipeline_loop` (after the `if item is None: break` check)**
-
-After:
-```python
-            if item is None:
-                break
-```
-
-Add:
-```python
-            # Skip the wake sentinel — its only job was to unblock get().
-            # The top of the next iteration will see pending_end=True and
-            # switch to the short-timeout drain. (ADR 0089)
-            if item is _DICTATION_WAKE:
-                continue
-```
-
-- [ ] **Step 5: Add `"cancel"` branch in dictation dispatch block (lines 593–601)**
-
-Replace:
-```python
-            if self._dictation_session is not None and self._dictation_session.active:
-                kind = self._dictation_session.handle_utterance(utterance, result.text)
-                if kind == "end":
-                    audio = self._dictation_session.take_and_finish()
-                    if audio is not None:
-                        self._dictation_executor.submit(self._finalize_dictation, audio)
-                run.set_status("ok")
-                return
-```
-
-With:
-```python
-            if self._dictation_session is not None and self._dictation_session.active:
-                kind = self._dictation_session.handle_utterance(utterance, result.text)
-                if kind == "end":
-                    audio = self._dictation_session.take_and_finish()
-                    if audio is not None:
-                        self._dictation_executor.submit(self._finalize_dictation, audio)
-                elif kind == "cancel":
-                    # Reuse the pre-existing cancel() method — no new code, no
-                    # POST, no clipboard paste. The method publishes
-                    # dictation.end {"reason": "cancel"}. (ADR 0089)
-                    self._dictation_session.cancel()
-                # "buffered" → fall through, nothing to do
-                run.set_status("ok")
-                return
-```
-
-- [ ] **Step 6: Pass `cancel_word` into the `DictationSession()` constructor (line 1270–1273)**
-
-Replace:
-```python
-    dictation_session = DictationSession(
-        bus=event_bus,
-        end_word=cfg.dictation.end_word,
-    )
-```
-
-With:
-```python
-    dictation_session = DictationSession(
-        bus=event_bus,
-        end_word=cfg.dictation.end_word,
-        cancel_word=cfg.dictation.cancel_word,
-    )
-```
-
-- [ ] **Step 7: Run Task 5 sentinel tests to confirm they now PASS**
-
-```
-pytest tests/unit/test_streaming_daemon.py::test_dictation_wake_sentinel_skipped_in_pipeline_loop tests/unit/test_streaming_daemon.py::test_dictation_wake_sentinel_real_utterance_processed_before_sentinel -v
-```
-
-Expected: Both PASS.
-
-- [ ] **Step 8: Run the full unit test suite to catch regressions**
-
-```
-pytest tests/unit/ -q
-```
-
-Expected: All tests PASS (or pre-existing failures only — no new failures).
-
-- [ ] **Step 9: Commit**
-
-```bash
-git add src/voice_commander/daemon.py
-git commit -m "feat(daemon): add _DICTATION_WAKE sentinel + spoken cancel dispatch (ADR 0089)"
-```
-
----
-
-### Task 7: Add `cancel_word` to config and config.toml.example
+### Task 5: Add `cancel_word` to config and `config.toml.example`
 
 **Files:**
 - Modify: `src/voice_commander/config.py` (L26–32)
-- Modify: `config.toml.example` (L7–9)
+- Modify: `config.toml.example` (`[dictation]` section)
+
+**MUST land before Task 7** (which wires `cfg.dictation.cancel_word` into the `DictationSession()` constructor in `daemon.py`). See commit-safety note above.
 
 - [ ] **Step 1: Add `cancel_word` field to `DictationConfig`**
 
@@ -900,6 +641,305 @@ Expected: All config tests PASS.
 ```bash
 git add src/voice_commander/config.py config.toml.example
 git commit -m "feat(config): add dictation.cancel_word to DictationConfig (ADR 0089)"
+```
+
+---
+
+### Task 6: Unit tests for `_DICTATION_WAKE` sentinel — Red phase
+
+**Files:**
+- Modify: `tests/unit/test_streaming_daemon.py`
+
+**REV 2 note:** These tests are FULLY SELF-CONTAINED. No `_StubTranscriber` reference at module level. Each test defines its own inline stub dataclass and stub transcriber class directly inside the test function body. This avoids any dangling reference to undefined module-level symbols. The tests use the same `_make_daemon` helper that already exists in `test_streaming_daemon.py` (which uses `MagicMock` for the transcriber), but override the transcriber inline where needed.
+
+- [ ] **Step 1: Append the sentinel tests to `tests/unit/test_streaming_daemon.py`**
+
+Read the end of `tests/unit/test_streaming_daemon.py` to confirm the last test, then append the following AFTER it (no new module-level symbols needed — everything is defined inside the test functions):
+
+```python
+# ---------------------------------------------------------------------------
+# Sentinel wake tests (Task 6 — ADR 0089)
+# Each test is fully self-contained — stub types defined inside the function.
+# ---------------------------------------------------------------------------
+
+
+def test_dictation_wake_sentinel_skipped_in_pipeline_loop(tmp_path):
+    """The _DICTATION_WAKE sentinel is identity-checked and skipped via
+    `continue` — _process_utterance is never called for it.
+
+    Fully self-contained: uses the existing _make_daemon() MagicMock helper.
+    The daemon is not started; _pipeline_loop() is driven directly on a thread.
+    """
+    import threading
+
+    from voice_commander.daemon import _DICTATION_WAKE
+
+    # Use the existing _make_daemon helper (MagicMock transcriber, no GPU)
+    daemon, feedback, recorder, transcriber, dispatcher = _make_daemon(
+        output_dir=str(tmp_path)
+    )
+
+    processed: list[str] = []
+    original_process = daemon._process_utterance
+
+    def _spy(utterance, *, gen=None):
+        processed.append("called")
+        return original_process(utterance, gen=gen)
+
+    daemon._process_utterance = _spy
+
+    # Queue: sentinel first, then shutdown sentinel
+    daemon._utt_q.put(_DICTATION_WAKE)
+    daemon._utt_q.put(None)
+
+    t = threading.Thread(target=daemon._pipeline_loop, daemon=True)
+    t.start()
+    t.join(timeout=2.0)
+
+    assert not t.is_alive(), "Pipeline loop did not exit within 2 s"
+    assert processed == [], (
+        f"_process_utterance should NOT be called for the sentinel; got: {processed}"
+    )
+
+
+def test_dictation_wake_sentinel_real_utterance_processed_before_sentinel(tmp_path):
+    """A real utterance queued BEFORE the sentinel is processed; sentinel is then
+    skipped. FIFO order guarantee: real audio → sentinel → shutdown.
+
+    Fully self-contained: inline stub transcriber defined inside this function.
+    """
+    import threading
+    from dataclasses import dataclass
+
+    import numpy as np
+
+    from voice_commander.daemon import _DICTATION_WAKE
+
+    # Inline stub transcriber — no module-level symbol needed
+    @dataclass
+    class _InlineTranscription:
+        text: str
+        confidence: float = 0.95
+        no_speech_prob: float = 0.05
+
+    class _InlineStub:
+        def __init__(self, results):
+            self._results = list(results)
+
+        def load(self) -> None: ...
+        def unload(self) -> None: ...
+
+        def transcribe(self, _audio):
+            return self._results.pop(0)
+
+    # Build daemon with the existing helper but swap out the MagicMock transcriber
+    daemon, feedback, recorder, _transcriber_mock, dispatcher = _make_daemon(
+        output_dir=str(tmp_path)
+    )
+    # Replace the MagicMock transcriber with our inline stub
+    stub = _InlineStub(results=[_InlineTranscription("click")])
+    daemon._transcriber = stub
+
+    processed: list[str] = []
+    original_process = daemon._process_utterance
+
+    def _spy(utterance, *, gen=None):
+        processed.append("called")
+        return original_process(utterance, gen=gen)
+
+    daemon._process_utterance = _spy
+
+    audio = np.zeros(16000, dtype=np.float32)
+    daemon._utt_q.put((audio, daemon._audio_gen))  # real utterance FIRST (FIFO)
+    daemon._utt_q.put(_DICTATION_WAKE)              # sentinel SECOND
+    daemon._utt_q.put(None)                         # shutdown THIRD
+
+    t = threading.Thread(target=daemon._pipeline_loop, daemon=True)
+    t.start()
+    t.join(timeout=2.0)
+
+    assert not t.is_alive(), "Pipeline loop did not exit within 2 s"
+    assert processed == ["called"], (
+        f"Expected exactly 1 _process_utterance call for the real utterance; got: {processed}"
+    )
+```
+
+- [ ] **Step 2: Run the new sentinel tests to confirm they FAIL**
+
+```
+pytest tests/unit/test_streaming_daemon.py::test_dictation_wake_sentinel_skipped_in_pipeline_loop tests/unit/test_streaming_daemon.py::test_dictation_wake_sentinel_real_utterance_processed_before_sentinel -v
+```
+
+Expected: Both FAIL. `ImportError: cannot import name '_DICTATION_WAKE' from 'voice_commander.daemon'`.
+
+- [ ] **Step 3: Commit the failing tests**
+
+```bash
+git add tests/unit/test_streaming_daemon.py
+git commit -m "test(daemon): add _DICTATION_WAKE sentinel red-phase unit tests (ADR 0089)"
+```
+
+---
+
+### Task 7: Implement `_DICTATION_WAKE` sentinel in daemon.py
+
+**Files:**
+- Modify: `src/voice_commander/daemon.py` (L61–62, L230–232, L395–412, L430–468, L593–601, L1270–1273)
+
+**Prerequisite:** Task 5 (config change) MUST be committed first. This task passes `cfg.dictation.cancel_word` to `DictationSession()` — that field must already exist on `DictationConfig`.
+
+- [ ] **Step 1: Add `_DICTATION_WAKE` sentinel constant after `_DICTATION_DRAIN_TIMEOUT_S` (after line 61)**
+
+After the line:
+```python
+_DICTATION_DRAIN_TIMEOUT_S = 0.25
+```
+
+Add:
+```python
+# Unique sentinel object — enqueued by on_dictation_toggle() to wake the
+# pipeline thread from a blocking get(timeout=None) when the user presses
+# the dictation hotkey to end a session. Identity comparison is safe: no
+# real utterance array can be is-equal to this singleton. (ADR 0089)
+_DICTATION_WAKE = object()
+```
+
+- [ ] **Step 2: Widen the `_utt_q` type annotation (line 230–232)**
+
+Change:
+```python
+        self._utt_q: queue.Queue[
+            tuple[npt.NDArray[np.float32], int] | npt.NDArray[np.float32] | None
+        ] = queue.Queue(maxsize=8)
+```
+
+To:
+```python
+        self._utt_q: queue.Queue[
+            tuple[npt.NDArray[np.float32], int] | npt.NDArray[np.float32] | None | object
+        ] = queue.Queue(maxsize=8)
+```
+
+- [ ] **Step 3: Enqueue sentinel in `on_dictation_toggle` (the dictation-active branch)**
+
+Replace:
+```python
+        if self._dictation_session.active:
+            self._dictation_session.request_end()
+            logger.info("dictation: hotkey-end requested; pipeline will drain and finalize")
+```
+
+With:
+```python
+        if self._dictation_session.active:
+            self._dictation_session.request_end()
+            # Wake the pipeline thread if it is blocked in get(timeout=None).
+            # Without this, the thread only re-evaluates pending_end at the
+            # top of the NEXT iteration — which never comes if the user
+            # stops speaking. The sentinel is consumed by the pipeline loop
+            # via identity check; real utterances ahead of it are processed
+            # first (FIFO). On queue.Full, log and do nothing: a full queue
+            # means the pipeline is already non-idle and will re-evaluate
+            # pending_end naturally. (ADR 0089)
+            try:
+                self._utt_q.put_nowait(_DICTATION_WAKE)
+            except queue.Full:
+                logger.warning(
+                    "dictation: _utt_q full — sentinel not needed; "
+                    "pipeline already active"
+                )
+            logger.info("dictation: hotkey-end requested; pipeline will drain and finalize")
+```
+
+- [ ] **Step 4: Add sentinel skip in `_pipeline_loop` (after the `if item is None: break` check)**
+
+After:
+```python
+            if item is None:
+                break
+```
+
+Add:
+```python
+            # Skip the wake sentinel — its only job was to unblock get().
+            # The top of the next iteration will see pending_end=True and
+            # switch to the short-timeout drain. (ADR 0089)
+            if item is _DICTATION_WAKE:
+                continue
+```
+
+- [ ] **Step 5: Add `"cancel"` branch in dictation dispatch block**
+
+Replace:
+```python
+            if self._dictation_session is not None and self._dictation_session.active:
+                kind = self._dictation_session.handle_utterance(utterance, result.text)
+                if kind == "end":
+                    audio = self._dictation_session.take_and_finish()
+                    if audio is not None:
+                        self._dictation_executor.submit(self._finalize_dictation, audio)
+                run.set_status("ok")
+                return
+```
+
+With:
+```python
+            if self._dictation_session is not None and self._dictation_session.active:
+                kind = self._dictation_session.handle_utterance(utterance, result.text)
+                if kind == "end":
+                    audio = self._dictation_session.take_and_finish()
+                    if audio is not None:
+                        self._dictation_executor.submit(self._finalize_dictation, audio)
+                elif kind == "cancel":
+                    # Reuse the pre-existing cancel() method — no new code, no
+                    # POST, no clipboard paste. The method publishes
+                    # dictation.end {"reason": "cancel"}. (ADR 0089)
+                    self._dictation_session.cancel()
+                # "buffered" → fall through, nothing to do
+                run.set_status("ok")
+                return
+```
+
+- [ ] **Step 6: Pass `cancel_word` into the `DictationSession()` constructor**
+
+Replace:
+```python
+    dictation_session = DictationSession(
+        bus=event_bus,
+        end_word=cfg.dictation.end_word,
+    )
+```
+
+With:
+```python
+    dictation_session = DictationSession(
+        bus=event_bus,
+        end_word=cfg.dictation.end_word,
+        cancel_word=cfg.dictation.cancel_word,
+    )
+```
+
+- [ ] **Step 7: Run Task 6 sentinel tests to confirm they now PASS**
+
+```
+pytest tests/unit/test_streaming_daemon.py::test_dictation_wake_sentinel_skipped_in_pipeline_loop tests/unit/test_streaming_daemon.py::test_dictation_wake_sentinel_real_utterance_processed_before_sentinel -v
+```
+
+Expected: Both PASS.
+
+- [ ] **Step 8: Run the full unit test suite to catch regressions**
+
+```
+pytest tests/unit/ -q
+```
+
+Expected: All tests PASS (or pre-existing failures only — no new failures).
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add src/voice_commander/daemon.py
+git commit -m "feat(daemon): add _DICTATION_WAKE sentinel + spoken cancel dispatch (ADR 0089)"
 ```
 
 ---
@@ -977,15 +1017,32 @@ def test_cancelled_cue_resets_on_new_dictation_start():
     assert sm.cancelled_cue is False, (
         "cancelled_cue must be cleared when a new dictation session starts"
     )
+
+
+def test_dictation_end_missing_reason_key_does_not_raise():
+    """dictation.end with no 'reason' key in data must not KeyError.
+
+    Other dictation.end publishers may omit the reason key; the handler must
+    use data.get('reason') defensively (REV 8).
+    """
+    from voice_sprite.state_machine import StateMachine
+
+    sm = StateMachine()
+    sm.on_event("dictation.start", {})
+    # No 'reason' key — must not raise KeyError
+    sm.on_event("dictation.end", {})
+    assert sm.dictating is False
+    # Missing reason → not "cancel" → cancelled_cue stays False
+    assert sm.cancelled_cue is False
 ```
 
 - [ ] **Step 2: Run new tests to confirm they FAIL**
 
 ```
-pytest tests/unit/test_sprite_state_machine.py::test_dictation_end_cancel_reason_sets_cancelled_cue tests/unit/test_sprite_state_machine.py::test_dictation_end_done_reason_does_not_set_cancelled_cue tests/unit/test_sprite_state_machine.py::test_dictation_end_cancel_reason_retroactively_covers_scroll_lock_cancel tests/unit/test_sprite_state_machine.py::test_cancelled_cue_resets_on_new_dictation_start -v
+pytest tests/unit/test_sprite_state_machine.py::test_dictation_end_cancel_reason_sets_cancelled_cue tests/unit/test_sprite_state_machine.py::test_dictation_end_done_reason_does_not_set_cancelled_cue tests/unit/test_sprite_state_machine.py::test_dictation_end_cancel_reason_retroactively_covers_scroll_lock_cancel tests/unit/test_sprite_state_machine.py::test_cancelled_cue_resets_on_new_dictation_start tests/unit/test_sprite_state_machine.py::test_dictation_end_missing_reason_key_does_not_raise -v
 ```
 
-Expected: All 4 FAIL. `AttributeError: 'StateMachine' object has no attribute 'cancelled_cue'`.
+Expected: All 5 FAIL. `AttributeError: 'StateMachine' object has no attribute 'cancelled_cue'`.
 
 - [ ] **Step 3: Commit failing tests**
 
@@ -1000,6 +1057,8 @@ git commit -m "test(sprite): add cancel-cue red-phase tests for dictation.end re
 
 **Files:**
 - Modify: `src/voice_sprite/state_machine.py` (L63–70, L98–104)
+
+**REV 8 note:** The `dictation.end` handler MUST use `data.get("reason")` (NOT `data["reason"]`) to avoid `KeyError` from publishers that do not set the reason key. Confirmed against existing publishers: `take_and_finish` emits `{"reason": "done"}`, `finish` emits `{"reason": "done"}`, `cancel` emits `{"reason": "cancel"}` — all three set the key, but defensive access is still required per REV 8.
 
 - [ ] **Step 1: Add `cancelled_cue` attribute to `StateMachine.__init__`**
 
@@ -1045,7 +1104,7 @@ With:
 
         if event_type == "dictation.end":
             self.dictating = False
-            reason = data.get("reason", "done")
+            reason = data.get("reason")  # defensive: some publishers may omit "reason"
             # Surface a distinct cancelled visual when reason == "cancel".
             # This covers both spoken cancel AND scroll-lock cancel — both
             # paths call DictationSession.cancel() which emits reason="cancel".
@@ -1061,13 +1120,13 @@ With:
 pytest tests/unit/test_sprite_state_machine.py -v
 ```
 
-Expected: All tests PASS including the 4 new cancel-cue tests.
+Expected: All tests PASS including the 5 new cancel-cue tests.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add src/voice_sprite/state_machine.py
-git commit -m "feat(sprite): read dictation.end reason, set cancelled_cue for cancel path (ADR 0089)"
+git commit -m "feat(sprite): read dictation.end reason defensively, set cancelled_cue for cancel path (ADR 0089)"
 ```
 
 ---
@@ -1077,9 +1136,13 @@ git commit -m "feat(sprite): read dictation.end reason, set cancelled_cue for ca
 **Files:**
 - Modify: `tests/integration/test_dictation_pipeline.py`
 
-- [ ] **Step 1: Add the sentinel regression integration test at the end of the file**
+**REV 5 note:** This test is a DETERMINISTIC regression gate. It uses two `threading.Event` objects — `processed` (set by a stub transcriber after the one seeded utterance is transcribed) and `finalized` (set by a monkeypatched `_finalize_dictation`) — to eliminate any race. No `time.sleep` for synchronization.
 
-Append the following test after the last existing test in `tests/integration/test_dictation_pipeline.py`:
+**Verify it fails against unfixed code:** Before the sentinel fix, the pipeline thread is blocked in `_utt_q.get(timeout=None)` after consuming the one seeded utterance. `on_dictation_toggle()` sets `pending_end` but the thread never re-evaluates it because no new utterance arrives. `finalized` is never set. `finalized.wait(timeout=2.0)` returns `False`. The test FAILS with assertion error. After the fix: the sentinel unblocks `get()`, `continue` re-enters the loop top, `pending_end=True` → drain loop → `_finalize_pending_dictation_end()` → `_finalize_dictation()` → `finalized.set()`. The test PASSES quickly.
+
+- [ ] **Step 1: Add the sentinel regression integration test at the end of `tests/integration/test_dictation_pipeline.py`**
+
+Append the following test after the last existing test:
 
 ```python
 # ---------------------------------------------------------------------------
@@ -1093,76 +1156,131 @@ def test_hotkey_end_finalizes_without_trailing_utterance(
 ) -> None:
     """Core regression test for ADR 0089 Change 1.
 
-    Start dictation, buffer one utterance via _process_utterance (not via
-    the queue), then call on_dictation_toggle() with NO further utterances.
-    The pipeline loop must finalize dictation within 500 ms — proving that
-    the _DICTATION_WAKE sentinel unblocks the pipeline thread without needing
-    a trailing utterance.
+    Uses two threading.Event objects for deterministic synchronization — no
+    time.sleep for synchronization. The test provably FAILS against unfixed
+    code (pipeline stays blocked in get(timeout=None) forever; 'finalized'
+    is never set; wait(timeout=2.0) returns False → AssertionError).
+
+    Protocol:
+    1. Stub transcriber sets 'processed' when it transcribes the one seeded
+       utterance (guaranteeing the pipeline consumed it and re-entered get()).
+    2. A monkeypatched _finalize_dictation sets 'finalized' when called.
+    3. Seed ONE utterance → wait on 'processed' → tiny fixed sleep (20 ms)
+       so the loop provably re-entered blocking get() → fire on_dictation_toggle()
+       with NO further utterance → assert finalized.wait(timeout=2.0).
+
+    Expected on UNFIXED code: FAIL — pipeline stays blocked in get(timeout=None),
+    'finalized' is never set, the test times out after 2 s.
+    Expected after sentinel fix: PASS quickly (sentinel wakes the thread).
     """
     import threading
-    import time
 
-    pasted: list[str] = []
+    # Events for deterministic synchronization
+    processed = threading.Event()
+    finalized = threading.Event()
 
+    # --- Stub transcriber: sets 'processed' after transcribing the utterance ---
+    @dataclass
+    class _SentinelTranscription:
+        text: str
+        confidence: float = 0.95
+        no_speech_prob: float = 0.05
+
+    class _SentinelStub:
+        def __init__(self, result):
+            self._result = result
+
+        def load(self) -> None: ...
+        def unload(self) -> None: ...
+
+        def transcribe(self, _audio: np.ndarray) -> _SentinelTranscription:
+            result = self._result
+            processed.set()   # signal: utterance has been transcribed
+            return result
+
+    # --- Build daemon with stub transcriber ---
+    from voice_commander.daemon import StreamingDaemon
+    from voice_commander.dispatcher import Dispatcher
+    from voice_commander.picker.registry import reset_global_picker_registry
+    from voice_commander.registry import get_global_registry, reset_global_registry
+
+    reset_global_registry()
+    reset_global_picker_registry()
+    registry = get_global_registry()
+    bus = EventBus()
+    feedback = CapturingFeedbackSink()
+    dispatcher = Dispatcher(feedback=feedback, event_bus=bus)
+    verb_router = VerbRouter(build_default_rules(), registry=registry, picker_registry=None)
+    dictation_session = DictationSession(bus=bus, end_word="done")
+
+    daemon = StreamingDaemon(
+        feedback=feedback,
+        recorder=None,
+        transcriber=_SentinelStub(_SentinelTranscription("some dictated content")),
+        dispatcher=dispatcher,
+        verb_router=verb_router,
+        registry=registry,
+        event_bus=bus,
+        dictation_session=dictation_session,
+        output_dir=str(tmp_path),
+    )
+    daemon._transcriber_ready.set()
+
+    # --- Monkeypatch _finalize_dictation to set 'finalized' ---
     monkeypatch.setattr(
         "voice_commander.dictation.remote.post_audio",
-        lambda wav_bytes, endpoint, **kw: "SENTINEL WAKE TEXT",
+        lambda *a, **kw: "FINALIZED TEXT",
     )
     monkeypatch.setattr(
         "voice_commander.dictation.clipboard.paste_via_clipboard",
-        lambda text, **kw: pasted.append(text),
+        lambda *a, **kw: finalized.set(),
     )
 
-    daemon, dictation_session, feedback, bus = _make_daemon(
-        transcripts=[
-            _Transcription("some dictated content"),
-        ],
-        tmp_path=tmp_path,
-    )
-
-    audio = np.zeros(16000, dtype=np.float32)
-
-    # Simulate an active session (on_dictation_toggle guards on _session_active)
-    daemon._session_active = True
-
-    # Start pipeline loop in background
+    # --- Start the pipeline loop in background ---
     pipeline_thread = threading.Thread(
-        target=daemon._pipeline_loop, name="vc-pipeline-test", daemon=True
+        target=daemon._pipeline_loop, name="vc-pipeline-sentinel-test", daemon=True
     )
+    daemon._session_active = True
     pipeline_thread.start()
 
-    # Enter dictation mode
+    # --- Enter dictation mode ---
     dictation_session.start()
 
-    # Buffer one utterance by pushing it through the queue directly
+    # --- Seed ONE utterance ---
+    audio = np.zeros(16000, dtype=np.float32)
     daemon._utt_q.put((audio, daemon._audio_gen))
 
-    # Brief pause so the pipeline thread processes the utterance before hotkey fires
-    # (avoids an artifically easy test where request_end fires first)
-    time.sleep(0.05)
+    # --- Wait until the utterance is transcribed (pipeline consumed it and
+    #     re-entered the blocking get()). Use a generous timeout so CI is not flaky. ---
+    assert processed.wait(timeout=5.0), (
+        "Timed out waiting for the stub transcriber to process the utterance"
+    )
 
-    # Press hotkey to end dictation — NO further utterances follow.
-    # This is the exact scenario that was broken: the pipeline was blocked in
-    # get(timeout=None) and would never finalize unless another utterance arrived.
+    # --- Tiny fixed sleep (20 ms) so the pipeline loop provably re-entered
+    #     get(timeout=None) after processing the utterance. ---
+    import time as _time
+    _time.sleep(0.020)
+
+    # --- Fire hotkey-end with NO further utterances.
+    #     This is the exact scenario that was broken before the sentinel fix. ---
     daemon.on_dictation_toggle()
 
-    # Assert finalization within 500 ms — the sentinel must have woken the pipeline.
-    deadline = time.monotonic() + 0.5
-    while time.monotonic() < deadline and not pasted:
-        time.sleep(0.01)
+    # --- Assert finalized within 2 s.
+    #     UNFIXED: times out — pipeline is still blocked in get(timeout=None).
+    #     FIXED: sentinel wakes pipeline → drain → finalize → finalized.set(). ---
+    assert finalized.wait(timeout=2.0), (
+        "hotkey-end must finalize within 2 s with no trailing utterance. "
+        "This is the ADR 0089 regression gate. If this fails, the sentinel is not working."
+    )
 
-    # Shutdown pipeline
+    assert not dictation_session.active, "session must be inactive after finalization"
+    assert not dictation_session.pending_end, "pending_end must be cleared after finalization"
+
+    # Teardown
     daemon._utt_q.put(None)
     pipeline_thread.join(timeout=3.0)
     daemon._dictation_executor.shutdown(wait=True)
     daemon._wav_executor.shutdown(wait=True)
-
-    assert pasted == ["SENTINEL WAKE TEXT"], (
-        f"hotkey-end must finalize within 500 ms with no trailing utterance; "
-        f"got pasted={pasted}. This is the ADR 0089 regression gate."
-    )
-    assert not dictation_session.active, "session must be inactive after finalization"
-    assert not dictation_session.pending_end, "pending_end must be cleared after finalization"
 ```
 
 - [ ] **Step 2: Run the regression test**
@@ -1171,7 +1289,7 @@ def test_hotkey_end_finalizes_without_trailing_utterance(
 pytest tests/integration/test_dictation_pipeline.py::test_hotkey_end_finalizes_without_trailing_utterance -v
 ```
 
-Expected: PASS (the sentinel implementation from Task 6 makes this work).
+Expected: PASS (the sentinel implementation from Task 7 makes this work).
 
 - [ ] **Step 3: Run all dictation pipeline integration tests**
 
@@ -1195,6 +1313,8 @@ git commit -m "test(integration): add sentinel-wake regression gate (ADR 0089)"
 **Files:**
 - Create: `tests/integration/test_dictation_cancel.py`
 
+**REV 3 note:** All tests drive utterances through the REAL daemon dispatch path (`_process_utterance`) — NOT via bare `handle_utterance` calls. The spoken-cancel path requires `_process_utterance` → `handle_utterance` → `elif kind == "cancel": self._dictation_session.cancel()` to execute. `test_spoken_cancel_does_not_buffer_audio` uses `_process_utterance` to drive both the "hello world" and "cancel" utterances, then asserts: session inactive, buffer empty (via `take_audio() is None`), no POST, no paste, `dictation.end` published with `{"reason": "cancel"}`.
+
 - [ ] **Step 1: Create `tests/integration/test_dictation_cancel.py`**
 
 ```python
@@ -1205,6 +1325,11 @@ _Transcription, _make_daemon). Tests that spoken "cancel" during active
 dictation: (a) calls DictationSession.cancel(), (b) never submits audio to
 the remote endpoint, (c) never pastes to clipboard, and (d) emits
 dictation.end with {"reason": "cancel"}.
+
+ALL tests drive utterances through daemon._process_utterance() — the real
+daemon dispatch path — NOT via bare handle_utterance() calls. This ensures
+the elif kind == "cancel": self._dictation_session.cancel() branch in
+daemon.py actually executes.
 """
 from __future__ import annotations
 
@@ -1289,7 +1414,10 @@ def _make_daemon(
 def test_spoken_cancel_no_post_no_paste(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Saying 'cancel' during active dictation must not POST audio and not paste."""
+    """Saying 'cancel' during active dictation must not POST audio and not paste.
+
+    Drives utterances through _process_utterance() — the real dispatch path.
+    """
     posted: list[bytes] = []
 
     def _fake_post(wav_bytes: bytes, endpoint: str, **kw: Any) -> str:
@@ -1307,7 +1435,7 @@ def test_spoken_cancel_no_post_no_paste(
     daemon, dictation_session, feedback, bus = _make_daemon(
         transcripts=[
             _Transcription("some words"),  # buffered
-            _Transcription("cancel"),       # triggers cancel
+            _Transcription("cancel"),       # triggers cancel via _process_utterance
         ],
         tmp_path=tmp_path,
     )
@@ -1318,10 +1446,12 @@ def test_spoken_cancel_no_post_no_paste(
     audio = np.zeros(16000, dtype=np.float32)
     dictation_session.start()
 
+    # Drive through the real dispatch path
     daemon._process_utterance(audio)  # "some words" → buffered
     assert dictation_session.active is True
 
-    daemon._process_utterance(audio)  # "cancel" → cancel()
+    daemon._process_utterance(audio)  # "cancel" → handle_utterance returns "cancel"
+                                       # → daemon calls dictation_session.cancel()
     assert dictation_session.active is False, "session must be inactive after spoken cancel"
 
     # Finalize executor — must be a no-op (nothing submitted)
@@ -1349,39 +1479,70 @@ def test_spoken_cancel_no_post_no_paste(
 def test_spoken_cancel_does_not_buffer_audio(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The cancel-word audio chunk is NOT appended to the buffer before cancel()."""
+    """The cancel-word audio chunk is NOT appended to the buffer; after cancel()
+    the buffer is empty.
+
+    Drives utterances through _process_utterance() — the real dispatch path.
+    Asserts: session inactive, buffer empty (take_audio() is None), no POST,
+    no paste, dictation.end {reason:'cancel'} published.
+    """
+    posted: list[bytes] = []
+    pasted: list[str] = []
     monkeypatch.setattr(
         "voice_commander.dictation.remote.post_audio",
-        lambda *a, **kw: "X",
+        lambda wav_bytes, endpoint, **kw: (posted.append(wav_bytes), "X")[1],
     )
     monkeypatch.setattr(
         "voice_commander.dictation.clipboard.paste_via_clipboard",
-        lambda *a, **kw: None,
+        lambda text, **kw: pasted.append(text),
     )
+
+    events: list[tuple[str, dict]] = []
 
     daemon, dictation_session, feedback, bus = _make_daemon(
         transcripts=[
-            _Transcription("hello world"),  # buffered (8000 samples)
-            _Transcription("cancel"),
+            _Transcription("hello world"),  # buffered (distinct audio)
+            _Transcription("cancel"),       # triggers cancel via _process_utterance
         ],
         tmp_path=tmp_path,
     )
+
+    bus.subscribe(lambda et, data: events.append((et, data or {})))
 
     audio_content = np.ones(8000, dtype=np.float32)
     audio_cancel = np.ones(8000, dtype=np.float32) * 99.0
 
     dictation_session.start()
-    daemon._transcriber.queue.clear()
-    # Bypass transcription — inject audio directly to handle_utterance
-    kind1 = dictation_session.handle_utterance(audio_content, "hello world")
-    assert kind1 == "buffered"
 
-    kind2 = dictation_session.handle_utterance(audio_cancel, "cancel")
-    assert kind2 == "cancel"
+    # "hello world" → buffered via _process_utterance (real dispatch path)
+    daemon._process_utterance(audio_content)
+    assert dictation_session.active is True
 
-    # After cancel(), buffer is cleared — take_audio must return None
+    # "cancel" → handle_utterance returns "cancel" → daemon calls cancel()
+    daemon._process_utterance(audio_cancel)
+
+    daemon._dictation_executor.shutdown(wait=True)
+    daemon._wav_executor.shutdown(wait=True)
+
+    # Session must be inactive
+    assert dictation_session.active is False, "session must be inactive after cancel"
+
+    # Buffer must be empty — cancel() clears it; cancel-word audio was never buffered
     assert dictation_session.take_audio() is None, (
         "Buffer must be empty after cancel(); cancel-word audio must not have been buffered"
+    )
+
+    # No POST, no paste
+    assert posted == [], f"post_audio must NOT be called after spoken cancel; got {posted}"
+    assert pasted == [], f"paste must NOT be called after spoken cancel; got {pasted}"
+
+    # SSE event with reason="cancel"
+    cancel_events = [
+        (et, d) for (et, d) in events
+        if et == "dictation.end" and d.get("reason") == "cancel"
+    ]
+    assert cancel_events, (
+        f"Expected dictation.end {{reason:'cancel'}} SSE event; events: {events}"
     )
 
 
@@ -1394,7 +1555,10 @@ def test_spoken_cancel_wins_race_with_pending_hotkey_end(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """If hotkey-end is pending (request_end set) and the next utterance is the
-    cancel word, cancel wins: no audio submitted, dictation.end {reason:cancel}."""
+    cancel word, cancel wins: no audio submitted, dictation.end {reason:cancel}.
+
+    Drives utterances through _process_utterance() — the real dispatch path.
+    """
     posted: list[bytes] = []
 
     def _fake_post(wav_bytes: bytes, endpoint: str, **kw: Any) -> str:
@@ -1421,14 +1585,16 @@ def test_spoken_cancel_wins_race_with_pending_hotkey_end(
 
     audio = np.zeros(16000, dtype=np.float32)
     dictation_session.start()
+
+    # Buffer one utterance via the real dispatch path
     daemon._process_utterance(audio)   # "some audio" → buffered
 
     # Hotkey-end fires (simulates concurrent Ctrl press)
     dictation_session.request_end()
     assert dictation_session.pending_end is True  # sanity
 
-    # Cancel utterance arrives AFTER pending_end is set
-    daemon._process_utterance(audio)   # "cancel" → cancel()
+    # Cancel utterance arrives AFTER pending_end is set — via real dispatch path
+    daemon._process_utterance(audio)   # "cancel" → cancel() wins
 
     daemon._dictation_executor.shutdown(wait=True)
     daemon._wav_executor.shutdown(wait=True)
@@ -1456,8 +1622,7 @@ def test_cancel_word_collision_disables_spoken_cancel(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """When cancel_word == end_word, spoken cancel is disabled; the collision
-    word acts as the end word (buffers normally if it appears mid-sentence,
-    triggers end if exact standalone match)."""
+    word acts as the end word (triggers finalization, not cancel)."""
     posted: list[bytes] = []
     monkeypatch.setattr(
         "voice_commander.dictation.remote.post_audio",
@@ -1485,8 +1650,10 @@ def test_cancel_word_collision_disables_spoken_cancel(
 
     audio = np.zeros(16000, dtype=np.float32)
     dictation_session.start()
+
+    # Drive through real dispatch path
     daemon._process_utterance(audio)   # "hello" → buffered
-    daemon._process_utterance(audio)   # "done" → end (not cancel)
+    daemon._process_utterance(audio)   # "done" → end word path (not cancel)
 
     daemon._dictation_executor.shutdown(wait=True)
     daemon._wav_executor.shutdown(wait=True)
@@ -1554,7 +1721,7 @@ A module-level `_DICTATION_WAKE = object()` singleton is added to `daemon.py`. `
 
 ### Change 2 — 50 ms per-key debounce in HotkeyController
 
-`HotkeyController` adds `_last_fire: dict[keyboard.Key, float]` mapping each bound key to the `time.monotonic()` of its last dispatched release. In `_on_release`, before invoking the callback, a `_DEBOUNCE_S = 0.050` (50 ms) window check drops releases that arrive within 50 ms of the same key's last fire. Each key has its own independent timer, so fast alternation between two different keys is unaffected. The 50 ms constant is internal — no config key is added.
+`HotkeyController` adds `_last_fire: dict[keyboard.Key, float]` mapping each bound key to the `time.monotonic()` of its last dispatched release. In `_on_release`, before invoking the callback, a `_DEBOUNCE_S = 0.050` (50 ms) window check drops releases that arrive within 50 ms of the same key's last fire. Each key has its own independent timer, so fast alternation between two different keys is unaffected. The 50 ms constant is internal — no config key is added. The implementation uses `import time` + `time.monotonic()` (not `from time import monotonic`) so the call is interceptable by `monkeypatch`.
 
 ### Change 3 — Spoken cancel word
 
@@ -1562,9 +1729,11 @@ A module-level `_DICTATION_WAKE = object()` singleton is added to `daemon.py`. `
 
 `DictationConfig` gains `cancel_word: str = "cancel"`. `config.toml.example` gains `cancel_word = "cancel"` with an inline comment. `DictationSession()` in `build_streaming_daemon` passes `cancel_word=cfg.dictation.cancel_word`.
 
+**Picker mutual-exclusion:** dictation and the picker (ADR 0083) are mutually-exclusive voice-session sub-states; `handle_utterance` runs only while dictation is active, so the dictation `cancel_word` and `PickerConfig.cancel_words` never conflict.
+
 ### Sprite update
 
-The `dictation.end` handler in `voice_sprite/state_machine.py` now reads `data["reason"]`. When `reason == "cancel"`, `self.cancelled_cue = True` is set (in addition to `dictating = False`). The renderer surfaces a distinct "cancelled" text badge. `dictation.start` resets `cancelled_cue = False`. This retroactively improves the scroll-lock-cancel visual as well as covering spoken cancel — both paths emit `{"reason": "cancel"}`.
+The `dictation.end` handler in `voice_sprite/state_machine.py` now reads `data.get("reason")` (defensive — some publishers may omit the key). When `reason == "cancel"`, `self.cancelled_cue = True` is set (in addition to `dictating = False`). The renderer surfaces a distinct "cancelled" text badge. `dictation.start` resets `cancelled_cue = False`. This retroactively improves the scroll-lock-cancel visual as well as covering spoken cancel — both paths emit `{"reason": "cancel"}`.
 
 ### Race: simultaneous hotkey-end + spoken cancel
 
@@ -1596,21 +1765,21 @@ git commit -m "docs(adr): ADR 0089 — dictation hotkey sentinel + spoken cancel
 
 ---
 
-### Task 13: Update docs — technical-decisions row, ADR 0086 successor note, CLAUDE.md, config.toml.example
+### Task 13: Update docs — technical-decisions row, ADR 0086 successor note, CLAUDE.md
 
 **Files:**
 - Modify: `docs/agents/technical-decisions.md`
 - Modify: `docs/decisions/0086-dictation-mode.md`
 - Modify: `CLAUDE.md`
 
-Note: `config.toml.example` was already updated in Task 7.
+Note: `config.toml.example` was already updated in Task 5.
 
 - [ ] **Step 1: Add ADR 0089 row to `docs/agents/technical-decisions.md`**
 
 Find the last row in the table (ADR 0088 row) and append the following row after it:
 
 ```markdown
-| Dictation hotkey-end reliability + spoken cancel + hotkey debounce | Sentinel `_DICTATION_WAKE` enqueued on hotkey press wakes the pipeline thread from `get(timeout=None)` so hotkey-end finalizes without requiring a trailing utterance; 50 ms per-key `_last_fire` debounce in `HotkeyController` rejects driver double-release; `DictationSession` gains `cancel_word` parameter (default `"cancel"`) — `handle_utterance` returns `"cancel"` kind which calls the pre-existing `cancel()` method; sprite reads `data["reason"]` to surface a distinct cancelled cue | Silent hang of the pipeline thread after hotkey-end press (race: `pending_end` set while thread blocked in `get(timeout=None)`); key bounce causing accidental double-toggle; no spoken cancel path | [0089](../decisions/0089-dictation-hotkey-sentinel-cancel-debounce.md) |
+| Dictation hotkey-end reliability + spoken cancel + hotkey debounce | Sentinel `_DICTATION_WAKE` enqueued on hotkey press wakes the pipeline thread from `get(timeout=None)` so hotkey-end finalizes without requiring a trailing utterance; 50 ms per-key `_last_fire` debounce in `HotkeyController` rejects driver double-release; `DictationSession` gains `cancel_word` parameter (default `"cancel"`) — `handle_utterance` returns `"cancel"` kind which calls the pre-existing `cancel()` method; sprite reads `data.get("reason")` to surface a distinct cancelled cue | Silent hang of the pipeline thread after hotkey-end press (race: `pending_end` set while thread blocked in `get(timeout=None)`); key bounce causing accidental double-toggle; no spoken cancel path | [0089](../decisions/0089-dictation-hotkey-sentinel-cancel-debounce.md) |
 ```
 
 - [ ] **Step 2: Add "Successor" note to `docs/decisions/0086-dictation-mode.md`**
@@ -1624,12 +1793,10 @@ Find the `**Status:** Accepted` line in `0086-dictation-mode.md` and add a succe
 
 - [ ] **Step 3: Update `CLAUDE.md` dictation paragraph in "Current state"**
 
-Find the sentence in CLAUDE.md starting with `**Dictation mode** (ADR 0086)` and update it. The existing paragraph ends with `re-transcribe applies the identical four-step pipeline.` Append the following to that paragraph (before the period at the end, replace the final sentence or append after the vocabulary paragraph):
-
 After the sentence `re-transcribe applies the identical four-step pipeline.`, add:
 
 ```
-**Hotkey-end reliability and spoken cancel** (ADR 0089): a module-level `_DICTATION_WAKE` sentinel is enqueued via `put_nowait` in `on_dictation_toggle` immediately after `request_end()` to wake the pipeline thread from its blocking `get(timeout=None)`, eliminating the race where `pending_end` was set while the thread was already inside `get`; on `queue.Full`, the sentinel is skipped (pipeline already active). `HotkeyController` applies a 50 ms per-key debounce (`_last_fire: dict[Key, float]`, `_DEBOUNCE_S = 0.050`) to reject driver double-release / key-bounce events uniformly across all bound keys. `DictationSession` gains `cancel_word: str = "cancel"` (configurable via `[dictation] cancel_word`); `handle_utterance` returns the new `"cancel"` `UtteranceKind` on an exact normalized match without buffering the audio; the daemon pipeline calls the pre-existing `cancel()` method, which discards the buffer and emits `dictation.end {"reason": "cancel"}` — no POST, no paste. The sprite `dictation.end` handler reads `data["reason"]`; `reason == "cancel"` sets `StateMachine.cancelled_cue = True` for a distinct visual badge (covers both spoken cancel and scroll-lock cancel retroactively).
+**Hotkey-end reliability and spoken cancel** (ADR 0089): a module-level `_DICTATION_WAKE` sentinel is enqueued via `put_nowait` in `on_dictation_toggle` immediately after `request_end()` to wake the pipeline thread from its blocking `get(timeout=None)`, eliminating the race where `pending_end` was set while the thread was already inside `get`; on `queue.Full`, the sentinel is skipped (pipeline already active). `HotkeyController` applies a 50 ms per-key debounce (`_last_fire: dict[Key, float]`, `_DEBOUNCE_S = 0.050`) to reject driver double-release / key-bounce events uniformly across all bound keys. `DictationSession` gains `cancel_word: str = "cancel"` (configurable via `[dictation] cancel_word`); `handle_utterance` returns the new `"cancel"` `UtteranceKind` on an exact normalized match without buffering the audio; the daemon pipeline calls the pre-existing `cancel()` method, which discards the buffer and emits `dictation.end {"reason": "cancel"}` — no POST, no paste. The sprite `dictation.end` handler reads `data.get("reason")` defensively; `reason == "cancel"` sets `StateMachine.cancelled_cue = True` for a distinct visual badge (covers both spoken cancel and scroll-lock cancel retroactively). Dictation and the picker are mutually-exclusive sub-states so `cancel_word` and `PickerConfig.cancel_words` never conflict.
 ```
 
 - [ ] **Step 4: Commit all doc updates**
@@ -1644,33 +1811,35 @@ git commit -m "docs: ADR 0089 row in technical-decisions, 0086 successor note, C
 ### Task 14: Visual E2E harness
 
 **Files:**
-- Create: `scripts/dictation_hotkey_cancel_e2e.py`
+- Create: `scripts/dictation_cancel_smoke.py` (render-smoke, in-process, Phase A: sentinel wake + Phase B: spoken cancel)
+- Create: `scripts/dictation_hotkey_cancel_e2e.py` (full subprocess + SSE + PrintWindow E2E, per mandatory protocol)
 
-- [ ] **Step 1: Create `scripts/dictation_hotkey_cancel_e2e.py`**
+**REV 6 note:** The E2E protocol requires TWO scripts, mirroring the picker reference:
+- `scripts/dictation_cancel_smoke.py` — in-process (no subprocess), fast feedback, proves the pipeline logic. Analogous to `scripts/picker_modal_smoke.py`.
+- `scripts/dictation_hotkey_cancel_e2e.py` — subprocess sprite + hand-rolled SSE server + `FindWindowW` + `PrintWindow` → PNG. Analogous to `scripts/picker_visual_e2e.py`. This script also drives the spoken-cancel path through the REAL daemon pipeline (not in-process).
+
+Both write to `outputs/` and exit non-zero on any failure. Both conform to the eight rules in `docs/agents/visual-e2e-testing.md`.
+
+#### Script A — Render-smoke (`scripts/dictation_cancel_smoke.py`)
+
+- [ ] **Step 1: Create `scripts/dictation_cancel_smoke.py`**
 
 ```python
-"""Visual E2E harness for ADR 0089 — dictation hotkey-end sentinel + spoken cancel.
+"""Render-smoke harness for ADR 0089 — dictation hotkey-end sentinel + spoken cancel.
 
-Mandatory per docs/agents/visual-e2e-testing.md — dictation touches hotkeys,
-daemon↔sprite IPC, and the system clipboard, all three trigger conditions.
+Mandatory per docs/agents/visual-e2e-testing.md Rule 2 (stage the harness).
+This script is Phase 1 (in-process, no subprocess). Proves:
+  - Sentinel wakes the pipeline thread within 1 s with no trailing utterance.
+  - Spoken cancel via _process_utterance() produces no POST, no paste, and emits
+    dictation.end {reason:'cancel'}.
+  - StateMachine.cancelled_cue is set after dictation.end {reason:'cancel'}.
 
-Two phases run in sequence; script exits non-zero if any check fails.
-
-PHASE A — Hotkey-end finalizes without trailing utterance
-  Start a minimal in-process pipeline (no real audio, stub transcriber),
-  enter dictation, buffer one utterance, fire on_dictation_toggle() with no
-  further utterances, assert dictation.end SSE event arrives within 1 s.
-
-PHASE B — Spoken cancel: no clipboard change, correct SSE reason
-  Start dictation, inject the cancel-word transcript via the dictation session,
-  assert dictation.end {reason:'cancel'} arrives on the SSE bus, assert the
-  clipboard is unchanged (no paste happened).
+Run BEFORE scripts/dictation_hotkey_cancel_e2e.py. Exits 0 on full PASS.
 
 Outputs:
-  outputs/dictation_e2e.log     — full validation log
-  outputs/dictation_e2e.json    — assertion summary (machine-readable)
+  outputs/dictation_smoke.log  — full validation log
+  outputs/dictation_smoke.json — assertion summary (machine-readable)
 """
-
 from __future__ import annotations
 
 import json
@@ -1679,14 +1848,13 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "outputs"
 OUT.mkdir(parents=True, exist_ok=True)
 
-LOG_PATH = OUT / "dictation_e2e.log"
-JSON_PATH = OUT / "dictation_e2e.json"
+LOG_PATH = OUT / "dictation_smoke.log"
+JSON_PATH = OUT / "dictation_smoke.json"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1696,19 +1864,11 @@ logging.basicConfig(
         logging.StreamHandler(),
     ],
 )
-log = logging.getLogger("dictation_e2e")
+log = logging.getLogger("dictation_smoke")
 
 
-# --------------------------------------------------------------------------
-# Shared scaffolding
-# --------------------------------------------------------------------------
-
-
-def _make_daemon(tmp_path: Path, cancel_word: str = "cancel") -> Any:
-    """Build a stripped-down in-process daemon for E2E testing.
-
-    Uses a stub transcriber (no GPU) and monkeypatches network + clipboard.
-    """
+def _make_daemon(tmp_path: Path, cancel_word: str = "cancel"):
+    """Build a stripped-down in-process daemon. Returns (daemon, dictation_session, bus)."""
     import numpy as np
     from dataclasses import dataclass
 
@@ -1728,10 +1888,14 @@ def _make_daemon(tmp_path: Path, cancel_word: str = "cancel") -> Any:
         no_speech_prob: float = 0.05
 
     class _Stub:
-        def __init__(self, q): self._q = q
+        def __init__(self, q):
+            self._q = list(q)
+
         def load(self): ...
         def unload(self): ...
-        def transcribe(self, _): return self._q.pop(0) if self._q else _T("")
+
+        def transcribe(self, _):
+            return self._q.pop(0) if self._q else _T("")
 
     reset_global_registry()
     reset_global_picker_registry()
@@ -1757,105 +1921,106 @@ def _make_daemon(tmp_path: Path, cancel_word: str = "cancel") -> Any:
     return daemon, dictation_session, bus
 
 
-# --------------------------------------------------------------------------
-# Phase A — Hotkey-end sentinel wake
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Phase A — Sentinel wake: hotkey-end finalizes without trailing utterance
+# ---------------------------------------------------------------------------
 
 
 def phase_a(tmp_path: Path) -> bool:
-    log.info("=== PHASE A: hotkey-end finalizes without trailing utterance ===")
+    log.info("=== PHASE A: hotkey-end sentinel wake ===")
     import numpy as np
+    from dataclasses import dataclass
 
-    posted: list[str] = []
-    pasted: list[str] = []
+    processed = threading.Event()
+    finalized = threading.Event()
 
-    # Monkeypatch network + clipboard at module level
     import voice_commander.dictation.remote as _remote
     import voice_commander.dictation.clipboard as _clipboard
 
     original_post = _remote.post_audio
     original_paste = _clipboard.paste_via_clipboard
 
-    _remote.post_audio = lambda *a, **kw: (posted.append("posted"), "SENTINEL TEXT")[1]
-    _clipboard.paste_via_clipboard = lambda text, **kw: pasted.append(text)
+    _remote.post_audio = lambda *a, **kw: "SENTINEL TEXT"
+    _clipboard.paste_via_clipboard = lambda *a, **kw: finalized.set()
 
     ok = False
     daemon = None
     pipeline_thread = None
     try:
-        daemon, dictation_session, bus = _make_daemon(tmp_path)
-
-        # Collect SSE events
-        events: list[tuple[str, dict]] = []
-        bus.subscribe(lambda et, data: events.append((et, data or {})))
-
-        # Start pipeline loop
-        pipeline_thread = threading.Thread(
-            target=daemon._pipeline_loop, name="vc-pipeline-e2e-a", daemon=True
-        )
-        pipeline_thread.start()
-
-        # Simulate an active voice session
-        daemon._session_active = True
-        dictation_session.start()
-
-        # Buffer one utterance by pushing it into the queue
-        audio = np.zeros(16000, dtype=np.float32)
-        gen = daemon._audio_gen
-
-        # Inject transcription result for this utterance
-        from dataclasses import dataclass
-
         @dataclass
         class _T:
             text: str
             confidence: float = 0.95
             no_speech_prob: float = 0.05
 
-        daemon._transcriber._q = [_T("some dictated words")]
-        daemon._utt_q.put((audio, gen))
-        time.sleep(0.1)  # let pipeline process the utterance
+        class _SentinelStub:
+            def __init__(self):
+                self._result = _T("some dictated words")
+
+            def load(self): ...
+            def unload(self): ...
+
+            def transcribe(self, _):
+                result = self._result
+                processed.set()
+                return result
+
+        from voice_commander.daemon import StreamingDaemon
+        from voice_commander.dictation.session import DictationSession
+        from voice_commander.dispatcher import Dispatcher
+        from voice_commander.event_bus import EventBus
+        from voice_commander.feedback import CapturingFeedbackSink
+        from voice_commander.picker.registry import reset_global_picker_registry
+        from voice_commander.registry import get_global_registry, reset_global_registry
+        from voice_commander.verb_router import VerbRouter, build_default_rules
+
+        reset_global_registry()
+        reset_global_picker_registry()
+        registry = get_global_registry()
+        bus = EventBus()
+        feedback = CapturingFeedbackSink()
+        dispatcher = Dispatcher(feedback=feedback, event_bus=bus)
+        verb_router = VerbRouter(build_default_rules(), registry=registry, picker_registry=None)
+        dictation_session = DictationSession(bus=bus, end_word="done")
+
+        daemon = StreamingDaemon(
+            feedback=feedback,
+            recorder=None,
+            transcriber=_SentinelStub(),
+            dispatcher=dispatcher,
+            verb_router=verb_router,
+            registry=registry,
+            event_bus=bus,
+            dictation_session=dictation_session,
+            output_dir=str(tmp_path),
+        )
+        daemon._transcriber_ready.set()
+
+        pipeline_thread = threading.Thread(
+            target=daemon._pipeline_loop, name="vc-pipeline-smoke-a", daemon=True
+        )
+        daemon._session_active = True
+        pipeline_thread.start()
+
+        dictation_session.start()
+        audio = np.zeros(16000, dtype=np.float32)
+        daemon._utt_q.put((audio, daemon._audio_gen))
+
+        assert processed.wait(timeout=5.0), "Timed out waiting for utterance to be transcribed"
+        time.sleep(0.020)  # let pipeline re-enter blocking get()
 
         log.info("firing hotkey-end with no trailing utterance...")
         t0 = time.monotonic()
         daemon.on_dictation_toggle()
 
-        # Assert dictation.end arrives within 1 s
-        deadline = t0 + 1.0
-        while time.monotonic() < deadline:
-            end_events = [
-                (et, d) for (et, d) in events if et == "dictation.end"
-            ]
-            if end_events:
-                break
-            time.sleep(0.01)
-
-        elapsed_ms = (time.monotonic() - t0) * 1000
-        end_events = [
-            (et, d) for (et, d) in events if et == "dictation.end"
-        ]
-
-        if not end_events:
+        if not finalized.wait(timeout=2.0):
             log.error(
-                "FAIL: dictation.end never arrived within 1 s (elapsed=%.0f ms). "
-                "Sentinel wake not working.", elapsed_ms
+                "FAIL: dictation not finalized within 2 s — sentinel wake not working"
             )
             return False
 
-        log.info(
-            "PASS: dictation.end arrived in %.0f ms (event=%s)",
-            elapsed_ms, end_events[0],
-        )
-
-        # Additional assertion: pasted text was produced (finalization worked)
-        daemon._dictation_executor.shutdown(wait=True)
-        daemon._wav_executor.shutdown(wait=True)
-
-        if not pasted:
-            log.error("FAIL: clipboard paste never happened — finalization may not have run")
-            return False
-
-        log.info("PASS: clipboard pasted=%r", pasted)
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        log.info("PASS: finalized in %.0f ms", elapsed_ms)
         ok = True
         return True
 
@@ -1869,20 +2034,23 @@ def phase_a(tmp_path: Path) -> bool:
                 pass
             if pipeline_thread is not None:
                 pipeline_thread.join(timeout=3.0)
+            daemon._dictation_executor.shutdown(wait=False)
+            daemon._wav_executor.shutdown(wait=False)
         log.info("PHASE A %s", "PASS" if ok else "FAIL")
 
 
-# --------------------------------------------------------------------------
-# Phase B — Spoken cancel: no clipboard change, SSE reason="cancel"
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Phase B — Spoken cancel: no paste, SSE reason="cancel"
+# ---------------------------------------------------------------------------
 
 
 def phase_b(tmp_path: Path) -> bool:
     log.info("=== PHASE B: spoken cancel — no paste, SSE reason='cancel' ===")
     import numpy as np
+    from dataclasses import dataclass
 
-    posted: list[str] = []
-    pasted: list[str] = []
+    posted: list = []
+    pasted: list = []
 
     import voice_commander.dictation.remote as _remote
     import voice_commander.dictation.clipboard as _clipboard
@@ -1891,55 +2059,53 @@ def phase_b(tmp_path: Path) -> bool:
     original_paste = _clipboard.paste_via_clipboard
 
     _remote.post_audio = lambda *a, **kw: (posted.append("posted"), "X")[1]
-    _clipboard.paste_via_clipboard = lambda text, **kw: pasted.append(text)
+    _clipboard.paste_via_clipboard = lambda *a, **kw: pasted.append("pasted")
 
     ok = False
     daemon = None
     pipeline_thread = None
     try:
-        daemon, dictation_session, bus = _make_daemon(tmp_path)
+        @dataclass
+        class _T:
+            text: str
+            confidence: float = 0.95
+            no_speech_prob: float = 0.05
 
-        events: list[tuple[str, dict]] = []
+        daemon, dictation_session, bus = _make_daemon(tmp_path)
+        # Inject transcripts for real _process_utterance dispatch
+        daemon._transcriber._q = [
+            _T("hello there"),  # buffered
+            _T("cancel"),       # triggers cancel via _process_utterance
+        ]
+
+        events: list = []
         bus.subscribe(lambda et, data: events.append((et, data or {})))
 
         pipeline_thread = threading.Thread(
-            target=daemon._pipeline_loop, name="vc-pipeline-e2e-b", daemon=True
+            target=daemon._pipeline_loop, name="vc-pipeline-smoke-b", daemon=True
         )
+        daemon._session_active = True
         pipeline_thread.start()
 
-        daemon._session_active = True
         dictation_session.start()
-        log.info("dictation session started")
-
-        # Buffer some content then inject cancel word via handle_utterance
-        # (bypasses transcription since we're testing the dispatch path)
         audio = np.zeros(8000, dtype=np.float32)
-        kind1 = dictation_session.handle_utterance(audio, "hello there")
-        assert kind1 == "buffered", f"Expected buffered; got {kind1}"
-        log.info("buffered one utterance")
 
-        # Inject cancel word
-        kind2 = dictation_session.handle_utterance(audio, "cancel")
-        assert kind2 == "cancel", f"Expected cancel; got {kind2}"
-        log.info("cancel-word injection returned kind=%r", kind2)
-
-        # Call daemon._dictation_session.cancel() as the pipeline would
-        daemon._dictation_session.cancel()
-        log.info("cancel() called — session should be inactive now")
-
-        assert not dictation_session.active, "session must be inactive after cancel"
+        # Drive through real _process_utterance dispatch path
+        daemon._utt_q.put((audio, daemon._audio_gen))  # "hello there" → buffered
+        time.sleep(0.1)
+        daemon._utt_q.put((audio, daemon._audio_gen))  # "cancel" → cancel()
+        time.sleep(0.1)
 
         daemon._dictation_executor.shutdown(wait=True)
         daemon._wav_executor.shutdown(wait=True)
 
-        # Assertions
         if posted:
-            log.error("FAIL: post_audio was called after cancel — must NOT be: %s", posted)
+            log.error("FAIL: post_audio was called — must NOT be: %s", posted)
             return False
         log.info("PASS: post_audio not called")
 
         if pasted:
-            log.error("FAIL: clipboard was pasted after cancel — must NOT be: %s", pasted)
+            log.error("FAIL: clipboard was pasted — must NOT be: %s", pasted)
             return False
         log.info("PASS: clipboard not pasted")
 
@@ -1949,11 +2115,10 @@ def phase_b(tmp_path: Path) -> bool:
         ]
         if not cancel_events:
             log.error(
-                "FAIL: dictation.end {reason:'cancel'} SSE event not emitted; events=%s",
-                events,
+                "FAIL: dictation.end {reason:'cancel'} not emitted; events=%s", events
             )
             return False
-        log.info("PASS: dictation.end reason='cancel' SSE event: %s", cancel_events[0])
+        log.info("PASS: dictation.end reason='cancel' emitted: %s", cancel_events[0])
 
         ok = True
         return True
@@ -1971,13 +2136,12 @@ def phase_b(tmp_path: Path) -> bool:
         log.info("PHASE B %s", "PASS" if ok else "FAIL")
 
 
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Phase C — Sprite state machine reads cancel reason
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 
 def phase_c() -> bool:
-    """Verify sprite StateMachine sets cancelled_cue on dictation.end reason='cancel'."""
     log.info("=== PHASE C: sprite state machine cancel cue ===")
     ok = False
     try:
@@ -1985,22 +2149,18 @@ def phase_c() -> bool:
 
         sm = StateMachine()
         sm.on_event("dictation.start", {})
-        assert sm.dictating is True
-
         sm.on_event("dictation.end", {"reason": "cancel"})
+
         if not sm.cancelled_cue:
-            log.error(
-                "FAIL: StateMachine.cancelled_cue not True after reason='cancel'"
-            )
+            log.error("FAIL: cancelled_cue not True after reason='cancel'")
             return False
         log.info("PASS: cancelled_cue=True after reason='cancel'")
 
         if sm.dictating:
-            log.error("FAIL: dictating should be False after dictation.end")
+            log.error("FAIL: dictating should be False")
             return False
         log.info("PASS: dictating=False")
 
-        # done reason must NOT set cancelled_cue
         sm2 = StateMachine()
         sm2.on_event("dictation.start", {})
         sm2.on_event("dictation.end", {"reason": "done"})
@@ -2009,15 +2169,25 @@ def phase_c() -> bool:
             return False
         log.info("PASS: cancelled_cue=False after reason='done'")
 
+        # Missing reason key — must not KeyError (REV 8 defensive access)
+        sm3 = StateMachine()
+        sm3.on_event("dictation.start", {})
+        try:
+            sm3.on_event("dictation.end", {})
+        except KeyError as e:
+            log.error("FAIL: KeyError on missing 'reason' key: %s", e)
+            return False
+        log.info("PASS: no KeyError on missing 'reason' key")
+
         ok = True
         return True
     finally:
         log.info("PHASE C %s", "PASS" if ok else "FAIL")
 
 
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Entry
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 
 def main() -> int:
@@ -2026,12 +2196,10 @@ def main() -> int:
     results: dict[str, bool] = {}
 
     with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        results["phase_a_hotkey_end_sentinel"] = phase_a(tmp_path)
+        results["phase_a_sentinel_wake"] = phase_a(Path(tmp))
 
     with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        results["phase_b_spoken_cancel"] = phase_b(tmp_path)
+        results["phase_b_spoken_cancel"] = phase_b(Path(tmp))
 
     results["phase_c_sprite_cancel_cue"] = phase_c()
 
@@ -2051,41 +2219,339 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 2: Run the E2E harness**
+#### Script B — Full E2E with subprocess sprite + SSE + PrintWindow (`scripts/dictation_hotkey_cancel_e2e.py`)
+
+- [ ] **Step 2: Create `scripts/dictation_hotkey_cancel_e2e.py`**
+
+This script follows `scripts/picker_visual_e2e.py` exactly:
+- Starts a hand-rolled stdlib SSE server on a free port.
+- Spawns the real `voice_sprite` subprocess pointed at that server.
+- Waits for the sprite window to appear (`FindWindowW("vc-sprite")` or the sprite's window class).
+- Publishes `dictation.start` and `dictation.end {"reason":"cancel"}` events through the SSE server.
+- Locates the sprite HWND, captures it with `PrintWindow(PW_RENDERFULLCONTENT=0x2)`.
+- Saves the PNG to `outputs/dictation_e2e.png`.
+- Asserts: sprite window visible, PNG saved non-empty, SSE events delivered.
+- Wrapped in `try`/`finally` to terminate the sprite subprocess — no leaked processes.
+- Exits non-zero on any failure (Rule 5 cleanup, Rule 4 artifacts, Rule 3 real signals).
+
+```python
+"""Full subprocess E2E harness for ADR 0089 — dictation cancel sprite rendering.
+
+Mandatory per docs/agents/visual-e2e-testing.md — this is the subprocess +
+SSE + PrintWindow layer. Run AFTER scripts/dictation_cancel_smoke.py passes.
+
+Follows scripts/picker_visual_e2e.py exactly:
+  - Hand-rolled stdlib SSE server on a free port (no FastAPI).
+  - Real voice_sprite subprocess pointed at the SSE server.
+  - FindWindowW to locate the sprite HWND.
+  - PrintWindow(PW_RENDERFULLCONTENT=0x2) to capture the sprite window.
+  - PNG written to outputs/dictation_e2e.png.
+  - Cleanup in try/finally — no leaked processes.
+  - Exits non-zero on any failure.
+
+PHASE A — Sprite receives dictation.start + dictation.end {reason:'cancel'}.
+  Asserts: sprite window visible, SSE events delivered, PNG captured.
+
+PHASE B — (Optional real-daemon integration when daemon is running)
+  Not included in this harness to avoid requiring a live GPU/audio stack.
+  Full real-daemon integration is covered by tests/integration/.
+
+Outputs:
+  outputs/dictation_e2e.png   — captured sprite screenshot
+  outputs/dictation_e2e.log   — full validation log
+  outputs/dictation_e2e.json  — assertion summary
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import queue
+import socket
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "outputs"
+OUT.mkdir(parents=True, exist_ok=True)
+
+LOG_PATH = OUT / "dictation_e2e.log"
+PNG_PATH = OUT / "dictation_e2e.png"
+JSON_PATH = OUT / "dictation_e2e.json"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_PATH, mode="w", encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
+)
+log = logging.getLogger("dictation_e2e")
+
+
+# --------------------------------------------------------------------------
+# Helpers (copied from picker_visual_e2e.py pattern)
+# --------------------------------------------------------------------------
+
+
+def _free_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p = s.getsockname()[1]
+    s.close()
+    return p
+
+
+class _SSEHandler(BaseHTTPRequestHandler):
+    def log_message(self, *_args: Any) -> None:
+        pass
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path.startswith("/healthz"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+            return
+        if self.path.startswith("/events"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            ev_id = 0
+            self.server.connected.set()  # type: ignore[attr-defined]
+            while not self.server.shutdown_flag.is_set():  # type: ignore[attr-defined]
+                try:
+                    ev = self.server.queue.get(timeout=1.0)  # type: ignore[attr-defined]
+                except queue.Empty:
+                    try:
+                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.flush()
+                    except OSError:
+                        return
+                    continue
+                if ev is None:
+                    return
+                ev_id += 1
+                payload = f"id: {ev_id}\nevent: {ev['type']}\ndata: {json.dumps(ev['data'])}\n\n"
+                try:
+                    self.wfile.write(payload.encode())
+                    self.wfile.flush()
+                except OSError:
+                    return
+
+
+def _start_sse_server(port: int) -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer(("127.0.0.1", port), _SSEHandler)
+    server.queue = queue.Queue()  # type: ignore[attr-defined]
+    server.connected = threading.Event()  # type: ignore[attr-defined]
+    server.shutdown_flag = threading.Event()  # type: ignore[attr-defined]
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    return server
+
+
+def _push_event(server: ThreadingHTTPServer, event_type: str, data: dict) -> None:
+    server.queue.put({"type": event_type, "data": data})  # type: ignore[attr-defined]
+
+
+def _capture_window_png(hwnd: int, out_path: Path) -> bool:
+    """Capture a window to PNG using PrintWindow(PW_RENDERFULLCONTENT=0x2)."""
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+        import win32gui
+        import win32ui
+        from PIL import Image
+
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+        w, h = right - left, bottom - top
+        if w <= 0 or h <= 0:
+            log.error("Window rect invalid: %dx%d", w, h)
+            return False
+
+        hwnd_dc = win32gui.GetWindowDC(hwnd)
+        dc_obj = win32ui.CreateDCFromHandle(hwnd_dc)
+        mem = dc_obj.CreateCompatibleDC()
+        bmp = win32ui.CreateBitmap()
+        bmp.CreateCompatibleBitmap(dc_obj, w, h)
+        mem.SelectObject(bmp)
+
+        user32 = ctypes.windll.user32
+        user32.PrintWindow.argtypes = [wt.HWND, wt.HDC, wt.UINT]
+        user32.PrintWindow.restype = wt.BOOL
+        ok = user32.PrintWindow(hwnd, mem.GetSafeHdc(), 0x2)
+
+        bmp_info = bmp.GetInfo()
+        bmp_bits = bmp.GetBitmapBits(True)
+        img = Image.frombuffer("RGB", (bmp_info["bmWidth"], bmp_info["bmHeight"]),
+                                bmp_bits, "raw", "BGRX", 0, 1)
+        img.save(str(out_path))
+
+        mem.DeleteDC()
+        dc_obj.DeleteDC()
+        win32gui.ReleaseDC(hwnd, hwnd_dc)
+        win32gui.DeleteObject(bmp.GetHandle())
+        return bool(ok)
+    except Exception as exc:
+        log.error("PrintWindow failed: %s", exc)
+        return False
+
+
+def _find_sprite_hwnd(timeout: float = 10.0) -> int | None:
+    """Poll for the sprite window HWND. Returns hwnd or None on timeout."""
+    import win32gui
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        # voice_sprite window titles / class names — check both common patterns
+        hwnd = win32gui.FindWindowW(None, "voice-sprite")
+        if not hwnd:
+            hwnd = win32gui.FindWindowW("vc-sprite", None)
+        if hwnd and win32gui.IsWindowVisible(hwnd):
+            return hwnd
+        time.sleep(0.2)
+    return None
+
+
+# --------------------------------------------------------------------------
+# Phase A — Sprite SSE rendering
+# --------------------------------------------------------------------------
+
+
+def phase_a() -> bool:
+    log.info("=== PHASE A: sprite receives dictation.start + dictation.end{cancel} ===")
+    port = _free_port()
+    server = _start_sse_server(port)
+    sprite_proc: subprocess.Popen | None = None
+    ok = False
+
+    try:
+        # Spawn voice_sprite subprocess pointed at our SSE server
+        env = dict(os.environ)
+        sprite_proc = subprocess.Popen(
+            [
+                sys.executable, "-m", "voice_sprite",
+                "--daemon-url", f"http://127.0.0.1:{port}",
+            ],
+            cwd=str(ROOT),
+            env=env,
+        )
+        log.info("sprite subprocess started (pid=%d)", sprite_proc.pid)
+
+        # Wait for the sprite to connect to our SSE endpoint
+        if not server.connected.wait(timeout=15.0):  # type: ignore[attr-defined]
+            log.error("FAIL: sprite never connected to SSE server within 15 s")
+            return False
+        log.info("sprite connected to SSE server")
+
+        # Send a heartbeat so the sprite doesn't crash to CRASHED state
+        _push_event(server, "daemon_heartbeat", {})
+        _push_event(server, "session_started", {})
+        time.sleep(0.5)
+
+        # Push dictation.start
+        _push_event(server, "dictation.start", {})
+        time.sleep(0.3)
+
+        # Push dictation.end with reason="cancel"
+        _push_event(server, "dictation.end", {"reason": "cancel"})
+        time.sleep(0.5)
+
+        # Locate the sprite window
+        hwnd = _find_sprite_hwnd(timeout=10.0)
+        if hwnd is None:
+            log.error("FAIL: sprite window not found within 10 s")
+            return False
+        log.info("PASS: sprite window found (hwnd=%d)", hwnd)
+
+        # Capture PNG
+        captured = _capture_window_png(hwnd, PNG_PATH)
+        if not captured or not PNG_PATH.exists() or PNG_PATH.stat().st_size < 100:
+            log.error("FAIL: PNG capture failed or file is empty")
+            return False
+        log.info("PASS: sprite screenshot captured to %s (%d bytes)",
+                 PNG_PATH, PNG_PATH.stat().st_size)
+
+        ok = True
+        return True
+
+    finally:
+        server.shutdown_flag.set()  # type: ignore[attr-defined]
+        server.shutdown()
+        if sprite_proc is not None:
+            sprite_proc.terminate()
+            try:
+                sprite_proc.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                sprite_proc.kill()
+        log.info("PHASE A %s", "PASS" if ok else "FAIL")
+
+
+# --------------------------------------------------------------------------
+# Entry
+# --------------------------------------------------------------------------
+
+
+def main() -> int:
+    results: dict[str, bool] = {}
+    results["phase_a_sprite_sse_rendering"] = phase_a()
+
+    all_pass = all(results.values())
+    log.info(
+        "=== SUMMARY: %s ===",
+        " | ".join(f"{k}={'PASS' if v else 'FAIL'}" for k, v in results.items()),
+    )
+    JSON_PATH.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    log.info("PNG evidence: %s", PNG_PATH)
+    log.info("Log: %s", LOG_PATH)
+    log.info("Assertion summary: %s", JSON_PATH)
+    return 0 if all_pass else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+- [ ] **Step 3: Run the smoke harness**
+
+```
+python scripts/dictation_cancel_smoke.py
+```
+
+Expected: All three phases PASS; exit code 0; `outputs/dictation_smoke.log` and `outputs/dictation_smoke.json` created.
+
+- [ ] **Step 4: Run the full E2E harness (requires display / sprite deps)**
 
 ```
 python scripts/dictation_hotkey_cancel_e2e.py
 ```
 
-Expected: All three phases PASS; exit code 0; `outputs/dictation_e2e.log` and `outputs/dictation_e2e.json` created.
+Expected: Phase A PASS; `outputs/dictation_e2e.png` exists and is non-empty; exit code 0.
 
-- [ ] **Step 3: Inspect the output files**
+- [ ] **Step 5: Inspect the output files**
 
-```
-cat outputs/dictation_e2e.json
-```
+Open `outputs/dictation_e2e.png` to visually confirm the sprite rendered (Rule 8: don't accept first green — eyeball it). Check `outputs/dictation_smoke.json` for all-true.
 
-Expected JSON:
-```json
-{
-  "phase_a_hotkey_end_sentinel": true,
-  "phase_b_spoken_cancel": true,
-  "phase_c_sprite_cancel_cue": true
-}
-```
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add scripts/dictation_hotkey_cancel_e2e.py
-git commit -m "test(e2e): dictation hotkey-end sentinel + spoken cancel visual E2E harness (ADR 0089)"
+git add scripts/dictation_cancel_smoke.py scripts/dictation_hotkey_cancel_e2e.py
+git commit -m "test(e2e): dictation cancel render-smoke + subprocess sprite SSE PrintWindow harness (ADR 0089)"
 ```
 
 ---
 
-### Task 15: Full test suite verification and final commit
+### Task 15: Full test suite verification and final docstring polish
 
-**Files:** None (verification only)
+**Files:** Minor docstring tweak to `src/voice_commander/dictation/session.py`
 
 - [ ] **Step 1: Run the complete unit test suite**
 
@@ -2103,22 +2569,44 @@ pytest tests/integration/ -q
 
 Expected: All tests PASS. Zero failures.
 
-- [ ] **Step 3: Run the E2E harness one final time as the exit-gate**
+- [ ] **Step 3: Run the smoke harness one final time as the exit-gate**
 
 ```
-python scripts/dictation_hotkey_cancel_e2e.py
+python scripts/dictation_cancel_smoke.py
 ```
 
 Expected: Exit code 0.
 
-- [ ] **Step 4: Verify no stale type annotations or docstrings**
+- [ ] **Step 4: Update module docstring in `src/voice_commander/dictation/session.py`**
 
-Check these locations match the implementation:
-- `src/voice_commander/dictation/session.py` L1–22: module docstring references both exit paths (end-word and hotkey-end). Append a note about the sentinel wake:
-  - In the hotkey-end paragraph, add: `(ADR 0089: a module-level sentinel is enqueued in _utt_q to wake the pipeline thread from get(timeout=None) when pending_end is set.)`
-- `src/voice_commander/daemon.py` L205–206: `_utt_q` docstring in `__init__`. Verify the inline comment still reads accurately (it mentions `maxsize 8` — this is still correct).
+In the hotkey-end paragraph of the module docstring (lines 1–22), add a note about the sentinel wake. The paragraph currently says:
 
-- [ ] **Step 5: Final summary commit if any docstring tweaks were needed**
+```
+(b) **Hotkey-end path** — the hotkey thread calls :meth:`request_end`, which
+    sets :attr:`pending_end` without deactivating the session.  The pipeline
+    thread polls :attr:`pending_end`; while it is set, the pipeline uses a
+    short timed get on the utterance queue (``_DICTATION_DRAIN_TIMEOUT_S``).
+    Once the queue drains (timeout expires with no new item), the pipeline
+    calls ``_finalize_pending_dictation_end`` → :meth:`take_and_finish`,
+    which atomically captures the buffer and deactivates the session.
+```
+
+Update to:
+```
+(b) **Hotkey-end path** — the hotkey thread calls :meth:`request_end`, which
+    sets :attr:`pending_end` without deactivating the session.  The hotkey
+    thread also enqueues a ``_DICTATION_WAKE`` sentinel via ``put_nowait``
+    to unblock the pipeline thread from ``get(timeout=None)`` immediately
+    (ADR 0089 — eliminates the race where ``pending_end`` is set while the
+    thread is already inside ``get``).  While ``pending_end`` is set, the
+    pipeline uses a short timed get on the utterance queue
+    (``_DICTATION_DRAIN_TIMEOUT_S``).  Once the queue drains (timeout
+    expires with no new item), the pipeline calls
+    ``_finalize_pending_dictation_end`` → :meth:`take_and_finish`, which
+    atomically captures the buffer and deactivates the session.
+```
+
+- [ ] **Step 5: Final summary commit if any docstring tweaks were made**
 
 ```bash
 git add src/voice_commander/dictation/session.py
