@@ -18,8 +18,31 @@ logger = logging.getLogger(__name__)
 _TAG_H = 22  # tag box height, px
 _TAG_PAD = 7  # horizontal padding inside a tag, px
 _DIGIT_W = 9  # approximate per-digit width at the chosen font size, px
+_TAG_FONT_SIZE = 11  # hint-tag digit font size, pt
 _TAG_BG = (255, 221, 0)  # Vimium yellow
 _TAG_FG = (0, 0, 0, 255)  # black text
+
+
+def _label_kwargs(text: str, *, x: int, y: int) -> dict[str, Any]:
+    """Static keyword arguments for a hint-tag ``pyglet.text.Label``.
+
+    Extracted from ``ElementsOverlayWindow.__init__`` so a unit test can
+    assert every key is a real parameter of the installed pyglet's
+    ``Label.__init__`` without needing a GL context. This is the regression
+    guard for the pyglet 1.x ``bold=True`` vs pyglet 2.1 ``weight="bold"``
+    API change — a wrong kwarg otherwise only surfaces as a crash at
+    window-construction time, which no other automated test exercises.
+    """
+    return {
+        "text": text,
+        "font_size": _TAG_FONT_SIZE,
+        "weight": "bold",
+        "color": _TAG_FG,
+        "x": x,
+        "y": y,
+        "anchor_x": "center",
+        "anchor_y": "center",
+    }
 
 
 def tag_xy(
@@ -105,15 +128,8 @@ class ElementsOverlayWindow(pyglet.window.Window):  # type: ignore[misc]
                 )
             )
             self._labels.append(
-                pyglet.text.Label(  # type: ignore[call-arg]  # pyglet stub lacks bold=
-                    text,
-                    font_size=11,
-                    bold=True,
-                    color=_TAG_FG,
-                    x=x + tag_w // 2,
-                    y=y + _TAG_H // 2,
-                    anchor_x="center",
-                    anchor_y="center",
+                pyglet.text.Label(
+                    **_label_kwargs(text, x=x + tag_w // 2, y=y + _TAG_H // 2),
                     batch=self._batch,
                 )
             )
