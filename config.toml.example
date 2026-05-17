@@ -5,8 +5,9 @@ key = "scroll_lock"
 dictation_key = "ctrl_r"
 
 [dictation]
-endpoint = "http://192.168.4.200:8765/inference"
-end_word = "done"
+endpoint    = "http://192.168.4.200:8765/inference"
+end_word    = "done"
+cancel_word = "cancel"   # say this word to abort dictation and discard the audio
 
 [audio]
 device_name = ""

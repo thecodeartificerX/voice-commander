@@ -270,6 +270,27 @@ def test_dictation_config_override(tmp_path):
     assert cfg.dictation.end_word == "finish"
 
 
+def test_dictation_config_cancel_word_default(tmp_path):
+    """DictationConfig.cancel_word defaults to 'cancel' when not specified."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("", encoding="utf-8")
+    from voice_commander.config import Config
+    cfg = Config.load(cfg_file)
+    assert cfg.dictation.cancel_word == "cancel"
+
+
+def test_dictation_config_cancel_word_override(tmp_path):
+    """DictationConfig.cancel_word can be overridden via [dictation] section."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        "[dictation]\ncancel_word = \"abort\"\n",
+        encoding="utf-8",
+    )
+    from voice_commander.config import Config
+    cfg = Config.load(cfg_file)
+    assert cfg.dictation.cancel_word == "abort"
+
+
 def test_stale_mute_key_warns_and_is_ignored(tmp_path, caplog):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
