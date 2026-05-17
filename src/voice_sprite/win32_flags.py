@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 user32 = ctypes.windll.user32
 dwmapi = ctypes.windll.dwmapi
+gdi32 = ctypes.windll.gdi32
 
 GWL_EXSTYLE = -20
 WS_EX_LAYERED = 0x00080000  # Enables per-pixel alpha / transparency
@@ -41,6 +42,7 @@ class DWM_BLURBEHIND(ctypes.Structure):
 
 
 DWM_BB_ENABLE = 0x1
+DWM_BB_BLURREGION = 0x2
 
 # NOTE: don't use ctypes.HRESULT as restype — it auto-raises OSError on any
 # non-zero return, including benign statuses like DWM_E_COMPOSITIONDISABLED,
@@ -51,6 +53,18 @@ dwmapi.DwmExtendFrameIntoClientArea.restype = ctypes.c_long
 
 dwmapi.DwmEnableBlurBehindWindow.argtypes = [wintypes.HWND, ctypes.POINTER(DWM_BLURBEHIND)]
 dwmapi.DwmEnableBlurBehindWindow.restype = ctypes.c_long
+
+gdi32.CreateRectRgn.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+gdi32.CreateRectRgn.restype = wintypes.HRGN
+gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+gdi32.DeleteObject.restype = wintypes.BOOL
+
+# GA_ROOT: walk up the window parent chain to the top-level window.
+# DwmEnableBlurBehindWindow requires a top-level HWND — calling it on a
+# child window (e.g. pyglet's OpenGL canvas child) returns E_INVALIDARG.
+_GA_ROOT = 2
+user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
+user32.GetAncestor.restype = wintypes.HWND
 
 
 def apply_click_through(hwnd: int) -> None:
@@ -84,20 +98,34 @@ def apply_click_through(hwnd: int) -> None:
     # with non-client area (title bar, borders) to extend. WS_POPUP has no
     # frame, so the call returns E_INVALIDARG. Skip it for overlay windows.
 
-    # Override pyglet's DwmEnableBlurBehindWindow call. Pyglet passes an
-    # empty blur region with DWM_BB_BLURREGION flag; on Windows 11 this
-    # can fail to enable per-pixel alpha because DWM sees the BLURREGION
-    # flag and tries to apply blur to an empty region. Canonical pattern =
-    # DWM_BB_ENABLE only, NULL region — tells DWM to composite the
-    # framebuffer's alpha channel directly.
+    # Re-apply DWM per-pixel alpha compositing using the canonical empty-HRGN
+    # idiom: DWM_BB_ENABLE | DWM_BB_BLURREGION with a zero-area region created
+    # by CreateRectRgn(0,0,-1,-1). This is exactly what pyglet's own
+    # _set_transparency() does (pyglet/window/win32/__init__.py), and what
+    # Qt's OpenGL backend and Rust winit use. The empty region tells DWM to
+    # honour the GL framebuffer's per-pixel alpha for the entire client area
+    # rather than compositing the window as a globally-opaque surface.
+    #
+    # The previous code used DWM_BB_ENABLE alone with hRgnBlur=NULL. That is
+    # INVALID (returns E_INVALIDARG, 0x80070057) and clobbers pyglet's correct
+    # DWM state. On small windows DWM silently ignores the bad call; on a
+    # full-monitor overlay DWM's fullscreen-optimisation path accepts it and
+    # composites the framebuffer as opaque black — the exact bug this fixes.
+    #
+    # DwmEnableBlurBehindWindow requires a TOP-LEVEL HWND. Callers may pass
+    # pyglet's canvas child HWND (canvas.hwnd ≠ window._hwnd). Walk up to the
+    # root ancestor so DWM never sees a child window and returns E_INVALIDARG.
     dwm_ok = True
     try:
+        toplevel_hwnd = user32.GetAncestor(hwnd, _GA_ROOT) or hwnd
+        region = gdi32.CreateRectRgn(0, 0, -1, -1)
         bb = DWM_BLURBEHIND()
-        bb.dwFlags = DWM_BB_ENABLE
+        bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION
         bb.fEnable = True
-        bb.hRgnBlur = 0
+        bb.hRgnBlur = region
         bb.fTransitionOnMaximized = False
-        hr = dwmapi.DwmEnableBlurBehindWindow(hwnd, ctypes.byref(bb))
+        hr = dwmapi.DwmEnableBlurBehindWindow(toplevel_hwnd, ctypes.byref(bb))
+        gdi32.DeleteObject(region)
         if hr != 0:
             logger.warning("DwmEnableBlurBehindWindow HRESULT=0x%08x", hr & 0xFFFFFFFF)
     except OSError:
