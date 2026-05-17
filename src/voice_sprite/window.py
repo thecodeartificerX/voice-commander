@@ -157,7 +157,9 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._sprite: pyglet.sprite.Sprite | None = None
         self._label: pyglet.text.Label | None = None
         self._badge_label: pyglet.text.Label | None = None
+        self._cancel_badge_label: pyglet.text.Label | None = None
         self._dictating = False
+        self._cancelled_cue = False
         self._muted = False
         self._mute_color = (128, 128, 128)
 
@@ -191,6 +193,18 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
 
     def set_dictating(self, dictating: bool) -> None:
         self._dictating = dictating
+
+    def set_cancelled_cue(self, cancelled: bool) -> None:
+        """Show (True) or hide (False) the transient 'CANCELLED' badge.
+
+        Called by the main update loop when ``StateMachine.cancelled_cue``
+        transitions.  The badge is distinct from the DICTATING badge: it uses
+        a red-orange colour and different text so the user can tell at a
+        glance that dictation was *discarded*, not merely stopped.
+        The caller is responsible for scheduling the auto-clear (typically
+        2.5 s via ``pyglet.clock.schedule_once``).
+        """
+        self._cancelled_cue = cancelled
 
     def on_draw(self) -> None:
         # Re-assert transparent clear color every frame. Canonical Windows
@@ -282,6 +296,23 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
             # captured once at label creation goes stale mid-dictation.
             self._badge_label.x = self.width // 2
             self._badge_label.draw()
+
+        if self._cancelled_cue:
+            if self._cancel_badge_label is None:
+                self._cancel_badge_label = pyglet.text.Label(
+                    "✕ CANCELLED",
+                    font_name="Segoe UI",
+                    font_size=9,
+                    weight="bold",
+                    x=self.width // 2,
+                    y=2,
+                    anchor_x="center",
+                    anchor_y="bottom",
+                    color=(255, 90, 90, 255),
+                )
+            # Re-centre every frame in case CursorDock resizes the window.
+            self._cancel_badge_label.x = self.width // 2
+            self._cancel_badge_label.draw()
 
     def apply_win32_flags(self) -> None:
         """Apply click-through, topmost, no-taskbar flags (Windows only).

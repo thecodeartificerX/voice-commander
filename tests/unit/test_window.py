@@ -31,7 +31,9 @@ def _make_window(
     win._sprite = None
     win._label = None
     win._badge_label = None
+    win._cancel_badge_label = None
     win._dictating = False
+    win._cancelled_cue = False
     win._muted = False
     win._mute_color = (128, 128, 128)
     win._cached_frame_key = None
@@ -372,6 +374,105 @@ def test_on_draw_not_dictating_skips_badge():
         win.on_draw()
 
     pg.text.Label.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Cancelled-cue badge — ADR 0089 (FIX 1)
+# ---------------------------------------------------------------------------
+
+
+def test_set_cancelled_cue_method_exists():
+    """SpriteWindow must expose set_cancelled_cue(bool) for the renderer to call."""
+    renderer = MagicMock()
+    bubble = MagicMock()
+    win = _make_window(renderer, bubble)
+    # Must not raise AttributeError
+    win.set_cancelled_cue(True)
+    assert win._cancelled_cue is True
+    win.set_cancelled_cue(False)
+    assert win._cancelled_cue is False
+
+
+def test_on_draw_cancelled_cue_draws_cancel_badge():
+    """on_draw with _cancelled_cue=True lazily creates and draws the CANCELLED badge."""
+    renderer = MagicMock()
+    renderer.frame_region = (0, 0, 32, 48)
+    bubble = MagicMock()
+    bubble.visible = False
+
+    with patch.object(_mod, "pyglet") as pg:
+        fake_image = MagicMock()
+        fake_image.height = 96
+        fake_image.get_region.return_value = MagicMock()
+        pg.sprite.Sprite.return_value = MagicMock()
+        fake_cancel_badge = MagicMock()
+        pg.text.Label.return_value = fake_cancel_badge
+
+        win = _make_window(renderer, bubble, image=fake_image)
+        win._cancelled_cue = True
+        win.clear = MagicMock()
+        win.on_draw()
+
+    # The cancel badge label must be created with a DISTINCT text and color
+    # from the DICTATING badge (yellow) and the speech-bubble label (white).
+    # Expect red-orange color to be visually distinct.
+    call_kwargs = pg.text.Label.call_args
+    label_text = call_kwargs[0][0] if call_kwargs[0] else call_kwargs[1].get("text", "")
+    assert "CANCEL" in label_text.upper(), (
+        f"cancel badge text must contain 'CANCEL', got: {label_text!r}"
+    )
+    fake_cancel_badge.draw.assert_called_once()
+
+
+def test_on_draw_cancelled_cue_false_skips_cancel_badge():
+    """on_draw with _cancelled_cue=False must not render any cancel badge."""
+    renderer = MagicMock()
+    renderer.frame_region = (0, 0, 32, 48)
+    bubble = MagicMock()
+    bubble.visible = False
+
+    with patch.object(_mod, "pyglet") as pg:
+        fake_image = MagicMock()
+        fake_image.height = 96
+        fake_image.get_region.return_value = MagicMock()
+        pg.sprite.Sprite.return_value = MagicMock()
+
+        win = _make_window(renderer, bubble, image=fake_image)
+        win._cancelled_cue = False
+        win.clear = MagicMock()
+        win.on_draw()
+
+    # No Label created (bubble.visible=False, not dictating, not cancelled)
+    pg.text.Label.assert_not_called()
+
+
+def test_on_draw_cancelled_and_dictating_both_render():
+    """If somehow both _cancelled_cue and _dictating are True, both badges render.
+
+    This should not normally occur (dictating is cleared before cancelled_cue
+    is set), but the render path must not crash.
+    """
+    renderer = MagicMock()
+    renderer.frame_region = (0, 0, 32, 48)
+    bubble = MagicMock()
+    bubble.visible = False
+
+    with patch.object(_mod, "pyglet") as pg:
+        fake_image = MagicMock()
+        fake_image.height = 96
+        fake_image.get_region.return_value = MagicMock()
+        pg.sprite.Sprite.return_value = MagicMock()
+        pg.text.Label.return_value = MagicMock()
+
+        win = _make_window(renderer, bubble, image=fake_image)
+        win._dictating = True
+        win._cancelled_cue = True
+        win.clear = MagicMock()
+        # Must not raise
+        win.on_draw()
+
+    # Two labels created: DICTATING badge + CANCELLED badge
+    assert pg.text.Label.call_count == 2
 
 
 # ---------------------------------------------------------------------------

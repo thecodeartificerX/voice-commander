@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock, call
+
 import pytest
 
-from voice_sprite.__main__ import _make_parser, _should_reload
+from voice_sprite.__main__ import (
+    _CANCELLED_CUE_DURATION_S,
+    _apply_cancelled_cue,
+    _make_parser,
+    _should_reload,
+)
 
 
 class TestShouldReload:
@@ -40,6 +47,93 @@ class TestShouldReload:
         self, old: float, new: float, threshold: float, expected: bool
     ) -> None:
         assert _should_reload(old, new, threshold) is expected
+
+
+class TestApplyCancelledCue:
+    """Unit tests for the _apply_cancelled_cue wiring helper (ADR 0089 FIX 1)."""
+
+    def _make_sm(self, cancelled: bool) -> MagicMock:
+        sm = MagicMock()
+        sm.cancelled_cue = cancelled
+        return sm
+
+    def test_cancelled_cue_true_calls_set_cancelled_cue(self) -> None:
+        """When sm.cancelled_cue is True, window.set_cancelled_cue(True) is called."""
+        sm = self._make_sm(True)
+        window = MagicMock()
+        schedule_fn = MagicMock()
+
+        _apply_cancelled_cue(sm, window, schedule_fn)
+
+        window.set_cancelled_cue.assert_called_once_with(True)
+
+    def test_cancelled_cue_true_schedules_auto_clear(self) -> None:
+        """When sm.cancelled_cue is True, a clear is scheduled for _CANCELLED_CUE_DURATION_S."""
+        sm = self._make_sm(True)
+        window = MagicMock()
+        schedule_fn = MagicMock()
+
+        _apply_cancelled_cue(sm, window, schedule_fn)
+
+        assert schedule_fn.call_count == 1
+        delay = schedule_fn.call_args[0][0]
+        assert delay == pytest.approx(_CANCELLED_CUE_DURATION_S)
+
+    def test_auto_clear_callback_resets_sm_and_window(self) -> None:
+        """The scheduled callback clears sm.cancelled_cue and hides the badge."""
+        sm = self._make_sm(True)
+        window = MagicMock()
+        captured_callbacks: list = []
+
+        def schedule_fn(delay: float, cb) -> None:  # noqa: ANN001
+            captured_callbacks.append(cb)
+
+        _apply_cancelled_cue(sm, window, schedule_fn)
+        assert len(captured_callbacks) == 1
+
+        # Fire the scheduled callback (simulating pyglet.clock firing after delay)
+        captured_callbacks[0](2.5)
+
+        assert sm.cancelled_cue is False
+        assert window.set_cancelled_cue.call_args_list == [call(True), call(False)]
+
+    def test_cancelled_cue_false_calls_set_cancelled_cue_false(self) -> None:
+        """When sm.cancelled_cue is False, window.set_cancelled_cue(False) is called."""
+        sm = self._make_sm(False)
+        window = MagicMock()
+        schedule_fn = MagicMock()
+
+        _apply_cancelled_cue(sm, window, schedule_fn)
+
+        window.set_cancelled_cue.assert_called_once_with(False)
+        schedule_fn.assert_not_called()
+
+    def test_cancelled_cue_false_does_not_schedule(self) -> None:
+        """When sm.cancelled_cue is False, no auto-clear timer is scheduled."""
+        sm = self._make_sm(False)
+        window = MagicMock()
+        schedule_fn = MagicMock()
+
+        _apply_cancelled_cue(sm, window, schedule_fn)
+
+        schedule_fn.assert_not_called()
+
+    def test_cancel_badge_distinct_from_dictating_badge(self) -> None:
+        """The cancelled cue must NOT affect sm.dictating or sm.muted.
+
+        This confirms the two badges are fully independent.
+        """
+        sm = self._make_sm(True)
+        sm.dictating = False
+        sm.muted = False
+        window = MagicMock()
+        schedule_fn = MagicMock()
+
+        _apply_cancelled_cue(sm, window, schedule_fn)
+
+        # Only set_cancelled_cue should be called — NOT set_dictating / set_muted
+        window.set_dictating.assert_not_called()
+        window.set_muted.assert_not_called()
 
 
 class TestMakeParser:
