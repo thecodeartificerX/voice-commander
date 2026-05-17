@@ -2,6 +2,20 @@
 
 Canonical entry point for any AI agent or human working on this project. **Read this file first**, then lazy-load the topical references from the map below as you need them.
 
+## Documentation discipline — non-negotiable
+
+**Docs are updated in the SAME change as the code. Not "later", not "a follow-up". A change is not done until its docs are.** Stale documentation is a defect, ranked the same as a failing test.
+
+When you change anything, update the matching docs *before* calling the work complete:
+
+- **New feature or behaviour change** → write or update an ADR in `docs/decisions/`, refresh the **Current state** section below, and add/update its row in `docs/agents/technical-decisions.md`.
+- **Config changed** → update `config.toml.example`, including the inline comment explaining each key.
+- **Touched a module, class, or function** → its docstrings must still be true afterwards. A stale docstring is a bug — fix it in the same edit, do not leave it.
+- **New subsystem or a non-obvious multi-step flow** → add an overview doc under `docs/` and link it from `docs/index.md`.
+- **Used an external library or framework** → vendor the researched API reference into `docs/references/` and cite it from the code that depends on it.
+
+Any reviewer — human or agent — must reject code whose docs are stale, missing, or contradict the implementation. If you find a doc that no longer matches the code, that is a defect: fix it, never ignore it.
+
 ## What we're building
 
 A voice-driven command launcher for Windows — like Talon Voice, but you say the actual command ("copy", "open spotify", "search for cats") instead of memorizing spoken shortcuts. A local-first daemon: no cloud, no third-party speech service.
