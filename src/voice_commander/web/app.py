@@ -35,11 +35,13 @@ logger = logging.getLogger(__name__)
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
 
-# Dictation output paths. Built with forward-slash literals so the dictation
-# routes can pass ``.as_posix()`` back through ``Path`` at request time (tests
-# monkeypatch the module-level ``Path`` to redirect these under a tmp dir).
+# Dictation output base dir. The dictation routes deliberately rebuild a fresh
+# ``Path(_DICTATION_DIR.as_posix())`` (and ``... / "vocab.json"``) at request
+# time rather than using this Path object directly: unit tests monkeypatch the
+# module-level ``Path`` name to redirect the literal ``"outputs/dictation"``
+# string into a tmp dir, and that interception only fires if ``Path(...)`` is
+# called with the literal string at request time.
 _DICTATION_DIR = Path("outputs/dictation")
-_VOCAB_PATH = _DICTATION_DIR / "vocab.json"
 
 
 def create_app(
