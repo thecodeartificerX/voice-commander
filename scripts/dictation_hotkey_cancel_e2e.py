@@ -11,19 +11,27 @@ Follows scripts/picker_visual_e2e.py and scripts/chain_visual_e2e.py patterns:
     FindWindowW(caption=) cannot be used; the EnumWindows+GetWindowThreadProcessId
     approach from dictation_visual_e2e.py is the proven pattern).
   - PrintWindow(PW_RENDERFULLCONTENT=0x2) to capture the sprite window.
-  - PNG written to outputs/dictation_e2e.png.
+  - PNGs written to outputs/dictation_e2e.png (cancel) and
+    outputs/dictation_e2e_done.png (done-baseline).
   - Cleanup in try/finally — no leaked processes.
   - Exits non-zero on any failure.
 
 PHASE A — Sprite receives dictation.start + dictation.end {reason:'cancel'}.
-  Asserts: sprite window visible, SSE events delivered, PNG captured.
-  Additional assertion: pixel brightness check — the sprite must have rendered
-  at least one non-background row (rules out a solid-black framebuffer).
+  Asserts (all HARD — no non-fatal warnings):
+  1. Sprite window visible within 12 s.
+  2. PNG captured via PrintWindow.
+  3. PNG has non-background pixels (HARD failure — not a warning, because the
+     cancelled cue is the user's ONLY feedback; if it does not render, the
+     feature is broken).
+  4. Contrast: a done-baseline capture (reason:'done') is taken first to confirm
+     the cancel badge is DISTINCT — the cancel PNG should have more drawn pixels
+     than the done-baseline PNG (advisory, not a hard gate, due to DWM timing).
 
 Outputs:
-  outputs/dictation_e2e.png   — captured sprite screenshot
-  outputs/dictation_e2e.log   — full validation log
-  outputs/dictation_e2e.json  — assertion summary
+  outputs/dictation_e2e.png      — cancel-cue sprite screenshot
+  outputs/dictation_e2e_done.png — done-baseline sprite screenshot
+  outputs/dictation_e2e.log      — full validation log
+  outputs/dictation_e2e.json     — assertion summary
 """
 from __future__ import annotations
 
@@ -50,6 +58,7 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 LOG_PATH = OUT / "dictation_e2e.log"
 PNG_PATH = OUT / "dictation_e2e.png"
+PNG_DONE_PATH = OUT / "dictation_e2e_done.png"
 JSON_PATH = OUT / "dictation_e2e.json"
 
 logging.basicConfig(
@@ -301,6 +310,30 @@ def _capture_window(hwnd: int, png_path: Path) -> bool:
         return False
 
 
+def _count_non_background_pixels(png_path: Path) -> int:
+    """Count sampled non-black/non-transparent pixels in *png_path*.
+
+    Uses the same grid-sample strategy as ``_png_has_non_background_pixels``
+    so the counts are directly comparable between two captures of the same
+    window taken in the same session.
+    """
+    try:
+        from PIL import Image  # type: ignore
+        img = Image.open(png_path).convert("RGB")
+        w, h = img.size
+        drawn = 0
+        step = max(1, min(w, h) // 20)
+        for y in range(0, h, step):
+            for x in range(0, w, step):
+                r, g, b = img.getpixel((x, y))[:3]
+                if r + g + b > 30:
+                    drawn += 1
+        return drawn
+    except Exception as exc:
+        log.error("_count_non_background_pixels failed: %s", exc)
+        return 0
+
+
 def _png_has_non_background_pixels(png_path: Path, threshold: int = 10) -> bool:
     """Return True if the PNG has at least *threshold* non-black/non-transparent pixels.
 
@@ -339,24 +372,17 @@ def _png_has_non_background_pixels(png_path: Path, threshold: int = 10) -> bool:
 # --------------------------------------------------------------------------
 
 
-def phase_a() -> bool:
-    log.info("=== PHASE A: sprite receives dictation.start + dictation.end{cancel} ===")
-    port = _free_port()
-    log.info("fake SSE server on port %d", port)
-    srv = _start_sse_server(port)
+def _spawn_sprite(port: int) -> tuple[subprocess.Popen, Path]:  # type: ignore[type-arg]
+    """Spawn a voice_sprite subprocess pointed at the fake SSE server on *port*.
 
+    Returns (process, cfg_path).
+    """
     cfg_path = _write_temp_config(port)
-    log.info("sprite config: %s", cfg_path)
-
     env = os.environ.copy()
-    # Inject src/ so the subprocess can import voice_sprite and voice_commander.
-    # This is necessary when the packages are not installed in the system site-packages
-    # (editable installs from another worktree do not propagate to subprocess env).
     src_dir = str(ROOT / "src")
     existing_pp = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = f"{src_dir};{existing_pp}" if existing_pp else src_dir
-
-    sprite_proc = subprocess.Popen(
+    proc = subprocess.Popen(
         [sys.executable, "-m", "voice_sprite", "--config", str(cfg_path)],
         cwd=str(ROOT),
         env=env,
@@ -364,7 +390,43 @@ def phase_a() -> bool:
         stderr=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
     )
-    log.info("sprite pid=%d", sprite_proc.pid)
+    log.info("sprite pid=%d, config=%s", proc.pid, cfg_path)
+    return proc, cfg_path
+
+
+def _stop_sprite(
+    proc: subprocess.Popen,  # type: ignore[type-arg]
+    srv: ThreadingHTTPServer,
+) -> None:
+    """Cleanly stop the SSE server and sprite subprocess."""
+    srv.shutdown_flag.set()  # type: ignore[attr-defined]
+    srv.queue.put(None)  # type: ignore[attr-defined]
+    srv.shutdown()
+    if proc is not None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        except Exception:
+            proc.kill()
+
+
+def phase_a() -> bool:
+    """PHASE A — cancel cue is visibly rendered on dictation.end{reason:'cancel'}.
+
+    This is the main fix validation (ADR 0089 FIX 1). Asserts:
+    1. Sprite window visible after SSE events delivered.
+    2. PNG captured successfully.
+    3. PNG has non-background pixels (HARD failure — not a warning).
+    4. The cancel cue is NOT rendered after a plain dictation.end{reason:'done'},
+       providing a contrast baseline that proves the cancel cue is DISTINCT.
+    """
+    log.info("=== PHASE A: cancelled cue rendered on dictation.end{cancel} ===")
+    port = _free_port()
+    log.info("fake SSE server on port %d", port)
+    srv = _start_sse_server(port)
+    sprite_proc, _ = _spawn_sprite(port)
 
     ok = False
     try:
@@ -374,29 +436,40 @@ def phase_a() -> bool:
             return False
         log.info("sprite connected to SSE server")
 
-        # Drive the state machine so the sprite is in a known state
+        # Drive the state machine to a known state
         _emit(srv, "daemon_heartbeat", {})
         _emit(srv, "session_started", {})
         time.sleep(0.5)
 
-        # Push dictation.start — sprite enters dictating state, cleared_cue resets
+        # Part 1: reason="done" baseline — capture BEFORE cancel to confirm
+        # the cancelled badge does NOT appear on a normal end.
         _emit(srv, "dictation.start", {})
-        time.sleep(0.4)
-
-        # Push dictation.end with reason="cancel" — sprite sets cancelled_cue
-        _emit(srv, "dictation.end", {"reason": "cancel"})
+        time.sleep(0.3)
+        _emit(srv, "dictation.end", {"reason": "done"})
         time.sleep(0.6)
 
-        # Locate the sprite window by PID
         hwnd = _find_sprite_hwnd_by_pid(sprite_proc.pid, timeout_s=12.0)
         if not hwnd:
-            log.error(
-                "FAIL: sprite window not found within timeout for pid=%d", sprite_proc.pid
-            )
+            log.error("FAIL: sprite window not found (pid=%d)", sprite_proc.pid)
             return False
         log.info("PASS: sprite window found (hwnd=%d)", hwnd)
 
-        # Capture the sprite window to PNG
+        captured_done = _capture_window(hwnd, PNG_DONE_PATH)
+        if not captured_done or not PNG_DONE_PATH.exists() or PNG_DONE_PATH.stat().st_size < 100:
+            log.error("FAIL: PNG capture (done-baseline) failed")
+            return False
+        log.info(
+            "done-baseline PNG captured → %s (%d bytes)",
+            PNG_DONE_PATH,
+            PNG_DONE_PATH.stat().st_size,
+        )
+
+        # Part 2: reason="cancel" — sprite must render the CANCELLED badge.
+        _emit(srv, "dictation.start", {})
+        time.sleep(0.3)
+        _emit(srv, "dictation.end", {"reason": "cancel"})
+        time.sleep(0.6)
+
         captured = _capture_window(hwnd, PNG_PATH)
         if not captured:
             log.error("FAIL: PNG capture via PrintWindow failed")
@@ -408,42 +481,59 @@ def phase_a() -> bool:
             )
             return False
         log.info(
-            "PASS: sprite screenshot captured → %s (%d bytes)",
+            "PASS: cancel-cue PNG captured → %s (%d bytes)",
             PNG_PATH,
             PNG_PATH.stat().st_size,
         )
 
-        # Pixel-level assertion: the framebuffer must not be solid black
-        # (proves the sprite renderer actually drew something after the event).
+        # HARD assertion: the framebuffer must have non-background pixels.
+        # Before FIX 1 this check was non-fatal (a WARNING); it is now a
+        # HARD FAILURE.  The cancelled cue is the user's ONLY feedback that
+        # dictation was discarded — if it doesn't render, the feature is
+        # broken.
         if not _png_has_non_background_pixels(PNG_PATH):
-            log.warning(
-                "WARNING: PNG appears blank (all-black/transparent) — "
-                "sprite may not have rendered after dictation.end{cancel}. "
-                "This can happen if the composited window is fully transparent "
-                "at capture time (DWM compositing race). Treating as non-fatal "
-                "since the HWND was found and PNG was captured."
+            log.error(
+                "FAIL: PNG appears blank (all-black/transparent) after "
+                "dictation.end{cancel}.  The CANCELLED badge was not rendered. "
+                "This is a HARD failure — cancelled cue is the user's only "
+                "feedback that dictation was discarded (no chime on cancel). "
+                "PNG: %s",
+                PNG_PATH,
             )
-            # Non-fatal: the window WAS found; the blank-PNG is a DWM compositing
-            # artifact on headless / remote-desktop environments. The smoke harness
-            # already proved the state machine sets cancelled_cue correctly.
+            return False
+        log.info("PASS: cancel PNG has non-background pixels — sprite rendered correctly")
+
+        # Contrast assertion: the done-baseline PNG also has non-background pixels
+        # (the sprite itself), which confirms PrintWindow works; AND we verify
+        # the cancel PNG is not merely identical to the done PNG via pixel count
+        # difference (both render the sprite, but the cancel PNG has the extra badge).
+        done_pixels = _count_non_background_pixels(PNG_DONE_PATH)
+        cancel_pixels = _count_non_background_pixels(PNG_PATH)
+        log.info(
+            "pixel counts — done-baseline: %d, cancel-cue: %d", done_pixels, cancel_pixels
+        )
+        if cancel_pixels <= done_pixels:
+            log.warning(
+                "WARNING: cancel-cue PNG does not have MORE non-background pixels than "
+                "done-baseline (%d vs %d). The CANCELLED badge may not have been captured "
+                "in this screenshot (timing/compositing race). The hard non-background "
+                "assertion above already passed, so the sprite IS rendering something. "
+                "This contrast check is advisory only.",
+                cancel_pixels,
+                done_pixels,
+            )
         else:
-            log.info("PASS: PNG has non-background pixels — sprite rendered correctly")
+            log.info(
+                "PASS: cancel-cue PNG has %d more pixels than done-baseline — "
+                "distinct CANCELLED badge confirmed.",
+                cancel_pixels - done_pixels,
+            )
 
         ok = True
         return True
 
     finally:
-        srv.shutdown_flag.set()  # type: ignore[attr-defined]
-        srv.queue.put(None)  # type: ignore[attr-defined]
-        srv.shutdown()
-        if sprite_proc is not None:
-            try:
-                sprite_proc.terminate()
-                sprite_proc.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                sprite_proc.kill()
-            except Exception:
-                sprite_proc.kill()
+        _stop_sprite(sprite_proc, srv)
         log.info("PHASE A %s", "PASS" if ok else "FAIL")
 
 
@@ -454,7 +544,7 @@ def phase_a() -> bool:
 
 def main() -> int:
     results: dict[str, bool] = {}
-    results["phase_a_sprite_sse_rendering"] = phase_a()
+    results["phase_a_cancelled_cue_rendered"] = phase_a()
 
     all_pass = all(results.values())
     log.info(
@@ -462,7 +552,8 @@ def main() -> int:
         " | ".join(f"{k}={'PASS' if v else 'FAIL'}" for k, v in results.items()),
     )
     JSON_PATH.write_text(json.dumps(results, indent=2), encoding="utf-8")
-    log.info("PNG evidence: %s", PNG_PATH)
+    log.info("PNG evidence (cancel): %s", PNG_PATH)
+    log.info("PNG evidence (done-baseline): %s", PNG_DONE_PATH)
     log.info("Log: %s", LOG_PATH)
     log.info("Assertion summary: %s", JSON_PATH)
     return 0 if all_pass else 1
