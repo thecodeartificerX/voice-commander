@@ -2,7 +2,7 @@
 
 While active the daemon routes every utterance here instead of the VerbRouter.
 Non-end utterances have their audio appended to a buffer.  Finalisation happens
-via one of two exit paths:
+via one of three exit paths:
 
 (a) **End-word path** — the pipeline thread recognises the configured end word
     (default ``"done"``), calls :meth:`take_and_finish`, captures the buffer,
@@ -16,9 +16,18 @@ via one of two exit paths:
     calls ``_finalize_pending_dictation_end`` → :meth:`take_and_finish`,
     which atomically captures the buffer and deactivates the session.
 
-Both paths converge on :meth:`take_and_finish`, which holds the lock across
-deactivation and buffer capture, preventing double-submit if both paths
-race.  Mirrors PickerSession's role as a voice-session sub-state.
+(c) **Spoken-cancel path** — :meth:`handle_utterance` recognises the configured
+    cancel word (default ``"cancel"``; exact normalized match only — a longer
+    phrase containing the cancel word is buffered, not cancelled) and returns
+    ``"cancel"``.  The pipeline thread calls :meth:`cancel` to drop the buffer
+    and abort the session without any transcription or paste.  The cancel word
+    is validated against the end word at construction time; a collision disables
+    spoken cancel (logged as a WARNING) to prevent ambiguity.
+
+All paths converge on either :meth:`take_and_finish` (paths a and b) or
+:meth:`cancel` (path c), both of which hold the lock across deactivation and
+buffer disposal, preventing double-action races.  Mirrors PickerSession's role
+as a voice-session sub-state.
 """
 
 from __future__ import annotations

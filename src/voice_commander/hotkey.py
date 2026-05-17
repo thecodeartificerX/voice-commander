@@ -64,17 +64,17 @@ class HotkeyController:
         callback = self._dispatch.get(key)
         if callback is None:
             return
-        now = time.monotonic()
-        last = self._last_fire.get(key, 0.0)
-        if now - last < _DEBOUNCE_S:
-            logger.debug(
-                "Hotkey debounce: dropping double-release for %s (gap=%.1f ms)",
-                key,
-                (now - last) * 1000,
-            )
-            return
-        self._last_fire[key] = now
         with self._lock:
+            now = time.monotonic()
+            last = self._last_fire.get(key, 0.0)
+            if now - last < _DEBOUNCE_S:
+                logger.debug(
+                    "Hotkey debounce: dropping double-release for %s (gap=%.1f ms)",
+                    key,
+                    (now - last) * 1000,
+                )
+                return
+            self._last_fire[key] = now
             try:
                 callback()
             except Exception:
