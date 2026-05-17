@@ -105,13 +105,18 @@ class ElementsOverlayWindow(pyglet.window.Window):  # type: ignore[misc]
             sample_buffers=0,
             samples=0,
         )
+        # Created visible (no visible=False): pyglet's _create() then runs
+        # _set_transparency() — DwmEnableBlurBehindWindow + SetLayeredWindow-
+        # Attributes — and shows the window in one step. This is the exact
+        # lifecycle SpriteWindow uses. Creating hidden and showing later
+        # leaves a window whose layered per-pixel alpha never composites,
+        # so DWM draws an opaque black background.
         super().__init__(
             width=mr - ml,
             height=mb - mt,
             style=pyglet.window.Window.WINDOW_STYLE_OVERLAY,
             config=gl_config,
             vsync=False,
-            visible=False,
         )
         # Alpha compositing — tag pixels blend over the transparent clear.
         # The separate alpha blend (GL_ONE for the alpha source) is critical
@@ -174,22 +179,27 @@ class ElementsOverlayWindow(pyglet.window.Window):  # type: ignore[misc]
         self.clear()
         self._batch.draw()
 
+    def _overlay_hwnd(self) -> int | None:
+        """HWND of this window — ``canvas.hwnd`` with a ``_hwnd`` fallback."""
+        hwnd = self.canvas.hwnd if hasattr(self.canvas, "hwnd") else None
+        if hwnd is None:
+            hwnd = getattr(self, "_hwnd", None)
+        return hwnd
+
     def apply_win32_flags(self) -> None:
         """Make the window click-through, topmost and non-activating.
 
         Mirrors the exact pattern from ``SpriteWindow.apply_win32_flags`` in
-        ``window.py`` — HWND lookup via ``canvas.hwnd`` with ``_hwnd``
-        fallback, then delegates to ``win32_flags.apply_click_through``.
+        ``window.py`` — delegates to ``win32_flags.apply_click_through``,
+        whose ``DwmEnableBlurBehindWindow`` call is what makes the cleared
+        framebuffer composite transparently against the desktop.
         """
         if platform.system() != "Windows":
             logger.warning("Win32 flags only apply on Windows")
             return
         from .win32_flags import apply_click_through
 
-        hwnd = self.canvas.hwnd if hasattr(self.canvas, "hwnd") else None
-        if hwnd is None:
-            # Fallback for older pyglet versions — 2.x HWND access path
-            hwnd = getattr(self, "_hwnd", None)
+        hwnd = self._overlay_hwnd()
         if hwnd is None:
             logger.error("Could not obtain HWND for elements overlay window")
             return

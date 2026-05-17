@@ -231,9 +231,14 @@ def main() -> None:
             elements = data.get("elements", [])
             if len(monitor) != 4 or not elements:
                 return
+            # ElementsOverlayWindow is created visible: pyglet's _create()
+            # runs _set_transparency() and shows the window in one step — the
+            # exact lifecycle of the working SpriteWindow. apply_win32_flags()
+            # must run AFTER the window is shown, otherwise SetWindowLongW
+            # drops the layered per-pixel alpha and DWM composites the
+            # overlay as opaque black.
             overlay = ElementsOverlayWindow(monitor, elements)
             overlay.apply_win32_flags()
-            overlay.set_visible(True)
             _elements_overlay.append(overlay)
 
         pyglet.clock.schedule_once(_create, 0.0)
