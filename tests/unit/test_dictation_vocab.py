@@ -44,6 +44,28 @@ def test_load_corrupt_file_returns_empty_vocabulary_and_logs_warning(
     assert any("WARNING" in r.levelname or r.levelno >= logging.WARNING for r in caplog.records)
 
 
+def test_load_null_fields_returns_empty_vocabulary(tmp_path: Path):
+    path = tmp_path / "vocab.json"
+    path.write_text(
+        json.dumps({"vocab": None, "corrections": None, "commands": None}),
+        encoding="utf-8",
+    )
+    store = VocabStore(path)
+    vocab = store.load()
+    assert vocab == Vocabulary()
+
+
+def test_load_non_list_fields_returns_empty_vocabulary(tmp_path: Path):
+    path = tmp_path / "vocab.json"
+    path.write_text(
+        json.dumps({"vocab": 42, "corrections": "x", "commands": {}}),
+        encoding="utf-8",
+    )
+    store = VocabStore(path)
+    vocab = store.load()
+    assert vocab == Vocabulary()
+
+
 def test_load_valid_file_returns_populated_vocabulary(tmp_path: Path):
     path = tmp_path / "vocab.json"
     path.write_text(

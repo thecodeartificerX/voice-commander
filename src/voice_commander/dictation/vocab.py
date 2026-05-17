@@ -77,20 +77,30 @@ class VocabStore:
             logger.warning("vocab.json root is not a JSON object — ignoring")
             return Vocabulary()
 
-        vocab_raw = data.get("vocab", [])
+        vocab_raw = data.get("vocab")
+        if not isinstance(vocab_raw, list):
+            vocab_raw = []
         vocab: tuple[str, ...] = tuple(
             str(w) for w in vocab_raw if isinstance(w, str)
         )
 
-        corrections_raw = data.get("corrections", [])
+        corrections_raw = data.get("corrections")
+        if not isinstance(corrections_raw, list):
+            corrections_raw = []
         corrections: list[Correction] = []
         for item in corrections_raw:
             if isinstance(item, dict) and "wrong" in item and "right" in item:
                 corrections.append(
                     Correction(wrong=str(item["wrong"]), right=str(item["right"]))
                 )
+            else:
+                logger.warning(
+                    "vocab.json: malformed correction entry %r — dropped", item
+                )
 
-        commands_raw = data.get("commands", [])
+        commands_raw = data.get("commands")
+        if not isinstance(commands_raw, list):
+            commands_raw = []
         commands: list[Command] = []
         for item in commands_raw:
             if not (isinstance(item, dict) and "phrase" in item and "action" in item):
@@ -104,7 +114,7 @@ class VocabStore:
             commands.append(
                 Command(
                     phrase=str(item["phrase"]),
-                    action=action,  # type: ignore[arg-type]
+                    action=action,  # type: ignore[arg-type]  # narrowed by _VALID_ACTIONS check above
                 )
             )
 
