@@ -120,3 +120,84 @@ def test_take_and_finish_when_inactive_returns_none_and_is_silent():
     # never started — the "lost the race" case
     assert s.take_and_finish() is None
     assert bus.events == []
+
+
+# ---------------------------------------------------------------------------
+# Cancel-word tests (Task 1 — ADR 0089)
+# ---------------------------------------------------------------------------
+
+
+def test_cancel_word_returns_cancel_and_does_not_buffer():
+    """handle_utterance returns "cancel" on exact cancel-word match and
+    does NOT append the audio chunk to the buffer."""
+    bus = _FakeBus()
+    s = DictationSession(bus, end_word="done", cancel_word="cancel")
+    s.start()
+    audio = _audio()
+    assert s.handle_utterance(audio, "cancel") == "cancel"
+    # Audio must NOT have been buffered — take_audio returns None
+    assert s.take_audio() is None
+
+
+def test_cancel_word_normalized_match():
+    """Normalization (lowercase, strip punctuation) applies to cancel word."""
+    bus = _FakeBus()
+    s = DictationSession(bus, end_word="done", cancel_word="cancel")
+    s.start()
+    audio = _audio()
+    # "Cancel." normalizes to "cancel"
+    assert s.handle_utterance(audio, "Cancel.") == "cancel"
+    assert s.take_audio() is None
+
+
+def test_cancel_word_partial_phrase_is_buffered():
+    """A transcript containing cancel word as part of a longer phrase is buffered."""
+    bus = _FakeBus()
+    s = DictationSession(bus, end_word="done", cancel_word="cancel")
+    s.start()
+    audio = _audio()
+    # "please cancel that" must NOT trigger cancel — it is not the exact word
+    assert s.handle_utterance(audio, "please cancel that") == "buffered"
+    assert s.take_audio() is not None
+
+
+def test_cancel_word_when_inactive_returns_buffered():
+    """handle_utterance returns "buffered" (no-op) when session is inactive,
+    even if the transcript matches the cancel word."""
+    bus = _FakeBus()
+    s = DictationSession(bus, end_word="done", cancel_word="cancel")
+    # Never started — inactive
+    audio = _audio()
+    assert s.handle_utterance(audio, "cancel") == "buffered"
+    assert s.take_audio() is None
+
+
+def test_cancel_word_collision_with_end_word_disables_cancel(caplog):
+    """When cancel_word == end_word, __init__ logs a WARNING and sets
+    _cancel_word = None, so the collision word buffers normally."""
+    import logging
+    bus = _FakeBus()
+    with caplog.at_level(logging.WARNING, logger="voice_commander.dictation.session"):
+        s = DictationSession(bus, end_word="done", cancel_word="done")
+    # Warning must have been emitted
+    assert any("cancel" in r.message.lower() or "collision" in r.message.lower()
+               for r in caplog.records)
+    # _cancel_word must be None — spoken cancel disabled
+    assert s._cancel_word is None
+    # The collision word now acts as the end word, not the cancel word
+    s.start()
+    audio = _audio()
+    assert s.handle_utterance(audio, "done") == "end"
+
+
+def test_cancel_word_empty_string_disables_cancel(caplog):
+    """An empty or whitespace-only cancel_word logs a WARNING and disables
+    spoken cancel (_cancel_word = None)."""
+    import logging
+    bus = _FakeBus()
+    with caplog.at_level(logging.WARNING, logger="voice_commander.dictation.session"):
+        s = DictationSession(bus, end_word="done", cancel_word="")
+    assert any("cancel" in r.message.lower() or "empty" in r.message.lower()
+               or "cancel_word" in r.message.lower()
+               for r in caplog.records)
+    assert s._cancel_word is None
