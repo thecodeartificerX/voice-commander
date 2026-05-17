@@ -230,3 +230,162 @@ def test_api_tools_returns_json_list(app_env_with_system_tool):
     for tool in data:
         assert "name" in tool
         assert "description" in tool
+
+
+# ---------------------------------------------------------------------------
+# Dictation page + vocab routes
+# ---------------------------------------------------------------------------
+
+import json as _json_mod
+
+
+def test_page_dictation_renders_three_editor_sections(app_env):
+    """GET /page/dictation must render the Vocabulary, Corrections, and Commands sections."""
+    client, _, _ = app_env
+    resp = client.get("/page/dictation")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Vocabulary" in body
+    assert "Corrections" in body
+    assert "Commands" in body
+
+
+def test_post_vocab_returns_result_fragment_on_success(app_env, tmp_path, monkeypatch):
+    """POST /dictation/vocab must write vocab.json and return the result fragment."""
+    import voice_commander.dictation.vocab as _vocab_mod
+
+    saved_vocabs: list = []
+    original_save = _vocab_mod.VocabStore.save
+
+    def _capturing_save(self, vocab):
+        saved_vocabs.append(vocab)
+        original_save(self, vocab)
+
+    monkeypatch.setattr(_vocab_mod.VocabStore, "save", _capturing_save)
+    # Point VocabStore to tmp_path
+    monkeypatch.setattr(
+        "voice_commander.web.app.Path",
+        lambda *a, **kw: (
+            (tmp_path / a[0]) if a and a[0] == "outputs/dictation" else __import__("pathlib").Path(*a, **kw)
+        ),
+    )
+
+    client, _, _ = app_env
+    resp = client.post(
+        "/dictation/vocab",
+        data={
+            "vocab": "Supabase\nn8n",
+            "corrections": _json_mod.dumps(
+                [{"wrong": "supa base", "right": "Supabase"}]
+            ),
+            "commands": _json_mod.dumps(
+                [{"phrase": "next line", "action": "newline"}]
+            ),
+        },
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+    # Fragment must confirm the save and the captured Vocabulary must reflect
+    # the posted vocab words, the parsed correction, and the parsed command.
+    body = resp.text
+    assert "Vocabulary saved." in body
+    assert len(saved_vocabs) == 1
+    assert saved_vocabs[0].vocab == ("Supabase", "n8n")
+    assert saved_vocabs[0].corrections[0].wrong == "supa base"
+    assert saved_vocabs[0].commands[0].phrase == "next line"
+
+
+def test_post_vocab_malformed_json_falls_back_gracefully(app_env, tmp_path, monkeypatch):
+    """POST /dictation/vocab with malformed corrections/commands JSON still saves.
+
+    The route's ``except`` clauses fall back to empty correction/command lists,
+    so the save succeeds and the success fragment is returned.
+    """
+    monkeypatch.setattr(
+        "voice_commander.web.app.Path",
+        lambda *a, **kw: (
+            (tmp_path / a[0]) if a and a[0] == "outputs/dictation" else __import__("pathlib").Path(*a, **kw)
+        ),
+    )
+
+    client, _, _ = app_env
+    resp = client.post(
+        "/dictation/vocab",
+        data={"vocab": "word", "corrections": "not-valid-json", "commands": "{bad"},
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+    assert "Vocabulary saved." in resp.text
+
+
+def test_post_vocab_csrf_blocked_without_hx_header(app_env):
+    """POST /dictation/vocab must be blocked without HX-Request header."""
+    client, _, _ = app_env
+    resp = client.post("/dictation/vocab", data={"vocab": "test"})
+    assert resp.status_code == 403
+
+
+def test_retranscribe_applies_vocab_postprocessing(app_env, tmp_path, monkeypatch):
+    """POST /dictation/retranscribe must apply vocab corrections and commands.
+
+    Writes a vocab.json with one correction (supa base → Supabase) and one
+    command (next line → newline), monkeypatches post_audio to return a raw
+    transcript that contains both, and asserts the clipboard text (and the
+    response fragment) reflect the post-processed result.
+    """
+    import json as _json
+    import numpy as np
+
+    from voice_commander.dictation.store import DictationStore, encode_wav
+    from voice_commander.dictation.vocab import VocabStore, Vocabulary, Correction, Command
+
+    # ---- redirect Path("outputs/dictation") into tmp_path ----
+    monkeypatch.setattr(
+        "voice_commander.web.app.Path",
+        lambda *a, **kw: (
+            (tmp_path / a[0]) if a and a[0] == "outputs/dictation" else __import__("pathlib").Path(*a, **kw)
+        ),
+    )
+
+    dictation_dir = tmp_path / "outputs/dictation"
+    dictation_dir.mkdir(parents=True, exist_ok=True)
+
+    # ---- write a vocab.json with a correction and a command ----
+    vocab = Vocabulary(
+        vocab=(),
+        corrections=(Correction(wrong="supa base", right="Supabase"),),
+        commands=(Command(phrase="next line", action="newline"),),
+    )
+    VocabStore(dictation_dir / "vocab.json").save(vocab)
+
+    # ---- write a minimal last.wav so read_audio() returns bytes ----
+    wav_bytes = encode_wav(np.zeros(1600, dtype=np.float32))
+    DictationStore(dictation_dir).save_audio(wav_bytes)
+
+    # ---- monkeypatch post_audio to return a raw transcript ----
+    monkeypatch.setattr(
+        "voice_commander.dictation.remote.post_audio",
+        lambda *a, **kw: "I use supa base next line world",
+    )
+
+    # ---- capture the clipboard write ----
+    captured: list[str] = []
+    monkeypatch.setattr(
+        "voice_commander.dictation.clipboard.set_clipboard_text",
+        lambda text: captured.append(text),
+    )
+
+    client, _, _ = app_env
+    resp = client.post(
+        "/dictation/retranscribe",
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+
+    # The post-processed text must appear in either the captured clipboard
+    # write or the response body (both paths read from the same processed text).
+    assert len(captured) == 1, "set_clipboard_text must be called exactly once"
+    result = captured[0]
+    assert "Supabase" in result, f"correction not applied; got: {result!r}"
+    assert "\n" in result, f"command not applied (expected newline); got: {result!r}"
+    assert "supa base" not in result, f"raw wrong-word survived; got: {result!r}"

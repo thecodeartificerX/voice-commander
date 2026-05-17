@@ -7,4 +7,6 @@ Sub-packages:
 * :mod:`remote`    — HTTP client for the whisper.cpp ``/inference`` endpoint.
 * :mod:`store`     — WAV encoding and single-slot on-disk persistence.
 * :mod:`clipboard` — Clipboard snapshot/paste/restore helper for result delivery.
+* :mod:`vocab`     — ``Vocabulary``/``Correction``/``Command`` dataclasses and
+                     ``VocabStore`` persistence for ``vocab.json``.
 """

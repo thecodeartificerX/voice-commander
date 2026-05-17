@@ -26,6 +26,7 @@ from .chain import ChainParser
 from .config import Config
 from .dictation.session import DictationSession
 from .dictation.store import DictationStore
+from .dictation.vocab import VocabStore
 from .dispatcher import Dispatcher
 from .elements import clicker, desktop, scanner
 from .elements.session import ENTRY_WORDS, ElementsSession, ElementsState
@@ -255,6 +256,7 @@ class StreamingDaemon:
         self._dictation_session = dictation_session
         self._dictation_endpoint = dictation_endpoint
         self._dictation_store = DictationStore(self._output_dir / "dictation")
+        self._vocab_store = VocabStore(self._output_dir / "dictation" / "vocab.json")
         self._dictation_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="dictation",
@@ -746,14 +748,29 @@ class StreamingDaemon:
             )
 
     def _finalize_dictation(self, audio: npt.NDArray[np.float32]) -> None:
-        """Worker-thread finalize: encode → POST → clipboard paste.
+        """Worker-thread finalize: encode → build prompt → POST → post-process → paste.
 
         Runs on ``self._dictation_executor`` so the pipeline thread is never
         blocked by the network round-trip. All failures surface as a
         ``dictation.error`` event + miss chime; the audio stays on disk for
         the web re-transcribe button.
+
+        Processing order
+        ----------------
+        1. Encode audio → WAV bytes; save to ``last.wav``.
+        2. Load ``VocabStore`` (fresh read — hot-reload with no restart).
+        3. Build whisper ``prompt`` string from vocabulary.
+        4. ``remote.post_audio(wav_bytes, endpoint, prompt=prompt)`` — transcribe.
+        5. ``apply_corrections(text, vocab.corrections)`` — fix known garbled forms.
+        6. ``apply_commands(text, vocab.commands)`` — replace command phrases with
+           control characters.
+        7. Save processed text to ``last.txt``; paste via clipboard.
+
+        Corrections run before commands so a lightly-mistranscribed command phrase
+        can be repaired into its canonical form before command matching (ADR 0088).
         """
         from .dictation import clipboard, remote
+        from .dictation.postprocess import apply_commands, apply_corrections, build_prompt
         from .dictation.store import encode_wav
 
         try:
@@ -765,13 +782,21 @@ class StreamingDaemon:
             self._feedback.on_miss("(dictation: encode error)", ())
             return
 
+        # Hot-reload vocabulary on every dictation — no daemon restart required.
+        vocab = self._vocab_store.load()
+        prompt = build_prompt(vocab)
+
         try:
-            text = remote.post_audio(wav_bytes, self._dictation_endpoint)
+            text = remote.post_audio(wav_bytes, self._dictation_endpoint, prompt=prompt)
         except remote.DictationRemoteError as e:
             logger.warning("dictation: remote transcription failed: %s", e)
             self._publish("dictation.error", {"reason": "endpoint"})
             self._feedback.on_miss("(dictation: endpoint error)", ())
             return
+
+        # Post-process: corrections then commands (ADR 0088 §Pipeline integration).
+        text = apply_corrections(text, vocab.corrections)
+        text = apply_commands(text, vocab.commands)
 
         self._dictation_store.save_text(text)
 

@@ -63,6 +63,14 @@ voice-commander/
 │   │   ├── registrar.py            # register_graphs / reload_all — synthesise ToolEntry closures
 │   │   ├── store.py                # GraphStore — unified JSON-backed store for commands + workflows
 │   │   └── restart.py              # daemon restart command
+│   ├── dictation/                  # dictation mode subsystem (ADR 0086 + 0088)
+│   │   ├── __init__.py             # package init; docstring lists sub-modules
+│   │   ├── session.py              # DictationSession state machine (active/pending-end)
+│   │   ├── remote.py               # post_audio(): encode WAV → POST to whisper.cpp /inference
+│   │   ├── store.py                # DictationStore: save/load last.wav + last.txt
+│   │   ├── clipboard.py            # paste_via_clipboard(): clipboard round-trip paste
+│   │   ├── vocab.py                # Vocabulary/Correction/Command dataclasses + VocabStore (loads/saves vocab.json, atomic write, never-raises load)
+│   │   └── postprocess.py          # build_prompt, apply_corrections, apply_commands; constants WHISPER_TOKEN_LIMIT=224, _PROMPT_CHAR_CAP=800
 │   ├── tools/                      # @tool groups (auto-discovered at import)
 │   │   ├── _win32.py               # Windows-specific helpers (focus_window_by_exe, etc.)
 │   │   ├── clipboard.py + .toml
@@ -95,8 +103,10 @@ voice-commander/
 │       ├── templates/              # Jinja2 templates (HTMX fragments)
 │       │   ├── page_builder.html   # stub page — redirects to React SPA when built
 │       │   ├── page_runs.html      # run list + live-update inspector (/page/runs)
+│       │   ├── page_dictation.html # dictation page: last text + re-transcribe + vocab editor
 │       │   ├── _run_detail.html    # run detail panel (span tree, LLM, replay buttons)
-│       │   └── _prompt_inspector.html  # Prompt Inspector panel template
+│       │   ├── _prompt_inspector.html  # Prompt Inspector panel template
+│       │   └── _vocab_result.html  # HTMX save-result fragment for /dictation/vocab POST
 │   └── event_bus.py                # in-process pub/sub for SSE consumers
 │
 ├── web/builder-ui/                # Builder React SPA source (React 18.3 + Vite 5 + TypeScript)
@@ -153,6 +163,8 @@ voice-commander/
 │
 ├── tests/
 │   ├── unit/                       # one file per src module, mocked hardware
+│   │   ├── test_dictation_vocab.py         # VocabStore load/save round-trip, tolerant-parse, atomic-write
+│   │   ├── test_dictation_postprocess.py   # build_prompt, apply_corrections, apply_commands (pure functions)
 │   │   └── observability/          # observability package unit tests
 │   │       ├── test_store.py       # Store round-trip, WAL, corruption recovery, pruning
 │   │       ├── test_tracer.py      # Tracer run/span lifecycle, parenting, step counters
@@ -160,10 +172,11 @@ voice-commander/
 │   │       ├── test_cli.py         # vc debug + vc tail subcommands
 │   │       └── test_replay.py      # replay_llm + replay_full scenarios
 │   ├── integration/                # canned-WAV end-to-end, real model
+│   │   └── test_dictation_vocab_pipeline.py  # _finalize_dictation with VocabStore: corrections + commands applied before paste
 │   ├── soak/                       # overnight stability runs
 │   └── fixtures/                   # audio WAVs + sidecar TOML fixtures
 │
-├── scripts/                        # one-off utilities (device listing, config patching, smoke tests)
+├── scripts/                        # one-off utilities (device listing, config patching, smoke tests, visual E2E harnesses)
 ├── assets/sprite/                  # sprite character sheet assets
 │   ├── README.md                  # art regeneration prompt template
 │   └── charsheet.toml             # state→row mapping for charsheet.png

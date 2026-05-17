@@ -21,3 +21,4 @@ Read in this order when joining the project:
 - LLM router ADRs: 0026–0038 in [`decisions/`](decisions/)
 - Node-graph ADRs: 0062–0068 in [`decisions/`](decisions/)
 - **Transcription pipeline (end-to-end):** [`transcription-pipeline.md`](transcription-pipeline.md) — both paths (command + dictation) with ASCII flow diagrams, module references, and ADR cross-links
+- **Dictation custom vocabulary:** ADR [`decisions/0088-dictation-custom-vocabulary.md`](decisions/0088-dictation-custom-vocabulary.md) + whisper.cpp server reference [`references/whisper-cpp-server-inference.md`](references/whisper-cpp-server-inference.md)

@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.responses import Response as StarletteResponse
 
+from ..dictation.postprocess import WHISPER_TOKEN_LIMIT
 from ..registry import ToolRegistry
 from ..tool_metadata import ToolMetadata, ToolMetadataError, ToolMetadataStore
 from .admin import attach_admin_routes
@@ -33,6 +34,14 @@ logger = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
+
+# Dictation output base dir. The dictation routes deliberately rebuild a fresh
+# ``Path(_DICTATION_DIR.as_posix())`` (and ``... / "vocab.json"``) at request
+# time rather than using this Path object directly: unit tests monkeypatch the
+# module-level ``Path`` name to redirect the literal ``"outputs/dictation"``
+# string into a tmp dir, and that interception only fires if ``Path(...)`` is
+# called with the literal string at request time.
+_DICTATION_DIR = Path("outputs/dictation")
 
 
 def create_app(
@@ -155,21 +164,115 @@ def create_app(
 
     @app.get("/page/dictation", response_class=HTMLResponse)
     async def page_dictation(request: Request) -> HTMLResponse:
-        """``GET /page/dictation`` — last dictation + re-transcribe button."""
-        from ..dictation.store import DictationStore
+        """``GET /page/dictation`` — last dictation + re-transcribe button + vocab editor.
 
-        last_text = DictationStore(Path("outputs/dictation")).read_text() or ""
+        The two file reads (last-dictation text + ``vocab.json``) are offloaded
+        to a worker thread so the event loop is never stalled on disk I/O.
+        """
+        from ..dictation.postprocess import build_prompt
+        from ..dictation.store import DictationStore
+        from ..dictation.vocab import Vocabulary, VocabStore
+
+        def _read() -> tuple[str, Vocabulary]:
+            last_text = DictationStore(Path(_DICTATION_DIR.as_posix())).read_text() or ""
+            vocab = VocabStore(
+                Path(_DICTATION_DIR.as_posix()) / "vocab.json"
+            ).load()
+            return last_text, vocab
+
+        loop = asyncio.get_running_loop()
+        last_text, vocab = await loop.run_in_executor(None, _read)
+        estimated_tokens = len(build_prompt(vocab)) // 4
         return templates.TemplateResponse(
-            request, "page_dictation.html", {"last_text": last_text}
+            request,
+            "page_dictation.html",
+            {
+                "last_text": last_text,
+                "vocab": vocab,
+                "estimated_tokens": estimated_tokens,
+                "token_limit": WHISPER_TOKEN_LIMIT,
+            },
+        )
+
+    @app.post("/dictation/vocab", response_class=HTMLResponse)
+    async def dictation_vocab_save(request: Request) -> HTMLResponse:
+        """``POST /dictation/vocab`` — persist the vocab editor form; return result fragment.
+
+        Accepts form fields:
+        - ``vocab``: newline-separated list of vocabulary words.
+        - ``corrections``: JSON array of ``{wrong, right}`` objects.
+        - ``commands``: JSON array of ``{phrase, action}`` objects.
+
+        Returns ``_vocab_result.html`` fragment (same interaction pattern as
+        ``/dictation/retranscribe``).
+        """
+        import json as _json
+
+        from ..dictation.postprocess import build_prompt
+        from ..dictation.vocab import Command, Correction, Vocabulary, VocabStore
+
+        estimated_tokens = 0
+        error: str | None = None
+        try:
+            form = await request.form()
+            vocab_raw = str(form.get("vocab", ""))
+            corrections_raw = str(form.get("corrections", "[]"))
+            commands_raw = str(form.get("commands", "[]"))
+
+            words = tuple(w.strip() for w in vocab_raw.splitlines() if w.strip())
+
+            try:
+                corrections_list = _json.loads(corrections_raw)
+            except Exception:
+                corrections_list = []
+            corrections = tuple(
+                Correction(wrong=str(c["wrong"]), right=str(c["right"]))
+                for c in corrections_list
+                if isinstance(c, dict) and "wrong" in c and "right" in c
+            )
+
+            try:
+                commands_list = _json.loads(commands_raw)
+            except Exception:
+                commands_list = []
+            commands = tuple(
+                Command(phrase=str(c["phrase"]), action=c["action"])
+                for c in commands_list
+                if isinstance(c, dict)
+                and "phrase" in c
+                and c.get("action") in ("newline", "paragraph")
+            )
+
+            new_vocab = Vocabulary(vocab=words, corrections=corrections, commands=commands)
+
+            def _do_save() -> None:
+                VocabStore(
+                    Path(_DICTATION_DIR.as_posix()) / "vocab.json"
+                ).save(new_vocab)
+
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _do_save)
+            estimated_tokens = len(build_prompt(new_vocab)) // 4
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("vocab save failed")
+            error = str(exc)
+
+        ctx = {"error": error} if error else {
+            "estimated_tokens": estimated_tokens,
+            "token_limit": WHISPER_TOKEN_LIMIT,
+        }
+        return HTMLResponse(
+            templates.get_template("_vocab_result.html").render(ctx)
         )
 
     @app.post("/dictation/retranscribe", response_class=HTMLResponse)
     async def dictation_retranscribe(request: Request) -> HTMLResponse:
-        """``POST /dictation/retranscribe`` — re-POST saved audio, set clipboard.
+        """``POST /dictation/retranscribe`` — re-POST saved audio, apply vocab post-processing, set clipboard.
 
-        All blocking work (file I/O, config load, the HTTP round-trip, the
-        Win32 clipboard write with its retry sleeps) runs in a worker thread so
-        the event loop is never stalled. Any failure renders the error partial.
+        All blocking work (file I/O, config load, the HTTP round-trip, vocab load,
+        post-processing, the Win32 clipboard write with its retry sleeps) runs in a
+        worker thread so the event loop is never stalled. Any failure renders the
+        error partial.
         """
 
         def _retranscribe_sync() -> tuple[str | None, str | None]:
@@ -179,17 +282,28 @@ def create_app(
             """
             from ..config import Config
             from ..dictation import clipboard, remote
+            from ..dictation.postprocess import apply_commands, apply_corrections, build_prompt
             from ..dictation.store import DictationStore
+            from ..dictation.vocab import VocabStore
 
-            store = DictationStore(Path("outputs/dictation"))
+            store = DictationStore(Path(_DICTATION_DIR.as_posix()))
             wav = store.read_audio()
             if wav is None:
                 return None, "no audio recorded yet"
+
+            # Hot-reload vocabulary — same four-step pipeline as _finalize_dictation.
+            vocab = VocabStore(Path(_DICTATION_DIR.as_posix()) / "vocab.json").load()
+            prompt = build_prompt(vocab)
+
             endpoint = Config.load(Path("config.toml")).dictation.endpoint
             try:
-                text = remote.post_audio(wav, endpoint)
+                text = remote.post_audio(wav, endpoint, prompt=prompt)
             except remote.DictationRemoteError as e:
                 return None, str(e)
+
+            text = apply_corrections(text, vocab.corrections)
+            text = apply_commands(text, vocab.commands)
+
             store.save_text(text)
             clipboard.set_clipboard_text(text)
             return text, None

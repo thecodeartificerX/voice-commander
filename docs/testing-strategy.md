@@ -61,6 +61,8 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 - **Fixtures:** `tests/fixtures/audio/phrase_coverage/<tool>_<n>.wav` (see §4 for naming convention).
 - **Triggered by:** `uv run pytest` (includes integration); skip with `-m "not integration"` for fast local iteration.
 
+> **Note:** Some integration tests mock the network/OS layer instead of using fixture WAVs. For example, `tests/integration/test_dictation_vocab_pipeline.py` exercises the full `_finalize_dictation` pipeline (VocabStore load → build_prompt → post_audio → apply_corrections/commands → paste) with the remote endpoint and clipboard mocked — no audio model required.
+
 ### Layer 3 — Hardware-in-the-loop (manual)
 
 - **Location:** Per-phase checklists in §3 below.
@@ -103,6 +105,8 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 | `VerbRouter` | `tests/unit/test_verb_router.py` (~34 tests) | Primitive verb routing (`click`/`scroll`/`focus`/`open`/`type`/`press`/`wait`); registry-aware command-name matching (longest-prefix wins, underscore↔space normalization, punctuation stripping, case-insensitive); synonym-based routing (entry.phrases match noisy Whisper transcripts, e.g. "P.A.C.T." → "paste"); enabled-only filter; primitive-origin precedence (primitives never fall through to the command-name path) | In-memory `ToolRegistry` reset per test; no hardware deps |
 | `press()` parser | `tests/unit/test_tools_primitives.py` (~10 tests) | Permissive combo-string parser: split on `+`/`-`/whitespace/commas/`and`; alias map (`control→ctrl`, `windows→win`, `option→alt`, `return→enter`, `escape→esc`, `spacebar→space`); unknown-key emits WARNING + no-op; empty-combo no-op | No external deps; `pyautogui` mocked |
 | Sprite `transcript` handler | `tests/unit/test_sprite_plan_outcome_handler.py` (8 tests, see `test_transcript_appends_info_entry`) | SSE `transcript` event handler appends an INFO-level chat-log entry; full plan-outcome handler suite for ok/miss/error/malformed events | No external deps; in-process `EventBus` with stub subscriber |
+| `VocabStore` | `tests/unit/test_dictation_vocab.py` | `load()` returns empty `Vocabulary` on missing/empty/corrupt file (never raises); `load()` / `save()` round-trip; malformed correction and command entries are dropped with a warning; atomic `.tmp`→replace write pattern | `tmp_path` fixture; no external deps; pure dataclass tests |
+| `postprocess` | `tests/unit/test_dictation_postprocess.py` | `build_prompt` comma-joins vocab words and enforces `_PROMPT_CHAR_CAP=800` by dropping trailing words; `apply_corrections` case-insensitive word-boundary replacement in list order; `apply_commands` replaces spoken command phrases with control characters, consuming surrounding whitespace | No external deps; pure function tests |
 
 > **Note:** React component and Zustand store unit tests live in `web/builder-ui/tests/unit/` and run via vitest (see Layer 1b above). They are not listed in this table, which covers Python daemon subsystems only. The exception is the `KeyRecorder` widget test noted in the Layer 1b section below.
 
