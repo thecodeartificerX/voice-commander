@@ -18,6 +18,7 @@ from .vocab import Command, Correction, Vocabulary
 # ~200 tokens at ~4 chars/token; safely under whisper.cpp's 224-token hard limit.
 _PROMPT_CHAR_CAP = 800
 
+# Extend this mapping to add new formatting actions.
 _ACTION_CHARS: dict[str, str] = {
     "newline": "\n",
     "paragraph": "\n\n",
@@ -57,8 +58,10 @@ def apply_corrections(text: str, corrections: Sequence[Correction]) -> str:
     a later one.
     """
     for correction in corrections:
+        if not correction.wrong:
+            continue
         pattern = re.compile(r"\b" + re.escape(correction.wrong) + r"\b", re.IGNORECASE)
-        text = pattern.sub(correction.right, text)
+        text = pattern.sub(lambda _m: correction.right, text)
     return text
 
 
@@ -74,11 +77,13 @@ def apply_commands(text: str, commands: Sequence[Command]) -> str:
     - ``"paragraph"`` → ``"\n\n"``
     """
     for command in commands:
+        if not command.phrase:
+            continue
         char = _ACTION_CHARS.get(command.action, "")
         if not char:
             continue
         pattern = re.compile(
             r"\s*\b" + re.escape(command.phrase) + r"\b\s*", re.IGNORECASE
         )
-        text = pattern.sub(char, text)
+        text = pattern.sub(lambda _m: char, text)
     return text

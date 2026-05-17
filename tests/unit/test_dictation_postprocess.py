@@ -97,6 +97,26 @@ def test_apply_corrections_no_match_unchanged():
     assert apply_corrections(text, corrections) == text
 
 
+def test_apply_corrections_right_with_backslash_does_not_raise():
+    # right may contain a Windows path / literal backslash — must not crash re.sub.
+    corrections = (Correction(wrong="PACT", right="C:\\path"),)
+    result = apply_corrections("I said PACT today", corrections)
+    assert result == "I said C:\\path today"
+
+
+def test_apply_corrections_right_with_group_reference_is_literal():
+    # A literal "\1" in right must be inserted verbatim, not treated as a group ref.
+    corrections = (Correction(wrong="token", right="\\1"),)
+    result = apply_corrections("the token here", corrections)
+    assert result == "the \\1 here"
+
+
+def test_apply_corrections_empty_wrong_is_skipped():
+    corrections = (Correction(wrong="", right="X"),)
+    text = "hello world"
+    assert apply_corrections(text, corrections) == text
+
+
 # ---------------------------------------------------------------------------
 # apply_commands
 # ---------------------------------------------------------------------------
@@ -142,3 +162,16 @@ def test_apply_commands_no_match_unchanged():
     commands = (Command(phrase="next line", action="newline"),)
     text = "no command phrase present"
     assert apply_commands(text, commands) == text
+
+
+def test_apply_commands_empty_phrase_is_skipped():
+    commands = (Command(phrase="", action="newline"),)
+    text = "hello world"
+    assert apply_commands(text, commands) == text
+
+
+def test_apply_commands_phrase_at_start_produces_leading_newline():
+    # Documented contract: a command phrase at position 0 yields a leading control char.
+    commands = (Command(phrase="next line", action="newline"),)
+    result = apply_commands("next line world", commands)
+    assert result == "\nworld"
