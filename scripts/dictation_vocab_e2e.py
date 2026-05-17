@@ -98,6 +98,7 @@ class _WhisperStubHandler(BaseHTTPRequestHandler):
                         # Value is after the blank line
                         value_part = part.split("\r\n\r\n", 1)
                         if len(value_part) > 1:
+                            # rstrip trims trailing CRLF + boundary dashes; fine for this test-only stub.
                             prompt_value = value_part[1].rstrip("\r\n--")
                             break
             except Exception:
@@ -136,6 +137,7 @@ _KNOWN_COMMAND_ACTION = "newline"
 
 def run() -> int:  # noqa: C901, PLR0912, PLR0915
     """Run all checkpoints. Returns 0 if all hard checkpoints pass."""
+    _checkpoints.clear()
     from voice_commander.dictation.postprocess import (
         apply_commands,
         apply_corrections,
@@ -162,141 +164,152 @@ def run() -> int:  # noqa: C901, PLR0912, PLR0915
     dictation_store = DictationStore(dictation_dir)
     vocab_store = VocabStore(vocab_path)
 
-    # ------------------------------------------------------------------
-    # CP 1: stub server is reachable
-    # ------------------------------------------------------------------
-    result = ""
-    try:
-        test_audio = np.zeros(16000, dtype=np.float32)
-        test_wav = encode_wav(test_audio)
-        from voice_commander.dictation.remote import post_audio
+    # Shared test audio + WAV — created here so every checkpoint can rely on it.
+    # If encode_wav fails the whole harness can't run; let it raise visibly.
+    test_audio = np.zeros(16000, dtype=np.float32)
+    test_wav = encode_wav(test_audio)
 
-        result = post_audio(test_wav, stub_endpoint)
-        cp1 = bool(result)
-        log.info("stub returned: %r", result)
-    except Exception as exc:
-        log.error("stub server unreachable: %s", exc)
-        cp1 = False
-    _record(1, f"stub whisper server reachable, returned: {result!r}", cp1)
+    # Safe defaults so a failing early checkpoint can't trigger UnboundLocalError
+    # cascades in CP 4/5/7 (which would misattribute the real failure).
+    vocab = Vocabulary()
+    prompt = ""
 
-    # ------------------------------------------------------------------
-    # CP 2: VocabStore.save + load round-trips the known vocabulary
-    # ------------------------------------------------------------------
-    known_vocab = Vocabulary(
-        vocab=(_KNOWN_VOCAB_WORD,),
-        corrections=(Correction(wrong=_KNOWN_CORRECTION_WRONG, right=_KNOWN_CORRECTION_RIGHT),),
-        commands=(Command(phrase=_KNOWN_COMMAND_PHRASE, action=_KNOWN_COMMAND_ACTION),),
-    )
-    try:
-        vocab_store.save(known_vocab)
-        loaded_back = vocab_store.load()
-        cp2 = loaded_back == known_vocab
-        log.info("vocab.json round-trip: %s", "PASS" if cp2 else "FAIL")
-    except Exception as exc:
-        log.error("vocab save/load failed: %s", exc)
-        cp2 = False
-    _record(2, "POST /dictation/vocab round-trips via VocabStore.save + load", cp2)
+    from voice_commander.dictation.remote import post_audio
 
-    # ------------------------------------------------------------------
-    # CP 3: prompt sent to stub contains vocab word
-    # ------------------------------------------------------------------
-    stub_srv.last_prompt = ""  # type: ignore[attr-defined]
     try:
-        vocab = vocab_store.load()
-        prompt = build_prompt(vocab)
-        log.info("built prompt: %r", prompt)
-        # Re-send with prompt to capture server-side
-        post_audio(test_wav, stub_endpoint, prompt=prompt)
-        cp3 = _KNOWN_VOCAB_WORD in stub_srv.last_prompt  # type: ignore[attr-defined]
-        log.info(
-            "stub last_prompt: %r — contains %r: %s",
-            stub_srv.last_prompt,  # type: ignore[attr-defined]
-            _KNOWN_VOCAB_WORD,
-            cp3,
+        # --------------------------------------------------------------
+        # CP 1: stub server is reachable
+        # --------------------------------------------------------------
+        result = ""
+        try:
+            result = post_audio(test_wav, stub_endpoint)
+            cp1 = bool(result)
+            log.info("stub returned: %r", result)
+        except Exception as exc:
+            log.error("stub server unreachable: %s", exc)
+            cp1 = False
+        _record(1, f"stub whisper server reachable, returned: {result!r}", cp1)
+
+        # --------------------------------------------------------------
+        # CP 2: VocabStore.save + load round-trips the known vocabulary
+        # --------------------------------------------------------------
+        known_vocab = Vocabulary(
+            vocab=(_KNOWN_VOCAB_WORD,),
+            corrections=(Correction(wrong=_KNOWN_CORRECTION_WRONG, right=_KNOWN_CORRECTION_RIGHT),),
+            commands=(Command(phrase=_KNOWN_COMMAND_PHRASE, action=_KNOWN_COMMAND_ACTION),),
         )
-    except Exception as exc:
-        log.error("prompt test failed: %s", exc)
-        cp3 = False
-    _record(3, f"prompt contains vocab word {_KNOWN_VOCAB_WORD!r}", cp3)
+        try:
+            vocab_store.save(known_vocab)
+            loaded_back = vocab_store.load()
+            cp2 = loaded_back == known_vocab
+            log.info("vocab.json round-trip: %s", "PASS" if cp2 else "FAIL")
+        except Exception as exc:
+            log.error("vocab save/load failed: %s", exc)
+            cp2 = False
+        _record(2, "VocabStore.save + load round-trips the known vocabulary", cp2)
 
-    # ------------------------------------------------------------------
-    # CP 4: correction applied: "supa base" → "Supabase"
-    # ------------------------------------------------------------------
-    corrected = ""
-    try:
-        raw_text = _STUB_RAW_TEXT  # "I use supa base next line world"
-        corrected = apply_corrections(raw_text, vocab.corrections)
-        cp4 = _KNOWN_CORRECTION_RIGHT in corrected and _KNOWN_CORRECTION_WRONG not in corrected
-        log.info(
-            "after corrections: %r (expected %r absent, %r present) → %s",
-            corrected,
-            _KNOWN_CORRECTION_WRONG,
-            _KNOWN_CORRECTION_RIGHT,
-            "PASS" if cp4 else "FAIL",
+        # --------------------------------------------------------------
+        # CP 3: prompt sent to stub contains vocab word
+        # --------------------------------------------------------------
+        stub_srv.last_prompt = ""  # type: ignore[attr-defined]
+        try:
+            vocab = vocab_store.load()
+            prompt = build_prompt(vocab)
+            log.info("built prompt: %r", prompt)
+            # Re-send with prompt to capture server-side
+            post_audio(test_wav, stub_endpoint, prompt=prompt)
+            cp3 = _KNOWN_VOCAB_WORD in stub_srv.last_prompt  # type: ignore[attr-defined]
+            log.info(
+                "stub last_prompt: %r — contains %r: %s",
+                stub_srv.last_prompt,  # type: ignore[attr-defined]
+                _KNOWN_VOCAB_WORD,
+                cp3,
+            )
+        except Exception as exc:
+            log.error("prompt test failed: %s", exc)
+            cp3 = False
+        _record(3, f"prompt contains vocab word {_KNOWN_VOCAB_WORD!r}", cp3)
+
+        # --------------------------------------------------------------
+        # CP 4: correction applied: "supa base" → "Supabase"
+        # --------------------------------------------------------------
+        corrected = ""
+        try:
+            raw_text = _STUB_RAW_TEXT  # "I use supa base next line world"
+            corrected = apply_corrections(raw_text, vocab.corrections)
+            cp4 = _KNOWN_CORRECTION_RIGHT in corrected and _KNOWN_CORRECTION_WRONG not in corrected
+            log.info(
+                "after corrections: %r (expected %r absent, %r present) → %s",
+                corrected,
+                _KNOWN_CORRECTION_WRONG,
+                _KNOWN_CORRECTION_RIGHT,
+                "PASS" if cp4 else "FAIL",
+            )
+        except Exception as exc:
+            log.error("apply_corrections failed: %s", exc)
+            cp4 = False
+        _record(
+            4, f"correction {_KNOWN_CORRECTION_WRONG!r} → {_KNOWN_CORRECTION_RIGHT!r} applied", cp4
         )
-    except Exception as exc:
-        log.error("apply_corrections failed: %s", exc)
-        cp4 = False
-    _record(4, f"correction {_KNOWN_CORRECTION_WRONG!r} → {_KNOWN_CORRECTION_RIGHT!r} applied", cp4)
 
-    # ------------------------------------------------------------------
-    # CP 5: command applied: "next line" → newline
-    # ------------------------------------------------------------------
-    after_commands = ""
-    try:
-        after_commands = apply_commands(corrected, vocab.commands)
-        cp5 = "\n" in after_commands and _KNOWN_COMMAND_PHRASE not in after_commands.lower()
-        log.info(
-            "after commands: %r — contains newline: %s, phrase absent: %s → %s",
-            after_commands,
-            "\n" in after_commands,
-            _KNOWN_COMMAND_PHRASE not in after_commands.lower(),
-            "PASS" if cp5 else "FAIL",
-        )
-    except Exception as exc:
-        log.error("apply_commands failed: %s", exc)
-        cp5 = False
-    _record(5, "command 'next line' → newline applied", cp5)
+        # --------------------------------------------------------------
+        # CP 5: command applied: "next line" → newline
+        # --------------------------------------------------------------
+        after_commands = ""
+        try:
+            after_commands = apply_commands(corrected, vocab.commands)
+            cp5 = "\n" in after_commands and _KNOWN_COMMAND_PHRASE not in after_commands.lower()
+            log.info(
+                "after commands: %r — contains newline: %s, phrase absent: %s → %s",
+                after_commands,
+                "\n" in after_commands,
+                _KNOWN_COMMAND_PHRASE not in after_commands.lower(),
+                "PASS" if cp5 else "FAIL",
+            )
+        except Exception as exc:
+            log.error("apply_commands failed: %s", exc)
+            cp5 = False
+        _record(5, "command 'next line' → newline applied", cp5)
 
-    # ------------------------------------------------------------------
-    # CP 6: last.txt on disk matches final pasted text
-    # ------------------------------------------------------------------
-    try:
-        dictation_store.save_text(after_commands)
-        on_disk = dictation_store.read_text()
-        cp6 = on_disk == after_commands
-        log.info("last.txt matches: %s", "PASS" if cp6 else "FAIL")
-    except Exception as exc:
-        log.error("last.txt save/read failed: %s", exc)
-        cp6 = False
-    _record(6, "last.txt on disk matches processed text", cp6)
+        # --------------------------------------------------------------
+        # CP 6: last.txt on disk matches final pasted text
+        # --------------------------------------------------------------
+        try:
+            dictation_store.save_text(after_commands)
+            on_disk = dictation_store.read_text()
+            cp6 = on_disk == after_commands
+            log.info("last.txt matches: %s", "PASS" if cp6 else "FAIL")
+        except Exception as exc:
+            log.error("last.txt save/read failed: %s", exc)
+            cp6 = False
+        _record(6, "last.txt on disk matches processed text", cp6)
 
-    # ------------------------------------------------------------------
-    # CP 7: re-transcribe applies same post-processing
-    # ------------------------------------------------------------------
-    try:
-        # Simulate retranscribe: read audio, call post_audio with prompt, apply corrections+commands
-        dictation_store.save_audio(test_wav)
-        wav_on_disk = dictation_store.read_audio()
-        assert wav_on_disk is not None
-        retranscribe_raw = post_audio(wav_on_disk, stub_endpoint, prompt=prompt)
-        retranscribe_corrected = apply_corrections(retranscribe_raw, vocab.corrections)
-        retranscribe_final = apply_commands(retranscribe_corrected, vocab.commands)
-        cp7 = (
-            _KNOWN_CORRECTION_RIGHT in retranscribe_final
-            and "\n" in retranscribe_final
-            and _KNOWN_CORRECTION_WRONG not in retranscribe_final
-        )
-        log.info("retranscribe result: %r → %s", retranscribe_final, "PASS" if cp7 else "FAIL")
-    except Exception as exc:
-        log.error("retranscribe simulation failed: %s", exc)
-        cp7 = False
-    _record(7, "re-transcribe path applies corrections + commands identically", cp7)
-
-    # ------------------------------------------------------------------
-    # Cleanup
-    # ------------------------------------------------------------------
-    stub_srv.shutdown()
+        # --------------------------------------------------------------
+        # CP 7: re-transcribe applies same post-processing
+        # --------------------------------------------------------------
+        try:
+            # Simulate retranscribe: read audio, post_audio with prompt, apply corrections+commands
+            dictation_store.save_audio(test_wav)
+            wav_on_disk = dictation_store.read_audio()
+            assert wav_on_disk is not None
+            retranscribe_raw = post_audio(wav_on_disk, stub_endpoint, prompt=prompt)
+            retranscribe_corrected = apply_corrections(retranscribe_raw, vocab.corrections)
+            retranscribe_final = apply_commands(retranscribe_corrected, vocab.commands)
+            cp7 = (
+                _KNOWN_CORRECTION_RIGHT in retranscribe_final
+                and "\n" in retranscribe_final
+                and _KNOWN_CORRECTION_WRONG not in retranscribe_final
+            )
+            log.info("retranscribe result: %r → %s", retranscribe_final, "PASS" if cp7 else "FAIL")
+        except Exception as exc:
+            log.error("retranscribe simulation failed: %s", exc)
+            cp7 = False
+        _record(7, "re-transcribe path applies corrections + commands identically", cp7)
+    finally:
+        # ------------------------------------------------------------------
+        # Cleanup — always shut the stub down, even on an unexpected failure.
+        # ------------------------------------------------------------------
+        stub_srv.shutdown()
 
     # ------------------------------------------------------------------
     # Summary
