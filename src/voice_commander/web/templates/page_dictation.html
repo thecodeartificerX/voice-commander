@@ -9,6 +9,8 @@
     The most recent dictation. Re-transcribe re-sends the saved audio to the
     whisper.cpp endpoint and loads the result onto your clipboard.
   </p>
+
+  <!-- Last dictation result + re-transcribe -->
   <div id="dictation-result" class="bg-neutral-900 border border-neutral-800 rounded-lg p-4 mb-4">
     {% if last_text %}
     <p class="text-sm text-neutral-200 whitespace-pre-wrap">{{ last_text }}</p>
@@ -17,8 +19,157 @@
     {% endif %}
   </div>
   <button hx-post="/dictation/retranscribe" hx-target="#dictation-result" hx-swap="outerHTML"
-          class="text-sm px-4 py-2 rounded bg-emerald-900 hover:bg-emerald-800 text-emerald-300">
+          class="text-sm px-4 py-2 rounded bg-emerald-900 hover:bg-emerald-800 text-emerald-300 mb-8">
     Re-transcribe
   </button>
+
+  <!-- Vocabulary editor -->
+  <form hx-post="/dictation/vocab" hx-target="#vocab-result" hx-swap="outerHTML"
+        hx-headers='{"HX-Request": "true"}' class="mt-8">
+
+    <!-- Vocabulary section -->
+    <div class="mb-6">
+      <h2 class="text-base font-medium text-neutral-200 mb-1">Vocabulary</h2>
+      <p class="text-xs text-neutral-400 mb-2">
+        One word per line. These are seeded into the whisper.cpp
+        <code class="text-neutral-300">prompt</code> field to bias the decoder toward
+        correct spellings. Token budget:
+        <span class="{% if estimated_tokens > token_limit %}text-amber-400{% else %}text-neutral-300{% endif %}">
+          {{ estimated_tokens }} / {{ token_limit }} tokens
+        </span>
+        {% if estimated_tokens > token_limit %}
+        <span class="text-amber-400">(over limit — prompt truncated at use time, saving still works)</span>
+        {% endif %}
+      </p>
+      <textarea name="vocab" rows="4"
+                class="w-full bg-neutral-900 border border-neutral-700 rounded p-2 text-sm text-neutral-200 font-mono focus:outline-none focus:border-neutral-500">{% for w in vocab.vocab %}{{ w }}
+{% endfor %}</textarea>
+    </div>
+
+    <!-- Corrections section -->
+    <div class="mb-6">
+      <h2 class="text-base font-medium text-neutral-200 mb-1">Corrections</h2>
+      <p class="text-xs text-neutral-400 mb-2">
+        Ordered <code class="text-neutral-300">wrong → right</code> replacements applied
+        to the transcription text after the remote call. Case-insensitive, word-boundary
+        anchored.
+      </p>
+      <div id="corrections-list" class="space-y-2 mb-2">
+        {% for c in vocab.corrections %}
+        <div class="flex gap-2 items-center correction-row">
+          <input type="text" name="correction_wrong[]" value="{{ c.wrong }}"
+                 placeholder="wrong"
+                 class="flex-1 bg-neutral-900 border border-neutral-700 rounded p-2 text-sm text-neutral-200 font-mono focus:outline-none focus:border-neutral-500">
+          <span class="text-neutral-500">→</span>
+          <input type="text" name="correction_right[]" value="{{ c.right }}"
+                 placeholder="right"
+                 class="flex-1 bg-neutral-900 border border-neutral-700 rounded p-2 text-sm text-neutral-200 font-mono focus:outline-none focus:border-neutral-500">
+          <button type="button" onclick="this.closest('.correction-row').remove()"
+                  class="text-neutral-500 hover:text-red-400 text-xs px-2">&times;</button>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" onclick="addCorrection()"
+              class="text-xs px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-400">
+        + Add correction
+      </button>
+    </div>
+
+    <!-- Commands section -->
+    <div class="mb-6">
+      <h2 class="text-base font-medium text-neutral-200 mb-1">Commands</h2>
+      <p class="text-xs text-neutral-400 mb-2">
+        Spoken <code class="text-neutral-300">phrase → action</code> mappings. The phrase
+        is consumed and replaced by the selected control character.
+      </p>
+      <div id="commands-list" class="space-y-2 mb-2">
+        {% for cmd in vocab.commands %}
+        <div class="flex gap-2 items-center command-row">
+          <input type="text" name="command_phrase[]" value="{{ cmd.phrase }}"
+                 placeholder="spoken phrase"
+                 class="flex-1 bg-neutral-900 border border-neutral-700 rounded p-2 text-sm text-neutral-200 font-mono focus:outline-none focus:border-neutral-500">
+          <span class="text-neutral-500">→</span>
+          <select name="command_action[]"
+                  class="bg-neutral-900 border border-neutral-700 rounded p-2 text-sm text-neutral-200 focus:outline-none focus:border-neutral-500">
+            <option value="newline" {% if cmd.action == "newline" %}selected{% endif %}>new line</option>
+            <option value="paragraph" {% if cmd.action == "paragraph" %}selected{% endif %}>new paragraph</option>
+          </select>
+          <button type="button" onclick="this.closest('.command-row').remove()"
+                  class="text-neutral-500 hover:text-red-400 text-xs px-2">&times;</button>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" onclick="addCommand()"
+              class="text-xs px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-400">
+        + Add command
+      </button>
+    </div>
+
+    <!-- Save button + result fragment target -->
+    <div class="flex items-center gap-4">
+      <button type="submit"
+              class="text-sm px-4 py-2 rounded bg-emerald-900 hover:bg-emerald-800 text-emerald-300"
+              hx-include="closest form"
+              onclick="serializeEditors(this.closest('form'))">
+        Save
+      </button>
+      <div id="vocab-result"></div>
+    </div>
+  </form>
 </div>
+
+<script>
+  // Serialize dynamic correction/command rows into the hidden JSON fields before submit.
+  function serializeEditors(form) {
+    const corrections = [];
+    form.querySelectorAll('.correction-row').forEach(row => {
+      const wrong = row.querySelector('[name="correction_wrong[]"]').value.trim();
+      const right = row.querySelector('[name="correction_right[]"]').value.trim();
+      if (wrong) corrections.push({wrong, right});
+    });
+    const commands = [];
+    form.querySelectorAll('.command-row').forEach(row => {
+      const phrase = row.querySelector('[name="command_phrase[]"]').value.trim();
+      const action = row.querySelector('[name="command_action[]"]').value;
+      if (phrase) commands.push({phrase, action});
+    });
+    let corField = form.querySelector('[name="corrections"]');
+    if (!corField) { corField = document.createElement('input'); corField.type='hidden'; corField.name='corrections'; form.appendChild(corField); }
+    corField.value = JSON.stringify(corrections);
+    let cmdField = form.querySelector('[name="commands"]');
+    if (!cmdField) { cmdField = document.createElement('input'); cmdField.type='hidden'; cmdField.name='commands'; form.appendChild(cmdField); }
+    cmdField.value = JSON.stringify(commands);
+  }
+
+  function addCorrection() {
+    const row = document.createElement('div');
+    row.className = 'flex gap-2 items-center correction-row';
+    row.innerHTML = `
+      <input type="text" name="correction_wrong[]" placeholder="wrong"
+             class="flex-1 bg-neutral-900 border border-neutral-700 rounded p-2 text-sm text-neutral-200 font-mono focus:outline-none focus:border-neutral-500">
+      <span class="text-neutral-500">→</span>
+      <input type="text" name="correction_right[]" placeholder="right"
+             class="flex-1 bg-neutral-900 border border-neutral-700 rounded p-2 text-sm text-neutral-200 font-mono focus:outline-none focus:border-neutral-500">
+      <button type="button" onclick="this.closest('.correction-row').remove()"
+              class="text-neutral-500 hover:text-red-400 text-xs px-2">&times;</button>`;
+    document.getElementById('corrections-list').appendChild(row);
+  }
+
+  function addCommand() {
+    const row = document.createElement('div');
+    row.className = 'flex gap-2 items-center command-row';
+    row.innerHTML = `
+      <input type="text" name="command_phrase[]" placeholder="spoken phrase"
+             class="flex-1 bg-neutral-900 border border-neutral-700 rounded p-2 text-sm text-neutral-200 font-mono focus:outline-none focus:border-neutral-500">
+      <span class="text-neutral-500">→</span>
+      <select name="command_action[]"
+              class="bg-neutral-900 border border-neutral-700 rounded p-2 text-sm text-neutral-200 focus:outline-none focus:border-neutral-500">
+        <option value="newline">new line</option>
+        <option value="paragraph">new paragraph</option>
+      </select>
+      <button type="button" onclick="this.closest('.command-row').remove()"
+              class="text-neutral-500 hover:text-red-400 text-xs px-2">&times;</button>`;
+    document.getElementById('commands-list').appendChild(row);
+  }
+</script>
 {% endblock %}

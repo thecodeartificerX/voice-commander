@@ -1,0 +1,13 @@
+<div id="vocab-result" class="mt-2">
+  {% if error %}
+  <p class="text-sm text-red-400">Save failed: {{ error }}</p>
+  {% else %}
+  <p class="text-sm text-emerald-400">
+    Vocabulary saved.
+    Token budget: {{ estimated_tokens }} / {{ token_limit }}
+    {% if estimated_tokens > token_limit %}
+    <span class="text-amber-400">(over limit — prompt will be truncated at use time)</span>
+    {% endif %}
+  </p>
+  {% endif %}
+</div>
