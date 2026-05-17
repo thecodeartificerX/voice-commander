@@ -1,8 +1,24 @@
 """DictationSession — daemon sub-state that buffers dictation audio.
 
 While active the daemon routes every utterance here instead of the VerbRouter.
-Non-end utterances have their audio appended to a buffer; the end word triggers
-finalisation. Mirrors PickerSession's role as a voice-session sub-state.
+Non-end utterances have their audio appended to a buffer.  Finalisation happens
+via one of two exit paths:
+
+(a) **End-word path** — the pipeline thread recognises the configured end word
+    (default ``"done"``), calls :meth:`take_and_finish`, captures the buffer,
+    deactivates the session, and submits audio for transcription.
+
+(b) **Hotkey-end path** — the hotkey thread calls :meth:`request_end`, which
+    sets :attr:`pending_end` without deactivating the session.  The pipeline
+    thread polls :attr:`pending_end`; while it is set, the pipeline uses a
+    short timed get on the utterance queue (``_DICTATION_DRAIN_TIMEOUT_S``).
+    Once the queue drains (timeout expires with no new item), the pipeline
+    calls ``_finalize_pending_dictation_end`` → :meth:`take_and_finish`,
+    which atomically captures the buffer and deactivates the session.
+
+Both paths converge on :meth:`take_and_finish`, which holds the lock across
+deactivation and buffer capture, preventing double-submit if both paths
+race.  Mirrors PickerSession's role as a voice-session sub-state.
 """
 
 from __future__ import annotations
@@ -88,8 +104,9 @@ class DictationSession:
 
         End-word utterances are NOT appended to the buffer. This method never
         changes session state — on an ``"end"`` result the caller MUST call
-        ``finish()`` to deactivate the session and publish the end event. A
-        no-op returning ``"buffered"`` when inactive (lost race with finish/cancel).
+        :meth:`take_and_finish` to atomically capture the buffer, deactivate
+        the session, and publish the end event. A no-op returning ``"buffered"``
+        when inactive (lost race with take_and_finish/cancel).
         """
         with self._lock:
             if not self._active:
