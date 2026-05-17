@@ -60,6 +60,12 @@ logger = logging.getLogger(__name__)
 # and calls _finalize_pending_dictation_end().
 _DICTATION_DRAIN_TIMEOUT_S = 0.25
 
+# Unique sentinel object — enqueued by on_dictation_toggle() to wake the
+# pipeline thread from a blocking get(timeout=None) when the user presses
+# the dictation hotkey to end a session. Identity comparison is safe: no
+# real utterance array can be is-equal to this singleton. (ADR 0089)
+_DICTATION_WAKE = object()
+
 
 def _provenance_banner(cfg: Config, result: SelfTestResult) -> list[str]:
     """Return two banner lines describing resolved startup state.
@@ -228,7 +234,7 @@ class StreamingDaemon:
         self._store = store
 
         self._utt_q: queue.Queue[
-            tuple[npt.NDArray[np.float32], int] | npt.NDArray[np.float32] | None
+            tuple[npt.NDArray[np.float32], int] | npt.NDArray[np.float32] | None | object
         ] = queue.Queue(maxsize=8)
         self._pipeline_thread: threading.Thread | None = None
         self._heartbeat_thread: threading.Thread | None = None
@@ -407,6 +413,21 @@ class StreamingDaemon:
             return
         if self._dictation_session.active:
             self._dictation_session.request_end()
+            # Wake the pipeline thread if it is blocked in get(timeout=None).
+            # Without this, the thread only re-evaluates pending_end at the
+            # top of the NEXT iteration — which never comes if the user
+            # stops speaking. The sentinel is consumed by the pipeline loop
+            # via identity check; real utterances ahead of it are processed
+            # first (FIFO). On queue.Full, log and do nothing: a full queue
+            # means the pipeline is already non-idle and will re-evaluate
+            # pending_end naturally. (ADR 0089)
+            try:
+                self._utt_q.put_nowait(_DICTATION_WAKE)
+            except queue.Full:
+                logger.warning(
+                    "dictation: _utt_q full — sentinel not needed; "
+                    "pipeline already active"
+                )
             logger.info("dictation: hotkey-end requested; pipeline will drain and finalize")
         else:
             self._dictation_session.start()
@@ -450,6 +471,11 @@ class StreamingDaemon:
 
             if item is None:
                 break
+            # Skip the wake sentinel — its only job was to unblock get().
+            # The top of the next iteration will see pending_end=True and
+            # switch to the short-timeout drain. (ADR 0089)
+            if item is _DICTATION_WAKE:
+                continue
             # Items enqueued by _on_utterance are (audio, gen) tuples.
             # Tests inject bare ndarrays directly — treat those as gen=None
             # (skip the generation check) for backward compatibility.
@@ -596,6 +622,12 @@ class StreamingDaemon:
                     audio = self._dictation_session.take_and_finish()
                     if audio is not None:
                         self._dictation_executor.submit(self._finalize_dictation, audio)
+                elif kind == "cancel":
+                    # Reuse the pre-existing cancel() method — no new code, no
+                    # POST, no clipboard paste. The method publishes
+                    # dictation.end {"reason": "cancel"}. (ADR 0089)
+                    self._dictation_session.cancel()
+                # "buffered" → fall through, nothing to do
                 run.set_status("ok")
                 return
 
@@ -1270,6 +1302,7 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
     dictation_session = DictationSession(
         bus=event_bus,
         end_word=cfg.dictation.end_word,
+        cancel_word=cfg.dictation.cancel_word,
     )
 
     # --- Elements mode (ADR 0087) ---
