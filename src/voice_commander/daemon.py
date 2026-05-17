@@ -26,6 +26,7 @@ from .chain import ChainParser
 from .config import Config
 from .dictation.session import DictationSession
 from .dictation.store import DictationStore
+from .dictation.vocab import VocabStore
 from .dispatcher import Dispatcher
 from .elements import clicker, desktop, scanner
 from .elements.session import ENTRY_WORDS, ElementsSession, ElementsState
@@ -255,8 +256,7 @@ class StreamingDaemon:
         self._dictation_session = dictation_session
         self._dictation_endpoint = dictation_endpoint
         self._dictation_store = DictationStore(self._output_dir / "dictation")
-        from .dictation.vocab import VocabStore as _VocabStore
-        self._vocab_store = _VocabStore(self._output_dir / "dictation" / "vocab.json")
+        self._vocab_store = VocabStore(self._output_dir / "dictation" / "vocab.json")
         self._dictation_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="dictation",
