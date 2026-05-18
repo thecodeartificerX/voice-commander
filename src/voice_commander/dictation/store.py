@@ -26,10 +26,10 @@ def encode_wav(audio: npt.NDArray[np.float32], sample_rate: int = _SAMPLE_RATE) 
 
 
 class DictationStore:
-    """One-slot on-disk store for the most recent dictation (audio + text).
+    """One-slot on-disk store for the most recent dictation transcript.
 
-    Each new dictation overwrites the previous one. The audio slot doubles as
-    the retry source for the web re-transcribe button.
+    Each new dictation overwrites the previous ``last.txt``. The streaming
+    pipeline never assembles a single WAV, so no audio slot exists (ADR 0092).
     """
 
     def __init__(self, base_dir: Path) -> None:
@@ -37,23 +37,11 @@ class DictationStore:
         self._base.mkdir(parents=True, exist_ok=True)
 
     @property
-    def audio_path(self) -> Path:
-        return self._base / "last.wav"
-
-    @property
     def text_path(self) -> Path:
         return self._base / "last.txt"
 
-    def save_audio(self, wav_bytes: bytes) -> None:
-        self.audio_path.write_bytes(wav_bytes)
-
     def save_text(self, text: str) -> None:
         self.text_path.write_text(text, encoding="utf-8")
-
-    def read_audio(self) -> bytes | None:
-        if not self.audio_path.exists():
-            return None
-        return self.audio_path.read_bytes()
 
     def read_text(self) -> str | None:
         if not self.text_path.exists():
