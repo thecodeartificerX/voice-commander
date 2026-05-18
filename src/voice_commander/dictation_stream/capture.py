@@ -41,12 +41,16 @@ class MicCapture:
         logger.info("MicCapture: input stream open at %d Hz", self.native_rate)
 
     def stop(self) -> None:
-        """Close the stream and push the ``None`` end-of-audio sentinel."""
+        """Close the stream and push the ``None`` end-of-audio sentinel.
+
+        Idempotent — a second call (or a call before ``start``) is a no-op,
+        so no spurious sentinel is enqueued.
+        """
         if self._stream is not None:
             self._stream.stop()
             self._stream.close()
             self._stream = None
-        self._raw_q.put(None)
+            self._raw_q.put(None)
 
     def _on_audio(
         self,

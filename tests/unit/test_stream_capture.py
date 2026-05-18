@@ -72,3 +72,14 @@ def test_stop_closes_stream_and_pushes_sentinel(monkeypatch):
     mc.stop()
     assert created["stream"].closed is True
     assert q.get_nowait() is None
+
+
+def test_stop_is_idempotent(monkeypatch):
+    created = _patch_sounddevice(monkeypatch)
+    q: queue.Queue = queue.Queue()
+    mc = MicCapture(q)
+    mc.start()
+    mc.stop()
+    mc.stop()  # second call must be a no-op
+    assert q.get_nowait() is None
+    assert q.empty()  # exactly one sentinel, not two
