@@ -60,7 +60,6 @@ tray = ["pystray>=0.19.5", "Pillow>=10.2.0"]
 voice-commander = "voice_commander.__main__:main"
 voice-sprite = "voice_sprite.__main__:main"
 voice-commander-supervisor = "voice_commander.supervisor:main"
-voice-dictation-stream = "voice_commander.dictation_stream.__main__:main"
 
 [dependency-groups]
 dev = [

@@ -174,7 +174,47 @@ def run() -> int:  # noqa: C901, PLR0912, PLR0915
     vocab = Vocabulary()
     prompt = ""
 
-    from voice_commander.dictation.remote import post_audio
+    # ---------------------------------------------------------------------------
+    # Local helper: send a WAV to the stub whisper.cpp /inference endpoint.
+    # The batch HTTP POST client (remote.py) was removed by ADR 0092.
+    # Uses urllib (stdlib) to avoid extra deps.
+    # ---------------------------------------------------------------------------
+    import email.generator
+    import email.mime.multipart
+    import io
+    import urllib.request
+
+    def _post_audio_stub(wav_bytes: bytes, endpoint: str, *, prompt: str = "") -> str:
+        """POST *wav_bytes* to the stub /inference server; return the transcribed text."""
+        boundary = "boundary_vocab_e2e_test"
+        parts: list[bytes] = []
+        # file part
+        parts.append(
+            f"--{boundary}\r\n"
+            "Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n"
+            "Content-Type: audio/wav\r\n\r\n".encode()
+            + wav_bytes
+            + b"\r\n"
+        )
+        if prompt:
+            parts.append(
+                f"--{boundary}\r\n"
+                "Content-Disposition: form-data; name=\"prompt\"\r\n\r\n".encode()
+                + prompt.encode()
+                + b"\r\n"
+            )
+        parts.append(f"--{boundary}--\r\n".encode())
+        body = b"".join(parts)
+        req = urllib.request.Request(
+            endpoint,
+            data=body,
+            method="POST",
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        import json as _json
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = _json.loads(resp.read())
+        return str(data.get("text", "")).strip()
 
     try:
         # --------------------------------------------------------------
@@ -182,7 +222,7 @@ def run() -> int:  # noqa: C901, PLR0912, PLR0915
         # --------------------------------------------------------------
         result = ""
         try:
-            result = post_audio(test_wav, stub_endpoint)
+            result = _post_audio_stub(test_wav, stub_endpoint)
             cp1 = bool(result)
             log.info("stub returned: %r", result)
         except Exception as exc:
@@ -217,7 +257,7 @@ def run() -> int:  # noqa: C901, PLR0912, PLR0915
             prompt = build_prompt(vocab)
             log.info("built prompt: %r", prompt)
             # Re-send with prompt to capture server-side
-            post_audio(test_wav, stub_endpoint, prompt=prompt)
+            _post_audio_stub(test_wav, stub_endpoint, prompt=prompt)
             cp3 = _KNOWN_VOCAB_WORD in stub_srv.last_prompt  # type: ignore[attr-defined]
             log.info(
                 "stub last_prompt: %r — contains %r: %s",
@@ -288,11 +328,10 @@ def run() -> int:  # noqa: C901, PLR0912, PLR0915
         # CP 7: re-transcribe applies same post-processing
         # --------------------------------------------------------------
         try:
-            # Simulate retranscribe: read audio, post_audio with prompt, apply corrections+commands
-            dictation_store.save_audio(test_wav)
-            wav_on_disk = dictation_store.read_audio()
-            assert wav_on_disk is not None
-            retranscribe_raw = post_audio(wav_on_disk, stub_endpoint, prompt=prompt)
+            # Simulate retranscribe: post WAV bytes with prompt, apply corrections+commands.
+            # (ADR 0092: DictationStore no longer persists audio; we use the in-memory
+            # test_wav bytes directly.)
+            retranscribe_raw = _post_audio_stub(test_wav, stub_endpoint, prompt=prompt)
             retranscribe_corrected = apply_corrections(retranscribe_raw, vocab.corrections)
             retranscribe_final = apply_commands(retranscribe_corrected, vocab.commands)
             cp7 = (

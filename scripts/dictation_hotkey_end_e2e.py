@@ -148,7 +148,7 @@ def _build_daemon(
     feedback = CapturingFeedbackSink()
     dispatcher = Dispatcher(feedback=feedback, event_bus=bus)
     verb_router = VerbRouter(build_default_rules(), registry=registry, picker_registry=None)
-    dictation_session = DictationSession(bus=bus, end_word="done")
+    dictation_session = DictationSession(bus=bus, ws_url="ws://stub-not-used", end_word="done")
 
     daemon = StreamingDaemon(
         feedback=feedback,
@@ -174,23 +174,28 @@ def _build_daemon(
 def run() -> int:
     """Run all checkpoints. Returns 0 if all hard checkpoints pass."""
     import voice_commander.dictation.clipboard as _clipboard_mod
-    import voice_commander.dictation.remote as _remote_mod
+    from voice_commander.dictation.session import DictationSession
 
-    # Stub the network call and clipboard operations
-    _orig_post = _remote_mod.post_audio
+    # Stub session.finish() so it returns the stub transcription without
+    # opening a real WebSocket, and stub clipboard operations.
+    _orig_finish = DictationSession.finish
     _orig_paste = _clipboard_mod.paste_via_clipboard
 
     pasted: list[str] = []
 
-    def _stub_post(wav_bytes: bytes, endpoint: str, **kw: Any) -> str:
-        log.info("stub post_audio called — %d bytes", len(wav_bytes))
+    def _stub_finish(self: DictationSession) -> str:
+        log.info("stub DictationSession.finish called")
+        with self._lock:
+            self._active = False
+            self._pending_end.clear()
+        self._bus.publish("dictation.end", {"reason": "done"})
         return _STUB_TRANSCRIPTION
 
     def _stub_paste(text: str, **kw: Any) -> None:
         log.info("stub paste_via_clipboard called — %r", text)
         pasted.append(text)
 
-    _remote_mod.post_audio = _stub_post  # type: ignore[assignment]
+    DictationSession.finish = _stub_finish  # type: ignore[method-assign]
     _clipboard_mod.paste_via_clipboard = _stub_paste  # type: ignore[assignment]
 
     # Snapshot the real clipboard to restore later
@@ -327,7 +332,7 @@ def run() -> int:
 
     finally:
         # Restore monkeypatches
-        _remote_mod.post_audio = _orig_post  # type: ignore[assignment]
+        DictationSession.finish = _orig_finish  # type: ignore[method-assign]
         _clipboard_mod.paste_via_clipboard = _orig_paste  # type: ignore[assignment]
 
         # Restore original clipboard
