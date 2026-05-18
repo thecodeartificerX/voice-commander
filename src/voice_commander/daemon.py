@@ -161,7 +161,9 @@ class StreamingDaemon:
         picker_session: PickerSession | None = None,
         picker_registry: BarePickerRegistry | None = None,
         dictation_session: DictationSession | None = None,
-        dictation_endpoint: str = "",
+        dictation_ws_url: str = "",
+        dictation_language: str = "en",
+        dictation_idle_timeout_s: float = 30.0,
         elements_session: ElementsSession | None = None,
         elements_max_elements: int = 200,
         elements_scan_timeout_s: float = 3.0,
@@ -261,7 +263,9 @@ class StreamingDaemon:
         self._picker_session = picker_session
         self._picker_registry = picker_registry
         self._dictation_session = dictation_session
-        self._dictation_endpoint = dictation_endpoint
+        self._dictation_ws_url = dictation_ws_url
+        self._dictation_language = dictation_language
+        self._dictation_idle_timeout_s = dictation_idle_timeout_s
         self._dictation_store = DictationStore(self._output_dir / "dictation")
         self._vocab_store = VocabStore(self._output_dir / "dictation" / "vocab.json")
         self._dictation_executor = concurrent.futures.ThreadPoolExecutor(
@@ -895,54 +899,61 @@ class StreamingDaemon:
                 "(session closed or no audio); close submitted unconditionally"
             )
 
-    def _finalize_dictation(self, audio: npt.NDArray[np.float32]) -> None:
-        """Worker-thread finalize: encode → build prompt → POST → post-process → paste.
+    def _finalize_dictation(self) -> None:
+        """Worker-thread finalize: take the stabilised transcript → post-process → paste.
 
         Runs on ``self._dictation_executor`` so the pipeline thread is never
-        blocked by the network round-trip. All failures surface as a
-        ``dictation.error`` event + miss chime; the audio stays on disk for
-        the web re-transcribe button.
+        blocked by the WebSocket teardown / join. ``DictationSession.finish``
+        joins the asyncio-loop thread and returns the raw stabilised
+        transcript; this method applies corrections + commands, pastes, saves
+        ``last.txt``, and publishes events.
 
-        Processing order
-        ----------------
-        1. Encode audio → WAV bytes; save to ``last.wav``.
-        2. Load ``VocabStore`` (fresh read — hot-reload with no restart).
-        3. Build whisper ``prompt`` string from vocabulary.
-        4. ``remote.post_audio(wav_bytes, endpoint, prompt=prompt)`` — transcribe.
-        5. ``apply_corrections(text, vocab.corrections)`` — fix known garbled forms.
-        6. ``apply_commands(text, vocab.commands)`` — replace command phrases with
-           control characters.
-        7. Save processed text to ``last.txt``; paste via clipboard.
+        Failure handling (events + chimes match the batch path exactly,
+        ADR 0092):
 
-        Corrections run before commands so a lightly-mistranscribed command phrase
-        can be repaired into its canonical form before command matching (ADR 0088).
+        - WebSocket connect failed / nothing transcribed → ``dictation.error
+          {reason: "endpoint"}`` + miss chime.
+        - ``encode_wav`` failed on a streamed chunk → ``dictation.error
+          {reason: "encode"}`` + miss chime.
+        - ``paste_via_clipboard`` failed → ``dictation.error
+          {reason: "clipboard"}`` + miss chime.
+
+        Corrections run before commands so a lightly-mistranscribed command
+        phrase can be repaired into its canonical form before command matching
+        (ADR 0088, carried over).
         """
-        from .dictation import clipboard, remote
-        from .dictation.postprocess import apply_commands, apply_corrections, build_prompt
-        from .dictation.store import encode_wav
+        from .dictation import clipboard
+        from .dictation.postprocess import apply_commands, apply_corrections
 
-        try:
-            wav_bytes = encode_wav(audio)
-            self._dictation_store.save_audio(wav_bytes)
-        except Exception:
-            logger.exception("dictation: failed to encode/save audio")
+        if self._dictation_session is None:
+            return
+
+        # Snapshot the vocab the session started with (one consistent snapshot
+        # per dictation — ADR 0092).
+        vocab = self._dictation_session.vocab
+
+        # finish() joins the asyncio thread and returns the raw transcript.
+        text = self._dictation_session.finish()
+
+        # encode_wav failure on a chunk is recorded on session.error == "encode".
+        if self._dictation_session.error == "encode":
+            logger.warning("dictation: a chunk failed to encode")
             self._publish("dictation.error", {"reason": "encode"})
             self._feedback.on_miss("(dictation: encode error)", ())
             return
 
-        # Hot-reload vocabulary on every dictation — no daemon restart required.
-        vocab = self._vocab_store.load()
-        prompt = build_prompt(vocab)
-
-        try:
-            text = remote.post_audio(wav_bytes, self._dictation_endpoint, prompt=prompt)
-        except remote.DictationRemoteError as e:
-            logger.warning("dictation: remote transcription failed: %s", e)
-            self._publish("dictation.error", {"reason": "endpoint"})
-            self._feedback.on_miss("(dictation: endpoint error)", ())
+        # Empty transcript: either the WS never connected, or the user said
+        # nothing. error == "endpoint" disambiguates the failure case.
+        if not text:
+            if self._dictation_session.error == "endpoint":
+                logger.warning("dictation: streaming endpoint failed")
+                self._publish("dictation.error", {"reason": "endpoint"})
+                self._feedback.on_miss("(dictation: endpoint error)", ())
+            else:
+                logger.info("dictation: empty transcript — nothing to paste")
             return
 
-        # Post-process: corrections then commands (ADR 0088 §Pipeline integration).
+        # Post-process: corrections then commands (ADR 0088).
         text = apply_corrections(text, vocab.corrections)
         text = apply_commands(text, vocab.commands)
 
