@@ -44,7 +44,7 @@ class SessionToggle:
         self._session: object | None = None
 
     def fire(self) -> str | None:
-        """Handle one hotkey press. Returns pasted text on stop, else None."""
+        """Handle one press. Returns pasted text on stop; None on start or debounce."""
         now = self._clock()
         if now - self._last < self._debounce_s:
             return None
@@ -56,9 +56,23 @@ class SessionToggle:
         session, self._session = self._session, None
         return session.stop()  # type: ignore[attr-defined]
 
+    def shutdown(self) -> str | None:
+        """Stop an in-flight session, if any. Returns its pasted text or None.
+
+        Called on process exit so a dictation in progress is finalized and
+        pasted rather than silently discarded.
+        """
+        if self._session is None:
+            return None
+        session, self._session = self._session, None
+        return session.stop()  # type: ignore[attr-defined]
+
 
 def main() -> None:
     """Bind Right Ctrl and toggle streaming-dictation sessions until Ctrl-C."""
+    import queue
+    import threading
+
     from pynput import keyboard
 
     logging.basicConfig(
@@ -73,9 +87,26 @@ def main() -> None:
 
     toggle = SessionToggle(lambda: StreamSession(config))
 
+    # Right Ctrl presses are serviced on a dedicated worker thread: a session
+    # stop() joins background threads and blocks, and must never run on (and
+    # freeze) the pynput listener thread.
+    press_q: "queue.Queue[object | None]" = queue.Queue()
+
+    def worker() -> None:
+        while True:
+            item = press_q.get()
+            if item is None:
+                return
+            result = toggle.fire()
+            if result:
+                logger.info("Dictation pasted (%d chars)", len(result))
+
+    worker_thread = threading.Thread(target=worker, name="dict-stream-toggle", daemon=True)
+    worker_thread.start()
+
     def on_press(key: object) -> None:
         if key is keyboard.Key.ctrl_r:
-            toggle.fire()
+            press_q.put(object())
 
     listener = keyboard.Listener(on_press=on_press)
     listener.start()
@@ -84,6 +115,9 @@ def main() -> None:
     except KeyboardInterrupt:
         logger.info("Shutting down")
         listener.stop()
+        toggle.shutdown()        # finalize + paste any in-flight dictation
+        press_q.put(None)        # release the worker thread
+        worker_thread.join(timeout=5.0)
 
 
 if __name__ == "__main__":

@@ -57,4 +57,18 @@ def test_debounce_drops_rapid_second_press():
     toggle.fire()              # start
     assert toggle.fire() is None  # debounced — ignored
     assert len(sessions) == 1
+    assert sessions[0].started is True
     assert sessions[0].stopped is False
+
+
+def test_shutdown_stops_an_active_session():
+    session = _FakeSession()
+    toggle = SessionToggle(lambda: session, clock=lambda: 0.0)
+    toggle.fire()  # start
+    assert toggle.shutdown() == "pasted text"
+    assert session.stopped is True
+
+
+def test_shutdown_is_noop_with_no_active_session():
+    toggle = SessionToggle(lambda: _FakeSession(), clock=lambda: 0.0)
+    assert toggle.shutdown() is None
