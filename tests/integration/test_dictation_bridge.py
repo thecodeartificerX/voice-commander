@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import queue
 
-from voice_commander.dictation_stream.bridge import pump
+from voice_commander.dictation.bridge import pump
 
 
 async def test_pump_moves_items_then_forwards_sentinel():
