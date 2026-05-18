@@ -26,6 +26,7 @@ class StreamDictationConfig:
     max_chunk_seconds: int = 15
     min_chunk_seconds: int = 1
     idle_timeout_seconds: int = 30
+    input_device: int | str | None = None
 
 
 def load(path: Path) -> StreamDictationConfig:

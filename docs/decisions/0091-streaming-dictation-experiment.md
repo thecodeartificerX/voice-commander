@@ -59,6 +59,14 @@ The standalone runner binds Right Ctrl (matching the shipped `dictation_key`).
 A first press starts a session, the next stops it. A 50 ms debounce drops
 driver double-release events, as in the shipped daemon.
 
+### D7 — Selectable input device
+
+`MicCapture` opens the Windows default input device unless `[dictation_stream]
+input_device` names another — an integer device index or a name substring.
+Threaded `config -> StreamSession -> MicCapture`; `None` (the default) preserves
+the system-default behaviour. Needed because a user's preferred mic (e.g. an
+external USB condenser) is often not the OS default capture device.
+
 ## Consequences
 
 ### Positive

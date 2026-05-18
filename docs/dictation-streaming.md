@@ -31,6 +31,13 @@ mic -> MicCapture -> raw_q -> Chunker (VADGate: silence | 15s cap)
 | `session.py` | `StreamSession` — pipeline orchestrator |
 | `__main__.py` | Right Ctrl entrypoint |
 
+## Configuration
+
+Set `[dictation_stream] input_device` in `config.toml` to select a non-default
+microphone by integer device index or name substring (e.g. `input_device = 4`
+or `input_device = "AT2020"`). Omit the key to use the Windows default input
+device.
+
 ## Status
 
 Experimental — not wired into the daemon. See ADR 0091. If it proves out, a

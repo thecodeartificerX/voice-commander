@@ -34,9 +34,11 @@ def _patch_sounddevice(monkeypatch, native_rate=48000):
         created["stream"] = stream
         return stream
 
-    monkeypatch.setattr(
-        capture_mod.sd, "query_devices", lambda kind: {"default_samplerate": float(native_rate)}
-    )
+    def _fake_query_devices(device=None, kind=None):
+        created["query_devices_device"] = device
+        return {"default_samplerate": float(native_rate)}
+
+    monkeypatch.setattr(capture_mod.sd, "query_devices", _fake_query_devices)
     monkeypatch.setattr(capture_mod.sd, "InputStream", _fake_input_stream)
     return created
 
@@ -83,3 +85,13 @@ def test_stop_is_idempotent(monkeypatch):
     mc.stop()  # second call must be a no-op
     assert q.get_nowait() is None
     assert q.empty()  # exactly one sentinel, not two
+
+
+def test_start_uses_explicit_device(monkeypatch):
+    created = _patch_sounddevice(monkeypatch, native_rate=48000)
+    mc = MicCapture(queue.Queue(), device=4)
+    mc.start()
+    # sd.query_devices was called with device=4
+    assert created["query_devices_device"] == 4
+    # the InputStream was created with device=4
+    assert created["stream"].kwargs["device"] == 4

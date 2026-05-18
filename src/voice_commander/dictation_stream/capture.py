@@ -20,21 +20,35 @@ logger = logging.getLogger(__name__)
 
 
 class MicCapture:
-    """Open the default input device; stream raw blocks onto ``raw_q``."""
+    """Open a sounddevice input device; stream raw blocks onto ``raw_q``.
 
-    def __init__(self, raw_q: "queue.Queue[npt.NDArray[np.float32] | None]") -> None:
+    Args:
+        raw_q: Thread-safe queue that receives ``float32`` numpy blocks while
+            the stream is running and a ``None`` sentinel when it stops.
+        device: sounddevice device specifier — an integer index, a name
+            substring, or ``None`` to use the Windows default input device.
+            Passed directly to ``sd.query_devices`` and ``sd.InputStream``.
+    """
+
+    def __init__(
+        self,
+        raw_q: "queue.Queue[npt.NDArray[np.float32] | None]",
+        device: int | str | None = None,
+    ) -> None:
         self._raw_q = raw_q
+        self._device = device
         self._stream: Any = None
         self.native_rate: int = 0
 
     def start(self) -> None:
         """Open and start the input stream. Raises on device failure."""
-        device_info = sd.query_devices(kind="input")
+        device_info = sd.query_devices(self._device, "input")
         self.native_rate = int(device_info["default_samplerate"])
         self._stream = sd.InputStream(
             samplerate=self.native_rate,
             channels=1,
             dtype="float32",
+            device=self._device,
             callback=self._on_audio,
         )
         self._stream.start()

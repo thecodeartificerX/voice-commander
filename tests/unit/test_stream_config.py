@@ -38,3 +38,13 @@ def test_unknown_key_rejected(tmp_path):
     path.write_text("[dictation_stream]\nbogus_key = 1\n")
     with pytest.raises(ValueError, match="bogus_key"):
         load(path)
+
+
+def test_input_device_override(tmp_path):
+    # default is None
+    assert StreamDictationConfig().input_device is None
+    # TOML integer overrides it
+    path = tmp_path / "config.toml"
+    path.write_text("[dictation_stream]\ninput_device = 4\n")
+    cfg = load(path)
+    assert cfg.input_device == 4

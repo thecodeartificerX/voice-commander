@@ -107,3 +107,4 @@ speech_pad_ms           = 300    # audio kept before/after detected speech
 max_chunk_seconds       = 15     # hard time cap — force-flush a chunk even without a pause
 min_chunk_seconds       = 1      # discard chunks shorter than this (too short for whisper)
 idle_timeout_seconds    = 30     # close the stream after this long with no audio
+# input_device           = 4      # mic device index or name substring; omit for the Windows default input device

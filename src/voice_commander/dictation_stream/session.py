@@ -47,7 +47,10 @@ class StreamSession:
         self._config = config
         self._raw_q: queue.Queue = raw_q if raw_q is not None else queue.Queue(maxsize=256)
         self._chunk_q: queue.Queue = queue.Queue()
-        self._capture = capture if capture is not None else MicCapture(self._raw_q)
+        self._capture = (
+            capture if capture is not None
+            else MicCapture(self._raw_q, device=config.input_device)
+        )
         self._chunker_factory = chunker_factory or self._default_chunker
         self._agreement = LocalAgreement()
         self._sink = TextSink()
