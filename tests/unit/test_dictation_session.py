@@ -1,203 +1,197 @@
+"""Unit + light-integration tests for the streaming DictationSession.
+
+A mock WebSocket server (websockets.asyncio.server.serve) stands in for the
+real /ws/transcribe endpoint. The session's own asyncio-loop thread connects
+to it. These tests exercise classification, the streaming round-trip, and the
+finish/cancel exit paths.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import threading
+
 import numpy as np
+import pytest
+from websockets.asyncio.server import serve
 
 from voice_commander.dictation.session import DictationSession
+from voice_commander.dictation.vocab import Correction, Vocabulary
 
 
 class _FakeBus:
-    def __init__(self):
-        self.events = []
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict]] = []
 
     def publish(self, event_type, data=None):
         self.events.append((event_type, data or {}))
 
 
-def _audio(n=8000):
+def _audio(n: int = 8000) -> np.ndarray:
     return np.ones(n, dtype=np.float32)
 
 
-def test_start_publishes_and_activates():
-    bus = _FakeBus()
-    s = DictationSession(bus)
-    assert not s.active
-    s.start()
-    assert s.active
-    assert bus.events == [("dictation.start", {})]
+class _MockWsServer:
+    """Runs websockets.serve on a background asyncio loop thread.
+
+    Replies one ``partial`` frame per binary chunk; the partial text is the
+    next entry of *replies* (last entry repeats). Exposes the bound URL.
+    """
+
+    def __init__(self, replies: list[str]) -> None:
+        self._replies = replies
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._ready = threading.Event()
+        self.url = ""
+        self.configs: list[dict] = []
+
+    def _run(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._serve())
+
+    async def _serve(self) -> None:
+        state = {"i": 0}
+
+        async def handler(conn):
+            async for message in conn:
+                if isinstance(message, str):
+                    data = json.loads(message)
+                    if data.get("type") == "config":
+                        self.configs.append(data)
+                else:
+                    text = self._replies[min(state["i"], len(self._replies) - 1)]
+                    state["i"] += 1
+                    await conn.send(json.dumps({"type": "partial", "text": text}))
+
+        server = await serve(handler, "localhost", 0)
+        port = server.sockets[0].getsockname()[1]
+        self.url = f"ws://localhost:{port}"
+        self._ready.set()
+        await asyncio.Future()  # run forever
+
+    def start(self) -> str:
+        self._thread.start()
+        assert self._ready.wait(timeout=5.0), "mock WS server did not start"
+        return self.url
 
 
-def test_buffers_non_end_utterances():
-    bus = _FakeBus()
-    s = DictationSession(bus)
-    s.start()
-    assert s.handle_utterance(_audio(), "hello there") == "buffered"
-    assert s.handle_utterance(_audio(), "more words") == "buffered"
-    audio = s.take_audio()
-    assert audio is not None
-    assert audio.shape[0] == 16000
+# --- classification (no server needed) ---
 
 
-def test_end_word_returns_end_and_is_not_buffered():
-    bus = _FakeBus()
-    s = DictationSession(bus, end_word="done")
-    s.start()
-    s.handle_utterance(_audio(), "some prose")
-    assert s.handle_utterance(_audio(), "done") == "end"
-    audio = s.take_audio()
-    assert audio is not None
-    assert audio.shape[0] == 8000  # only the one buffered utterance
-
-
-def test_end_word_match_is_exact_standalone():
-    bus = _FakeBus()
-    s = DictationSession(bus, end_word="done")
-    s.start()
-    # "I am done with this" must NOT end dictation.
-    assert s.handle_utterance(_audio(), "I am done with this") == "buffered"
-    # Punctuation / case tolerated on the standalone word.
-    assert s.handle_utterance(_audio(), "Done.") == "end"
-
-
-def test_empty_buffer_take_audio_is_none():
-    s = DictationSession(_FakeBus())
-    s.start()
-    assert s.take_audio() is None
-
-
-def test_finish_deactivates_and_publishes():
-    bus = _FakeBus()
-    s = DictationSession(bus)
-    s.start()
-    s.finish()
-    assert not s.active
-    assert ("dictation.end", {"reason": "done"}) in bus.events
-
-
-def test_cancel_deactivates_and_publishes():
-    bus = _FakeBus()
-    s = DictationSession(bus)
-    s.start()
-    s.cancel()
-    assert not s.active
-    assert ("dictation.end", {"reason": "cancel"}) in bus.events
-
-
-def test_handle_utterance_when_inactive_is_noop():
-    s = DictationSession(_FakeBus())
+def test_handle_utterance_when_inactive_is_buffered() -> None:
+    s = DictationSession(_FakeBus(), ws_url="ws://localhost:1")
     assert s.handle_utterance(_audio(), "anything") == "buffered"
-    assert s.take_audio() is None
 
 
-def test_finish_when_inactive_is_noop():
+def test_end_word_returns_end_exact_standalone() -> None:
+    s = _MockWsServer([])
+    url = s.start()
+    sess = DictationSession(_FakeBus(), ws_url=url, end_word="done")
+    sess.start(Vocabulary())
+    assert sess.handle_utterance(_audio(), "I am done with this") == "buffered"
+    assert sess.handle_utterance(_audio(), "Done.") == "end"
+    sess.finish()
+
+
+def test_cancel_word_collision_disables_cancel(caplog) -> None:
     bus = _FakeBus()
-    s = DictationSession(bus)
-    s.finish()  # never started
-    assert not s.active
-    assert bus.events == []
+    with caplog.at_level(logging.WARNING, logger="voice_commander.dictation.session"):
+        sess = DictationSession(
+            bus, ws_url="ws://localhost:1", end_word="done", cancel_word="done"
+        )
+    assert sess._cancel_word is None
+    assert any(
+        "collision" in r.message.lower() or "cancel" in r.message.lower()
+        for r in caplog.records
+    )
 
 
-def test_take_and_finish_returns_audio_and_deactivates():
+def test_cancel_word_empty_disables_cancel(caplog) -> None:
+    with caplog.at_level(logging.WARNING, logger="voice_commander.dictation.session"):
+        sess = DictationSession(
+            _FakeBus(), ws_url="ws://localhost:1", end_word="done", cancel_word=""
+        )
+    assert sess._cancel_word is None
+
+
+# --- streaming round-trip (mock server) ---
+
+
+def test_start_publishes_dictation_start() -> None:
     bus = _FakeBus()
-    s = DictationSession(bus)
-    s.start()
-    s.handle_utterance(_audio(), "hello")
-    audio = s.take_and_finish()
-    assert audio is not None
-    assert audio.shape[0] == 8000
-    assert not s.active
+    url = _MockWsServer([]).start()
+    sess = DictationSession(bus, ws_url=url)
+    sess.start(Vocabulary())
+    assert ("dictation.start", {}) in bus.events
+    sess.finish()
+
+
+def test_streamed_utterances_are_stabilised_by_finish() -> None:
+    """Two utterances → two partials → LocalAgreement → finish returns text."""
+    bus = _FakeBus()
+    server = _MockWsServer(["hello world", "world done"])
+    url = server.start()
+    sess = DictationSession(bus, ws_url=url, end_word="stop", idle_timeout_s=3.0)
+    sess.start(Vocabulary())
+    assert sess.handle_utterance(_audio(), "hello world") == "buffered"
+    assert sess.handle_utterance(_audio(), "more speech") == "buffered"
+    text = sess.finish()
+    # commit("hello world")->[]; commit("world done")->["hello"];
+    # finalize->["world","done"]
+    assert text == "hello world done"
     assert ("dictation.end", {"reason": "done"}) in bus.events
+    assert not sess.active
 
 
-def test_take_and_finish_empty_buffer_returns_none():
+def test_finish_returns_empty_on_connect_failure() -> None:
+    """A bad ws_url → asyncio thread records error → finish() returns ''."""
     bus = _FakeBus()
-    s = DictationSession(bus)
-    s.start()
-    assert s.take_and_finish() is None
-    assert not s.active
+    sess = DictationSession(bus, ws_url="ws://localhost:1", idle_timeout_s=2.0)
+    sess.start(Vocabulary())
+    text = sess.finish()
+    assert text == ""
+    assert sess.error == "endpoint"
 
 
-def test_take_and_finish_when_inactive_returns_none_and_is_silent():
+def test_cancel_discards_and_publishes_cancel() -> None:
     bus = _FakeBus()
-    s = DictationSession(bus)
-    # never started — the "lost the race" case
-    assert s.take_and_finish() is None
-    assert bus.events == []
+    server = _MockWsServer(["hello world"])
+    url = server.start()
+    sess = DictationSession(bus, ws_url=url, idle_timeout_s=2.0)
+    sess.start(Vocabulary())
+    sess.handle_utterance(_audio(), "hello world")
+    sess.cancel()
+    assert not sess.active
+    assert ("dictation.end", {"reason": "cancel"}) in bus.events
+    # finish() after cancel is a no-op returning ""
+    assert sess.finish() == ""
 
 
-# ---------------------------------------------------------------------------
-# Cancel-word tests (Task 1 — ADR 0089)
-# ---------------------------------------------------------------------------
+def test_config_frame_carries_prompt_from_vocab() -> None:
+    """build_prompt(vocab) is sent in the config handshake."""
+    server = _MockWsServer([])
+    url = server.start()
+    sess = DictationSession(_FakeBus(), ws_url=url, idle_timeout_s=2.0)
+    vocab = Vocabulary(vocab=("Supabase", "Postgres"))
+    sess.start(vocab)
+    sess.handle_utterance(_audio(), "filler")  # one chunk forces a config send
+    sess.finish()
+    assert server.configs, "server received no config frame"
+    cfg = server.configs[0]
+    # Field name confirmed in Phase 2 — adjust if Phase 2 found a different name.
+    assert cfg.get("initial_prompt") == "Supabase, Postgres"
 
 
-def test_cancel_word_returns_cancel_and_does_not_buffer():
-    """handle_utterance returns "cancel" on exact cancel-word match and
-    does NOT append the audio chunk to the buffer."""
-    bus = _FakeBus()
-    s = DictationSession(bus, end_word="done", cancel_word="cancel")
-    s.start()
-    audio = _audio()
-    assert s.handle_utterance(audio, "cancel") == "cancel"
-    # Audio must NOT have been buffered — take_audio returns None
-    assert s.take_audio() is None
-
-
-def test_cancel_word_normalized_match():
-    """Normalization (lowercase, strip punctuation) applies to cancel word."""
-    bus = _FakeBus()
-    s = DictationSession(bus, end_word="done", cancel_word="cancel")
-    s.start()
-    audio = _audio()
-    # "Cancel." normalizes to "cancel"
-    assert s.handle_utterance(audio, "Cancel.") == "cancel"
-    assert s.take_audio() is None
-
-
-def test_cancel_word_partial_phrase_is_buffered():
-    """A transcript containing cancel word as part of a longer phrase is buffered."""
-    bus = _FakeBus()
-    s = DictationSession(bus, end_word="done", cancel_word="cancel")
-    s.start()
-    audio = _audio()
-    # "please cancel that" must NOT trigger cancel — it is not the exact word
-    assert s.handle_utterance(audio, "please cancel that") == "buffered"
-    assert s.take_audio() is not None
-
-
-def test_cancel_word_when_inactive_returns_buffered():
-    """handle_utterance returns "buffered" (no-op) when session is inactive,
-    even if the transcript matches the cancel word."""
-    bus = _FakeBus()
-    s = DictationSession(bus, end_word="done", cancel_word="cancel")
-    # Never started — inactive
-    audio = _audio()
-    assert s.handle_utterance(audio, "cancel") == "buffered"
-    assert s.take_audio() is None
-
-
-def test_cancel_word_collision_with_end_word_disables_cancel(caplog):
-    """When cancel_word == end_word, __init__ logs a WARNING and sets
-    _cancel_word = None, so the collision word buffers normally."""
-    import logging
-    bus = _FakeBus()
-    with caplog.at_level(logging.WARNING, logger="voice_commander.dictation.session"):
-        s = DictationSession(bus, end_word="done", cancel_word="done")
-    # Warning must have been emitted
-    assert any("cancel" in r.message.lower() or "collision" in r.message.lower()
-               for r in caplog.records)
-    # _cancel_word must be None — spoken cancel disabled
-    assert s._cancel_word is None
-    # The collision word now acts as the end word, not the cancel word
-    s.start()
-    audio = _audio()
-    assert s.handle_utterance(audio, "done") == "end"
-
-
-def test_cancel_word_empty_string_disables_cancel(caplog):
-    """An empty or whitespace-only cancel_word logs a WARNING and disables
-    spoken cancel (_cancel_word = None)."""
-    import logging
-    bus = _FakeBus()
-    with caplog.at_level(logging.WARNING, logger="voice_commander.dictation.session"):
-        s = DictationSession(bus, end_word="done", cancel_word="")
-    assert any("cancel" in r.message.lower() or "empty" in r.message.lower()
-               or "cancel_word" in r.message.lower()
-               for r in caplog.records)
-    assert s._cancel_word is None
+def test_request_end_sets_pending_end() -> None:
+    server = _MockWsServer([])
+    url = server.start()
+    sess = DictationSession(_FakeBus(), ws_url=url, idle_timeout_s=2.0)
+    sess.start(Vocabulary())
+    assert not sess.pending_end
+    sess.request_end()
+    assert sess.pending_end
+    sess.finish()
+    assert not sess.pending_end
