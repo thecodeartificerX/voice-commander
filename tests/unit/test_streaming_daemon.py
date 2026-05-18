@@ -468,7 +468,7 @@ def test_active_dictation_end_word_submits_finalize(tmp_path):
     )
 
 
-def test_active_dictation_end_word_no_audio_skips_submit(tmp_path):
+def test_active_dictation_end_word_always_submits_finalize(tmp_path):
     """In the streaming path, both _end_owned_session_if_needed AND _finalize_dictation
     are ALWAYS submitted on end-word (session.finish() is idempotent-safe, ADR 0092).
     The old 'no audio → skip _finalize_dictation' guard no longer applies."""

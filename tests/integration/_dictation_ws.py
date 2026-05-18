@@ -62,9 +62,14 @@ class MockWsServer:
         assert self._ready.wait(timeout=5.0), "mock WS server did not start"
         return self.url
 
-    def stop(self) -> None:
+    async def _shutdown(self) -> None:
         if self._server is not None:
-            self._loop.call_soon_threadsafe(self._server.close)
+            self._server.close()
+            await self._server.wait_closed()
+
+    def stop(self) -> None:
+        fut = asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop)
+        fut.result(timeout=10.0)
         self._loop.call_soon_threadsafe(self._loop.stop)
 
     def __enter__(self) -> "MockWsServer":

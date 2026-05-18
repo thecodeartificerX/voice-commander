@@ -1265,13 +1265,15 @@ class StreamingDaemon:
 
         # Cancel active dictation directly — BEFORE executor shutdown (REV 3, ADR 0090 §5).
         # Placement: after session-close block and pipeline join, BEFORE
-        # _dictation_executor.shutdown(wait=False).  Rationale: cancel() only sets flags
-        # and publishes dictation.end on the event bus (no executor use), so it is safe
-        # to call here.  Publishing dictation.end BEFORE executor teardown keeps event
-        # ordering clean.  executor.shutdown(wait=False) abandons queued tasks — any
-        # _end_owned_session_if_needed already queued will not execute — so the direct
-        # cancel call here is the only reliable path to clear the dictating state and
-        # prevent the sprite from being stuck in the 'dictating' visual state.
+        # _dictation_executor.shutdown(wait=False).  Rationale: cancel() pushes the end
+        # sentinel and joins the dictation WS asyncio-loop thread (bounded by
+        # idle_timeout_s + margin; fast in practice). It does not touch the executor,
+        # so calling it directly here is safe.  Publishing dictation.end BEFORE executor
+        # teardown keeps event ordering clean.  executor.shutdown(wait=False) abandons
+        # queued tasks — any _end_owned_session_if_needed already queued will not
+        # execute — so the direct cancel call here is the only reliable path to clear
+        # the dictating state and prevent the sprite from being stuck in the 'dictating'
+        # visual state.
         if self._dictation_session is not None and self._dictation_session.active:
             self._dictation_session.cancel()
 

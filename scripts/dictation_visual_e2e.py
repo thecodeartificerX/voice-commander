@@ -3,9 +3,11 @@
 Drives the dictation finalize pipeline the way a real user would:
   1. Sprite SSE rendering — emits ``dictation.start`` and asserts the DICTATING
      gold badge is visible in the sprite window.
-  2. Finalize pipeline — loads ``tests/test-audio/test-wav.wav``, encodes it to
-     16 kHz mono s16le WAV (stored as ``last.wav``), POSTs to the transcription
-     endpoint (or a stub), and clipboard-pastes the result into Notepad.
+  2. Finalize pipeline — loads ``tests/test-audio/test-wav.wav``, encodes each
+     VAD utterance to a WAV chunk in-memory and streams it over a WebSocket to
+     the transcription endpoint; under ``--stub-endpoint`` a fixed stub
+     transcription string is returned without a real WebSocket server.
+     The final transcript is clipboard-pasted into Notepad.
   3. Evidence capture — screenshots written to ``outputs/dictation_e2e/``.
 
 10 checkpoints (plus a non-blocking badge row). Exits non-zero if any hard
@@ -13,7 +15,7 @@ checkpoint fails.
 
 Usage:
   python scripts/dictation_visual_e2e.py               # live endpoint (config.toml)
-  python scripts/dictation_visual_e2e.py --stub-endpoint  # offline; POST stubbed
+  python scripts/dictation_visual_e2e.py --stub-endpoint  # offline; stub transcript used
 """
 
 from __future__ import annotations
@@ -764,7 +766,7 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
             _record(4, "encoded WAV is 16 kHz mono s16le", cp4)
 
         # ------------------------------------------------------------------
-        # CHECKPOINT 5: remote POST returns non-empty text
+        # CHECKPOINT 5: finalize returns non-empty transcript via WebSocket stream
         # ------------------------------------------------------------------
         log.info("launching Notepad sink")
         try:

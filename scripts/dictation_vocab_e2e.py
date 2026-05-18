@@ -2,13 +2,13 @@
 
 Checkpoints
 -----------
-CP 1  stub whisper server reachable; post_audio returns the canned text
+CP 1  stub HTTP server reachable; local test helper returns the canned text
 CP 2  VocabStore.save + load round-trips the known vocabulary
 CP 3  build_prompt output reaches the stub's prompt field, contains the vocab word
 CP 4  apply_corrections turns "supa base" into "Supabase"
 CP 5  apply_commands turns "next line" into a newline char
 CP 6  DictationStore.save_text / read_text round-trips the processed text
-CP 7  simulated re-transcribe path applies the same corrections + commands
+CP 7  in-memory retranscribe simulation applies the same corrections + commands
 
 Usage:
   python scripts/dictation_vocab_e2e.py
