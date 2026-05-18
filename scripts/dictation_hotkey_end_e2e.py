@@ -14,7 +14,7 @@ Hard checkpoints (exit non-zero if any fail):
   CP1  dictation.start event received
   CP2  queue non-empty before toggle (2 items)
   CP3  pending_end True AND active True immediately after request_end
-  CP4  active False after drain (session deactivated by take_and_finish)
+  CP4  active False after drain (session deactivated by finish)
   CP5  pasted list non-empty with expected stub text
   CP6  pending_end False after finalize
   CP7  clipboard restored to sentinel
