@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from voice_commander.dictation_stream.local_agreement import LocalAgreement
 
 
@@ -55,3 +53,11 @@ def test_finalize_is_idempotent():
     la.commit("one two")
     assert la.finalize() == ["one", "two"]
     assert la.finalize() == []
+
+
+def test_single_word_chunks_stabilise_correctly():
+    la = LocalAgreement()
+    assert la.commit("hello") == []
+    assert la.commit("world") == ["hello"]   # no overlap
+    assert la.commit("world") == []           # full overlap (same word repeated)
+    assert la.finalize() == ["world"]
