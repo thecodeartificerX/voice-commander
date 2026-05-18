@@ -36,8 +36,9 @@ async def stream_transcribe(
     """Stream WAV chunks to the server; route partials to ``on_partial``.
 
     Returns when the ``END`` sentinel is dequeued, the idle timeout elapses, or
-    the server sends an ``error`` frame. Propagates ``OSError`` if the initial
-    connection fails.
+    the server sends an ``error`` frame. Propagates any exception raised by
+    ``connect()`` itself (``OSError`` / ``InvalidURI`` / ``InvalidHandshake``)
+    if the initial connection fails.
     """
     async with connect(ws_url) as ws:
         await ws.send(json.dumps({"type": "config", "language": language}))
@@ -49,7 +50,11 @@ async def stream_transcribe(
                 break
             if chunk is END:
                 break
-            await ws.send(chunk)
+            try:
+                await ws.send(chunk)
+            except ConnectionClosed:
+                logger.warning("stream_transcribe: connection closed before chunk send")
+                return
             try:
                 reply = json.loads(await ws.recv())
             except ConnectionClosed:
@@ -57,10 +62,13 @@ async def stream_transcribe(
                 return
             kind = reply.get("type")
             if kind == "partial":
-                on_partial(reply.get("text", ""))
+                try:
+                    on_partial(reply.get("text", ""))
+                except Exception:  # noqa: BLE001 - a bad callback must not kill the stream
+                    logger.exception("stream_transcribe: on_partial callback raised — continuing")
             elif kind == "error":
                 logger.error("stream_transcribe: server error — %s", reply.get("detail"))
-                return
+                break
             else:
                 logger.warning("stream_transcribe: unexpected reply type %r", kind)
         try:

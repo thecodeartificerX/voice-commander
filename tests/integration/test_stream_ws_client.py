@@ -67,6 +67,7 @@ async def test_server_error_frame_stops_streaming(mock_server):
 
     assert state["chunks"] == 1  # stopped after the first chunk's error reply
     assert partials == []
+    assert state["ended"] is True  # error path still sends the end frame
 
 
 async def test_idle_timeout_ends_session(mock_server):
