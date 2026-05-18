@@ -6,8 +6,8 @@ the cursor via a clipboard round-trip (reusing the shipped
 ``dictation.clipboard`` helper).
 
 ``transform`` is the seam for a future small-LLM rewrite step (spec section 3);
-it is the identity function for now. ``flush`` looks ``transform`` up on the
-module at call time, so a replacement is picked up without touching callers.
+it is the identity function for now. Callers depend only on its ``str -> str``
+signature — replacing the body is the swap path.
 """
 
 from __future__ import annotations
@@ -52,8 +52,8 @@ class TextSink:
         if not raw:
             logger.info("TextSink: nothing to paste")
             return ""
-        import voice_commander.dictation_stream.sink as _self  # late bind transform
-        result = _self.transform(raw)
+        result = transform(raw)
         paste_via_clipboard(result)
+        self._words.clear()
         logger.info("TextSink: pasted %d chars", len(result))
         return result

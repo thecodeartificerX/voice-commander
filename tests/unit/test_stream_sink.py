@@ -43,3 +43,14 @@ def test_flush_runs_text_through_transform(monkeypatch):
     sink.accumulate(["quiet"])
     assert sink.flush() == "QUIET"
     assert pasted == ["QUIET"]
+
+
+def test_flush_clears_buffer(monkeypatch):
+    pasted: list[str] = []
+    monkeypatch.setattr(sink_mod, "paste_via_clipboard", pasted.append)
+    sink = TextSink()
+    sink.accumulate(["hello", "world"])
+    sink.flush()
+    assert sink.text == ""        # buffer drained after flush
+    assert sink.flush() == ""     # second flush pastes nothing
+    assert pasted == ["hello world"]
