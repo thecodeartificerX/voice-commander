@@ -337,18 +337,28 @@ call `self._dictation_session.cancel()`. If dictation is active at shutdown, the
 sprite is left stuck in the `dictating` state — no `dictation.end` event is ever
 published.
 
-The spec mandates: in `shutdown()`, after the existing session-close logic, add:
+The spec mandates: in `shutdown()`, add a direct `self._dictation_session.cancel()` call
+placed **immediately after the session-close block and pipeline join, and BEFORE
+`_dictation_executor.shutdown(wait=False)`**:
 
 ```python
-# In shutdown(), after closing the session:
+# In shutdown(), after session-close block + pipeline join, BEFORE executor shutdown:
 if self._dictation_session is not None and self._dictation_session.active:
     self._dictation_session.cancel()
+
+# Shut down executors AFTER the cancel call:
+self._wav_executor.shutdown(wait=False)
+self._dictation_executor.shutdown(wait=False)
+self._elements_executor.shutdown(wait=False)
 ```
 
-**Do NOT rely on `_dictation_executor` for this.** `_dictation_executor.shutdown(wait=False)`
-abandons queued tasks — any `_end_owned_session_if_needed` already in the queue will
-not execute. The cancel must be called directly in `shutdown()`, after the executor
-shutdown.
+**Placement rationale (REV 3):** `cancel()` only sets flags and publishes `dictation.end`
+on the event bus — it does not use the executor — so it is safe to call before executor
+teardown. Publishing `dictation.end` **before** `executor.shutdown(wait=False)` keeps
+event ordering clean and ensures the sprite sees the `dictation.end` event before the
+executor is torn down. `executor.shutdown(wait=False)` abandons queued tasks — any
+`_end_owned_session_if_needed` already in the queue will not execute. The cancel must be
+called directly here; relying on queued tasks is unreliable.
 
 ---
 
@@ -578,7 +588,7 @@ contradicts the code is a defect:
 | 2 | Close-before-finalize ordering mandated in both end-word and hotkey-end paths | PASS — §4 pseudocode shows `submit(_end_owned_session_if_needed)` before `submit(_finalize_dictation)` in both paths |
 | 3 | HTTP timeout requirement specified | PASS — §4 mandates `_TIMEOUT_S` reduced to 30 s; `remote.py` current state documented |
 | 4 | `_end_owned_session_if_needed` submitted unconditionally in hotkey-end path | PASS — §4 hotkey-end pseudocode shows unconditional submit before the `if audio is not None:` branch |
-| 5 | Shutdown cleanup specified | PASS — §5 mandates `self._dictation_session.cancel()` in `shutdown()`, after executor shutdown |
+| 5 | Shutdown cleanup specified | PASS — §5 mandates `self._dictation_session.cancel()` in `shutdown()`, BEFORE `_dictation_executor.shutdown(wait=False)` (REV 3: cancel only publishes to event bus, no executor dependency; publishing before teardown keeps event ordering clean) |
 | 6 | `_end_owned_session_if_needed` executor-only contract documented | PASS — both the helper's docstring (§4) and `_close_voice_session`'s docstring (§2) state the pipeline-thread-call prohibition |
 | 7 | Abandoned session (no auto-timeout) documented | PASS — §3 states this is deliberate |
 | 8 | Pipeline thread post-close behaviour documented | PASS — Race section documents `_utt_q.get(timeout=None)` blocking behaviour |
