@@ -388,6 +388,20 @@ See also [`docs/gotchas.md`](gotchas.md) §10 for the crash diagnosis (kept as a
 
 ---
 
+## `websockets` — Async WebSocket client (streaming dictation experiment)
+
+**Purpose in this project:** `websockets>=14.0` is the async WebSocket client for the streaming dictation
+experiment (`dictation_stream/ws_client.py`). Uses the modern
+`websockets.asyncio` API. See `docs/references/websockets.md`.
+
+**Alternatives considered:** `aiohttp` (full HTTP client, heavier), `websocket-client` (sync-only), `httpx` (no native WebSocket support).
+
+**Why `websockets` won:** The `websockets.asyncio` API in v14+ is the idiomatic, minimal choice for a pure WebSocket client. The library has no heavy transitive dependencies and integrates cleanly with `asyncio.run()` in the `bridge.pump` coroutine.
+
+**Pin reason:** `>=14.0` for the stable `websockets.asyncio` connection API (the pre-v14 `websockets.connect()` path is legacy).
+
+**ADR:** [`decisions/0091-streaming-dictation-experiment.md`](decisions/0091-streaming-dictation-experiment.md). Reference: [`references/websockets.md`](references/websockets.md).
+
 ---
 
 ## Drawflow 0.0.60 — Node-graph editor (vendored, legacy)
@@ -592,5 +606,6 @@ These libraries power the React 18.3 + Vite 5 SPA at `/page/builder` (`web/build
 | `httpx` | No dedicated ADR yet |
 | `pyglet` | [`0046-pyglet-over-tkinter-pyqt-web-overlay.md`](decisions/0046-pyglet-over-tkinter-pyqt-web-overlay.md) |
 | `httpx-sse` | [`0048-eventbus-sse-outbound-telemetry.md`](decisions/0048-eventbus-sse-outbound-telemetry.md) |
+| `websockets` (streaming dictation experiment) | [`0091-streaming-dictation-experiment.md`](decisions/0091-streaming-dictation-experiment.md) |
 | `react`, `react-dom`, `reactflow`, `zustand`, `tailwindcss`, `vite`, `vitest`, `@playwright/test`, `pnpm`, `eslint` (Builder SPA) | [`0071-builder-react-spa.md`](decisions/0071-builder-react-spa.md) |
 | `Drawflow` (legacy — adapter only) | [`0062-drawflow-vendored-node-graph-editor.md`](decisions/0062-drawflow-vendored-node-graph-editor.md) |
