@@ -383,13 +383,21 @@ class StreamingDaemon:
             self._feedback.on_error("recorder.open_session", e)
             return False
 
-    def _close_voice_session(self) -> None:
+    def _close_voice_session(self, cancel_dictation: bool = True) -> None:
         """Close the audio pipeline, drain the utterance queue, and reset state.
 
         Thread context: hotkey-listener thread (called directly from on_scroll_lock)
         OR _dictation_executor worker thread (submitted by _end_owned_session_if_needed).
         Idempotent: recorder.close_session() is a no-op when already IDLE.
         Always resets _session_opened_by_dictation to False.
+
+        ``cancel_dictation`` controls whether an active DictationSession is
+        cancelled on close. Pass ``False`` from ``_end_owned_session_if_needed``
+        so that ``_finalize_dictation`` (queued immediately after on the same
+        single-worker executor) can call ``session.finish()`` normally and return
+        the stabilised transcript. Pass the default ``True`` from all other
+        callers (Scroll Lock close, shutdown) where the session should be
+        discarded immediately.
 
         IMPORTANT — executor-submission rule:
         When invoked from pipeline-thread code (the dictation-end paths in
@@ -426,8 +434,9 @@ class StreamingDaemon:
         self._drain_utt_q()
         self._session_active = False
         self._session_opened_by_dictation = False
-        if self._dictation_session is not None and self._dictation_session.active:
-            self._dictation_session.cancel()
+        if cancel_dictation:
+            if self._dictation_session is not None and self._dictation_session.active:
+                self._dictation_session.cancel()
         if self._elements_session is not None and self._elements_session.active:
             self._elements_session.cancel()
         self._feedback.on_recording_stop()
@@ -453,7 +462,7 @@ class StreamingDaemon:
           already closed by a concurrent hotkey press), this is a no-op.
         """
         if self._session_opened_by_dictation:
-            self._close_voice_session()
+            self._close_voice_session(cancel_dictation=False)
 
     # ------------------------------------------------------------------
     # Hotkey callbacks
