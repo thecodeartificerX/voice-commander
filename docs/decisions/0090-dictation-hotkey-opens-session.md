@@ -35,9 +35,12 @@ Does NOT touch `_session_opened_by_dictation`.
 drains `_utt_q`, sets `_session_active = False`, resets `_session_opened_by_dictation = False`,
 cancels active dictation/elements sessions, publishes `muted` → `session_stopped`.
 
-Intentional divergences from verbatim extraction: (a) adds `if self._recorder is None: return`
-guard (helper callable independently); (b) generic exception log message (multiple callers);
-(c) adds `_session_opened_by_dictation = False` (new field).
+Intentional divergences from verbatim extraction: (a) adds an early-exit guard when
+`self._recorder is None` — instead of a bare `return`, the guard first resets both
+`self._session_active = False` and `self._session_opened_by_dictation = False` then
+returns, ensuring state is clean even when the recorder was never initialised;
+(b) generic exception log message (multiple callers);
+(c) adds `_session_opened_by_dictation = False` to the normal (recorder-present) path as well (new field).
 
 ### D3 — `on_dictation_toggle` idle branch
 

@@ -5,9 +5,15 @@ Mandatory per docs/agents/visual-e2e-testing.md (8-rule protocol).
 This feature touches hotkeys, daemon ↔ sprite ↔ web-UI IPC, and the system
 clipboard — all three triggers for the visual E2E requirement.
 
-REV 4: The harness exercises the REAL daemon subprocess with a REAL injected
-Right Ctrl key press via pynput.keyboard.Controller.  The daemon's SSE /events
-endpoint is used to assert session_started and session_stopped.
+REV 4: The harness exercises ONE real-daemon scenario (Phase A) only: start
+the daemon subprocess, inject Right Ctrl to open a session (empty buffer),
+inject Right Ctrl again to close it, assert ``session_started`` then
+``session_stopped`` arrive on the real SSE /events stream, and gate on crash
+signatures.  Audio-dependent scenarios — end-word exit with spoken content,
+spoken "cancel", and the Scroll-Lock-session-stays-open regression — are
+covered by ``tests/integration/test_dictation_opens_session.py`` rather than
+this harness, because they require transcribed speech that cannot be injected
+against a real daemon from outside the process.
 
 Architecture
 ------------
