@@ -100,6 +100,10 @@ class DictationSession:
         self._agreement_lock = threading.Lock()
         self._confirmed: list[str] = []
         self._vocab: Vocabulary = Vocabulary()
+        # Written by both the pipeline thread (encode_wav failure -> "encode")
+        # and the asyncio-loop thread (_run_asyncio -> "endpoint"). No lock:
+        # both writers finish before finish() returns and the daemon reads
+        # this field; CPython attribute assignment is GIL-atomic.
         self.error: str | None = None
 
         # Validate cancel_word against end_word and emptiness. Cross-field
@@ -164,13 +168,16 @@ class DictationSession:
         with self._lock:
             if self._active:
                 return
-            self._active = True
+            # All per-session state is reset under the lock and BEFORE
+            # _active flips to True, so a concurrent handle_utterance can
+            # never observe _active==True with a stale/None _chunk_q.
+            self._agreement = LocalAgreement()
+            self._confirmed = []
+            self._vocab = vocab
+            self.error = None
+            self._chunk_q = queue.Queue()
             self._pending_end.clear()
-        self._agreement = LocalAgreement()
-        self._confirmed = []
-        self._vocab = vocab
-        self.error = None
-        self._chunk_q = queue.Queue()
+            self._active = True
         prompt = build_prompt(vocab)
         self._loop_thread = threading.Thread(
             target=self._run_asyncio,
@@ -201,6 +208,10 @@ class DictationSession:
           chunk queue (streamed immediately); session stays active. The name
           ``"buffered"`` is kept for wire-compatibility with the daemon's
           existing ``kind ==`` branches — no audio is actually buffered.
+
+        If ``encode_wav`` raises, the failure is logged, ``self.error`` is set
+        to ``"encode"``, the chunk is dropped, and ``"buffered"`` is still
+        returned — the daemon surfaces the encode error at finalize time.
 
         A no-op returning ``"buffered"`` when inactive (lost race with
         finish/cancel).
@@ -288,6 +299,12 @@ class DictationSession:
             chunk_q.put(None)
         if loop_thread is not None:
             loop_thread.join(timeout=self._idle_timeout_s + _JOIN_MARGIN_S)
+            if loop_thread.is_alive():
+                logger.warning(
+                    "dictation: ws-loop thread did not stop within %.0fs "
+                    "during cancel",
+                    self._idle_timeout_s + _JOIN_MARGIN_S,
+                )
         with self._agreement_lock:
             self._confirmed = []
             self._agreement = LocalAgreement()
@@ -324,6 +341,13 @@ class DictationSession:
                 prompt=prompt,
             )
         finally:
+            # Cancel the bridge pump. It may be blocked in
+            # run_in_executor(sync_q.get); the CancelledError is scheduled but
+            # cannot interrupt the executor thread — the None sentinel pushed
+            # by finish()/cancel() before their join() is what actually
+            # unblocks it. asyncio.run() cleanup (Python >= 3.11) then drains
+            # the cancelled task and shuts down the default executor before
+            # returning to _run_asyncio.
             bridge_task.cancel()
 
     def _on_partial(self, text: str) -> None:
