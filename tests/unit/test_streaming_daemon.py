@@ -518,18 +518,27 @@ def test_dictation_toggle_finishes_when_already_dictating(tmp_path):
     fake_session.take_and_finish.assert_not_called()
 
 
-def test_dictation_toggle_no_session_is_miss(tmp_path):
-    """Pressing the dictation key when NO voice session is open fires a miss
-    chime and does NOT call session.start()."""
-    daemon, feedback, *_ = _make_daemon(output_dir=str(tmp_path))
+def test_dictation_toggle_no_session_opens_session_and_starts_dictation(tmp_path):
+    """Pressing the dictation key when NO voice session is open opens a session
+    and starts dictation immediately (ADR 0090 — replaces the old miss-chime no-op).
+
+    The old behaviour (no-op + miss chime) was the defect that ADR 0090 fixes.
+    Comprehensive coverage of the idle-branch logic lives in
+    tests/unit/test_daemon_session_helpers.py.
+    """
+    daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._session_active = False
     fake_session = MagicMock()
     daemon._dictation_session = fake_session
     daemon.on_dictation_toggle()
-    # No voice session open → miss chime fired, dictation not started.
-    fake_session.start.assert_not_called()
-    assert any(c[0] == "on_miss" for c in feedback.calls), (
-        f"Expected an on_miss call on the feedback sink; got {feedback.calls}"
+    # ADR 0090: Right Ctrl with no session → open session, set flag, start dictation
+    recorder.open_session.assert_called_once()
+    fake_session.start.assert_called_once()
+    assert daemon._session_active is True
+    assert daemon._session_opened_by_dictation is True
+    # No miss chime
+    assert not any(c[0] == "on_miss" for c in feedback.calls), (
+        f"on_dictation_toggle with no session must not play a miss chime; got {feedback.calls}"
     )
 
 
