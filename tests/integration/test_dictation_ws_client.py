@@ -8,7 +8,7 @@ import json
 import pytest
 from websockets.asyncio.server import serve
 
-from voice_commander.dictation_stream.ws_client import stream_transcribe
+from voice_commander.dictation.ws_client import stream_transcribe
 
 
 @pytest.fixture
@@ -46,12 +46,24 @@ async def test_streams_chunks_collects_partials_and_ends(mock_server):
     await chunk_q.put(None)
     partials: list[str] = []
 
-    await stream_transcribe(url, "en", chunk_q, partials.append, idle_timeout_s=5.0)
+    await stream_transcribe(
+        url, "en", chunk_q, partials.append, idle_timeout_s=5.0, prompt="Supabase"
+    )
 
-    assert state["configs"] == [{"type": "config", "language": "en"}]
+    assert state["configs"] == [
+        {"type": "config", "language": "en", "initial_prompt": "Supabase"}
+    ]
     assert state["chunks"] == 2
     assert state["ended"] is True
     assert partials == ["word1", "word2"]
+
+
+async def test_empty_prompt_omits_field(mock_server):
+    url, state = mock_server
+    chunk_q: asyncio.Queue = asyncio.Queue()
+    await chunk_q.put(None)
+    await stream_transcribe(url, "en", chunk_q, lambda _t: None, idle_timeout_s=5.0)
+    assert state["configs"] == [{"type": "config", "language": "en"}]
 
 
 async def test_server_error_frame_stops_streaming(mock_server):

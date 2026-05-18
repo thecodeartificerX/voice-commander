@@ -3,8 +3,9 @@
 Connects to the confirmed-live ``/ws/transcribe`` endpoint, sends a one-time
 JSON ``config`` handshake, streams binary WAV chunks, and routes the server's
 ``partial`` / ``error`` JSON replies. The protocol is request/reply: one
-binary chunk out, one reply in. The server carries ``initial_prompt`` context
-across chunks itself — the client sends no prompt.
+binary chunk out, one reply in. The config handshake carries an optional
+``initial_prompt`` field that biases the whisper decoder toward the user's
+custom vocabulary (built by ``postprocess.build_prompt``).
 
 See `docs/references/websockets.md` for the library API and spec section 8 for
 the frame contract.
@@ -32,6 +33,7 @@ async def stream_transcribe(
     chunk_q: "asyncio.Queue[bytes | None]",
     on_partial: Callable[[str], None],
     idle_timeout_s: float,
+    prompt: str = "",
 ) -> None:
     """Stream WAV chunks to the server; route partials to ``on_partial``.
 
@@ -39,9 +41,16 @@ async def stream_transcribe(
     the server sends an ``error`` frame. Propagates any exception raised by
     ``connect()`` itself (``OSError`` / ``InvalidURI`` / ``InvalidHandshake``)
     if the initial connection fails.
+
+    ``prompt`` (when non-empty) is sent in the config frame as the
+    ``initial_prompt`` field so the server biases its decoder toward the
+    user's custom vocabulary. An empty ``prompt`` omits the field entirely.
     """
     async with connect(ws_url) as ws:
-        await ws.send(json.dumps({"type": "config", "language": language}))
+        config: dict[str, str] = {"type": "config", "language": language}
+        if prompt:
+            config["initial_prompt"] = prompt
+        await ws.send(json.dumps(config))
         while True:
             try:
                 chunk = await asyncio.wait_for(chunk_q.get(), timeout=idle_timeout_s)
