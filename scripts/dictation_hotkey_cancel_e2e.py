@@ -28,10 +28,12 @@ PHASE A — Sprite receives dictation.start + dictation.end {reason:'cancel'}.
      than the done-baseline PNG (advisory, not a hard gate, due to DWM timing).
 
 Outputs:
-  outputs/dictation_e2e.png      — cancel-cue sprite screenshot
-  outputs/dictation_e2e_done.png — done-baseline sprite screenshot
-  outputs/dictation_e2e.log      — full validation log
-  outputs/dictation_e2e.json     — assertion summary
+  outputs/dictation_e2e.png         — cancel-cue sprite screenshot
+  outputs/dictation_e2e_done.png    — done-baseline sprite screenshot
+  outputs/dictation_e2e.log         — full validation log
+  outputs/dictation_e2e.json        — assertion summary
+  outputs/dictation_e2e_sprite.log  — captured sprite subprocess stdout+stderr
+                                      (scanned for crash signatures after run)
 """
 from __future__ import annotations
 
@@ -60,6 +62,7 @@ LOG_PATH = OUT / "dictation_e2e.log"
 PNG_PATH = OUT / "dictation_e2e.png"
 PNG_DONE_PATH = OUT / "dictation_e2e_done.png"
 JSON_PATH = OUT / "dictation_e2e.json"
+SPRITE_LOG_PATH = OUT / "dictation_e2e_sprite.log"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -372,12 +375,74 @@ def _png_has_non_background_pixels(png_path: Path, threshold: int = 10) -> bool:
 
 
 # --------------------------------------------------------------------------
+# Subprocess output crash-signature scanner (Rule 3 — assert on real signals)
+# --------------------------------------------------------------------------
+
+_CRASH_SIGNATURES = (
+    "Traceback (most recent call last)",
+    "Exception in thread",
+    "TypeError:",
+    "AttributeError:",
+    "RuntimeError:",
+    "ValueError:",
+)
+
+
+def scan_sprite_log(sprite_proc: subprocess.Popen) -> bool:  # type: ignore[type-arg]
+    """Scan the captured sprite subprocess log for crash signatures.
+
+    Called AFTER _stop_sprite() so the log file handle is fully flushed and
+    closed before we read it.
+
+    Returns True if the log is clean (no crash), False if a crash was detected.
+    Prints the full captured log on failure so CI output contains the evidence.
+
+    Note: we do NOT check the process exit code here because _stop_sprite()
+    called proc.terminate() before we run — all exit codes are expected to be
+    non-zero at this point.  The log content is the authoritative signal.
+    """
+    if not SPRITE_LOG_PATH.exists():
+        log.warning(
+            "sprite log not found at %s — cannot scan for crash signatures",
+            SPRITE_LOG_PATH,
+        )
+        return True  # nothing to scan; do not block on missing log
+
+    captured = SPRITE_LOG_PATH.read_text(encoding="utf-8", errors="replace")
+    if not captured.strip():
+        log.info("sprite log is empty (no output captured)")
+        return True
+
+    hits = [sig for sig in _CRASH_SIGNATURES if sig in captured]
+    if hits:
+        log.error(
+            "FAIL [subprocess-crash-gate]: sprite subprocess log contains crash "
+            "signature(s): %s\n"
+            "--- sprite subprocess output (from %s) ---\n%s\n"
+            "--- end sprite subprocess output ---",
+            hits,
+            SPRITE_LOG_PATH,
+            captured,
+        )
+        return False
+
+    log.info(
+        "PASS [subprocess-crash-gate]: no crash signatures in sprite log (%d chars)",
+        len(captured),
+    )
+    return True
+
+
+# --------------------------------------------------------------------------
 # Phase A — Sprite SSE rendering: dictation.start + dictation.end{cancel}
 # --------------------------------------------------------------------------
 
 
 def _spawn_sprite(port: int) -> tuple[subprocess.Popen, Path]:  # type: ignore[type-arg]
     """Spawn a voice_sprite subprocess pointed at the fake SSE server on *port*.
+
+    stdout and stderr are captured to SPRITE_LOG_PATH so the harness can
+    detect crash tracebacks after the run (Rule 3 — assert on real signals).
 
     Returns (process, cfg_path).
     """
@@ -386,15 +451,18 @@ def _spawn_sprite(port: int) -> tuple[subprocess.Popen, Path]:  # type: ignore[t
     src_dir = str(ROOT / "src")
     existing_pp = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = f"{src_dir};{existing_pp}" if existing_pp else src_dir
+    sprite_log_fh = SPRITE_LOG_PATH.open("w", encoding="utf-8", buffering=1)
     proc = subprocess.Popen(
         [sys.executable, "-m", "voice_sprite", "--config", str(cfg_path)],
         cwd=str(ROOT),
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=sprite_log_fh,
+        stderr=sprite_log_fh,
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
     )
-    log.info("sprite pid=%d, config=%s", proc.pid, cfg_path)
+    # Store the file handle on the process object so _stop_sprite can flush/close it.
+    proc._sprite_log_fh = sprite_log_fh  # type: ignore[attr-defined]
+    log.info("sprite pid=%d, config=%s, log=%s", proc.pid, cfg_path, SPRITE_LOG_PATH)
     return proc, cfg_path
 
 
@@ -402,7 +470,7 @@ def _stop_sprite(
     proc: subprocess.Popen,  # type: ignore[type-arg]
     srv: ThreadingHTTPServer,
 ) -> None:
-    """Cleanly stop the SSE server and sprite subprocess."""
+    """Cleanly stop the SSE server and sprite subprocess, then flush its log."""
     srv.shutdown_flag.set()  # type: ignore[attr-defined]
     srv.queue.put(None)  # type: ignore[attr-defined]
     srv.shutdown()
@@ -414,6 +482,14 @@ def _stop_sprite(
             proc.kill()
         except Exception:
             proc.kill()
+        # Flush and close the captured sprite log so scan_sprite_log() sees all output.
+        fh = getattr(proc, "_sprite_log_fh", None)
+        if fh is not None:
+            try:
+                fh.flush()
+                fh.close()
+            except Exception:
+                pass
 
 
 def phase_a() -> bool:
@@ -425,6 +501,11 @@ def phase_a() -> bool:
     3. PNG has non-background pixels (HARD failure — not a warning).
     4. The cancel cue is NOT rendered after a plain dictation.end{reason:'done'},
        providing a contrast baseline that proves the cancel cue is DISTINCT.
+    5. Sprite subprocess stdout/stderr contains no crash signatures (Rule 3 —
+       assert on real signals).  This catches silent thread deaths (e.g. the
+       schedule_once argument-order bug: TypeError in SSE-client thread) that
+       happen AFTER the badge renders, leaving the sprite broken while the
+       visual screenshot passes.
     """
     log.info("=== PHASE A: cancelled cue rendered on dictation.end{cancel} ===")
     port = _free_port()
@@ -534,11 +615,19 @@ def phase_a() -> bool:
             )
 
         ok = True
-        return True
 
     finally:
         _stop_sprite(sprite_proc, srv)
+        # Scan captured sprite subprocess output for crash signatures AFTER
+        # _stop_sprite flushes/closes the log file handle.  This gate catches
+        # silent thread deaths (e.g. TypeError in the SSE-client thread) that
+        # happen AFTER the badge rendered — visual screenshot PASS, process BROKEN.
+        if ok and not scan_sprite_log(sprite_proc):
+            ok = False
+            log.error("FAIL: subprocess crash gate triggered — see sprite log above")
         log.info("PHASE A %s", "PASS" if ok else "FAIL")
+
+    return ok
 
 
 # --------------------------------------------------------------------------
