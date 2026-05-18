@@ -367,13 +367,17 @@ def test_close_before_finalize_submission_order_end_word(
         recorder=recorder,
     )
 
-    # Replace executor with a mock to capture submission order
+    # Replace executor with a mock to capture submission order.
+    # Save the bound method BEFORE patching — patching .submit on the executor
+    # object makes original_executor.submit recursive, so we keep a stable
+    # reference to the original callable.
     submission_order: list[str] = []
     original_executor = daemon._dictation_executor
+    original_submit = original_executor.submit  # bound method, stable reference
 
     def _tracking_submit(fn: Any, *args: Any) -> Any:
         submission_order.append(fn.__name__)
-        return original_executor.submit(fn, *args)
+        return original_submit(fn, *args)
 
     daemon._dictation_executor.submit = _tracking_submit  # type: ignore[method-assign]
 
@@ -424,12 +428,14 @@ def test_close_submitted_unconditionally_hotkey_end_empty_buffer(
         recorder=recorder,
     )
 
+    # Save the bound method BEFORE patching to avoid self-referential recursion.
     submission_order: list[str] = []
     original_executor = daemon._dictation_executor
+    original_submit = original_executor.submit  # bound method, stable reference
 
     def _tracking_submit(fn: Any, *args: Any) -> Any:
         submission_order.append(fn.__name__)
-        return original_executor.submit(fn, *args)
+        return original_submit(fn, *args)
 
     daemon._dictation_executor.submit = _tracking_submit  # type: ignore[method-assign]
 

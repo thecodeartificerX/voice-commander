@@ -717,13 +717,20 @@ class StreamingDaemon:
                 kind = self._dictation_session.handle_utterance(utterance, result.text)
                 if kind == "end":
                     audio = self._dictation_session.take_and_finish()
+                    # Close-before-finalize: submit the session close FIRST so the
+                    # recording stops promptly (≤5 s VAD-worker join) before the
+                    # network POST begins. _end_owned_session_if_needed is a no-op
+                    # when _session_opened_by_dictation is False (Scroll Lock session).
+                    # Submitted unconditionally — covers the empty-buffer edge case.
+                    self._dictation_executor.submit(self._end_owned_session_if_needed)
                     if audio is not None:
                         self._dictation_executor.submit(self._finalize_dictation, audio)
                 elif kind == "cancel":
-                    # Reuse the pre-existing cancel() method — no new code, no
-                    # POST, no clipboard paste. The method publishes
-                    # dictation.end {"reason": "cancel"}. (ADR 0089)
+                    # Spoken cancel: abort dictation (no POST, no paste).
+                    # Submit _end_owned_session_if_needed to close a Ctrl-opened session.
+                    # cancel() publishes dictation.end {"reason": "cancel"}. (ADR 0089)
                     self._dictation_session.cancel()
+                    self._dictation_executor.submit(self._end_owned_session_if_needed)
                 # "buffered" → fall through, nothing to do
                 run.set_status("ok")
                 return
@@ -854,17 +861,29 @@ class StreamingDaemon:
     def _finalize_pending_dictation_end(self) -> None:
         """Called on the pipeline thread when the hotkey-end drain window expires.
 
-        Atomically captures the buffered audio (take_and_finish) and submits it to
-        the dictation executor.  Returns immediately — all heavy work (encode, POST,
-        paste) happens off-thread.
+        Atomically captures the buffered audio (take_and_finish) and submits tasks
+        to the dictation executor.  Returns immediately — all heavy work (close,
+        encode, POST, paste) happens off-thread on _dictation_executor.
+
+        Close-before-finalize ordering (ADR 0090):
+        1. take_and_finish() — atomically capture audio and deactivate session.
+        2. submit _end_owned_session_if_needed — UNCONDITIONALLY, before the audio
+           check.  This covers the empty-buffer Ctrl-open → Ctrl-close case.
+        3. submit _finalize_dictation — only if audio is not None.
 
         If the "done" word path won the race (take_and_finish returns None because
-        the session is already inactive), this is a no-op.  No double-submit risk:
-        take_and_finish holds the lock across deactivation + buffer clear.
+        the session is already inactive), _end_owned_session_if_needed is still
+        submitted (and is a no-op if the session was already closed by another
+        submission earlier).  No double-submit risk: take_and_finish holds the lock
+        across deactivation + buffer clear.
         """
         if self._dictation_session is None:
             return
         audio = self._dictation_session.take_and_finish()
+        # Submit close UNCONDITIONALLY — before checking audio — to ensure the
+        # recording stops even when the buffer is empty (user opened with Ctrl,
+        # pressed Ctrl again immediately without speaking).
+        self._dictation_executor.submit(self._end_owned_session_if_needed)
         if audio is not None:
             logger.info(
                 "dictation: hotkey-end drain complete — submitting %d samples", len(audio)
@@ -873,7 +892,7 @@ class StreamingDaemon:
         else:
             logger.info(
                 "dictation: hotkey-end drain complete — buffer empty "
-                "(session closed or no audio)"
+                "(session closed or no audio); close submitted unconditionally"
             )
 
     def _finalize_dictation(self, audio: npt.NDArray[np.float32]) -> None:
@@ -1236,6 +1255,18 @@ class StreamingDaemon:
             self._heartbeat_thread.join(timeout=2.0)
             if self._heartbeat_thread.is_alive():
                 logger.warning("Heartbeat thread did not exit within 2 s")
+
+        # Cancel active dictation directly — BEFORE executor shutdown (REV 3, ADR 0090 §5).
+        # Placement: after session-close block and pipeline join, BEFORE
+        # _dictation_executor.shutdown(wait=False).  Rationale: cancel() only sets flags
+        # and publishes dictation.end on the event bus (no executor use), so it is safe
+        # to call here.  Publishing dictation.end BEFORE executor teardown keeps event
+        # ordering clean.  executor.shutdown(wait=False) abandons queued tasks — any
+        # _end_owned_session_if_needed already queued will not execute — so the direct
+        # cancel call here is the only reliable path to clear the dictating state and
+        # prevent the sprite from being stuck in the 'dictating' visual state.
+        if self._dictation_session is not None and self._dictation_session.active:
+            self._dictation_session.cancel()
 
         # Shut down the WAV writer executor.
         self._wav_executor.shutdown(wait=False)
