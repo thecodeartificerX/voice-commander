@@ -396,7 +396,7 @@ experiment (`dictation_stream/ws_client.py`). Uses the modern
 
 **Alternatives considered:** `aiohttp` (full HTTP client, heavier), `websocket-client` (sync-only), `httpx` (no native WebSocket support).
 
-**Why `websockets` won:** The `websockets.asyncio` API in v14+ is the idiomatic, minimal choice for a pure WebSocket client. The library has no heavy transitive dependencies and integrates cleanly with `asyncio.run()` in the `bridge.pump` coroutine.
+**Why `websockets` won:** The `websockets.asyncio` API in v14+ is the idiomatic, minimal choice for a pure WebSocket client. The library has no heavy transitive dependencies and integrates cleanly with the streaming-dictation event loop, which is owned by `StreamSession._run_asyncio()` (the sole caller of `asyncio.run()`); `pump` runs as a task inside that loop via `asyncio.create_task(pump(...))`.
 
 **Pin reason:** `>=14.0` for the stable `websockets.asyncio` connection API (the pre-v14 `websockets.connect()` path is legacy).
 

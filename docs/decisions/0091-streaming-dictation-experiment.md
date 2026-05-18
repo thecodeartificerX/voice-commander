@@ -34,9 +34,11 @@ and force-caps at `max_utterance_ms` — that dual trigger is the hybrid silence
 ### D3 — WebSocket streaming with server-side prompt carry
 
 Each WAV chunk streams to the confirmed-live `ws://192.168.4.200:8765/ws/transcribe`
-endpoint. The protocol: a one-time `{"type":"config"}` handshake, binary WAV
-frames, `{"type":"partial"}` / `{"type":"error"}` replies, `{"type":"end"}` on
-stop. The server carries `initial_prompt` context across chunks.
+endpoint. The protocol: a one-time `{"type":"config","language":"<lang>"}`
+handshake, binary WAV frames, `{"type":"partial"}` / `{"type":"error"}` replies,
+`{"type":"end"}` on stop. The client also ends the session if no audio arrives
+within the idle timeout. The server carries `initial_prompt` context across
+chunks.
 
 ### D4 — LocalAgreement word stabilisation
 
