@@ -438,8 +438,9 @@ def test_active_dictation_buffers_utterance(tmp_path):
 
 def test_active_dictation_end_word_submits_finalize(tmp_path):
     """When handle_utterance returns 'end' and take_and_finish() has data,
-    _dictation_executor.submit is called with _finalize_dictation and the
-    captured audio."""
+    _dictation_executor.submit is called twice: first with
+    _end_owned_session_if_needed (close-before-finalize, ADR 0090), then with
+    _finalize_dictation and the captured audio."""
     daemon, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._transcriber.transcribe.return_value = _fake_transcription_result(
         "stop dictation", confidence=0.95
@@ -456,15 +457,25 @@ def test_active_dictation_end_word_submits_finalize(tmp_path):
     daemon._process_utterance(np.zeros(16000, dtype=np.float32))
 
     fake_session.take_and_finish.assert_called_once()
-    daemon._dictation_executor.submit.assert_called_once_with(
-        daemon._finalize_dictation, fake_audio
+    # ADR 0090: close-before-finalize — two submissions in order
+    assert daemon._dictation_executor.submit.call_count == 2
+    calls = daemon._dictation_executor.submit.call_args_list
+    assert calls[0].args[0] == daemon._end_owned_session_if_needed, (
+        f"First submission must be _end_owned_session_if_needed; got {calls[0]}"
+    )
+    assert calls[1].args[0] == daemon._finalize_dictation, (
+        f"Second submission fn must be _finalize_dictation; got {calls[1]}"
+    )
+    assert calls[1].args[1] is fake_audio, (
+        f"Second submission audio arg must be fake_audio; got {calls[1]}"
     )
 
 
 def test_active_dictation_end_word_no_audio_skips_submit(tmp_path):
     """When handle_utterance returns 'end' but take_and_finish() returns None
-    (nothing was buffered, or the other thread won the race), _dictation_executor
-    is NOT used to submit any finalization work."""
+    (nothing was buffered, or the other thread won the race), only
+    _end_owned_session_if_needed is submitted — _finalize_dictation is NOT
+    submitted (ADR 0090 close-before-finalize, unconditional close submission)."""
     daemon, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._transcriber.transcribe.return_value = _fake_transcription_result(
         "stop dictation", confidence=0.95
@@ -480,7 +491,11 @@ def test_active_dictation_end_word_no_audio_skips_submit(tmp_path):
     daemon._process_utterance(np.zeros(16000, dtype=np.float32))
 
     fake_session.take_and_finish.assert_called_once()
-    daemon._dictation_executor.submit.assert_not_called()
+    # ADR 0090: _end_owned_session_if_needed is submitted unconditionally even
+    # when audio is None; _finalize_dictation must NOT be submitted.
+    daemon._dictation_executor.submit.assert_called_once_with(
+        daemon._end_owned_session_if_needed
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -518,18 +533,27 @@ def test_dictation_toggle_finishes_when_already_dictating(tmp_path):
     fake_session.take_and_finish.assert_not_called()
 
 
-def test_dictation_toggle_no_session_is_miss(tmp_path):
-    """Pressing the dictation key when NO voice session is open fires a miss
-    chime and does NOT call session.start()."""
-    daemon, feedback, *_ = _make_daemon(output_dir=str(tmp_path))
+def test_dictation_toggle_no_session_opens_session_and_starts_dictation(tmp_path):
+    """Pressing the dictation key when NO voice session is open opens a session
+    and starts dictation immediately (ADR 0090 — replaces the old miss-chime no-op).
+
+    The old behaviour (no-op + miss chime) was the defect that ADR 0090 fixes.
+    Comprehensive coverage of the idle-branch logic lives in
+    tests/unit/test_daemon_session_helpers.py.
+    """
+    daemon, feedback, recorder, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._session_active = False
     fake_session = MagicMock()
     daemon._dictation_session = fake_session
     daemon.on_dictation_toggle()
-    # No voice session open → miss chime fired, dictation not started.
-    fake_session.start.assert_not_called()
-    assert any(c[0] == "on_miss" for c in feedback.calls), (
-        f"Expected an on_miss call on the feedback sink; got {feedback.calls}"
+    # ADR 0090: Right Ctrl with no session → open session, set flag, start dictation
+    recorder.open_session.assert_called_once()
+    fake_session.start.assert_called_once()
+    assert daemon._session_active is True
+    assert daemon._session_opened_by_dictation is True
+    # No miss chime
+    assert not any(c[0] == "on_miss" for c in feedback.calls), (
+        f"on_dictation_toggle with no session must not play a miss chime; got {feedback.calls}"
     )
 
 

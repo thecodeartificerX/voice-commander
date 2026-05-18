@@ -247,6 +247,7 @@ class StreamingDaemon:
             thread_name_prefix="wav-writer",
         )
         self._session_active: bool = False
+        self._session_opened_by_dictation: bool = False
         # Audio-generation counter. Bumped on every state transition that
         # ends audio capture (scroll-lock close) or restarts it
         # (scroll-lock open). Each utterance is tagged with the
@@ -346,6 +347,111 @@ class StreamingDaemon:
         self._publish("config_reloaded", {"path": str(path)})
 
     # ------------------------------------------------------------------
+    # Session lifecycle helpers (ADR 0090)
+    # ------------------------------------------------------------------
+
+    def _open_voice_session(self) -> bool:
+        """Open the audio pipeline and transition to session_active.
+
+        Thread context: hotkey-listener thread only (called from on_scroll_lock
+        and on_dictation_toggle, both of which run exclusively on the pynput
+        listener thread).  Must not block beyond recorder.open_session().
+
+        Returns True on success, False if the recorder failed (error already
+        surfaced via feedback.on_error).  Does NOT touch _session_opened_by_dictation
+        — that flag is set by the caller (on_dictation_toggle) when appropriate.
+        on_scroll_lock never sets the flag.
+        """
+        if self._recorder is None:
+            logger.warning("_open_voice_session: recorder not initialised; ignoring")
+            return False
+        self._audio_gen += 1
+        try:
+            self._recorder.open_session()
+            self._session_active = True
+            self._feedback.on_recording_start()
+            self._publish("session_started")
+            self._publish("unmuted")
+            logger.info("Session opened")
+            return True
+        except Exception as e:
+            self._session_active = False
+            self._feedback.on_error("recorder.open_session", e)
+            return False
+
+    def _close_voice_session(self) -> None:
+        """Close the audio pipeline, drain the utterance queue, and reset state.
+
+        Thread context: hotkey-listener thread (called directly from on_scroll_lock)
+        OR _dictation_executor worker thread (submitted by _end_owned_session_if_needed).
+        Idempotent: recorder.close_session() is a no-op when already IDLE.
+        Always resets _session_opened_by_dictation to False.
+
+        IMPORTANT — executor-submission rule:
+        When invoked from pipeline-thread code (the dictation-end paths in
+        _process_utterance and _finalize_pending_dictation_end), this method MUST
+        only ever be called by submitting _end_owned_session_if_needed to
+        _dictation_executor — NEVER called directly on the pipeline thread.
+        A direct call on the pipeline thread would run recorder.close_session(),
+        which joins the vad-worker thread (up to 5 s timeout), stalling the
+        pipeline thread and preventing it from draining _utt_q.  The vad-worker
+        depends on the pipeline draining _utt_q to finish its flush and exit —
+        calling close_session() directly from the pipeline thread creates a
+        circular wait / deadlock.
+
+        When called from the hotkey-listener thread (on_scroll_lock close path),
+        this is safe: the hotkey-listener thread is not the pipeline thread, so
+        the pipeline continues draining _utt_q and the vad-worker join completes
+        promptly.
+
+        Intentional divergences from verbatim on_scroll_lock extraction (see plan §3.2):
+        - Adds `if self._recorder is None: return` guard (helper can be called independently).
+        - Exception log message changed from "during scroll-lock close" to generic
+          (helper is called from multiple thread contexts, not only scroll-lock).
+        - Adds `self._session_opened_by_dictation = False` (new field, no equivalent in original).
+        """
+        if self._recorder is None:
+            self._session_active = False
+            self._session_opened_by_dictation = False
+            return
+        self._audio_gen += 1
+        try:
+            self._recorder.close_session()
+        except Exception:
+            logger.exception("close_session() failed")
+        self._drain_utt_q()
+        self._session_active = False
+        self._session_opened_by_dictation = False
+        if self._dictation_session is not None and self._dictation_session.active:
+            self._dictation_session.cancel()
+        if self._elements_session is not None and self._elements_session.active:
+            self._elements_session.cancel()
+        self._feedback.on_recording_stop()
+        self._publish("muted")
+        self._publish("session_stopped")
+        logger.info("Session closed")
+
+    def _end_owned_session_if_needed(self) -> None:
+        """Close the voice session if it was opened by Right Ctrl (ADR 0090).
+
+        Contract (MUST be honoured by every caller):
+        - MUST only ever be invoked by submitting it to _dictation_executor as a
+          callable — NEVER called directly on the pipeline thread (vc-pipeline).
+          A direct call on the pipeline thread would block on recorder.close_session()'s
+          vad-worker join (up to 5 s timeout), stalling _utt_q drainage and creating
+          a circular wait with the vad-worker thread.
+        - Runs on the _dictation_executor worker thread (FIFO, single-worker).
+        - Safe to call even when take_and_finish() returned None (empty buffer /
+          session already closed by a concurrent Scroll Lock press).
+        - DictationSession.cancel() and recorder.close_session() are both idempotent;
+          double-cancel / double-close races are benign.
+        - When _session_opened_by_dictation is False (e.g. Scroll Lock session, or
+          already closed by a concurrent hotkey press), this is a no-op.
+        """
+        if self._session_opened_by_dictation:
+            self._close_voice_session()
+
+    # ------------------------------------------------------------------
     # Hotkey callbacks
     # ------------------------------------------------------------------
 
@@ -358,10 +464,13 @@ class StreamingDaemon:
 
         State transitions:
 
-        * **Open → close**: calls ``recorder.close_session()``, drains ``_utt_q``,
-          sets ``_session_active = False``, publishes ``session_stopped``.
-        * **Closed → open**: calls ``recorder.open_session()`` (spawns VAD worker),
+        * **Open → close**: calls ``_close_voice_session()``, which drains ``_utt_q``,
+          sets ``_session_active = False``, resets ``_session_opened_by_dictation``,
+          and publishes ``session_stopped``.
+        * **Closed → open**: calls ``_open_voice_session()`` (spawns VAD worker),
           sets ``_session_active = True``, publishes ``session_started``.
+          Never sets ``_session_opened_by_dictation`` — Scroll Lock sessions always
+          leave the flag ``False``.
 
         Guard: no-op (with a warning log) if ``_recorder`` is ``None`` — i.e. the
         daemon was constructed but the recorder has not yet been wired in.
@@ -370,44 +479,32 @@ class StreamingDaemon:
             logger.warning("on_scroll_lock called but recorder is not yet initialised; ignoring")
             return
         if self._session_active:
-            self._audio_gen += 1
-            try:
-                self._recorder.close_session()
-            except Exception:
-                logger.exception("close_session() failed during scroll-lock close")
-            self._drain_utt_q()
-            self._session_active = False
-            if self._dictation_session is not None and self._dictation_session.active:
-                self._dictation_session.cancel()
-            if self._elements_session is not None and self._elements_session.active:
-                self._elements_session.cancel()
-            self._feedback.on_recording_stop()
-            self._publish("muted")
-            self._publish("session_stopped")
-            logger.info("Session closed")
+            self._close_voice_session()
         else:
-            self._audio_gen += 1
-            try:
-                self._recorder.open_session()
-                self._session_active = True
-                self._feedback.on_recording_start()
-                self._publish("session_started")
-                self._publish("unmuted")
-                logger.info("Session opened")
-            except Exception as e:
-                self._session_active = False
-                self._feedback.on_error("recorder.open_session", e)
+            self._open_voice_session()
 
     def on_dictation_toggle(self) -> None:
-        """Right-control callback: toggle dictation mode within an active session.
+        """Right-control callback: toggle dictation mode.
 
-        Press once to start dictation, press again to end it (an alternative to
-        saying the end word). A no-op + miss chime if no voice session is open —
-        dictation is a sub-state of an active session.
+        When no voice session is open (``_session_active == False``):
+        opens a self-contained session via ``_open_voice_session()``, sets
+        ``_session_opened_by_dictation = True``, and starts dictation immediately.
+        When dictation ends the session is auto-closed by ``_end_owned_session_if_needed``.
+
+        When a session is already open (``_session_active == True``):
+        press once to start dictation, press again to end it (an alternative to
+        saying the end word). Behaviour is unchanged from ADR 0086.
         """
         if not self._session_active:
-            logger.info("on_dictation_toggle: no active session — ignoring")
-            self._feedback.on_miss("(dictation: no active session)", ())
+            # Right Ctrl with no open session → open one and enter dictation immediately.
+            # (ADR 0090) The session is self-contained: when dictation ends, the
+            # auto-close helper closes the recorder and resets _session_active.
+            if not self._open_voice_session():
+                return  # recorder failed; error already surfaced by the helper
+            self._session_opened_by_dictation = True
+            if self._dictation_session is None:
+                return
+            self._dictation_session.start()
             return
         if self._dictation_session is None:
             return
@@ -620,13 +717,20 @@ class StreamingDaemon:
                 kind = self._dictation_session.handle_utterance(utterance, result.text)
                 if kind == "end":
                     audio = self._dictation_session.take_and_finish()
+                    # Close-before-finalize: submit the session close FIRST so the
+                    # recording stops promptly (≤5 s VAD-worker join) before the
+                    # network POST begins. _end_owned_session_if_needed is a no-op
+                    # when _session_opened_by_dictation is False (Scroll Lock session).
+                    # Submitted unconditionally — covers the empty-buffer edge case.
+                    self._dictation_executor.submit(self._end_owned_session_if_needed)
                     if audio is not None:
                         self._dictation_executor.submit(self._finalize_dictation, audio)
                 elif kind == "cancel":
-                    # Reuse the pre-existing cancel() method — no new code, no
-                    # POST, no clipboard paste. The method publishes
-                    # dictation.end {"reason": "cancel"}. (ADR 0089)
+                    # Spoken cancel: abort dictation (no POST, no paste).
+                    # Submit _end_owned_session_if_needed to close a Ctrl-opened session.
+                    # cancel() publishes dictation.end {"reason": "cancel"}. (ADR 0089)
                     self._dictation_session.cancel()
+                    self._dictation_executor.submit(self._end_owned_session_if_needed)
                 # "buffered" → fall through, nothing to do
                 run.set_status("ok")
                 return
@@ -757,17 +861,29 @@ class StreamingDaemon:
     def _finalize_pending_dictation_end(self) -> None:
         """Called on the pipeline thread when the hotkey-end drain window expires.
 
-        Atomically captures the buffered audio (take_and_finish) and submits it to
-        the dictation executor.  Returns immediately — all heavy work (encode, POST,
-        paste) happens off-thread.
+        Atomically captures the buffered audio (take_and_finish) and submits tasks
+        to the dictation executor.  Returns immediately — all heavy work (close,
+        encode, POST, paste) happens off-thread on _dictation_executor.
+
+        Close-before-finalize ordering (ADR 0090):
+        1. take_and_finish() — atomically capture audio and deactivate session.
+        2. submit _end_owned_session_if_needed — UNCONDITIONALLY, before the audio
+           check.  This covers the empty-buffer Ctrl-open → Ctrl-close case.
+        3. submit _finalize_dictation — only if audio is not None.
 
         If the "done" word path won the race (take_and_finish returns None because
-        the session is already inactive), this is a no-op.  No double-submit risk:
-        take_and_finish holds the lock across deactivation + buffer clear.
+        the session is already inactive), _end_owned_session_if_needed is still
+        submitted (and is a no-op if the session was already closed by another
+        submission earlier).  No double-submit risk: take_and_finish holds the lock
+        across deactivation + buffer clear.
         """
         if self._dictation_session is None:
             return
         audio = self._dictation_session.take_and_finish()
+        # Submit close UNCONDITIONALLY — before checking audio — to ensure the
+        # recording stops even when the buffer is empty (user opened with Ctrl,
+        # pressed Ctrl again immediately without speaking).
+        self._dictation_executor.submit(self._end_owned_session_if_needed)
         if audio is not None:
             logger.info(
                 "dictation: hotkey-end drain complete — submitting %d samples", len(audio)
@@ -776,7 +892,7 @@ class StreamingDaemon:
         else:
             logger.info(
                 "dictation: hotkey-end drain complete — buffer empty "
-                "(session closed or no audio)"
+                "(session closed or no audio); close submitted unconditionally"
             )
 
     def _finalize_dictation(self, audio: npt.NDArray[np.float32]) -> None:
@@ -1139,6 +1255,18 @@ class StreamingDaemon:
             self._heartbeat_thread.join(timeout=2.0)
             if self._heartbeat_thread.is_alive():
                 logger.warning("Heartbeat thread did not exit within 2 s")
+
+        # Cancel active dictation directly — BEFORE executor shutdown (REV 3, ADR 0090 §5).
+        # Placement: after session-close block and pipeline join, BEFORE
+        # _dictation_executor.shutdown(wait=False).  Rationale: cancel() only sets flags
+        # and publishes dictation.end on the event bus (no executor use), so it is safe
+        # to call here.  Publishing dictation.end BEFORE executor teardown keeps event
+        # ordering clean.  executor.shutdown(wait=False) abandons queued tasks — any
+        # _end_owned_session_if_needed already queued will not execute — so the direct
+        # cancel call here is the only reliable path to clear the dictating state and
+        # prevent the sprite from being stuck in the 'dictating' visual state.
+        if self._dictation_session is not None and self._dictation_session.active:
+            self._dictation_session.cancel()
 
         # Shut down the WAV writer executor.
         self._wav_executor.shutdown(wait=False)

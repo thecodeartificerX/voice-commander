@@ -25,8 +25,17 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Generous read timeout — a long dictation can be minutes of audio.
-_TIMEOUT_S = 300.0
+# 30 s total timeout (connect + read).  This is intentionally bounded:
+# post_audio runs on _dictation_executor (a FIFO single-worker executor shared
+# by all dictation operations).  A hung POST at the old 300 s default would
+# block _dictation_executor for up to 5 minutes, stalling all subsequent
+# dictation — including the auto-close submitted by _end_owned_session_if_needed
+# (ADR 0090 §4).  Long dictations on the reference hardware transcribe in ~1.2 s
+# for a 36 s clip; 30 s gives ample headroom without allowing an indefinite stall.
+# On timeout httpx raises TimeoutException, which the except-Exception block
+# wraps as DictationRemoteError → _finalize_dictation publishes dictation.error
+# and sounds a miss chime, leaving the executor worker free for the next call.
+_TIMEOUT_S = 30.0
 
 
 class DictationRemoteError(Exception):
@@ -54,8 +63,8 @@ def post_audio(
         across *all* decode windows. When empty (default), both fields are
         omitted and behaviour is identical to the pre-vocabulary baseline.
     timeout:
-        HTTP read timeout in seconds (default 300 s — long dictations can take
-        many seconds on the remote hardware).
+        HTTP read timeout in seconds (default 30 s — bounded to prevent an
+        indefinite executor stall; see _TIMEOUT_S comment, ADR 0090 §4).
 
     Raises
     ------

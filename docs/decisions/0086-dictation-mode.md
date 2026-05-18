@@ -17,6 +17,14 @@ This makes the mute toggle unnecessary. The `HotkeyConfig.mute_key` field and al
 
 ### D1 — Dictation is a voice-session sub-state
 
+> **Amendment: ADR 0090** — When Right Ctrl is pressed with no active Scroll Lock
+> session, `_open_voice_session()` is called first to open the audio pipeline, and
+> a new `_session_opened_by_dictation` flag is set so the session auto-closes when
+> dictation ends. D1's original constraint ("without touching StreamingRecorder session
+> state") applies only to the Scroll Lock sub-state path — the Ctrl-open path
+> deliberately opens and then auto-closes the session. See
+> [ADR 0090](0090-dictation-hotkey-opens-session.md) for the full rationale.
+
 Dictation mirrors the picker sub-state introduced in ADR 0083. The microphone stays open; the session remains active throughout. Dictation mode is entered and exited without touching `StreamingRecorder` or `HotkeyController` session state.
 
 ### D2 — Entry
