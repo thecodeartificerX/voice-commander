@@ -20,6 +20,14 @@ async def pump(
 
     The terminating ``None`` is forwarded onto ``async_q`` so the consumer also
     observes end-of-stream.
+
+    Cancellation: if this coroutine is cancelled while blocked in
+    ``run_in_executor``, the underlying ``sync_q.get`` call cannot be
+    interrupted — the executor thread keeps blocking until a ``None`` or any
+    item is placed on ``sync_q``. Callers are responsible for ensuring a
+    sentinel arrives promptly after cancellation (``StreamSession`` guarantees
+    this via ``MicCapture.stop``). ``async_q`` must be unbounded (the default
+    ``maxsize=0``) so ``async_q.put`` never blocks the pump.
     """
     loop = asyncio.get_running_loop()
     while True:
