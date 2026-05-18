@@ -2,7 +2,7 @@
 
 **Library:** `websockets` — async WebSocket client/server (RFC 6455).
 **Version targeted:** `>= 14.0` (current stable 16.x, Jan 2026).
-**Used by:** `src/voice_commander/dictation_stream/ws_client.py` (streaming dictation experiment).
+**Used by:** `src/voice_commander/dictation/ws_client.py` (streaming dictation transport, ADR 0092).
 
 Vendored per `CLAUDE.md` — research lands here before code depends on it.
 

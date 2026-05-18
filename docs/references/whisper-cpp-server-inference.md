@@ -38,7 +38,8 @@ server cap regardless of the user's vocabulary size.
 ```
 
 The `text` field may contain leading/trailing whitespace and segment-boundary
-newlines. `remote.post_audio` collapses all whitespace runs to single spaces.
+newlines. The dictation path handles this via `LocalAgreement`, which accumulates
+confirmed words joined by single spaces — no embedded newlines in the stabilised transcript.
 
 ## Response (response_format=verbose_json)
 
