@@ -46,9 +46,9 @@ def _apply_cancelled_cue(
     """Show or clear the cancelled-cue badge on *window* based on *sm.cancelled_cue*.
 
     When ``sm.cancelled_cue`` is ``True`` the badge is made visible and a
-    timer is scheduled (via *schedule_fn*, which must accept a ``(delay,
-    callback)`` signature matching ``pyglet.clock.schedule_once``) to
-    auto-clear it after ``_CANCELLED_CUE_DURATION_S`` seconds.  The auto-
+    timer is scheduled (via *schedule_fn*, which must accept a
+    ``(callback, delay)`` signature matching ``pyglet.clock.schedule_once``)
+    to auto-clear it after ``_CANCELLED_CUE_DURATION_S`` seconds.  The auto-
     clear also resets ``sm.cancelled_cue`` so subsequent ticks do not
     re-schedule.
 
@@ -64,7 +64,7 @@ def _apply_cancelled_cue(
             sm.cancelled_cue = False
             window.set_cancelled_cue(False)
 
-        schedule_fn(_CANCELLED_CUE_DURATION_S, _clear_cue)
+        schedule_fn(_clear_cue, _CANCELLED_CUE_DURATION_S)
     else:
         window.set_cancelled_cue(False)
 

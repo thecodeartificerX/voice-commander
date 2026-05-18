@@ -76,7 +76,10 @@ class TestApplyCancelledCue:
         _apply_cancelled_cue(sm, window, schedule_fn)
 
         assert schedule_fn.call_count == 1
-        delay = schedule_fn.call_args[0][0]
+        # pyglet.clock.schedule_once signature is (func, delay) — verify both
+        # positionally so a swapped-argument regression is caught here.
+        func, delay = schedule_fn.call_args[0]
+        assert callable(func)
         assert delay == pytest.approx(_CANCELLED_CUE_DURATION_S)
 
     def test_auto_clear_callback_resets_sm_and_window(self) -> None:
@@ -85,7 +88,7 @@ class TestApplyCancelledCue:
         window = MagicMock()
         captured_callbacks: list = []
 
-        def schedule_fn(delay: float, cb) -> None:  # noqa: ANN001
+        def schedule_fn(cb, delay: float) -> None:  # noqa: ANN001
             captured_callbacks.append(cb)
 
         _apply_cancelled_cue(sm, window, schedule_fn)
