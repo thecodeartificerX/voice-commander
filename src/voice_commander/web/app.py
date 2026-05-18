@@ -164,7 +164,7 @@ def create_app(
 
     @app.get("/page/dictation", response_class=HTMLResponse)
     async def page_dictation(request: Request) -> HTMLResponse:
-        """``GET /page/dictation`` — last dictation + re-transcribe button + vocab editor.
+        """``GET /page/dictation`` — last dictation text + vocab editor.
 
         The two file reads (last-dictation text + ``vocab.json``) are offloaded
         to a worker thread so the event loop is never stalled on disk I/O.
@@ -203,8 +203,7 @@ def create_app(
         - ``corrections``: JSON array of ``{wrong, right}`` objects.
         - ``commands``: JSON array of ``{phrase, action}`` objects.
 
-        Returns ``_vocab_result.html`` fragment (same interaction pattern as
-        ``/dictation/retranscribe``).
+        Returns the ``_vocab_result.html`` fragment.
         """
         import json as _json
 
@@ -263,61 +262,6 @@ def create_app(
         }
         return HTMLResponse(
             templates.get_template("_vocab_result.html").render(ctx)
-        )
-
-    @app.post("/dictation/retranscribe", response_class=HTMLResponse)
-    async def dictation_retranscribe(request: Request) -> HTMLResponse:
-        """``POST /dictation/retranscribe`` — re-POST saved audio, apply vocab post-processing, set clipboard.
-
-        All blocking work (file I/O, config load, the HTTP round-trip, vocab load,
-        post-processing, the Win32 clipboard write with its retry sleeps) runs in a
-        worker thread so the event loop is never stalled. Any failure renders the
-        error partial.
-        """
-
-        def _retranscribe_sync() -> tuple[str | None, str | None]:
-            """Run the whole retranscribe off the event loop.
-
-            Returns ``(text, error)`` — exactly one is non-None.
-            """
-            from ..config import Config
-            from ..dictation import clipboard, remote
-            from ..dictation.postprocess import apply_commands, apply_corrections, build_prompt
-            from ..dictation.store import DictationStore
-            from ..dictation.vocab import VocabStore
-
-            store = DictationStore(Path(_DICTATION_DIR.as_posix()))
-            wav = store.read_audio()
-            if wav is None:
-                return None, "no audio recorded yet"
-
-            # Hot-reload vocabulary — same four-step pipeline as _finalize_dictation.
-            vocab = VocabStore(Path(_DICTATION_DIR.as_posix()) / "vocab.json").load()
-            prompt = build_prompt(vocab)
-
-            endpoint = Config.load(Path("config.toml")).dictation.endpoint
-            try:
-                text = remote.post_audio(wav, endpoint, prompt=prompt)
-            except remote.DictationRemoteError as e:
-                return None, str(e)
-
-            text = apply_corrections(text, vocab.corrections)
-            text = apply_commands(text, vocab.commands)
-
-            store.save_text(text)
-            clipboard.set_clipboard_text(text)
-            return text, None
-
-        loop = asyncio.get_running_loop()
-        try:
-            text, error = await loop.run_in_executor(None, _retranscribe_sync)
-        except Exception as e:  # noqa: BLE001 — surface any failure as the error partial
-            logger.exception("dictation retranscribe failed")
-            text, error = None, f"unexpected error: {e}"
-
-        ctx = {"error": error} if error else {"text": text}
-        return HTMLResponse(
-            templates.get_template("_dictation_result.html").render(ctx)
         )
 
     @app.get("/api/tools")
