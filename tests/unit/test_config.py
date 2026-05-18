@@ -255,20 +255,22 @@ def test_dictation_config_defaults(tmp_path):
     cfg_file.write_text("[hotkey]\nkey = \"scroll_lock\"\n", encoding="utf-8")
     from voice_commander.config import Config
     cfg = Config.load(cfg_file)
-    assert cfg.dictation.endpoint == "http://192.168.4.200:8765/inference"
+    assert cfg.dictation.ws_url == "ws://192.168.4.200:8765/ws/transcribe"
+    assert cfg.dictation.language == "en"
     assert cfg.dictation.end_word == "done"
+    assert cfg.dictation.idle_timeout_seconds == 30
 
 
 def test_dictation_config_override(tmp_path):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
         "[hotkey]\nkey = \"scroll_lock\"\n"
-        "[dictation]\nendpoint = \"http://1.2.3.4:9/x\"\nend_word = \"finish\"\n",
+        "[dictation]\nws_url = \"ws://1.2.3.4:9/ws/transcribe\"\nend_word = \"finish\"\n",
         encoding="utf-8",
     )
     from voice_commander.config import Config
     cfg = Config.load(cfg_file)
-    assert cfg.dictation.endpoint == "http://1.2.3.4:9/x"
+    assert cfg.dictation.ws_url == "ws://1.2.3.4:9/ws/transcribe"
     assert cfg.dictation.end_word == "finish"
 
 

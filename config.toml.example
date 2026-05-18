@@ -5,9 +5,11 @@ key = "scroll_lock"
 dictation_key = "ctrl_r"
 
 [dictation]
-endpoint    = "http://192.168.4.200:8765/inference"
-end_word    = "done"
-cancel_word = "cancel"   # say this word to abort dictation and discard the audio
+ws_url               = "ws://192.168.4.200:8765/ws/transcribe"  # streaming whisper WebSocket endpoint
+language             = "en"     # whisper decode language
+end_word             = "done"   # say this word (standalone) to end dictation
+cancel_word          = "cancel" # say this word to abort dictation and discard the transcript
+idle_timeout_seconds = 30        # close the stream after this long with no audio
 
 [audio]
 device_name = ""
@@ -94,17 +96,3 @@ exclude_self = true      # filter daemon + sprite + modal windows
 max_elements = 200      # cap on hint tags drawn (bounds scan cost + clutter)
 scan_timeout_s = 3.0    # hard cap on the UIA tree walk
 hint_timeout_s = 8.0    # overlay auto-dismisses after this many seconds of silence
-
-# --- Streaming dictation experiment (ADR 0091) ---
-# Isolated experimental pipeline — not used by the daemon. Run standalone via
-# `python -m voice_commander.dictation_stream`. Press Right Ctrl to dictate.
-[dictation_stream]
-ws_url                  = "ws://192.168.4.200:8765/ws/transcribe"  # streaming transcription endpoint
-language                = "en"   # whisper decode language
-vad_threshold           = 0.5    # silero speech probability cutoff (raise in noisy rooms)
-min_silence_duration_ms = 1200   # silence gap that ends a chunk (lets mid-sentence pauses through)
-speech_pad_ms           = 300    # audio kept before/after detected speech
-max_chunk_seconds       = 15     # hard time cap — force-flush a chunk even without a pause
-min_chunk_seconds       = 1      # discard chunks shorter than this (too short for whisper)
-idle_timeout_seconds    = 30     # close the stream after this long with no audio
-# input_device           = 4      # mic device index or name substring; omit for the Windows default input device
