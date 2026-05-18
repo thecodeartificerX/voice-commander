@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voice_commander.dictation_stream.local_agreement import LocalAgreement
+from voice_commander.dictation.local_agreement import LocalAgreement
 
 
 def test_first_chunk_commits_nothing():

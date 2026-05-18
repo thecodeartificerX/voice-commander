@@ -5,8 +5,8 @@ chunk are unstable — the model has not heard what follows, so it guesses.
 LocalAgreement holds back the unstable suffix of every chunk transcript and
 commits a word only once the next chunk's transcript confirms it by overlap.
 
-Pure module — no I/O, no threads. See spec
-`docs/superpowers/specs/2026-05-18-streaming-dictation-design.md` section 7.
+Pure module — no I/O, no threads. See ADR 0092
+(`docs/decisions/0092-streaming-dictation-integration.md`).
 """
 
 from __future__ import annotations
