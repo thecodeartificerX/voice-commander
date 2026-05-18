@@ -37,6 +37,13 @@ class StreamSession:
         chunker_factory: Callable[[int], Chunker] | None = None,
         raw_q: "queue.Queue | None" = None,
     ) -> None:
+        """Build a session.
+
+        ``capture``, ``chunker_factory`` and ``raw_q`` are injection seams for
+        tests. An injected ``capture`` MUST enqueue the ``None`` sentinel onto
+        ``raw_q`` from its ``stop()`` — the chunker worker thread terminates
+        only on that sentinel.
+        """
         self._config = config
         self._raw_q: queue.Queue = raw_q if raw_q is not None else queue.Queue(maxsize=256)
         self._chunk_q: queue.Queue = queue.Queue()
@@ -44,6 +51,7 @@ class StreamSession:
         self._chunker_factory = chunker_factory or self._default_chunker
         self._agreement = LocalAgreement()
         self._sink = TextSink()
+        self._lock = threading.Lock()  # guards _agreement / _sink across threads
         self._worker: threading.Thread | None = None
         self._loop_thread: threading.Thread | None = None
         self._running = False
@@ -84,10 +92,20 @@ class StreamSession:
         self._capture.stop()  # pushes the None sentinel onto raw_q
         if self._worker is not None:
             self._worker.join(timeout=10.0)
+            if self._worker.is_alive():
+                logger.warning("StreamSession: chunker worker did not stop within 10s")
         if self._loop_thread is not None:
-            self._loop_thread.join(timeout=self._config.idle_timeout_seconds + 10.0)
-        self._sink.accumulate(self._agreement.finalize())
-        pasted = self._sink.flush()
+            loop_join_timeout = self._config.idle_timeout_seconds + 10.0
+            self._loop_thread.join(timeout=loop_join_timeout)
+            if self._loop_thread.is_alive():
+                logger.warning(
+                    "StreamSession: event-loop thread did not stop within %.0fs — "
+                    "transcript may be incomplete",
+                    loop_join_timeout,
+                )
+        with self._lock:  # serialise against a still-running _on_partial
+            self._sink.accumulate(self._agreement.finalize())
+            pasted = self._sink.flush()
         logger.info("StreamSession: stopped")
         return pasted
 
@@ -126,5 +144,10 @@ class StreamSession:
             bridge_task.cancel()
 
     def _on_partial(self, text: str) -> None:
-        """Runs on the loop thread; stop() joins that thread before reading."""
-        self._sink.accumulate(self._agreement.commit(text))
+        """Fold one partial into the agreement/sink. Runs on the loop thread.
+
+        Holds ``_lock`` so it can never race ``stop``'s ``finalize``/``flush``
+        even if the loop-thread join below times out instead of completing.
+        """
+        with self._lock:
+            self._sink.accumulate(self._agreement.commit(text))
