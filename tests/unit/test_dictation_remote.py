@@ -150,3 +150,24 @@ def test_post_audio_whitespace_only_prompt_is_sent_as_is(monkeypatch):
     # Documents current behavior: build_prompt never returns whitespace-only, so the if-prompt guard need not strip.
     assert captured["data"]["prompt"] == "   "
     assert captured["data"]["carry_initial_prompt"] == "true"
+
+
+def test_timeout_exception_wraps_as_remote_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """httpx.TimeoutException raised by httpx.post must be re-raised as
+    DictationRemoteError (ADR 0090 §4).
+
+    post_audio already has `except Exception as e: raise DictationRemoteError(...) from e`
+    which catches ALL exceptions — including httpx.TimeoutException. This test verifies
+    that the existing except-Exception clause covers the timeout case correctly, so that
+    _finalize_dictation's `except remote.DictationRemoteError` handler catches it and
+    publishes dictation.error + miss chime (keeping the executor worker unblocked).
+    """
+    import httpx
+    from voice_commander.dictation.remote import DictationRemoteError, post_audio
+
+    def _fake_post(url: str, **kwargs: object) -> object:
+        raise httpx.TimeoutException("read timeout after 30 s")
+
+    monkeypatch.setattr("voice_commander.dictation.remote.httpx.post", _fake_post)
+    with pytest.raises(DictationRemoteError, match="read timeout after 30 s"):
+        post_audio(b"RIFFfake", "http://x/inference")
