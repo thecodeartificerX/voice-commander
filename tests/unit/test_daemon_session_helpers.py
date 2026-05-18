@@ -3,25 +3,26 @@ helpers, and on_dictation_toggle idle branch.
 
 All hardware subsystems are replaced with MagicMocks. No real audio, no GPU.
 Mirrors tests/unit/test_streaming_daemon.py style exactly.
+
+NOTE: soxr, sounddevice, silero_vad, and torch are all real installed
+dependencies — do NOT stub them here.  test_resampler.py and
+test_streaming_recorder.py need the real soxr/sounddevice modules bound in
+sys.modules; installing MagicMock stubs at module level would poison those
+test files for the entire pytest session.
 """
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock
 
 import pytest
 
-# Stub heavy deps before daemon import (same pattern as test_streaming_daemon.py).
-for _mod in ("silero_vad", "torch", "sounddevice", "soxr"):
-    sys.modules.setdefault(_mod, MagicMock())
-
-from voice_commander.daemon import StreamingDaemon  # noqa: E402
-from voice_commander.dictation.session import DictationSession  # noqa: E402
-from voice_commander.event_bus import EventBus  # noqa: E402
-from voice_commander.feedback import CapturingFeedbackSink  # noqa: E402
-from voice_commander.plan import Plan, ToolCall  # noqa: E402
-from voice_commander.transcriber import TranscriptionResult  # noqa: E402
-from voice_commander.verb_router import VerbRouter  # noqa: E402
+from voice_commander.daemon import StreamingDaemon
+from voice_commander.dictation.session import DictationSession
+from voice_commander.event_bus import EventBus
+from voice_commander.feedback import CapturingFeedbackSink
+from voice_commander.plan import Plan, ToolCall
+from voice_commander.transcriber import TranscriptionResult
+from voice_commander.verb_router import VerbRouter
 
 
 # ---------------------------------------------------------------------------
