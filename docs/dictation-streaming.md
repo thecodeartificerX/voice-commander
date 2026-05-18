@@ -1,44 +1,169 @@
-# Streaming Dictation (Experimental)
+# Streaming Dictation
 
-An isolated experiment in streaming dictation, separate from the shipped batch
-dictation (`docs/transcription-pipeline.md`). Run standalone:
+Dictation is a voice-session sub-state. Saying bare "dictate" or pressing Right
+Ctrl (`dictation_key`, default `ctrl_r`) enters dictation; the daemon's VAD
+segments speech into utterances, and each utterance is streamed immediately to
+a whisper WebSocket server. Words are stabilised progressively by `LocalAgreement`
+as partials arrive. When dictation ends the stabilised transcript is
+post-processed and pasted at the cursor.
 
-    python -m voice_commander.dictation_stream
+**ADR:** [0092 — Streaming Dictation Integration](decisions/0092-streaming-dictation-integration.md)
+(supersedes the batch POST transport of ADR 0086/0090; promotes the experiment
+from ADR 0091).
 
-Press Right Ctrl to start dictating, press it again to finish. The transcript
-is pasted at the cursor.
+---
 
 ## Flow
 
 ```
-mic -> MicCapture -> raw_q -> Chunker (VADGate: silence | 15s cap)
-    -> chunk_q -> bridge.pump -> stream_transcribe (WebSocket)
-    -> partials -> LocalAgreement.commit -> TextSink.accumulate
-    -> stop: LocalAgreement.finalize -> transform() -> clipboard paste
+daemon VAD utterance (ndarray)
+    │
+    ▼ handle_utterance(audio, text)
+DictationSession
+    │  encode_wav(audio) → WAV chunk
+    │  push to sync chunk_q
+    │
+    ▼ (asyncio-loop thread)
+bridge.pump(chunk_q, ws)          ← drains sync queue into async ws.send()
+    │
+    ▼
+ws_client.stream_transcribe(ws)   ← receives partial transcripts from server
+    │  on_partial(text)
+    ▼
+LocalAgreement.commit(words)      ← stabilises words across chunk boundaries
+    │  (lock-guarded accumulator)
+    │
+    ▼ finish() — end-word or hotkey-end
+LocalAgreement.finalize()         ← returns confirmed + tail words
+    │
+    ▼ _finalize_dictation (daemon, _dictation_executor thread)
+apply_corrections → apply_commands → paste_via_clipboard → DictationStore.save_text
 ```
 
-## Modules — `src/voice_commander/dictation_stream/`
+---
+
+## Architecture
+
+### `DictationSession` (`src/voice_commander/dictation/session.py`)
+
+Owns the WebSocket transport. On `start(vocab)`:
+
+1. Loads `vocab.json`, builds `initial_prompt = build_prompt(vocab)`.
+2. Spawns an asyncio-loop thread that runs `bridge.pump` +
+   `ws_client.stream_transcribe` concurrently as tasks.
+3. Sends the config frame `{language, initial_prompt}` to `/ws/transcribe`.
+4. Routes each partial transcript to `LocalAgreement.commit` under a lock.
+5. Publishes `dictation.start`.
+
+On `handle_utterance(audio, text) -> "end" | "cancel" | "buffered"`:
+
+- Classification unchanged (end-word / cancel-word / accumulate).
+- On `"buffered"`: `encode_wav(audio)` → push WAV chunk onto the sync chunk
+  queue; the asyncio-loop drains it via `bridge.pump`.
+- End-word and cancel-word audio are not streamed.
+
+On `finish() -> str` (normal exit):
+
+- Pushes the `None` end sentinel to the chunk queue.
+- Joins the asyncio-loop thread (bounded by `idle_timeout_seconds` + margin).
+- Calls `LocalAgreement.finalize()` to flush the confirmed-word accumulator.
+- Returns the raw stabilised transcript; publishes
+  `dictation.end {reason:"done"}`.
+- Returns `""` if the WebSocket never connected or produced no output.
+
+On `cancel()`:
+
+- Closes the WebSocket, discards the buffer.
+- Publishes `dictation.end {reason:"cancel"}`.
+
+`request_end()`, `pending_end`, and `active` are unchanged — they drive the
+hotkey-end drain path (ADR 0089).
+
+### Supporting modules (`src/voice_commander/dictation/`)
 
 | Module | Responsibility |
 |--------|----------------|
-| `config.py` | `StreamDictationConfig` + `[dictation_stream]` loader |
-| `capture.py` | `MicCapture` — sounddevice input stream |
-| `chunker.py` | `Chunker` — raw audio → WAV speech chunks (reuses `VADGate`) |
-| `ws_client.py` | `stream_transcribe` — WebSocket client |
-| `bridge.py` | `pump` — sync→async queue bridge |
-| `local_agreement.py` | `LocalAgreement` — word stabiliser |
-| `sink.py` | `TextSink` + `transform` seam |
-| `session.py` | `StreamSession` — pipeline orchestrator |
-| `__main__.py` | Right Ctrl entrypoint |
+| `ws_client.py` | `stream_transcribe` — async WebSocket client; sends chunks, receives partials |
+| `bridge.py` | `pump` — sync-to-async queue bridge (runs as asyncio task) |
+| `local_agreement.py` | `LocalAgreement` — word stabiliser across chunk boundaries |
+| `store.py` | `encode_wav`, `DictationStore.save_text` / `read_text` |
+| `postprocess.py` | `apply_corrections`, `apply_commands`, `build_prompt` |
 
-## Configuration
+### Daemon `_finalize_dictation`
 
-Set `[dictation_stream] input_device` in `config.toml` to select a non-default
-microphone by integer device index or name substring (e.g. `input_device = 4`
-or `input_device = "AT2020"`). Omit the key to use the Windows default input
-device.
+Runs on the `_dictation_executor` single-worker thread (FIFO, unchanged from
+ADR 0090). Reduced to five steps:
 
-## Status
+1. `text = session.finish()`
+2. `apply_corrections(text, vocab.corrections)`
+3. `apply_commands(text, vocab.commands)`
+4. `paste_via_clipboard(text)`
+5. `DictationStore.save_text(text)` → `outputs/dictation/last.txt`
 
-Experimental — not wired into the daemon. See ADR 0091. If it proves out, a
-later decision covers replacing the batch transcription path.
+Takes no arguments. The daemon's lifecycle wiring
+(`on_dictation_toggle`, `_end_owned_session_if_needed`, close-before-finalize
+ordering, `_DICTATION_WAKE` sentinel) is **unchanged** from ADR 0090.
+
+---
+
+## Configuration (`[dictation]` section in `config.toml`)
+
+```toml
+[dictation]
+ws_url               = "ws://192.168.4.200:8765/ws/transcribe"
+language             = "en"
+end_word             = "done"
+cancel_word          = "cancel"
+idle_timeout_seconds = 30
+```
+
+| Key | Description |
+|-----|-------------|
+| `ws_url` | WebSocket endpoint for `/ws/transcribe` (replaces the old `endpoint` HTTP URL) |
+| `language` | BCP-47 language code sent in the config frame |
+| `end_word` | Standalone spoken word that ends dictation and pastes |
+| `cancel_word` | Standalone spoken word that cancels dictation (no paste) |
+| `idle_timeout_seconds` | Max time the asyncio-loop thread waits for final words after the end sentinel |
+
+`DictationConfig` dataclass: `ws_url`, `language`, `idle_timeout_seconds`,
+`end_word`, `cancel_word`. The old `endpoint` field is removed.
+
+---
+
+## Custom vocabulary (`outputs/dictation/vocab.json`)
+
+Hot-reloaded on every dictation (no restart required). Three layers:
+
+- `vocab` — word list sent as `initial_prompt` to bias the whisper decoder.
+- `corrections` — deterministic mistranscription fixes applied post-finalize.
+- `commands` — maps spoken phrases to control characters
+  (`"newline"` → `\n`, `"paragraph"` → `\n\n`).
+
+Managed via the `/page/dictation` web page (three editor sections,
+`POST /dictation/vocab` saves). `last.wav` and re-transcribe are removed (ADR
+0092 D7); the page shows `last.txt` and the vocab editor only.
+
+---
+
+## Error handling
+
+| Failure | Behaviour |
+|---------|-----------|
+| WebSocket connect fails | asyncio thread records error; `finish()` returns `""`; `dictation.error {reason:"endpoint"}` + miss chime |
+| WebSocket drops mid-session | `stream_transcribe` returns early; already-confirmed words are pasted; `dictation.error {reason:"endpoint"}` if nothing confirmed |
+| `encode_wav` fails on a chunk | `dictation.error {reason:"encode"}` + miss chime |
+| `paste_via_clipboard` fails | `dictation.error {reason:"clipboard"}` + miss chime |
+| Spoken cancel | Buffer discarded; `dictation.end {reason:"cancel"}`; sprite shows cancelled-cue badge; no chime |
+
+---
+
+## Related ADRs
+
+| ADR | Topic |
+|-----|-------|
+| [0086](decisions/0086-dictation-mode.md) | Dictation sub-state, lifecycle, sprite badge |
+| [0088](decisions/0088-dictation-postprocessing.md) | Custom vocabulary, post-processing pipeline |
+| [0089](decisions/0089-dictation-hotkey-sentinel-cancel-debounce.md) | Hotkey-end sentinel, 50 ms debounce, spoken cancel |
+| [0090](decisions/0090-dictation-hotkey-opens-session.md) | Right Ctrl opens own session, close-before-finalize ordering |
+| [0091](decisions/0091-streaming-dictation-experiment.md) | Original streaming experiment (promoted) |
+| [0092](decisions/0092-streaming-dictation-integration.md) | Integration decision — this document's primary ADR |
