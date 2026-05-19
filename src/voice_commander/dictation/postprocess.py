@@ -5,7 +5,7 @@ network access.
 
 References
 ----------
-- docs/references/whisper-cpp-server-inference.md — prompt field, 224-token limit
+- docs/references/ws-transcribe-server.md — prompt field, 224-token limit
 """
 
 from __future__ import annotations

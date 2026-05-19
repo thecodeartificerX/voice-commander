@@ -60,7 +60,7 @@ is amber-coloured but **never blocks saving**.
 `post_audio` gains `prompt: str = ""`. When non-empty it adds form fields
 `prompt=<value>` and `carry_initial_prompt=true` so whisper re-applies the initial
 prompt to every decode window, not only the first 30 s. See
-`docs/references/whisper-cpp-server-inference.md`.
+`docs/references/ws-transcribe-server.md`.
 
 ### D6 — Pipeline integration order
 
@@ -133,6 +133,6 @@ would not naturally speak in prose.
 
 - [ADR 0086](0086-dictation-mode.md) — dictation pipeline this extends
 - [ADR 0073](0073-remote-transcription-backend.md) — whisper.cpp wire format
-- `docs/references/whisper-cpp-server-inference.md` — prompt field reference
+- `docs/references/ws-transcribe-server.md` — prompt field / server contract reference
 - `src/voice_commander/dictation/postprocess.py` — pure post-processing functions
 - `src/voice_commander/dictation/vocab.py` — data model and persistence

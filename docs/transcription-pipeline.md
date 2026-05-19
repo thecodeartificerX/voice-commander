@@ -1,8 +1,8 @@
 ﻿# Voice Commander — Transcription Pipeline (End-to-End)
 
-**Date:** 2026-05-18
+**Date:** 2026-05-19
 **Status:** Authoritative
-**Scope:** Both transcription paths — command (local faster-whisper) and dictation (WebSocket streaming to an LLM-cleanup proxy in front of whisper).
+**Scope:** Both transcription paths — command (local faster-whisper) and dictation (WebSocket streaming to an LLM-cleanup proxy in front of whisper, growing-window model per ADR 0095).
 
 This document is the single narrative reference for how audio moves from the microphone to text in Voice Commander. Everything here is grounded in the actual source code and ADRs; there is no speculation. Use the symbol names and file paths below to navigate the code directly.
 
@@ -15,7 +15,7 @@ Voice Commander has two transcription paths that share the same audio capture in
 | Path | Transcriber | Trigger | Output |
 |---|---|---|---|
 | **Command** | `Transcriber` (local faster-whisper, CUDA) | Every VAD utterance during a normal session | Text → `VerbRouter` → `Dispatcher` |
-| **Dictation** | Remote WebSocket proxy `/ws/transcribe` (LLM-cleanup proxy in front of whisper, ADR 0093) | Session enters dictation sub-state; each VAD chunk is streamed in real-time; stabilised transcript pasted on exit | Text → clipboard paste → cursor |
+| **Dictation** | Remote WebSocket proxy `/ws/transcribe` (LLM-cleanup proxy in front of whisper, ADR 0093) | Session enters dictation sub-state; a `StreamingRecorder` frame tap feeds `DictationWindow` which emits whole-window WAVs on a fixed cadence; `LocalAgreement-2` stabilises transcript; pasted on exit | Text → clipboard paste → cursor |
 
 Both paths share:
 - `StreamingRecorder` — owns the `sd.InputStream` + VAD worker thread
@@ -263,10 +263,12 @@ CUDA DLL preloading happens at `transcriber.py` import time via `_cuda_setup.reg
 
 > **Endpoint (ADR 0093).** `ws_url` points at a WebSocket **proxy** (`:8767`), not
 > the raw whisper server. The proxy is protocol-compatible: it forwards the config
-> frame and audio chunks upstream and passes `partial` frames through unchanged, so
-> `LocalAgreement` and HUD feedback are unaffected. It LLM-cleans only the final
-> `done` transcript, with a silent fallback to raw whisper text if the LLM is
-> unavailable. The daemon-side flow below is identical regardless.
+> frame and audio chunks upstream and passes `partial` frames (carrying `segments`
+> per ADR 0095) through unchanged, so `LocalAgreement-2` and HUD feedback are
+> unaffected. It LLM-cleans only the final `done` transcript, with a silent fallback
+> to raw whisper text if the LLM is unavailable. The daemon-side flow below is
+> identical regardless. When the server omits `segments` on partials (un-upgraded
+> server), the daemon degrades gracefully to cap-bounded trimming (OI-1).
 
 ### 4.1 ASCII flow
 
@@ -277,6 +279,8 @@ CUDA DLL preloading happens at `transcriber.py` import time via `_cuda_setup.reg
   VerbRouter → __dictation.start
   daemon intercepts → DictationSession.start()
       publishes "dictation.start"
+      creates DictationWindow (growing 16 kHz float32 buffer)
+      registers StreamingRecorder frame tap → DictationWindow._on_frame()
       spawns asyncio-loop thread
       sprite shows ● DICTATING badge
 
@@ -286,17 +290,23 @@ CUDA DLL preloading happens at `transcriber.py` import time via `_cuda_setup.reg
 
   ──── dictation active ──────────────────────────────────────────────────────────────────────
 
-  Each VAD utterance → _process_utterance()
+  StreamingRecorder frame tap (continuous, VAD-independent)
+      raw 16 kHz float32 frames → DictationWindow._on_frame()
+      every window_step_ms (1000 ms): emit whole-window WAV onto _chunk_q
+      asyncio thread drains _chunk_q → ws.send(whole_window_wav_bytes)
+      server re-decodes whole window → partial{text, segments}
+      _on_partial(text, segments): LocalAgreement-2 commits longest prefix
+          → DictationWindow.commit(end_s) trims buffer at committed word's end-time
+          (window_cap_ms bounds uncommitted buffer; OI-1 fallback when segments absent)
+
+  Each VAD utterance → _process_utterance() [endpointing-only]
       Transcriber.transcribe(ndarray)         [local faster-whisper — end-word detection only]
       publish "transcript" SSE
       DictationSession.handle_utterance(audio, text)
-        → "buffered": encode_wav(audio) → chunk pushed onto _chunk_q
-                       asyncio thread drains _chunk_q → ws.send(wav_bytes)
-                       server replies partial JSON → LocalAgreement folds word
-                       (partials are raw whisper; LLM-cleaned text arrives only in done frame)
+        → "buffered": returns immediately (no audio encoding; audio flows via frame tap)
         → "end"    :  submit _end_owned_session_if_needed (close-before-finalize)
                        submit _finalize_dictation to dictation executor
-        → "cancel" :  session.cancel() closes WS, discards transcript
+        → "cancel" :  session.cancel() clears frame tap, closes WS, discards transcript
 
   [OR: Right Ctrl pressed again]
   on_dictation_toggle()
@@ -313,13 +323,17 @@ CUDA DLL preloading happens at `transcriber.py` import time via `_cuda_setup.reg
                                                                   _finalize_dictation()
                                                                     │
                                                                     ├─ session.finish()
+                                                                    │    clears frame tap
+                                                                    │    flushes DictationWindow (final WAV)
                                                                     │    pushes end sentinel to _chunk_q
-                                                                    │    asyncio thread sends {"type":"end"}
+                                                                    │    asyncio thread sends
+                                                                    │      {"type":"end","raw_transcript":"..."}
+                                                                    │      (committed raw text via raw_transcript_fn)
                                                                     │    asyncio thread reads done frame → _final_text
                                                                     │    join asyncio thread
-                                                                    │    LocalAgreement.finalize() (for fallback)
+                                                                    │    LocalAgreement-2.finalize() (for fallback)
                                                                     │    returns _final_text (LLM-cleaned done.text)
-                                                                    │    or LocalAgreement output if no done frame
+                                                                    │    or LocalAgreement-2 output if no done frame
                                                                     │    (ADR 0094; "" on connect error)
                                                                     │
                                                                     ├─ apply_corrections(text, vocab)
@@ -352,6 +366,13 @@ CUDA DLL preloading happens at `transcriber.py` import time via `_cuda_setup.reg
 
 ### 4.3 Streaming transport (D3)
 
+Under the growing-window model (ADR 0095), audio no longer flows through VAD utterances.
+Instead, a frame tap on `StreamingRecorder` feeds raw 16 kHz float32 frames directly into
+`DictationWindow`. Every `window_step_ms` (default 1000 ms), `DictationWindow` emits the
+entire accumulated buffer as a WAV onto `_chunk_q`; the asyncio thread sends it to the
+server; the server re-decodes the whole window and returns a `partial{text, segments}`
+frame. `bridge.py` is not used — `stream_transcribe` drains `_chunk_q` directly.
+
 While `_dictation_session.active` is `True`, `_process_utterance()` branches before the word-count gate:
 
 ```python
@@ -364,18 +385,20 @@ if self._dictation_session is not None and self._dictation_session.active:
     elif kind == "cancel":
         self._dictation_session.cancel()
         self._dictation_executor.submit(self._end_owned_session_if_needed)
-    # "buffered" → utterance streamed inside handle_utterance
+    # "buffered" → audio already flowing via frame tap; no chunk push here
     run.set_status("ok")
     return
 ```
 
-Each utterance is still transcribed by local faster-whisper (for end-word / cancel-word detection and HUD display), but the audio ndarray is also streamed immediately.
+Each utterance is still transcribed by local faster-whisper (for end-word / cancel-word
+detection and HUD display), but `handle_utterance` is **classification-only** — it does
+not encode or push audio chunks.
 
-`DictationSession.handle_utterance(audio, text)`:
+`DictationSession.handle_utterance(audio, text)` (endpointing-only):
 - Normalises the text via `_normalize_spoken()`.
-- If text matches `cancel_word`: returns `"cancel"` — no audio streamed.
-- If text matches `end_word` (default `"done"`): returns `"end"` — utterance NOT streamed.
-- Otherwise: `encode_wav(audio)` → WAV bytes pushed onto `_chunk_q`; asyncio thread sends chunk to server; server `partial` reply folds into `LocalAgreement`; returns `"buffered"`.
+- If text matches `cancel_word`: returns `"cancel"` — frame tap cleared, WS closed.
+- If text matches `end_word` (default `"done"`): returns `"end"`.
+- Otherwise: returns `"buffered"` immediately (no audio encoding, no chunk push).
 
 ### 4.4 Exit paths (D4)
 
@@ -408,23 +431,25 @@ Runs on the **`dictation` executor thread** (single-worker `ThreadPoolExecutor`,
 **Step 1 — Finish streaming session**
 
 `session.finish()` in `src/voice_commander/dictation/session.py`:
+- Clears the frame tap on `StreamingRecorder` (stops new audio flowing into `DictationWindow`).
+- Flushes `DictationWindow` — emits the final partial window as WAV onto `_chunk_q`.
 - Pushes a `None` sentinel onto `_chunk_q` to signal end-of-stream to the asyncio thread.
 - Joins the asyncio-loop thread (with a `_JOIN_MARGIN_S` grace on top of `idle_timeout_s`).
-- Always calls `LocalAgreement.finalize()` to flush any tentative tail words (for the fallback path).
-- **Primary transcript source (ADR 0094):** `stream_transcribe` reads the proxy's single
-  `done` frame after sending `{"type":"end"}` and returns `done.text` (the LLM-cleaned
-  transcript, stored in `DictationSession._final_text`). After the join, `finish()`
-  returns `_final_text` when it is not `None` (including the empty-string case, which
-  means whisper heard nothing).
+  During the join the asyncio thread sends `{"type":"end","raw_transcript":"..."}` (the
+  full committed raw text via `raw_transcript_fn`), then reads the proxy's single `done`
+  frame, storing `done.text` in `DictationSession._final_text` (ADR 0094).
+- Always calls `LocalAgreement-2.finalize()` to flush any tentative tail words (for the fallback path).
+- **Primary transcript source (ADR 0094):** After the join, `finish()` returns `_final_text`
+  when it is not `None` (including the empty-string case, which means whisper heard nothing).
 - **Fallback:** when `_final_text is None` (the `done` frame did not arrive — timeout,
-  connection closed, or server error), `finish()` falls back to the `LocalAgreement`-stabilised
+  connection closed, or server error), `finish()` falls back to the `LocalAgreement-2`-stabilised
   transcript built from the accumulated `partial` frames.
 - Returns `""` when the WebSocket never connected or produced nothing.
 
-On encode failure in `handle_utterance()`: `session.error == "encode"` is set; `finish()` still returns, and the finalize method publishes `dictation.error {reason: "encode"}`, fires miss chime, returns.
+On encode failure (window WAV encode): `session.error == "encode"` is set; `finish()` still returns, and the finalize method publishes `dictation.error {reason: "encode"}`, fires miss chime, returns.
 
 On WebSocket connect failure: `session.error == "endpoint"` is set; `_final_text` stays `None`;
-empty transcript from `LocalAgreement` fallback → `dictation.error {reason: "endpoint"}`, miss chime, returns.
+empty transcript from `LocalAgreement-2` fallback → `dictation.error {reason: "endpoint"}`, miss chime, returns.
 
 **Step 2 — Post-process**
 
@@ -467,8 +492,10 @@ Every dictation overwrites one file:
 
 ```toml
 [dictation]
-ws_url   = "ws://192.168.4.200:8767/ws/transcribe"  # WebSocket URL for streaming transcription proxy
-end_word = "done"                                    # spoken word that ends dictation
+ws_url         = "ws://192.168.4.200:8767/ws/transcribe"  # WebSocket URL for streaming transcription proxy
+end_word       = "done"                                    # spoken word that ends dictation
+window_step_ms = 1000                                      # cadence (ms) for whole-window WAV emission
+window_cap_ms  = 25000                                     # maximum uncommitted buffer size (ms)
 ```
 
 The daemon also reads `dictation_key` from `[hotkey]`:
@@ -488,9 +515,9 @@ dictation_key = "ctrl_r"   # Right Ctrl; empty string disables
 | `DictationSession.finish()` | `src/voice_commander/dictation/session.py` |
 | `DictationSession.request_end()` | `src/voice_commander/dictation/session.py` |
 | `DictationSession.cancel()` | `src/voice_commander/dictation/session.py` |
-| `LocalAgreement` | `src/voice_commander/dictation/local_agreement.py` |
+| `DictationWindow` | `src/voice_commander/dictation/window.py` |
+| `LocalAgreement-2` (`LocalAgreement`) | `src/voice_commander/dictation/local_agreement.py` |
 | `stream_transcribe()` | `src/voice_commander/dictation/ws_client.py` |
-| `pump()` | `src/voice_commander/dictation/bridge.py` |
 | `DictationStore` | `src/voice_commander/dictation/store.py` |
 | `encode_wav()` | `src/voice_commander/dictation/store.py` |
 | `clipboard.paste_via_clipboard()` | `src/voice_commander/dictation/clipboard.py` |
@@ -512,6 +539,7 @@ dictation_key = "ctrl_r"   # Right Ctrl; empty string disables
 | Streaming transport, WebSocket, LocalAgreement | ADR 0092 (supersedes batch POST of ADR 0086 D5) |
 | Endpoint moved to LLM-cleanup proxy (`:8765` → `:8767`) | ADR 0093 (amends endpoint of ADR 0092) |
 | Consume `done` frame; `finish()` returns LLM-cleaned `done.text` with `LocalAgreement` fallback | ADR 0094 (amends ADR 0093) |
+| Growing-window model; `DictationWindow`; `LocalAgreement-2`; VAD endpointing-only; `raw_transcript` in end frame | ADR 0095 (amends ADR 0092/0094) |
 
 ---
 
@@ -535,7 +563,7 @@ Governing ADR: ADR 0079.
 
 ADR 0073 introduced `[transcription] backend = "local" | "remote"` as a toggle for the **command** path. This is distinct from the dictation remote endpoint, which is always remote. When `backend = "remote"`, `StreamingDaemon` uses a `RemoteTranscriber` (not shown above) instead of `Transcriber` for the command path. The wire format is `verbose_json` (for per-segment confidence) to `POST /inference`, matching the whisper.cpp server contract. Failure returns `TranscriptionResult(text="", confidence=0.0, no_speech_prob=1.0)`, which fires the confidence gate miss chime. There is no auto-fallback.
 
-The dictation path (`_finalize_dictation`) does **not** use `RemoteTranscriber` — it streams each VAD chunk directly over a WebSocket to `/ws/transcribe` via `DictationSession` / `ws_client.stream_transcribe()` (ADR 0092).
+The dictation path (`_finalize_dictation`) does **not** use `RemoteTranscriber` — it streams whole-window WAVs on a fixed cadence over a WebSocket to `/ws/transcribe` via `DictationSession` / `DictationWindow` / `ws_client.stream_transcribe()` (ADR 0092, ADR 0095).
 
 ---
 
