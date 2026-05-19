@@ -1443,6 +1443,8 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         idle_timeout_s=float(cfg.dictation.idle_timeout_seconds),
         end_word=cfg.dictation.end_word,
         cancel_word=cfg.dictation.cancel_word,
+        window_step_ms=cfg.dictation.window_step_ms,
+        window_cap_ms=cfg.dictation.window_cap_ms,
     )
 
     # --- Elements mode (ADR 0087) ---
@@ -1565,6 +1567,10 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         utterance_sink=daemon._on_utterance,
         device_name=cfg.audio.device_name,
     )
+
+    # Streaming-window dictation (ADR 0095): give the session the recorder so
+    # it can register a per-frame audio tap on start() / clear it on finish().
+    dictation_session.set_recorder(daemon._recorder)
 
     # Audio self-test: open device for ~200 ms before hotkey becomes active.
     # On failure: log, emit banner with FAIL status, then exit with code 73.
