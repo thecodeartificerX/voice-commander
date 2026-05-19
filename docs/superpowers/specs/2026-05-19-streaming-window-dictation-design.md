@@ -144,9 +144,17 @@ committed raw transcript; send `{"type":"end","raw_transcript":<text>}`; read
 the `done` frame; return `done.text` (ADR 0094 path preserved). If no `done`
 frame arrives, fall back to the locally committed text.
 
-## Server contract additions (VPS — faster-whisper proxy)
+## Server contract additions (VPS — transcription pipeline at :8767)
 
 Implemented by the VPS engineer; ~15% of the work. Both are backward-compatible.
+
+**Target endpoint.** The daemon connects to the LLM-cleanup pipeline at
+`ws://192.168.4.200:8767/ws/transcribe` (`[dictation] ws_url`, ADR 0093) — **not**
+the raw whisper server at `:8765`. Change B (text-clean on end) lives in the
+pipeline process and requires the LLM; it does not exist on the `:8765` path.
+Change A (segment timestamps) lives in the faster-whisper service the pipeline
+proxies. ADR 0095 must state the `:8767` target explicitly so the implementing
+session does not infer it.
 
 - **Segment timestamps.** Every `partial` reply gains
   `segments: [{"start": float, "end": float, "text": str}, ...]` — seconds
