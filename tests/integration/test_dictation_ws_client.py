@@ -47,7 +47,9 @@ async def test_streams_chunks_collects_partials_and_ends(mock_server):
     partials: list[str] = []
 
     await stream_transcribe(
-        url, "en", chunk_q, partials.append, idle_timeout_s=5.0, prompt="Supabase"
+        url, "en", chunk_q,
+        lambda t, s: partials.append(t),
+        idle_timeout_s=5.0, prompt="Supabase",
     )
 
     assert state["configs"] == [
@@ -62,7 +64,7 @@ async def test_empty_prompt_omits_field(mock_server):
     url, state = mock_server
     chunk_q: asyncio.Queue = asyncio.Queue()
     await chunk_q.put(None)
-    await stream_transcribe(url, "en", chunk_q, lambda _t: None, idle_timeout_s=5.0)
+    await stream_transcribe(url, "en", chunk_q, lambda _t, _s: None, idle_timeout_s=5.0)
     assert state["configs"] == [{"type": "config", "language": "en"}]
 
 
@@ -75,7 +77,7 @@ async def test_server_error_frame_stops_streaming(mock_server):
     await chunk_q.put(None)
     partials: list[str] = []
 
-    await stream_transcribe(url, "en", chunk_q, partials.append, idle_timeout_s=5.0)
+    await stream_transcribe(url, "en", chunk_q, lambda t, s: partials.append(t), idle_timeout_s=5.0)
 
     assert state["chunks"] == 1  # stopped after the first chunk's error reply
     assert partials == []
@@ -87,7 +89,7 @@ async def test_idle_timeout_ends_session(mock_server):
     chunk_q: asyncio.Queue = asyncio.Queue()  # never fed — forces the idle path
     partials: list[str] = []
 
-    await stream_transcribe(url, "en", chunk_q, partials.append, idle_timeout_s=0.2)
+    await stream_transcribe(url, "en", chunk_q, lambda t, s: partials.append(t), idle_timeout_s=0.2)
 
     assert state["ended"] is True
     assert partials == []
@@ -98,5 +100,5 @@ async def test_connect_failure_raises_oserror():
     await chunk_q.put(None)
     with pytest.raises(OSError):
         await stream_transcribe(
-            "ws://localhost:1", "en", chunk_q, lambda _t: None, idle_timeout_s=1.0
+            "ws://localhost:1", "en", chunk_q, lambda _t, _s: None, idle_timeout_s=1.0
         )

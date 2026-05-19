@@ -311,3 +311,27 @@ def test_stale_mute_key_warns_and_is_ignored(tmp_path, caplog):
     assert cfg.hotkey.dictation_key == "ctrl_r"
     assert not hasattr(cfg.hotkey, "mute_key")
     assert any("mute_key" in r.message for r in caplog.records)
+
+
+def test_dictation_window_keys_default(tmp_path):
+    from voice_commander.config import DictationConfig
+
+    cfg = DictationConfig()
+    assert cfg.window_step_ms == 1000
+    assert cfg.window_cap_ms == 25000
+
+
+def test_dictation_window_keys_load_from_toml(tmp_path):
+    from voice_commander.config import Config
+
+    toml = tmp_path / "config.toml"
+    toml.write_text(
+        "[dictation]\n"
+        'ws_url = "ws://x/ws"\n'
+        "window_step_ms = 750\n"
+        "window_cap_ms = 18000\n",
+        encoding="utf-8",
+    )
+    cfg = Config.load(toml)
+    assert cfg.dictation.window_step_ms == 750
+    assert cfg.dictation.window_cap_ms == 18000

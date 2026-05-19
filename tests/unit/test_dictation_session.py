@@ -73,7 +73,7 @@ class _MockWsServer:
                 else:
                     text = self._replies[min(state["i"], len(self._replies) - 1)]
                     state["i"] += 1
-                    await conn.send(json.dumps({"type": "partial", "text": text}))
+                    await conn.send(json.dumps({"type": "partial", "text": text, "segments": []}))
 
         server = await serve(handler, "localhost", 0)
         port = server.sockets[0].getsockname()[1]
@@ -265,7 +265,7 @@ def test_ws_client_stream_transcribe_returns_done_text() -> None:
             url,
             "en",
             chunk_q,
-            partials.append,
+            lambda t, s: partials.append(t),
             idle_timeout_s=3.0,
             done_timeout_s=5.0,
         )
@@ -318,7 +318,7 @@ def test_ws_client_stream_transcribe_returns_none_on_timeout() -> None:
             url_holder[0],
             "en",
             chunk_q,
-            lambda _: None,
+            lambda _t, _s: None,
             idle_timeout_s=3.0,
             done_timeout_s=0.5,  # short timeout so the test is fast
         )
@@ -342,7 +342,7 @@ def test_ws_client_stream_transcribe_returns_empty_string_for_empty_done_text() 
             url,
             "en",
             chunk_q,
-            lambda _: None,
+            lambda _t, _s: None,
             idle_timeout_s=3.0,
             done_timeout_s=5.0,
         )
@@ -350,3 +350,93 @@ def test_ws_client_stream_transcribe_returns_empty_string_for_empty_done_text() 
     result = asyncio.run(run())
     assert result == ""
     assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# Task 7: _segments_to_timed_words helper
+# ---------------------------------------------------------------------------
+
+
+def test_segments_to_timed_words_applies_offset():
+    from voice_commander.dictation.session import _segments_to_timed_words
+
+    segments = [
+        {"start": 0.0, "end": 0.6, "text": "the quick"},
+        {"start": 0.6, "end": 1.2, "text": "brown fox"},
+    ]
+    words = _segments_to_timed_words(segments, committed_offset_s=2.0)
+    assert [w.text for w in words] == ["the", "quick", "brown", "fox"]
+    # window-relative end-times shifted by the committed offset
+    assert words[1].end_s == pytest.approx(2.6)   # 0.6 + 2.0
+    assert words[3].end_s == pytest.approx(3.2)   # 1.2 + 2.0
+
+
+def test_segments_to_timed_words_empty_when_no_segments():
+    from voice_commander.dictation.session import _segments_to_timed_words
+
+    assert _segments_to_timed_words([], committed_offset_s=0.0) == []
+
+
+# ---------------------------------------------------------------------------
+# Task 8: DictationSession — frame tap, window streaming, _on_partial LA-2
+# ---------------------------------------------------------------------------
+
+
+class _FakeRecorder:
+    """Minimal StreamingRecorder stand-in — records frame-tap set/clear."""
+
+    def __init__(self) -> None:
+        self.tap = None
+
+    def set_frame_tap(self, cb) -> None:
+        self.tap = cb
+
+
+def test_start_registers_frame_tap_finish_clears_it():
+    rec = _FakeRecorder()
+    bus = _FakeBus()
+    sess = DictationSession(bus=bus, ws_url="ws://localhost:1", idle_timeout_s=0.5)
+    sess.set_recorder(rec)
+    sess.start(Vocabulary())
+    assert rec.tap is not None
+    sess.finish()
+    assert rec.tap is None
+
+
+def test_cancel_clears_frame_tap():
+    rec = _FakeRecorder()
+    bus = _FakeBus()
+    sess = DictationSession(bus=bus, ws_url="ws://localhost:1", idle_timeout_s=0.5)
+    sess.set_recorder(rec)
+    sess.start(Vocabulary())
+    sess.cancel()
+    assert rec.tap is None
+
+
+def test_on_partial_publishes_committed_prefix_transcript():
+    """HUD transcript follows the committed prefix, not the raw hypothesis (OI-3)."""
+    bus = _FakeBus()
+    sess = DictationSession(bus=bus, ws_url="ws://localhost:1", idle_timeout_s=0.5)
+    sess.set_recorder(_FakeRecorder())
+    sess.start(Vocabulary())
+
+    seg1 = [{"start": 0.0, "end": 0.6, "text": "the quick"}]
+    sess._on_partial("the quick", seg1)
+    seg2 = [{"start": 0.0, "end": 0.9, "text": "the quick brown"}]
+    sess._on_partial("the quick brown", seg2)
+
+    transcripts = [d.get("text") for (t, d) in bus.events if t == "transcript"]
+    assert transcripts[-1] == "the quick"
+    sess.cancel()
+
+
+def test_handle_utterance_does_not_stream_buffered_audio():
+    """VAD is endpointing-only — buffered utterances are NOT pushed as chunks."""
+    sess = DictationSession(bus=_FakeBus(), ws_url="ws://localhost:1", idle_timeout_s=0.5)
+    sess.set_recorder(_FakeRecorder())
+    sess.start(Vocabulary())
+    audio = np.zeros(16000, dtype=np.float32)
+    kind = sess.handle_utterance(audio, "some words")
+    assert kind == "buffered"
+    assert sess._chunk_q is not None and sess._chunk_q.qsize() == 0
+    sess.cancel()

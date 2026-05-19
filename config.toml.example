@@ -10,6 +10,8 @@ language             = "en"     # whisper decode language
 end_word             = "done"   # say this word (standalone) to end dictation
 cancel_word          = "cancel" # say this word to abort dictation and discard the transcript
 idle_timeout_seconds = 30        # close the stream after this long with no audio
+window_step_ms       = 1000      # re-decode the growing audio window this often (ADR 0095)
+window_cap_ms        = 25000     # max uncommitted window length; older audio is force-committed
 
 [audio]
 device_name = ""

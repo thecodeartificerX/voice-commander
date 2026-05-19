@@ -7,8 +7,16 @@ binary chunk out, one reply in. The config handshake carries an optional
 ``initial_prompt`` field that biases the whisper decoder toward the user's
 custom vocabulary (built by ``postprocess.build_prompt``).
 
-After the client sends the terminal ``{"type":"end"}`` frame, the proxy emits
-**exactly one** ``done`` frame: ``{"type":"done","text":"<LLM-cleaned>","raw":"<raw-whisper>"}``.
+Partials carry both ``text`` and a ``segments`` array (ADR 0095): each segment
+has ``start``, ``end``, and ``text`` fields that let the session translate
+window-relative timestamps into absolute-stream timestamps for audio trimming.
+The ``on_partial`` callback receives ``(text, segments)`` — both arguments are
+always present; ``segments`` defaults to ``[]`` when the server omits the field.
+
+After the client sends the terminal ``{"type":"end"}`` frame (which also carries
+``raw_transcript`` when a ``raw_transcript_fn`` callable is supplied — ADR 0095),
+the proxy emits **exactly one** ``done`` frame:
+``{"type":"done","text":"<LLM-cleaned>","raw":"<raw-whisper>"}``.
 ``stream_transcribe`` reads that frame and returns ``done.text`` (the LLM-cleaned
 transcript). The ``raw`` field is optional (the raw 8765 server omits it).
 An empty ``done.text`` is valid — whisper heard nothing. If no ``done`` frame
@@ -40,10 +48,11 @@ async def stream_transcribe(
     ws_url: str,
     language: str,
     chunk_q: "asyncio.Queue[bytes | None]",
-    on_partial: Callable[[str], None],
+    on_partial: Callable[[str, list[dict]], None],
     idle_timeout_s: float,
     prompt: str = "",
     done_timeout_s: float = 15.0,
+    raw_transcript_fn: Callable[[], str] | None = None,
 ) -> str | None:
     """Stream WAV chunks to the server; route partials to ``on_partial``.
 
@@ -55,6 +64,16 @@ async def stream_transcribe(
     ``prompt`` (when non-empty) is sent in the config frame as the
     ``initial_prompt`` field so the server biases its decoder toward the
     user's custom vocabulary. An empty ``prompt`` omits the field entirely.
+
+    ``raw_transcript_fn`` (when not ``None``) is called once, just before the
+    terminal ``{"type":"end"}`` frame is sent, to obtain the raw
+    ``LocalAgreement``-stabilised transcript. The result is included in the
+    end frame as ``raw_transcript`` so the LLM-cleanup proxy can use it as
+    additional grounding context (ADR 0095).
+
+    ``on_partial`` receives ``(text, segments)`` where ``segments`` is the
+    list of dicts from the server's partial frame (ADR 0095); it defaults to
+    ``[]`` when the server omits the field.
 
     After sending the terminal ``{"type":"end"}`` frame, this function reads
     frames until it receives the proxy's ``done`` frame, a server ``error``,
@@ -94,7 +113,7 @@ async def stream_transcribe(
             kind = reply.get("type")
             if kind == "partial":
                 try:
-                    on_partial(reply.get("text", ""))
+                    on_partial(reply.get("text", ""), reply.get("segments", []) or [])
                 except Exception:  # noqa: BLE001 - a bad callback must not kill the stream
                     logger.exception("stream_transcribe: on_partial callback raised — continuing")
             elif kind == "error":
@@ -102,8 +121,11 @@ async def stream_transcribe(
                 break
             else:
                 logger.warning("stream_transcribe: unexpected reply type %r", kind)
+        end_frame: dict[str, str] = {"type": "end"}
+        if raw_transcript_fn is not None:
+            end_frame["raw_transcript"] = raw_transcript_fn()
         try:
-            await ws.send(json.dumps({"type": "end"}))
+            await ws.send(json.dumps(end_frame))
         except ConnectionClosed:
             logger.warning("stream_transcribe: connection closed before end frame")
             return None
@@ -131,7 +153,7 @@ async def stream_transcribe(
             elif kind == "partial":
                 # Stray trailing partial — forward and keep waiting.
                 try:
-                    on_partial(frame.get("text", ""))
+                    on_partial(frame.get("text", ""), frame.get("segments", []) or [])
                 except Exception:  # noqa: BLE001
                     logger.exception(
                         "stream_transcribe: on_partial callback raised on trailing partial — continuing"

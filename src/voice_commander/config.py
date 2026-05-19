@@ -36,6 +36,12 @@ class DictationConfig:
     end_word: str = "done"
     cancel_word: str = "cancel"  # say this word to abort dictation and discard the transcript
     idle_timeout_seconds: int = 30
+    # Streaming-window dictation (ADR 0095). The growing audio window is
+    # re-decoded every window_step_ms of accumulated audio. window_cap_ms
+    # bounds the uncommitted window: beyond it the oldest segment is
+    # force-committed so latency stays independent of dictation length.
+    window_step_ms: int = 1000
+    window_cap_ms: int = 25000
 
 
 @dataclass(frozen=True)
