@@ -407,6 +407,12 @@ class StreamingRecorder:
         self._resampler: Resampler | None = None
         self._vad_thread: threading.Thread | None = None
 
+        # Optional per-frame consumer for streaming-window dictation (ADR 0095).
+        # Set via set_frame_tap(); invoked by the VAD worker thread with each
+        # resampled 16 kHz / 512-sample float32 frame. Unset (None) by default
+        # so command mode is unaffected. At most one consumer.
+        self._frame_tap: Callable[[npt.NDArray[np.float32]], None] | None = None
+
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
@@ -428,6 +434,36 @@ class StreamingRecorder:
             unexpected exception.
         """
         return validate_device(self._device, self._device_name, self._channels)
+
+    def set_frame_tap(
+        self, callback: Callable[[npt.NDArray[np.float32]], None] | None
+    ) -> None:
+        """Register (or clear) the per-frame audio tap.
+
+        *callback* is invoked by the VAD worker thread with every resampled
+        16 kHz / 512-sample float32 frame, alongside the existing
+        ``VADGate.process`` call. At most one consumer; passing ``None`` clears
+        it. Default unset — command mode is unaffected.
+
+        Used by streaming-window dictation (ADR 0095): ``DictationSession.start``
+        registers a tap that feeds the growing ``DictationWindow`` buffer;
+        ``finish``/``cancel`` clear it.
+        """
+        self._frame_tap = callback
+
+    def _invoke_frame_tap(self, frame: npt.NDArray[np.float32]) -> None:
+        """Call the registered frame tap; swallow + log any exception.
+
+        A raising tap callback must never kill the VAD worker thread, so the
+        invocation is wrapped. A no-op when no tap is registered.
+        """
+        tap = self._frame_tap
+        if tap is None:
+            return
+        try:
+            tap(frame)
+        except Exception:
+            logger.exception("StreamingRecorder: frame tap callback raised")
 
     @property
     def is_open(self) -> bool:
@@ -750,6 +786,12 @@ class StreamingRecorder:
                 while pending_samples >= _VAD_FRAME_SIZE:
                     frame: npt.NDArray[np.float32] = _pop_frame(pending, _VAD_FRAME_SIZE)
                     pending_samples -= _VAD_FRAME_SIZE
+
+                    # Streaming-window dictation tap (ADR 0095): feed every
+                    # 16 kHz/512 frame to the dictation buffer. Wrapped so a
+                    # raising tap never kills this worker thread. Runs BEFORE
+                    # VADGate so a window emission is never starved by gate work.
+                    self._invoke_frame_tap(frame)
 
                     result = self._vad_gate.process(frame)
                     if result is not None:
