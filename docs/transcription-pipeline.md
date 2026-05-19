@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-18
 **Status:** Authoritative
-**Scope:** Both transcription paths — command (local faster-whisper) and dictation (WebSocket streaming to whisper.cpp).
+**Scope:** Both transcription paths — command (local faster-whisper) and dictation (WebSocket streaming to an LLM-cleanup proxy in front of whisper).
 
 This document is the single narrative reference for how audio moves from the microphone to text in Voice Commander. Everything here is grounded in the actual source code and ADRs; there is no speculation. Use the symbol names and file paths below to navigate the code directly.
 
@@ -15,7 +15,7 @@ Voice Commander has two transcription paths that share the same audio capture in
 | Path | Transcriber | Trigger | Output |
 |---|---|---|---|
 | **Command** | `Transcriber` (local faster-whisper, CUDA) | Every VAD utterance during a normal session | Text → `VerbRouter` → `Dispatcher` |
-| **Dictation** | Remote whisper.cpp server (WebSocket `/ws/transcribe`) | Session enters dictation sub-state; each VAD chunk is streamed in real-time; stabilised transcript pasted on exit | Text → clipboard paste → cursor |
+| **Dictation** | Remote WebSocket proxy `/ws/transcribe` (LLM-cleanup proxy in front of whisper, ADR 0093) | Session enters dictation sub-state; each VAD chunk is streamed in real-time; stabilised transcript pasted on exit | Text → clipboard paste → cursor |
 
 Both paths share:
 - `StreamingRecorder` — owns the `sd.InputStream` + VAD worker thread
@@ -257,9 +257,16 @@ CUDA DLL preloading happens at `transcriber.py` import time via `_cuda_setup.reg
 
 ---
 
-## 4. Path 2 — Dictation Mode (WebSocket streaming to whisper.cpp)
+## 4. Path 2 — Dictation Mode (WebSocket streaming to the transcription proxy)
 
 *Superseded batch POST path removed by ADR 0092. The description below reflects the streaming implementation.*
+
+> **Endpoint (ADR 0093).** `ws_url` points at a WebSocket **proxy** (`:8767`), not
+> the raw whisper server. The proxy is protocol-compatible: it forwards the config
+> frame and audio chunks upstream and passes `partial` frames through unchanged, so
+> `LocalAgreement` and HUD feedback are unaffected. It LLM-cleans only the final
+> `done` transcript, with a silent fallback to raw whisper text if the LLM is
+> unavailable. The daemon-side flow below is identical regardless.
 
 ### 4.1 ASCII flow
 
@@ -286,6 +293,7 @@ CUDA DLL preloading happens at `transcriber.py` import time via `_cuda_setup.reg
         → "buffered": encode_wav(audio) → chunk pushed onto _chunk_q
                        asyncio thread drains _chunk_q → ws.send(wav_bytes)
                        server replies partial JSON → LocalAgreement folds word
+                       (partials are raw whisper; LLM-cleaned text arrives only in done frame)
         → "end"    :  submit _end_owned_session_if_needed (close-before-finalize)
                        submit _finalize_dictation to dictation executor
         → "cancel" :  session.cancel() closes WS, discards transcript
@@ -306,9 +314,13 @@ CUDA DLL preloading happens at `transcriber.py` import time via `_cuda_setup.reg
                                                                     │
                                                                     ├─ session.finish()
                                                                     │    pushes end sentinel to _chunk_q
-                                                                    │    asyncio thread drains + closes WS
-                                                                    │    LocalAgreement.finalize() → transcript
-                                                                    │    returns stabilised text (or "" on error)
+                                                                    │    asyncio thread sends {"type":"end"}
+                                                                    │    asyncio thread reads done frame → _final_text
+                                                                    │    join asyncio thread
+                                                                    │    LocalAgreement.finalize() (for fallback)
+                                                                    │    returns _final_text (LLM-cleaned done.text)
+                                                                    │    or LocalAgreement output if no done frame
+                                                                    │    (ADR 0094; "" on connect error)
                                                                     │
                                                                     ├─ apply_corrections(text, vocab)
                                                                     ├─ apply_commands(text, vocab)
@@ -398,12 +410,21 @@ Runs on the **`dictation` executor thread** (single-worker `ThreadPoolExecutor`,
 `session.finish()` in `src/voice_commander/dictation/session.py`:
 - Pushes a `None` sentinel onto `_chunk_q` to signal end-of-stream to the asyncio thread.
 - Joins the asyncio-loop thread (with a `_JOIN_MARGIN_S` grace on top of `idle_timeout_s`).
-- Calls `LocalAgreement.finalize()` to flush any tentative tail words.
-- Returns the stabilised transcript string (empty string if nothing was confirmed).
+- Always calls `LocalAgreement.finalize()` to flush any tentative tail words (for the fallback path).
+- **Primary transcript source (ADR 0094):** `stream_transcribe` reads the proxy's single
+  `done` frame after sending `{"type":"end"}` and returns `done.text` (the LLM-cleaned
+  transcript, stored in `DictationSession._final_text`). After the join, `finish()`
+  returns `_final_text` when it is not `None` (including the empty-string case, which
+  means whisper heard nothing).
+- **Fallback:** when `_final_text is None` (the `done` frame did not arrive — timeout,
+  connection closed, or server error), `finish()` falls back to the `LocalAgreement`-stabilised
+  transcript built from the accumulated `partial` frames.
+- Returns `""` when the WebSocket never connected or produced nothing.
 
 On encode failure in `handle_utterance()`: `session.error == "encode"` is set; `finish()` still returns, and the finalize method publishes `dictation.error {reason: "encode"}`, fires miss chime, returns.
 
-On WebSocket connect failure: `session.error == "endpoint"` is set; empty transcript → `dictation.error {reason: "endpoint"}`, miss chime, returns.
+On WebSocket connect failure: `session.error == "endpoint"` is set; `_final_text` stays `None`;
+empty transcript from `LocalAgreement` fallback → `dictation.error {reason: "endpoint"}`, miss chime, returns.
 
 **Step 2 — Post-process**
 
@@ -446,7 +467,7 @@ Every dictation overwrites one file:
 
 ```toml
 [dictation]
-ws_url   = "ws://192.168.4.200:8765/ws/transcribe"  # WebSocket URL for whisper.cpp streaming server
+ws_url   = "ws://192.168.4.200:8767/ws/transcribe"  # WebSocket URL for streaming transcription proxy
 end_word = "done"                                    # spoken word that ends dictation
 ```
 
@@ -489,6 +510,8 @@ dictation_key = "ctrl_r"   # Right Ctrl; empty string disables
 | Hotkey-end sentinel, 50 ms debounce, spoken cancel | ADR 0089 |
 | Right Ctrl opens own session; close-before-finalize | ADR 0090 |
 | Streaming transport, WebSocket, LocalAgreement | ADR 0092 (supersedes batch POST of ADR 0086 D5) |
+| Endpoint moved to LLM-cleanup proxy (`:8765` → `:8767`) | ADR 0093 (amends endpoint of ADR 0092) |
+| Consume `done` frame; `finish()` returns LLM-cleaned `done.text` with `LocalAgreement` fallback | ADR 0094 (amends ADR 0093) |
 
 ---
 

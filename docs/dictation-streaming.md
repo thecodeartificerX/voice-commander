@@ -9,7 +9,34 @@ post-processed and pasted at the cursor.
 
 **ADR:** [0092 — Streaming Dictation Integration](decisions/0092-streaming-dictation-integration.md)
 (supersedes the batch POST transport of ADR 0086/0090; promotes the experiment
-from ADR 0091).
+from ADR 0091). [ADR 0093](decisions/0093-transcription-proxy-endpoint.md) moved
+the endpoint to an LLM-cleanup proxy — see [Transcription proxy](#transcription-proxy) below.
+[ADR 0094](decisions/0094-consume-done-frame.md) corrects ADR 0093's "zero code change" claim:
+the daemon now consumes the proxy's `done` frame to receive the LLM-cleaned transcript.
+
+## Transcription proxy
+
+`[dictation] ws_url` points at a **WebSocket proxy** (`ws://192.168.4.200:8767/ws/transcribe`,
+ADR 0093), not the raw whisper server. The proxy is protocol-compatible — same
+config frame, audio-chunk frames, and `partial` / `done` / `error` replies.
+
+- **Partial frames pass through unchanged** → `LocalAgreement` stabilisation and
+  the live HUD transcript feedback work exactly as before.
+- **The final `done` transcript is LLM-cleaned** by the proxy (punctuation,
+  casing, disfluency removal). After sending `{"type":"end"}`, the daemon now
+  **reads the `done` frame** (`stream_transcribe` loops on `ws.recv()` until a
+  `{"type":"done","text":"..."}` frame arrives, bounded by `done_timeout_s=15 s`).
+  `DictationSession.finish()` returns the `done.text` value as the transcript
+  (ADR 0094).
+- If no `done` frame arrives (timeout, connection closed, or server error),
+  `finish()` **falls back to the `LocalAgreement`-stabilised transcript** built
+  from the accumulated `partial` frames — the pre-0093 behaviour, preserving
+  graceful degradation.
+- If the LLM is temporarily unavailable, the proxy **silently returns raw whisper
+  text in the `done` frame** — dictation still completes with the raw text.
+
+The cleanup is entirely server-side; the daemon stays local-first and contacts
+only the proxy.
 
 ---
 
@@ -66,9 +93,14 @@ On `finish() -> str` (normal exit):
 
 - Pushes the `None` end sentinel to the chunk queue.
 - Joins the asyncio-loop thread (bounded by `idle_timeout_seconds` + margin).
-- Calls `LocalAgreement.finalize()` to flush the confirmed-word accumulator.
-- Returns the raw stabilised transcript; publishes
-  `dictation.end {reason:"done"}`.
+  During that thread, `stream_transcribe` sends `{"type":"end"}` then reads the
+  proxy's `done` frame, storing `done.text` in `_final_text` (ADR 0094).
+- Calls `LocalAgreement.finalize()` to flush the confirmed-word accumulator
+  (always, for the fallback path).
+- Returns `_final_text` (the proxy's LLM-cleaned `done.text`) when not `None`.
+  Falls back to the `LocalAgreement`-stabilised transcript when `_final_text is
+  None` (no `done` frame received — timeout / closed / error).
+- Publishes `dictation.end {reason:"done"}`.
 - Returns `""` if the WebSocket never connected or produced no output.
 
 On `cancel()`:
@@ -83,7 +115,7 @@ hotkey-end drain path (ADR 0089).
 
 | Module | Responsibility |
 |--------|----------------|
-| `ws_client.py` | `stream_transcribe` — async WebSocket client; sends chunks, receives partials |
+| `ws_client.py` | `stream_transcribe` — async WebSocket client; sends chunks, receives partials, reads `done` frame (ADR 0094) |
 | `bridge.py` | `pump` — sync-to-async queue bridge (runs as asyncio task) |
 | `local_agreement.py` | `LocalAgreement` — word stabiliser across chunk boundaries |
 | `store.py` | `encode_wav`, `DictationStore.save_text` / `read_text` |
@@ -110,7 +142,7 @@ ordering, `_DICTATION_WAKE` sentinel) is **unchanged** from ADR 0090.
 
 ```toml
 [dictation]
-ws_url               = "ws://192.168.4.200:8765/ws/transcribe"
+ws_url               = "ws://192.168.4.200:8767/ws/transcribe"
 language             = "en"
 end_word             = "done"
 cancel_word          = "cancel"
@@ -119,7 +151,7 @@ idle_timeout_seconds = 30
 
 | Key | Description |
 |-----|-------------|
-| `ws_url` | WebSocket endpoint for `/ws/transcribe` (replaces the old `endpoint` HTTP URL) |
+| `ws_url` | WebSocket `/ws/transcribe` endpoint — the LLM-cleanup proxy (ADR 0093). Replaces the old `endpoint` HTTP URL |
 | `language` | BCP-47 language code sent in the config frame |
 | `end_word` | Standalone spoken word that ends dictation and pastes |
 | `cancel_word` | Standalone spoken word that cancels dictation (no paste) |
@@ -167,3 +199,5 @@ Managed via the `/page/dictation` web page (three editor sections,
 | [0090](decisions/0090-dictation-hotkey-opens-session.md) | Right Ctrl opens own session, close-before-finalize ordering |
 | [0091](decisions/0091-streaming-dictation-experiment.md) | Original streaming experiment (promoted) |
 | [0092](decisions/0092-streaming-dictation-integration.md) | Integration decision — this document's primary ADR |
+| [0093](decisions/0093-transcription-proxy-endpoint.md) | LLM-cleanup proxy endpoint |
+| [0094](decisions/0094-consume-done-frame.md) | Consume `done` frame; `finish()` returns LLM-cleaned text with `LocalAgreement` fallback |

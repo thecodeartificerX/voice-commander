@@ -2,7 +2,7 @@
 
 REQUIREMENTS — run this manually only:
   - A live ``/ws/transcribe`` WebSocket server reachable at the URL in
-    ``config.toml`` ([dictation] ws_url, default ws://192.168.4.200:8765/ws/transcribe).
+    ``config.toml`` ([dictation] ws_url, default ws://192.168.4.200:8767/ws/transcribe).
   - A working microphone.
   - The daemon's Python environment (``uv run`` or activated venv).
 
@@ -240,7 +240,7 @@ def run() -> int:
         log.info("Loaded config: ws_url=%s end_word=%r", ws_url, end_word)
     else:
         # Fallback to defaults if config.toml is not present
-        ws_url = "ws://192.168.4.200:8765/ws/transcribe"
+        ws_url = "ws://192.168.4.200:8767/ws/transcribe"
         end_word = "done"
         log.warning("config.toml not found at %s; using defaults", config_path)
 

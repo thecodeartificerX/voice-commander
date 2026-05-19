@@ -12,8 +12,9 @@ from ADR 0086/0089/0090 — only the session internals changed, ADR 0092):
 
 (a) **End-word path** — the pipeline thread recognises the configured end word
     (default ``"done"``), calls :meth:`finish`, which pushes the end sentinel,
-    joins the asyncio thread, finalises ``LocalAgreement``, and returns the
-    stabilised transcript.
+    joins the asyncio thread, reads the proxy's ``done`` frame transcript, and
+    returns the LLM-cleaned text (or falls back to ``LocalAgreement`` output
+    when no ``done`` frame arrived, ADR 0094).
 
 (b) **Hotkey-end path** — the hotkey thread calls :meth:`request_end`, which
     sets :attr:`pending_end` without deactivating the session. The pipeline
@@ -27,6 +28,11 @@ Threading: the confirmed-word accumulator + ``LocalAgreement`` are touched by
 the asyncio-loop thread (via ``_on_partial``) and by :meth:`finish` (the
 ``_dictation_executor`` thread). A single lock (``_agreement_lock``)
 serialises them — the ADR 0091 Task-9 pattern.
+
+``_final_text`` is written by the asyncio-loop thread (via ``_async_main``)
+and read by :meth:`finish` after ``loop_thread.join()``; the join provides
+the happens-before edge so no lock is needed — same rationale as the existing
+:attr:`error` comment.
 
 A connect failure inside the asyncio thread is recorded on :attr:`error`;
 :meth:`finish` then returns whatever ``LocalAgreement`` confirmed (``""`` when
@@ -105,6 +111,12 @@ class DictationSession:
         # both writers finish before finish() returns and the daemon reads
         # this field; CPython attribute assignment is GIL-atomic.
         self.error: str | None = None
+        # Written by the asyncio-loop thread (_async_main -> stream_transcribe
+        # return value); read by finish() after loop_thread.join() — the join
+        # provides the happens-before edge; no lock needed (same pattern as
+        # self.error above). None means no done frame arrived; str (possibly
+        # empty) is the proxy's LLM-cleaned transcript (ADR 0094).
+        self._final_text: str | None = None
 
         # Validate cancel_word against end_word and emptiness. Cross-field
         # validation lives here (precedent: dictation_key == hotkey_key
@@ -175,6 +187,7 @@ class DictationSession:
             self._confirmed = []
             self._vocab = vocab
             self.error = None
+            self._final_text = None
             self._chunk_q = queue.Queue()
             self._pending_end.clear()
             self._active = True
@@ -240,14 +253,24 @@ class DictationSession:
         return "buffered"
 
     def finish(self) -> str:
-        """End dictation normally; return the raw stabilised transcript.
+        """End dictation normally; return the transcript.
 
         Pushes the ``None`` end sentinel, joins the asyncio-loop thread (bounded
-        by ``idle_timeout_s + _JOIN_MARGIN_S``), finalises ``LocalAgreement``,
-        and returns the confirmed-word transcript. Returns ``""`` when the
-        WebSocket never connected or produced nothing. Publishes
-        ``dictation.end {reason: "done"}``. Idempotent — a no-op returning
-        ``""`` when the session is already inactive (lost race).
+        by ``idle_timeout_s + _JOIN_MARGIN_S``), and returns the transcript.
+
+        **Primary source — proxy ``done`` frame (ADR 0094):** after the join,
+        if ``stream_transcribe`` returned a ``done`` frame text (stored in
+        ``_final_text``), that LLM-cleaned string is returned directly (may be
+        empty when whisper heard nothing).
+
+        **Fallback — ``LocalAgreement``:** when ``_final_text is None`` (no
+        ``done`` frame arrived — timeout, connection closed, or error), the
+        method falls back to the ``LocalAgreement``-stabilised transcript built
+        from the accumulated ``partial`` frames.
+
+        Returns ``""`` when the WebSocket never connected or produced nothing.
+        Publishes ``dictation.end {reason: "done"}``. Idempotent — a no-op
+        returning ``""`` when the session is already inactive (lost race).
         """
         with self._lock:
             if not self._active:
@@ -270,9 +293,24 @@ class DictationSession:
                     self._idle_timeout_s + _JOIN_MARGIN_S,
                 )
 
+        # Always run LocalAgreement.finalize() so the fallback path has the
+        # complete confirmed-word accumulator ready.
         with self._agreement_lock:
             self._confirmed.extend(self._agreement.finalize())
-            text = " ".join(self._confirmed)
+            fallback_text = " ".join(self._confirmed)
+
+        # _final_text is set by the asyncio-loop thread (join above provides
+        # the happens-before edge). Use the proxy's LLM-cleaned done.text when
+        # available; fall back to LocalAgreement output otherwise (ADR 0094).
+        if self._final_text is not None:
+            text = self._final_text
+            logger.debug("dictation: using proxy done.text (%d chars)", len(text))
+        else:
+            text = fallback_text
+            logger.debug(
+                "dictation: no done frame — falling back to LocalAgreement (%d chars)",
+                len(text),
+            )
 
         self._bus.publish("dictation.end", {"reason": "done"})
         logger.info("dictation: finished (streaming) — %d chars", len(text))
@@ -332,7 +370,11 @@ class DictationSession:
         async_q: asyncio.Queue[bytes | None] = asyncio.Queue()
         bridge_task = asyncio.create_task(pump(chunk_q, async_q))
         try:
-            await stream_transcribe(
+            # Capture stream_transcribe's return: the proxy's LLM-cleaned
+            # done.text (str, possibly empty) or None when no done frame
+            # arrived. Written here; read by finish() after loop_thread.join()
+            # — the join is the happens-before edge (same pattern as self.error).
+            self._final_text = await stream_transcribe(
                 self._ws_url,
                 self._language,
                 async_q,

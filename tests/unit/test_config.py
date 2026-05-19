@@ -255,7 +255,7 @@ def test_dictation_config_defaults(tmp_path):
     cfg_file.write_text("[hotkey]\nkey = \"scroll_lock\"\n", encoding="utf-8")
     from voice_commander.config import Config
     cfg = Config.load(cfg_file)
-    assert cfg.dictation.ws_url == "ws://192.168.4.200:8765/ws/transcribe"
+    assert cfg.dictation.ws_url == "ws://192.168.4.200:8767/ws/transcribe"
     assert cfg.dictation.language == "en"
     assert cfg.dictation.end_word == "done"
     assert cfg.dictation.idle_timeout_seconds == 30

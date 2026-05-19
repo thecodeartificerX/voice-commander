@@ -24,9 +24,14 @@ class HotkeyConfig:
 
 @dataclass(frozen=True)
 class DictationConfig:
-    """Dictation mode — streaming whisper WebSocket transcription (ADR 0092)."""
+    """Dictation mode — streaming WebSocket transcription (ADR 0092).
 
-    ws_url: str = "ws://192.168.4.200:8765/ws/transcribe"
+    ``ws_url`` points at the LLM-cleanup transcription proxy (ADR 0093): a
+    protocol-compatible WebSocket proxy that passes partial frames through
+    unchanged and LLM-cleans only the final transcript.
+    """
+
+    ws_url: str = "ws://192.168.4.200:8767/ws/transcribe"
     language: str = "en"
     end_word: str = "done"
     cancel_word: str = "cancel"  # say this word to abort dictation and discard the transcript
