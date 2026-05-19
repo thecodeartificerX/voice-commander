@@ -1,8 +1,0 @@
-<div id="dictation-result" class="bg-neutral-900 border border-neutral-800 rounded-lg p-4 mb-4">
-  {% if error %}
-  <p class="text-sm text-red-400">Re-transcribe failed: {{ error }}</p>
-  {% else %}
-  <p class="text-sm text-emerald-400 mb-1">Re-transcribed and copied to clipboard.</p>
-  <p class="text-sm text-neutral-200 whitespace-pre-wrap">{{ text }}</p>
-  {% endif %}
-</div>

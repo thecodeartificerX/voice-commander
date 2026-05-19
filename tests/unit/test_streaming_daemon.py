@@ -437,26 +437,22 @@ def test_active_dictation_buffers_utterance(tmp_path):
 
 
 def test_active_dictation_end_word_submits_finalize(tmp_path):
-    """When handle_utterance returns 'end' and take_and_finish() has data,
-    _dictation_executor.submit is called twice: first with
-    _end_owned_session_if_needed (close-before-finalize, ADR 0090), then with
-    _finalize_dictation and the captured audio."""
+    """When handle_utterance returns 'end', _dictation_executor.submit is called
+    twice: first with _end_owned_session_if_needed (close-before-finalize, ADR 0090),
+    then with _finalize_dictation (no audio arg — streaming path, ADR 0092)."""
     daemon, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._transcriber.transcribe.return_value = _fake_transcription_result(
         "stop dictation", confidence=0.95
     )
 
-    fake_audio = np.zeros(16000, dtype=np.float32)
     fake_session = MagicMock()
     fake_session.active = True
     fake_session.handle_utterance.return_value = "end"
-    fake_session.take_and_finish.return_value = fake_audio
     daemon._dictation_session = fake_session
     daemon._dictation_executor = MagicMock()
 
     daemon._process_utterance(np.zeros(16000, dtype=np.float32))
 
-    fake_session.take_and_finish.assert_called_once()
     # ADR 0090: close-before-finalize — two submissions in order
     assert daemon._dictation_executor.submit.call_count == 2
     calls = daemon._dictation_executor.submit.call_args_list
@@ -466,16 +462,16 @@ def test_active_dictation_end_word_submits_finalize(tmp_path):
     assert calls[1].args[0] == daemon._finalize_dictation, (
         f"Second submission fn must be _finalize_dictation; got {calls[1]}"
     )
-    assert calls[1].args[1] is fake_audio, (
-        f"Second submission audio arg must be fake_audio; got {calls[1]}"
+    # Streaming path: _finalize_dictation takes no audio arg (calls session.finish())
+    assert len(calls[1].args) == 1, (
+        f"_finalize_dictation must be submitted with no extra args; got {calls[1].args}"
     )
 
 
-def test_active_dictation_end_word_no_audio_skips_submit(tmp_path):
-    """When handle_utterance returns 'end' but take_and_finish() returns None
-    (nothing was buffered, or the other thread won the race), only
-    _end_owned_session_if_needed is submitted — _finalize_dictation is NOT
-    submitted (ADR 0090 close-before-finalize, unconditional close submission)."""
+def test_active_dictation_end_word_always_submits_finalize(tmp_path):
+    """In the streaming path, both _end_owned_session_if_needed AND _finalize_dictation
+    are ALWAYS submitted on end-word (session.finish() is idempotent-safe, ADR 0092).
+    The old 'no audio → skip _finalize_dictation' guard no longer applies."""
     daemon, *_ = _make_daemon(output_dir=str(tmp_path))
     daemon._transcriber.transcribe.return_value = _fake_transcription_result(
         "stop dictation", confidence=0.95
@@ -484,18 +480,16 @@ def test_active_dictation_end_word_no_audio_skips_submit(tmp_path):
     fake_session = MagicMock()
     fake_session.active = True
     fake_session.handle_utterance.return_value = "end"
-    fake_session.take_and_finish.return_value = None
     daemon._dictation_session = fake_session
     daemon._dictation_executor = MagicMock()
 
     daemon._process_utterance(np.zeros(16000, dtype=np.float32))
 
-    fake_session.take_and_finish.assert_called_once()
-    # ADR 0090: _end_owned_session_if_needed is submitted unconditionally even
-    # when audio is None; _finalize_dictation must NOT be submitted.
-    daemon._dictation_executor.submit.assert_called_once_with(
-        daemon._end_owned_session_if_needed
-    )
+    # ADR 0092: both are always submitted; session.finish() returns "" if nothing streamed.
+    assert daemon._dictation_executor.submit.call_count == 2
+    calls = daemon._dictation_executor.submit.call_args_list
+    assert calls[0].args[0] == daemon._end_owned_session_if_needed
+    assert calls[1].args[0] == daemon._finalize_dictation
 
 
 # ---------------------------------------------------------------------------

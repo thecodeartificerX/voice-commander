@@ -25,15 +25,12 @@ def test_encode_wav_clips_and_scales():
     assert frames[2] == 0
 
 
-def test_store_roundtrip(tmp_path):
+def test_store_text_roundtrip(tmp_path):
     store = DictationStore(tmp_path / "dictation")
-    assert store.read_audio() is None
     assert store.read_text() is None
-    store.save_audio(b"RIFFfake")
     store.save_text("hello world")
-    assert store.read_audio() == b"RIFFfake"
     assert store.read_text() == "hello world"
-    assert store.audio_path.exists()
+    assert store.text_path.exists()
 
 
 def test_store_save_overwrites(tmp_path):

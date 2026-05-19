@@ -24,11 +24,13 @@ class HotkeyConfig:
 
 @dataclass(frozen=True)
 class DictationConfig:
-    """Dictation mode — remote whisper.cpp transcription (ADR 0086)."""
+    """Dictation mode — streaming whisper WebSocket transcription (ADR 0092)."""
 
-    endpoint: str = "http://192.168.4.200:8765/inference"
+    ws_url: str = "ws://192.168.4.200:8765/ws/transcribe"
+    language: str = "en"
     end_word: str = "done"
-    cancel_word: str = "cancel"  # say this word to abort dictation and discard the audio
+    cancel_word: str = "cancel"  # say this word to abort dictation and discard the transcript
+    idle_timeout_seconds: int = 30
 
 
 @dataclass(frozen=True)

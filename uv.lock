@@ -2055,6 +2055,7 @@ dependencies = [
     { name = "uiautomation" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "watchdog" },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -2100,6 +2101,7 @@ requires-dist = [
     { name = "uiautomation", specifier = ">=2.0.29" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
     { name = "watchdog", specifier = ">=6.0.0" },
+    { name = "websockets", specifier = ">=14.0" },
 ]
 
 [package.metadata.requires-dev]

@@ -1,8 +1,8 @@
-# Voice Commander — Transcription Pipeline (End-to-End)
+﻿# Voice Commander — Transcription Pipeline (End-to-End)
 
-**Date:** 2026-05-17
+**Date:** 2026-05-18
 **Status:** Authoritative
-**Scope:** Both transcription paths — command (local faster-whisper) and dictation (remote whisper.cpp).
+**Scope:** Both transcription paths — command (local faster-whisper) and dictation (WebSocket streaming to whisper.cpp).
 
 This document is the single narrative reference for how audio moves from the microphone to text in Voice Commander. Everything here is grounded in the actual source code and ADRs; there is no speculation. Use the symbol names and file paths below to navigate the code directly.
 
@@ -15,7 +15,7 @@ Voice Commander has two transcription paths that share the same audio capture in
 | Path | Transcriber | Trigger | Output |
 |---|---|---|---|
 | **Command** | `Transcriber` (local faster-whisper, CUDA) | Every VAD utterance during a normal session | Text → `VerbRouter` → `Dispatcher` |
-| **Dictation** | Remote whisper.cpp server (`DictationRemoteError`) | Session enters dictation sub-state; accumulated audio is POSTed on exit | Text → clipboard paste → cursor |
+| **Dictation** | Remote whisper.cpp server (WebSocket `/ws/transcribe`) | Session enters dictation sub-state; each VAD chunk is streamed in real-time; stabilised transcript pasted on exit | Text → clipboard paste → cursor |
 
 Both paths share:
 - `StreamingRecorder` — owns the `sd.InputStream` + VAD worker thread
@@ -257,70 +257,73 @@ CUDA DLL preloading happens at `transcriber.py` import time via `_cuda_setup.reg
 
 ---
 
-## 4. Path 2 — Dictation Mode (Remote whisper.cpp)
+## 4. Path 2 — Dictation Mode (WebSocket streaming to whisper.cpp)
+
+*Superseded batch POST path removed by ADR 0092. The description below reflects the streaming implementation.*
 
 ### 4.1 ASCII flow
 
 ```
-  Hotkey thread / pipeline thread        dictation executor thread
-  ───────────────────────────────        ──────────────────────────
+  Hotkey thread / pipeline thread        asyncio-loop thread         dictation executor thread
+  ───────────────────────────────────    ──────────────────          ──────────────────────────
   [Entry: "dictate" utterance]
   VerbRouter → __dictation.start
   daemon intercepts → DictationSession.start()
       publishes "dictation.start"
+      spawns asyncio-loop thread
       sprite shows ● DICTATING badge
 
   [OR: Right Ctrl keypress]
   on_dictation_toggle()
   → DictationSession.start()
 
-  ──── dictation active ────────────────────────────────────────────
+  ──── dictation active ──────────────────────────────────────────────────────────────────────
 
   Each VAD utterance → _process_utterance()
-      Transcriber.transcribe(ndarray)         [local faster-whisper]
+      Transcriber.transcribe(ndarray)         [local faster-whisper — end-word detection only]
       publish "transcript" SSE
       DictationSession.handle_utterance(audio, text)
-        → "buffered": audio appended to _buffer; loop continues
-        → "end"    : DictationSession.take_and_finish()
-                      submit _finalize_dictation(audio) to dictation executor
+        → "buffered": encode_wav(audio) → chunk pushed onto _chunk_q
+                       asyncio thread drains _chunk_q → ws.send(wav_bytes)
+                       server replies partial JSON → LocalAgreement folds word
+        → "end"    :  submit _end_owned_session_if_needed (close-before-finalize)
+                       submit _finalize_dictation to dictation executor
+        → "cancel" :  session.cancel() closes WS, discards transcript
 
   [OR: Right Ctrl pressed again]
   on_dictation_toggle()
   → DictationSession.request_end()            [hotkey thread]
       sets _pending_end Event
+      enqueues _DICTATION_WAKE sentinel → wakes pipeline thread
 
   vc-pipeline drains with 250ms timeout
   → _finalize_pending_dictation_end()
-      DictationSession.take_and_finish()      [pipeline thread, atomic]
-      submit _finalize_dictation(audio)
+      submit _end_owned_session_if_needed
+      submit _finalize_dictation                     [dictation executor thread]
 
-  ──── finalization ───────────────────────────────────────────────────
-                                              _finalize_dictation(audio)
-                                              [dictation executor thread]
-                                                │
-                                                ├─ encode_wav(audio)
-                                                │    float32 → PCM_16 WAV bytes
-                                                │    DictationStore.save_audio()
-                                                │    outputs/dictation/last.wav
-                                                │
-                                                ├─ remote.post_audio(wav_bytes)
-                                                │    httpx POST multipart/form-data
-                                                │    field: file=audio.wav
-                                                │    field: response_format=json
-                                                │    → JSON {"text": "..."}
-                                                │    → text (whitespace-collapsed)
-                                                │
-                                                ├─ DictationStore.save_text(text)
-                                                │    outputs/dictation/last.txt
-                                                │
-                                                ├─ clipboard.paste_via_clipboard(text)
-                                                │    snapshot clipboard
-                                                │    set clipboard to text
-                                                │    pyautogui Ctrl+V
-                                                │    restore original clipboard
-                                                │
-                                                └─ publish "transcript" SSE
-                                                   publish "dictation.result" SSE
+  ──── finalization ──────────────────────────────────────────────────────────────────────────────
+                                                                  _finalize_dictation()
+                                                                    │
+                                                                    ├─ session.finish()
+                                                                    │    pushes end sentinel to _chunk_q
+                                                                    │    asyncio thread drains + closes WS
+                                                                    │    LocalAgreement.finalize() → transcript
+                                                                    │    returns stabilised text (or "" on error)
+                                                                    │
+                                                                    ├─ apply_corrections(text, vocab)
+                                                                    ├─ apply_commands(text, vocab)
+                                                                    │
+                                                                    ├─ DictationStore.save_text(text)
+                                                                    │    outputs/dictation/last.txt
+                                                                    │
+                                                                    ├─ clipboard.paste_via_clipboard(text)
+                                                                    │    snapshot clipboard
+                                                                    │    set clipboard to text
+                                                                    │    pyautogui Ctrl+V
+                                                                    │    restore original clipboard
+                                                                    │
+                                                                    └─ publish "transcript" SSE
+                                                                       publish "dictation.result" SSE
 ```
 
 ### 4.2 Entry paths (D2)
@@ -333,98 +336,78 @@ CUDA DLL preloading happens at `transcriber.py` import time via `_cuda_setup.reg
 
 `HotkeyController` fires `on_dictation_toggle()` on the pynput listener thread. If `_session_active` is `True` and `_dictation_session.active` is `False`, `DictationSession.start()` is called.
 
-`DictationSession.start()` sets `_active = True`, clears `_buffer`, and publishes `dictation.start` on the EventBus.
+`DictationSession.start()` sets `_active = True`, creates a fresh `_chunk_q`, spawns the asyncio-loop thread (which connects to `ws_url` and drains the chunk queue), and publishes `dictation.start` on the EventBus.
 
-### 4.3 Audio buffering (D3)
+### 4.3 Streaming transport (D3)
 
 While `_dictation_session.active` is `True`, `_process_utterance()` branches before the word-count gate:
 
 ```python
-# daemon.py ~line 591
+# daemon.py — dictation branch inside _process_utterance()
 if self._dictation_session is not None and self._dictation_session.active:
     kind = self._dictation_session.handle_utterance(utterance, result.text)
     if kind == "end":
-        audio = self._dictation_session.take_and_finish()
-        if audio is not None:
-            self._dictation_executor.submit(self._finalize_dictation, audio)
+        self._dictation_executor.submit(self._end_owned_session_if_needed)
+        self._dictation_executor.submit(self._finalize_dictation)
+    elif kind == "cancel":
+        self._dictation_session.cancel()
+        self._dictation_executor.submit(self._end_owned_session_if_needed)
+    # "buffered" → utterance streamed inside handle_utterance
     run.set_status("ok")
     return
 ```
 
-Each utterance is still transcribed by local faster-whisper (so the end word can be detected and the `transcript` SSE event published), but the audio ndarray is passed to `DictationSession.handle_utterance()` for buffering decisions.
+Each utterance is still transcribed by local faster-whisper (for end-word / cancel-word detection and HUD display), but the audio ndarray is also streamed immediately.
 
 `DictationSession.handle_utterance(audio, text)`:
-- Normalises the text (lowercase, strip punctuation) via `_normalize_spoken()`.
-- If text matches `end_word` (default `"done"`): returns `"end"` — utterance NOT appended to buffer.
-- Otherwise: appends audio to `_buffer`, returns `"buffered"`.
-
-Note: the local `small.en` model is used during dictation buffering *only for end-word detection and HUD display* — it is not used for the final dictation transcription. The final transcription is always done by the remote whisper.cpp server.
+- Normalises the text via `_normalize_spoken()`.
+- If text matches `cancel_word`: returns `"cancel"` — no audio streamed.
+- If text matches `end_word` (default `"done"`): returns `"end"` — utterance NOT streamed.
+- Otherwise: `encode_wav(audio)` → WAV bytes pushed onto `_chunk_q`; asyncio thread sends chunk to server; server `partial` reply folds into `LocalAgreement`; returns `"buffered"`.
 
 ### 4.4 Exit paths (D4)
 
 **Exit A — End word**
 
-`handle_utterance()` returns `"end"`. `_process_utterance()` calls `DictationSession.take_and_finish()` (atomic: holds `_lock` across deactivation + buffer capture), receives the concatenated audio, and submits `_finalize_dictation(audio)` to `_dictation_executor`.
+`handle_utterance()` returns `"end"`. `_process_utterance()` submits `_end_owned_session_if_needed` then `_finalize_dictation` to `_dictation_executor` (close-before-finalize ordering from ADR 0090).
 
 **Exit B — Right Ctrl hotkey (hotkey-end drain)**
 
-`on_dictation_toggle()` is called on the pynput thread while dictation is active. It calls `DictationSession.request_end()`, which sets the `_pending_end` threading.Event — it does NOT deactivate the session.
-
-The pipeline thread detects `pending_end` and switches to `_utt_q.get(timeout=0.25)`. If no new utterance arrives within 250 ms (`_DICTATION_DRAIN_TIMEOUT_S`), the queue is considered drained, and `_finalize_pending_dictation_end()` is called:
+`on_dictation_toggle()` calls `DictationSession.request_end()` (sets `_pending_end`) and enqueues `_DICTATION_WAKE` sentinel to wake the blocked pipeline thread (ADR 0089). The pipeline thread drains with a 250 ms timeout, then calls `_finalize_pending_dictation_end()`:
 
 ```python
 # daemon.py — _finalize_pending_dictation_end()
-audio = self._dictation_session.take_and_finish()
-if audio is not None:
-    self._dictation_executor.submit(self._finalize_dictation, audio)
+self._dictation_executor.submit(self._end_owned_session_if_needed)
+self._dictation_executor.submit(self._finalize_dictation)
 ```
 
-`take_and_finish()` is the same atomic method used by the end-word path. If the end-word path wins the race (session already inactive), `take_and_finish()` returns `None` and no double-submit occurs. The lock inside `take_and_finish()` spans both the deactivation and the buffer capture, making this race-safe.
+**Exit C — Spoken cancel**
+
+`handle_utterance()` returns `"cancel"`. The pipeline thread calls `session.cancel()` (closes the WebSocket, discards the transcript) and submits `_end_owned_session_if_needed`. No paste, no chime — sprite renders a transient "✕ CANCELLED" badge (ADR 0089).
 
 **Scroll Lock close while dictating**
 
-`on_scroll_lock()` calls `DictationSession.cancel()`, which drops the buffer without finalising. The audio is lost.
+`on_scroll_lock()` calls `DictationSession.cancel()`, which closes the WebSocket and discards the transcript.
 
 ### 4.5 Finalization — `_finalize_dictation` (D5–D7)
 
-Runs on the **`dictation` executor thread** (single-worker `ThreadPoolExecutor`, thread prefix `dictation`). The pipeline thread is never blocked by network I/O.
+Runs on the **`dictation` executor thread** (single-worker `ThreadPoolExecutor`, thread prefix `dictation`). The pipeline thread is never blocked by WebSocket teardown.
 
-**Step 1 — WAV encode**
+**Step 1 — Finish streaming session**
 
-`encode_wav(audio)` in `src/voice_commander/dictation/store.py`:
-- Clips float32 to `[-1.0, 1.0]`.
-- Converts to little-endian int16 PCM.
-- Wraps in a `wave` container (mono, 16 kHz, 16-bit) using `io.BytesIO` — no disk I/O during encode.
-- Returns raw WAV bytes.
+`session.finish()` in `src/voice_commander/dictation/session.py`:
+- Pushes a `None` sentinel onto `_chunk_q` to signal end-of-stream to the asyncio thread.
+- Joins the asyncio-loop thread (with a `_JOIN_MARGIN_S` grace on top of `idle_timeout_s`).
+- Calls `LocalAgreement.finalize()` to flush any tentative tail words.
+- Returns the stabilised transcript string (empty string if nothing was confirmed).
 
-`DictationStore.save_audio(wav_bytes)` writes to `outputs/dictation/last.wav` (overwrites).
+On encode failure in `handle_utterance()`: `session.error == "encode"` is set; `finish()` still returns, and the finalize method publishes `dictation.error {reason: "encode"}`, fires miss chime, returns.
 
-On encode/save failure: publishes `dictation.error` SSE `{reason: "encode"}`, fires miss chime, returns.
+On WebSocket connect failure: `session.error == "endpoint"` is set; empty transcript → `dictation.error {reason: "endpoint"}`, miss chime, returns.
 
-**Step 2 — Remote POST**
+**Step 2 — Post-process**
 
-`remote.post_audio(wav_bytes, endpoint)` in `src/voice_commander/dictation/remote.py`:
-
-```
-POST <dictation.endpoint>
-Content-Type: multipart/form-data
-  file: audio.wav  (16 kHz mono PCM_16 WAV bytes)
-  response_format: json
-  temperature: 0.0
-
-→ 200 OK
-{
-  "text": "The transcribed dictation text."
-}
-```
-
-`response_format=json` (not `verbose_json`) is deliberate: dictation needs only `text`. `verbose_json` makes whisper.cpp compute per-segment confidence + token timestamps, adding ~1.2 s on a 36-second clip for data the pipeline discards (ADR 0086 D5).
-
-Timeout: 300 seconds (`_TIMEOUT_S` in `remote.py`) to accommodate long dictations.
-
-The raw text is whitespace-collapsed (`" ".join(text.split())`) because whisper.cpp emits a newline at every segment boundary, which would produce spurious line breaks when pasted as prose.
-
-On any failure (network, HTTP ≠ 200, bad JSON, missing `text` key): raises `DictationRemoteError`. The caller publishes `dictation.error` SSE `{reason: "endpoint"}`, fires miss chime, returns. `last.wav` has already been written so the user can retry via `GET /page/dictation`.
+`apply_corrections(text, vocab.corrections)` fixes known mistranscriptions. `apply_commands(text, vocab.commands)` maps spoken phrases to control characters (`"newline"` → `\n`, `"paragraph"` → `\n\n`). Corrections run first so a lightly-mistranscribed command phrase can be repaired into its canonical form (ADR 0088).
 
 **Step 3 — Save text**
 
@@ -443,31 +426,28 @@ On any failure (network, HTTP ≠ 200, bad JSON, missing `text` key): raises `Di
 
 Clipboard open is retried up to 6 times with 50 ms delay if another process holds it. On paste failure: publishes `dictation.error` SSE `{reason: "clipboard"}`, fires miss chime.
 
-With Windows clipboard history (Win+V) enabled, the transcription becomes the second history entry and the user's original content is restored to first place.
-
 **Step 5 — Success events**
 
 On success, the finalize function publishes:
 - `"transcript"` SSE `{text: ..., confidence: 1.0}` — the HUD displays the dictated text in light blue.
 - `"dictation.result"` SSE `{text: ...}` — consumed by the web UI `/page/dictation`.
 
-### 4.6 One-slot retention (D7)
+### 4.6 One-slot text retention (D7)
 
-Every dictation overwrites exactly two files:
+Every dictation overwrites one file:
 
 | File | Content |
 |---|---|
-| `outputs/dictation/last.wav` | 16 kHz mono PCM_16 WAV of the buffered audio |
 | `outputs/dictation/last.txt` | Transcription text (or error description) |
 
-`DictationStore` manages these paths. `GET /page/dictation` reads both. `POST /dictation/retranscribe` reads `last.wav`, re-POSTs it to the configured endpoint, and writes the new text to `last.txt`.
+`DictationStore` manages this path. `GET /page/dictation` reads it. The batch `last.wav` / re-transcribe path was removed by ADR 0092.
 
 ### 4.7 Config keys
 
 ```toml
 [dictation]
-endpoint = "http://192.168.4.200:8765/inference"  # full URL to whisper.cpp server
-end_word = "done"                                  # spoken word that ends dictation
+ws_url   = "ws://192.168.4.200:8765/ws/transcribe"  # WebSocket URL for whisper.cpp streaming server
+end_word = "done"                                    # spoken word that ends dictation
 ```
 
 The daemon also reads `dictation_key` from `[hotkey]`:
@@ -484,12 +464,14 @@ dictation_key = "ctrl_r"   # Right Ctrl; empty string disables
 |---|---|
 | `DictationSession` | `src/voice_commander/dictation/session.py` |
 | `DictationSession.handle_utterance()` | `src/voice_commander/dictation/session.py` |
-| `DictationSession.take_and_finish()` | `src/voice_commander/dictation/session.py` |
+| `DictationSession.finish()` | `src/voice_commander/dictation/session.py` |
 | `DictationSession.request_end()` | `src/voice_commander/dictation/session.py` |
+| `DictationSession.cancel()` | `src/voice_commander/dictation/session.py` |
+| `LocalAgreement` | `src/voice_commander/dictation/local_agreement.py` |
+| `stream_transcribe()` | `src/voice_commander/dictation/ws_client.py` |
+| `pump()` | `src/voice_commander/dictation/bridge.py` |
 | `DictationStore` | `src/voice_commander/dictation/store.py` |
 | `encode_wav()` | `src/voice_commander/dictation/store.py` |
-| `remote.post_audio()` | `src/voice_commander/dictation/remote.py` |
-| `DictationRemoteError` | `src/voice_commander/dictation/remote.py` |
 | `clipboard.paste_via_clipboard()` | `src/voice_commander/dictation/clipboard.py` |
 | `StreamingDaemon._finalize_dictation()` | `src/voice_commander/daemon.py` |
 | `StreamingDaemon._finalize_pending_dictation_end()` | `src/voice_commander/daemon.py` |
@@ -500,13 +482,13 @@ dictation_key = "ctrl_r"   # Right Ctrl; empty string disables
 | Decision | ADR |
 |---|---|
 | Dictation as session sub-state; entry/exit paths | ADR 0086 (D1–D4) |
-| Remote whisper.cpp POST, `response_format=json` | ADR 0086 (D5) |
 | Clipboard round-trip paste | ADR 0086 (D6) |
-| One-slot on-disk retention + web re-transcribe | ADR 0086 (D7, D8) |
 | Failure handling (error SSE + miss chime) | ADR 0086 (D9) |
 | `mute_key` → `dictation_key` rename | ADR 0086 (D10) |
 | Mute toggle superseded | ADR 0025 (superseded), ADR 0086 |
-| Wire format (whisper.cpp server contract) | ADR 0073 (reused by ADR 0086) |
+| Hotkey-end sentinel, 50 ms debounce, spoken cancel | ADR 0089 |
+| Right Ctrl opens own session; close-before-finalize | ADR 0090 |
+| Streaming transport, WebSocket, LocalAgreement | ADR 0092 (supersedes batch POST of ADR 0086 D5) |
 
 ---
 
@@ -520,7 +502,7 @@ Every transcription path publishes `"transcript"` on the EventBus. The voice_spr
 | 2 | `tool_fired` — tool name(s) fired (command path only) | green |
 | 3 | `plan_outcome` miss or error (only if non-ok) | orange / red |
 
-Dictation publishes `"transcript"` twice: once per VAD utterance (from local faster-whisper, used for end-word detection) and once at the end of `_finalize_dictation()` (from the remote whisper.cpp result, with `confidence=1.0`).
+Dictation publishes `"transcript"` twice: once per VAD utterance (from local faster-whisper, used for end-word detection and HUD display) and once at the end of `_finalize_dictation()` (from the stabilised WebSocket transcript, with `confidence=1.0`).
 
 Governing ADR: ADR 0079.
 
@@ -530,7 +512,7 @@ Governing ADR: ADR 0079.
 
 ADR 0073 introduced `[transcription] backend = "local" | "remote"` as a toggle for the **command** path. This is distinct from the dictation remote endpoint, which is always remote. When `backend = "remote"`, `StreamingDaemon` uses a `RemoteTranscriber` (not shown above) instead of `Transcriber` for the command path. The wire format is `verbose_json` (for per-segment confidence) to `POST /inference`, matching the whisper.cpp server contract. Failure returns `TranscriptionResult(text="", confidence=0.0, no_speech_prob=1.0)`, which fires the confidence gate miss chime. There is no auto-fallback.
 
-The dictation path (`_finalize_dictation`) does **not** use `RemoteTranscriber` — it calls `remote.post_audio()` directly and always uses `response_format=json` (no confidence needed).
+The dictation path (`_finalize_dictation`) does **not** use `RemoteTranscriber` — it streams each VAD chunk directly over a WebSocket to `/ws/transcribe` via `DictationSession` / `ws_client.stream_transcribe()` (ADR 0092).
 
 ---
 
@@ -543,5 +525,5 @@ The dictation path (`_finalize_dictation`) does **not** use `RemoteTranscriber` 
 | `vc-pipeline` | `StreamingDaemon` | Drain `_utt_q`, call `_process_utterance()` for every utterance |
 | `vc-transcriber-load` | `StreamingDaemon` | Load faster-whisper model at startup; set `_transcriber_ready` |
 | `wav-writer` executor | `_wav_executor` | Write `outputs/last_utterance.wav` asynchronously |
-| `dictation` executor | `_dictation_executor` | Encode WAV, POST to remote, paste via clipboard |
+| `dictation` executor | `_dictation_executor` | Join WS asyncio thread, apply post-processing, paste via clipboard |
 | pynput listener thread | `HotkeyController` | Fire `on_scroll_lock()`, `on_dictation_toggle()` |

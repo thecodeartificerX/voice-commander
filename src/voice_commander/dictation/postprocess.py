@@ -76,9 +76,9 @@ def apply_commands(text: str, commands: Sequence[Command]) -> str:
     control character is not padded by stray spaces.
 
     Assumes *text* contains no embedded newlines — the ``\s*`` whitespace
-    consumption would otherwise silently eat them. ``remote.post_audio``
-    guarantees this invariant by collapsing all whitespace runs (including any
-    segment-boundary newlines emitted by whisper.cpp) via ``" ".join(text.split())``.
+    consumption would otherwise silently eat them. ``ws_client.stream_transcribe``
+    guarantees this invariant: ``LocalAgreement`` accumulates confirmed words
+    joined by spaces, so the stabilised transcript contains no embedded newlines.
 
     Supported actions:
     - ``"newline"``   → ``"\n"``

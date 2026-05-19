@@ -26,7 +26,7 @@ from .chain import ChainParser
 from .config import Config
 from .dictation.session import DictationSession
 from .dictation.store import DictationStore
-from .dictation.vocab import VocabStore
+from .dictation.vocab import Vocabulary, VocabStore
 from .dispatcher import Dispatcher
 from .elements import clicker, desktop, scanner
 from .elements.session import ENTRY_WORDS, ElementsSession, ElementsState
@@ -161,7 +161,9 @@ class StreamingDaemon:
         picker_session: PickerSession | None = None,
         picker_registry: BarePickerRegistry | None = None,
         dictation_session: DictationSession | None = None,
-        dictation_endpoint: str = "",
+        dictation_ws_url: str = "",
+        dictation_language: str = "en",
+        dictation_idle_timeout_s: float = 30.0,
         elements_session: ElementsSession | None = None,
         elements_max_elements: int = 200,
         elements_scan_timeout_s: float = 3.0,
@@ -261,7 +263,9 @@ class StreamingDaemon:
         self._picker_session = picker_session
         self._picker_registry = picker_registry
         self._dictation_session = dictation_session
-        self._dictation_endpoint = dictation_endpoint
+        self._dictation_ws_url = dictation_ws_url
+        self._dictation_language = dictation_language
+        self._dictation_idle_timeout_s = dictation_idle_timeout_s
         self._dictation_store = DictationStore(self._output_dir / "dictation")
         self._vocab_store = VocabStore(self._output_dir / "dictation" / "vocab.json")
         self._dictation_executor = concurrent.futures.ThreadPoolExecutor(
@@ -379,13 +383,21 @@ class StreamingDaemon:
             self._feedback.on_error("recorder.open_session", e)
             return False
 
-    def _close_voice_session(self) -> None:
+    def _close_voice_session(self, cancel_dictation: bool = True) -> None:
         """Close the audio pipeline, drain the utterance queue, and reset state.
 
         Thread context: hotkey-listener thread (called directly from on_scroll_lock)
         OR _dictation_executor worker thread (submitted by _end_owned_session_if_needed).
         Idempotent: recorder.close_session() is a no-op when already IDLE.
         Always resets _session_opened_by_dictation to False.
+
+        ``cancel_dictation`` controls whether an active DictationSession is
+        cancelled on close. Pass ``False`` from ``_end_owned_session_if_needed``
+        so that ``_finalize_dictation`` (queued immediately after on the same
+        single-worker executor) can call ``session.finish()`` normally and return
+        the stabilised transcript. Pass the default ``True`` from all other
+        callers (Scroll Lock close, shutdown) where the session should be
+        discarded immediately.
 
         IMPORTANT — executor-submission rule:
         When invoked from pipeline-thread code (the dictation-end paths in
@@ -422,8 +434,9 @@ class StreamingDaemon:
         self._drain_utt_q()
         self._session_active = False
         self._session_opened_by_dictation = False
-        if self._dictation_session is not None and self._dictation_session.active:
-            self._dictation_session.cancel()
+        if cancel_dictation:
+            if self._dictation_session is not None and self._dictation_session.active:
+                self._dictation_session.cancel()
         if self._elements_session is not None and self._elements_session.active:
             self._elements_session.cancel()
         self._feedback.on_recording_stop()
@@ -441,7 +454,7 @@ class StreamingDaemon:
           vad-worker join (up to 5 s timeout), stalling _utt_q drainage and creating
           a circular wait with the vad-worker thread.
         - Runs on the _dictation_executor worker thread (FIFO, single-worker).
-        - Safe to call even when take_and_finish() returned None (empty buffer /
+        - Safe to call even when the session is already inactive (empty buffer /
           session already closed by a concurrent Scroll Lock press).
         - DictationSession.cancel() and recorder.close_session() are both idempotent;
           double-cancel / double-close races are benign.
@@ -449,7 +462,7 @@ class StreamingDaemon:
           already closed by a concurrent hotkey press), this is a no-op.
         """
         if self._session_opened_by_dictation:
-            self._close_voice_session()
+            self._close_voice_session(cancel_dictation=False)
 
     # ------------------------------------------------------------------
     # Hotkey callbacks
@@ -504,7 +517,7 @@ class StreamingDaemon:
             self._session_opened_by_dictation = True
             if self._dictation_session is None:
                 return
-            self._dictation_session.start()
+            self._dictation_session.start(self._load_vocab())
             return
         if self._dictation_session is None:
             return
@@ -527,7 +540,7 @@ class StreamingDaemon:
                 )
             logger.info("dictation: hotkey-end requested; pipeline will drain and finalize")
         else:
-            self._dictation_session.start()
+            self._dictation_session.start(self._load_vocab())
 
     def _drain_utt_q(self) -> None:
         """Discard all pending utterances from the queue."""
@@ -716,22 +729,22 @@ class StreamingDaemon:
             if self._dictation_session is not None and self._dictation_session.active:
                 kind = self._dictation_session.handle_utterance(utterance, result.text)
                 if kind == "end":
-                    audio = self._dictation_session.take_and_finish()
-                    # Close-before-finalize: submit the session close FIRST so the
-                    # recording stops promptly (≤5 s VAD-worker join) before the
-                    # network POST begins. _end_owned_session_if_needed is a no-op
-                    # when _session_opened_by_dictation is False (Scroll Lock session).
-                    # Submitted unconditionally — covers the empty-buffer edge case.
+                    # Close-before-finalize (ADR 0090): submit the session close
+                    # FIRST so recording stops promptly (≤5 s VAD-worker join)
+                    # before _finalize_dictation joins the WS asyncio thread.
+                    # _end_owned_session_if_needed is a no-op when
+                    # _session_opened_by_dictation is False (Scroll Lock session).
+                    # _finalize_dictation itself calls session.finish() — it must
+                    # be submitted unconditionally (no audio handle to check).
                     self._dictation_executor.submit(self._end_owned_session_if_needed)
-                    if audio is not None:
-                        self._dictation_executor.submit(self._finalize_dictation, audio)
+                    self._dictation_executor.submit(self._finalize_dictation)
                 elif kind == "cancel":
-                    # Spoken cancel: abort dictation (no POST, no paste).
-                    # Submit _end_owned_session_if_needed to close a Ctrl-opened session.
-                    # cancel() publishes dictation.end {"reason": "cancel"}. (ADR 0089)
+                    # Spoken cancel: abort dictation (no transcript, no paste).
+                    # cancel() closes the WS and publishes
+                    # dictation.end {"reason": "cancel"}.
                     self._dictation_session.cancel()
                     self._dictation_executor.submit(self._end_owned_session_if_needed)
-                # "buffered" → fall through, nothing to do
+                # "buffered" → utterance streamed inside handle_utterance.
                 run.set_status("ok")
                 return
 
@@ -836,7 +849,7 @@ class StreamingDaemon:
                 return
             if len(plan.steps) == 1 and plan.steps[0].name == "__dictation.start":
                 if self._dictation_session is not None:
-                    self._dictation_session.start()
+                    self._dictation_session.start(self._load_vocab())
                 run.set_status("ok")
                 self._feedback.on_plan_complete(result.text, 0)
                 _publish_picker_ok(result.text)
@@ -861,88 +874,82 @@ class StreamingDaemon:
     def _finalize_pending_dictation_end(self) -> None:
         """Called on the pipeline thread when the hotkey-end drain window expires.
 
-        Atomically captures the buffered audio (take_and_finish) and submits tasks
-        to the dictation executor.  Returns immediately — all heavy work (close,
-        encode, POST, paste) happens off-thread on _dictation_executor.
+        Submits the close + finalize tasks to the dictation executor and returns
+        immediately — all heavy work (WS teardown, asyncio-thread join,
+        post-processing, paste) happens off-thread on ``_dictation_executor``.
 
         Close-before-finalize ordering (ADR 0090):
-        1. take_and_finish() — atomically capture audio and deactivate session.
-        2. submit _end_owned_session_if_needed — UNCONDITIONALLY, before the audio
-           check.  This covers the empty-buffer Ctrl-open → Ctrl-close case.
-        3. submit _finalize_dictation — only if audio is not None.
-
-        If the "done" word path won the race (take_and_finish returns None because
-        the session is already inactive), _end_owned_session_if_needed is still
-        submitted (and is a no-op if the session was already closed by another
-        submission earlier).  No double-submit risk: take_and_finish holds the lock
-        across deactivation + buffer clear.
+        1. submit ``_end_owned_session_if_needed`` UNCONDITIONALLY — covers the
+           empty-session Ctrl-open → Ctrl-close case.
+        2. submit ``_finalize_dictation`` — it calls ``session.finish()``, which
+           is a no-op returning ``""`` when the session is already inactive
+           (the "done"-word path won the race), so submitting it is always safe.
         """
         if self._dictation_session is None:
             return
-        audio = self._dictation_session.take_and_finish()
-        # Submit close UNCONDITIONALLY — before checking audio — to ensure the
-        # recording stops even when the buffer is empty (user opened with Ctrl,
-        # pressed Ctrl again immediately without speaking).
         self._dictation_executor.submit(self._end_owned_session_if_needed)
-        if audio is not None:
-            logger.info(
-                "dictation: hotkey-end drain complete — submitting %d samples", len(audio)
-            )
-            self._dictation_executor.submit(self._finalize_dictation, audio)
-        else:
-            logger.info(
-                "dictation: hotkey-end drain complete — buffer empty "
-                "(session closed or no audio); close submitted unconditionally"
-            )
+        self._dictation_executor.submit(self._finalize_dictation)
+        logger.info("dictation: hotkey-end drain complete — close + finalize submitted")
 
-    def _finalize_dictation(self, audio: npt.NDArray[np.float32]) -> None:
-        """Worker-thread finalize: encode → build prompt → POST → post-process → paste.
+    def _load_vocab(self) -> "Vocabulary":
+        """Hot-reload vocab.json — called once per dictation at session start."""
+        return self._vocab_store.load()
+
+    def _finalize_dictation(self) -> None:
+        """Worker-thread finalize: take the stabilised transcript → post-process → paste.
 
         Runs on ``self._dictation_executor`` so the pipeline thread is never
-        blocked by the network round-trip. All failures surface as a
-        ``dictation.error`` event + miss chime; the audio stays on disk for
-        the web re-transcribe button.
+        blocked by the WebSocket teardown / join. ``DictationSession.finish``
+        joins the asyncio-loop thread and returns the raw stabilised
+        transcript; this method applies corrections + commands, pastes, saves
+        ``last.txt``, and publishes events.
 
-        Processing order
-        ----------------
-        1. Encode audio → WAV bytes; save to ``last.wav``.
-        2. Load ``VocabStore`` (fresh read — hot-reload with no restart).
-        3. Build whisper ``prompt`` string from vocabulary.
-        4. ``remote.post_audio(wav_bytes, endpoint, prompt=prompt)`` — transcribe.
-        5. ``apply_corrections(text, vocab.corrections)`` — fix known garbled forms.
-        6. ``apply_commands(text, vocab.commands)`` — replace command phrases with
-           control characters.
-        7. Save processed text to ``last.txt``; paste via clipboard.
+        Failure handling (events + chimes match the batch path exactly,
+        ADR 0092):
 
-        Corrections run before commands so a lightly-mistranscribed command phrase
-        can be repaired into its canonical form before command matching (ADR 0088).
+        - WebSocket connect failed / nothing transcribed → ``dictation.error
+          {reason: "endpoint"}`` + miss chime.
+        - ``encode_wav`` failed on a streamed chunk → ``dictation.error
+          {reason: "encode"}`` + miss chime.
+        - ``paste_via_clipboard`` failed → ``dictation.error
+          {reason: "clipboard"}`` + miss chime.
+
+        Corrections run before commands so a lightly-mistranscribed command
+        phrase can be repaired into its canonical form before command matching
+        (ADR 0088, carried over).
         """
-        from .dictation import clipboard, remote
-        from .dictation.postprocess import apply_commands, apply_corrections, build_prompt
-        from .dictation.store import encode_wav
+        from .dictation import clipboard
+        from .dictation.postprocess import apply_commands, apply_corrections
 
-        try:
-            wav_bytes = encode_wav(audio)
-            self._dictation_store.save_audio(wav_bytes)
-        except Exception:
-            logger.exception("dictation: failed to encode/save audio")
+        if self._dictation_session is None:
+            return
+
+        # Snapshot the vocab the session started with (one consistent snapshot
+        # per dictation — ADR 0092).
+        vocab = self._dictation_session.vocab
+
+        # finish() joins the asyncio thread and returns the raw transcript.
+        text = self._dictation_session.finish()
+
+        # encode_wav failure on a chunk is recorded on session.error == "encode".
+        if self._dictation_session.error == "encode":
+            logger.warning("dictation: a chunk failed to encode")
             self._publish("dictation.error", {"reason": "encode"})
             self._feedback.on_miss("(dictation: encode error)", ())
             return
 
-        # Hot-reload vocabulary on every dictation — no daemon restart required.
-        vocab = self._vocab_store.load()
-        prompt = build_prompt(vocab)
-
-        try:
-            text = remote.post_audio(wav_bytes, self._dictation_endpoint, prompt=prompt)
-        except remote.DictationRemoteError as e:
-            logger.warning("dictation: remote transcription failed: %s", e)
-            self._publish("dictation.error", {"reason": "endpoint"})
-            self._feedback.on_miss("(dictation: endpoint error)", ())
+        # Empty transcript: either the WS never connected, or the user said
+        # nothing. error == "endpoint" disambiguates the failure case.
+        if not text:
+            if self._dictation_session.error == "endpoint":
+                logger.warning("dictation: streaming endpoint failed")
+                self._publish("dictation.error", {"reason": "endpoint"})
+                self._feedback.on_miss("(dictation: endpoint error)", ())
+            else:
+                logger.info("dictation: empty transcript — nothing to paste")
             return
 
-        # Post-process: corrections then commands (ADR 0088 §Pipeline integration).
+        # Post-process: corrections then commands (ADR 0088).
         text = apply_corrections(text, vocab.corrections)
         text = apply_commands(text, vocab.commands)
 
@@ -1258,13 +1265,15 @@ class StreamingDaemon:
 
         # Cancel active dictation directly — BEFORE executor shutdown (REV 3, ADR 0090 §5).
         # Placement: after session-close block and pipeline join, BEFORE
-        # _dictation_executor.shutdown(wait=False).  Rationale: cancel() only sets flags
-        # and publishes dictation.end on the event bus (no executor use), so it is safe
-        # to call here.  Publishing dictation.end BEFORE executor teardown keeps event
-        # ordering clean.  executor.shutdown(wait=False) abandons queued tasks — any
-        # _end_owned_session_if_needed already queued will not execute — so the direct
-        # cancel call here is the only reliable path to clear the dictating state and
-        # prevent the sprite from being stuck in the 'dictating' visual state.
+        # _dictation_executor.shutdown(wait=False).  Rationale: cancel() pushes the end
+        # sentinel and joins the dictation WS asyncio-loop thread (bounded by
+        # idle_timeout_s + margin; fast in practice). It does not touch the executor,
+        # so calling it directly here is safe.  Publishing dictation.end BEFORE executor
+        # teardown keeps event ordering clean.  executor.shutdown(wait=False) abandons
+        # queued tasks — any _end_owned_session_if_needed already queued will not
+        # execute — so the direct cancel call here is the only reliable path to clear
+        # the dictating state and prevent the sprite from being stuck in the 'dictating'
+        # visual state.
         if self._dictation_session is not None and self._dictation_session.active:
             self._dictation_session.cancel()
 
@@ -1426,9 +1435,12 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         mru_pump = Win32MruPump(tracker=mru_tracker)
         mru_pump.start()
 
-    # --- Dictation mode (ADR 0086) ---
+    # --- Dictation mode (ADR 0086, streaming since ADR 0092) ---
     dictation_session = DictationSession(
         bus=event_bus,
+        ws_url=cfg.dictation.ws_url,
+        language=cfg.dictation.language,
+        idle_timeout_s=float(cfg.dictation.idle_timeout_seconds),
         end_word=cfg.dictation.end_word,
         cancel_word=cfg.dictation.cancel_word,
     )
@@ -1530,7 +1542,9 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         picker_session=picker_session,
         picker_registry=picker_registry if cfg.picker.enabled else None,
         dictation_session=dictation_session,
-        dictation_endpoint=cfg.dictation.endpoint,
+        dictation_ws_url=cfg.dictation.ws_url,
+        dictation_language=cfg.dictation.language,
+        dictation_idle_timeout_s=float(cfg.dictation.idle_timeout_seconds),
         elements_session=elements_session,
         elements_max_elements=cfg.elements.max_elements,
         elements_scan_timeout_s=cfg.elements.scan_timeout_s,

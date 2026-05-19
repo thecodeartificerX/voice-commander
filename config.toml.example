@@ -5,9 +5,11 @@ key = "scroll_lock"
 dictation_key = "ctrl_r"
 
 [dictation]
-endpoint    = "http://192.168.4.200:8765/inference"
-end_word    = "done"
-cancel_word = "cancel"   # say this word to abort dictation and discard the audio
+ws_url               = "ws://192.168.4.200:8765/ws/transcribe"  # streaming whisper WebSocket endpoint
+language             = "en"     # whisper decode language
+end_word             = "done"   # say this word (standalone) to end dictation
+cancel_word          = "cancel" # say this word to abort dictation and discard the transcript
+idle_timeout_seconds = 30        # close the stream after this long with no audio
 
 [audio]
 device_name = ""

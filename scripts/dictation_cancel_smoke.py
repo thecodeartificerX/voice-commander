@@ -56,12 +56,12 @@ def phase_a(tmp_path: Path) -> bool:
     finalized = threading.Event()
 
     import voice_commander.dictation.clipboard as _clipboard
-    import voice_commander.dictation.remote as _remote
+    from voice_commander.dictation.session import DictationSession
 
-    original_post = _remote.post_audio
+    original_finish = DictationSession.finish
     original_paste = _clipboard.paste_via_clipboard
 
-    _remote.post_audio = lambda *a, **kw: "SENTINEL TEXT"
+    DictationSession.finish = lambda self: "SENTINEL TEXT"  # type: ignore[method-assign]
     _clipboard.paste_via_clipboard = lambda *a, **kw: finalized.set()
 
     ok = False
@@ -100,7 +100,7 @@ def phase_a(tmp_path: Path) -> bool:
         feedback = CapturingFeedbackSink()
         dispatcher = Dispatcher(feedback=feedback, event_bus=bus)
         verb_router = VerbRouter(build_default_rules(), registry=registry, picker_registry=None)
-        dictation_session = DictationSession(bus=bus, end_word="done")
+        dictation_session = DictationSession(bus=bus, ws_url="ws://stub-not-used", end_word="done")
 
         daemon = StreamingDaemon(
             feedback=feedback,
@@ -145,7 +145,7 @@ def phase_a(tmp_path: Path) -> bool:
         return True
 
     finally:
-        _remote.post_audio = original_post
+        DictationSession.finish = original_finish  # type: ignore[method-assign]
         _clipboard.paste_via_clipboard = original_paste
         if daemon is not None:
             with contextlib.suppress(Exception):
@@ -170,12 +170,12 @@ def phase_b(tmp_path: Path) -> bool:
     pasted: list[str] = []
 
     import voice_commander.dictation.clipboard as _clipboard
-    import voice_commander.dictation.remote as _remote
+    from voice_commander.dictation.session import DictationSession
 
-    original_post = _remote.post_audio
+    original_finish = DictationSession.finish
     original_paste = _clipboard.paste_via_clipboard
 
-    _remote.post_audio = lambda *a, **kw: (posted.append("posted"), "X")[1]
+    DictationSession.finish = lambda self: (posted.append("finish-called"), "X")[1]  # type: ignore[method-assign]
     _clipboard.paste_via_clipboard = lambda *a, **kw: pasted.append("pasted")
 
     ok = False
@@ -213,7 +213,7 @@ def phase_b(tmp_path: Path) -> bool:
         feedback = CapturingFeedbackSink()
         dispatcher = Dispatcher(feedback=feedback, event_bus=bus)
         verb_router = VerbRouter(build_default_rules(), registry=registry, picker_registry=None)
-        dictation_session = DictationSession(bus=bus, end_word="done", cancel_word="cancel")
+        dictation_session = DictationSession(bus=bus, ws_url="ws://stub-not-used", end_word="done", cancel_word="cancel")
 
         transcripts = [_T("hello there"), _T("cancel")]
         daemon = StreamingDaemon(
@@ -244,9 +244,9 @@ def phase_b(tmp_path: Path) -> bool:
         daemon._wav_executor.shutdown(wait=True)
 
         if posted:
-            log.error("FAIL: post_audio was called — must NOT be: %s", posted)
+            log.error("FAIL: session.finish() was called — must NOT be on cancel path: %s", posted)
             return False
-        log.info("PASS: post_audio not called")
+        log.info("PASS: session.finish() not called")
 
         if pasted:
             log.error("FAIL: clipboard was pasted — must NOT be: %s", pasted)
@@ -280,7 +280,7 @@ def phase_b(tmp_path: Path) -> bool:
         return True
 
     finally:
-        _remote.post_audio = original_post
+        DictationSession.finish = original_finish  # type: ignore[method-assign]
         _clipboard.paste_via_clipboard = original_paste
         if daemon is not None:
             daemon._dictation_executor.shutdown(wait=False)

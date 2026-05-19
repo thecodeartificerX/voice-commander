@@ -66,8 +66,10 @@ voice-commander/
 │   ├── dictation/                  # dictation mode subsystem (ADR 0086 + 0088)
 │   │   ├── __init__.py             # package init; docstring lists sub-modules
 │   │   ├── session.py              # DictationSession state machine (active/pending-end)
-│   │   ├── remote.py               # post_audio(): encode WAV → POST to whisper.cpp /inference
-│   │   ├── store.py                # DictationStore: save/load last.wav + last.txt
+│   │   ├── ws_client.py            # stream_transcribe(): async WebSocket streaming to /ws/transcribe
+│   │   ├── local_agreement.py      # LocalAgreement: word stabilisation across WS partial replies
+│   │   ├── bridge.py               # pump(): drain chunk queue into WS coroutine (asyncio ↔ thread bridge)
+│   │   ├── store.py                # DictationStore: save/load last.txt
 │   │   ├── clipboard.py            # paste_via_clipboard(): clipboard round-trip paste
 │   │   ├── vocab.py                # Vocabulary/Correction/Command dataclasses + VocabStore (loads/saves vocab.json, atomic write, never-raises load)
 │   │   └── postprocess.py          # build_prompt, apply_corrections, apply_commands; constants WHISPER_TOKEN_LIMIT=224, _PROMPT_CHAR_CAP=800

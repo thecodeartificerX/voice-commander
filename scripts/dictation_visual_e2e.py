@@ -3,9 +3,11 @@
 Drives the dictation finalize pipeline the way a real user would:
   1. Sprite SSE rendering — emits ``dictation.start`` and asserts the DICTATING
      gold badge is visible in the sprite window.
-  2. Finalize pipeline — loads ``tests/test-audio/test-wav.wav``, encodes it to
-     16 kHz mono s16le WAV (stored as ``last.wav``), POSTs to the transcription
-     endpoint (or a stub), and clipboard-pastes the result into Notepad.
+  2. Finalize pipeline — loads ``tests/test-audio/test-wav.wav``, encodes each
+     VAD utterance to a WAV chunk in-memory and streams it over a WebSocket to
+     the transcription endpoint; under ``--stub-endpoint`` a fixed stub
+     transcription string is returned without a real WebSocket server.
+     The final transcript is clipboard-pasted into Notepad.
   3. Evidence capture — screenshots written to ``outputs/dictation_e2e/``.
 
 10 checkpoints (plus a non-blocking badge row). Exits non-zero if any hard
@@ -13,7 +15,7 @@ checkpoint fails.
 
 Usage:
   python scripts/dictation_visual_e2e.py               # live endpoint (config.toml)
-  python scripts/dictation_visual_e2e.py --stub-endpoint  # offline; POST stubbed
+  python scripts/dictation_visual_e2e.py --stub-endpoint  # offline; stub transcript used
 """
 
 from __future__ import annotations
@@ -558,13 +560,10 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
     )
     log.info("sprite pid=%d", sprite_proc.pid)
 
-    # Stub the network call if requested
+    # --stub-endpoint: use the stub transcription directly (no network call needed
+    # for the streaming path — DictationSession.finish() returns the transcript).
     if stub_endpoint:
-        import voice_commander.dictation.remote as _remote_mod
-
-        _original_post = _remote_mod.post_audio
-        _remote_mod.post_audio = lambda wav_bytes, endpoint, **kw: _STUB_TRANSCRIPTION
-        log.info("--stub-endpoint: post_audio monkeypatched → %r", _STUB_TRANSCRIPTION)
+        log.info("--stub-endpoint active: transcription will be %r", _STUB_TRANSCRIPTION)
 
     # Notepad and DictationStore setup
     notepad_hwnd: int = 0
@@ -731,42 +730,43 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
         _record(1, "dictation.start SSE event seen", cp1_sse)
 
         # ------------------------------------------------------------------
-        # CHECKPOINT 2-4: encode test-wav.wav → last.wav; assert WAV params
+        # CHECKPOINT 2-4: encode test-wav.wav → WAV bytes; assert WAV params
+        # NOTE (ADR 0092): DictationStore no longer persists audio (streaming
+        # path never assembles a single WAV).  CPs 2-4 now validate that
+        # encode_wav produces correct 16 kHz mono s16le WAV bytes in memory.
         # ------------------------------------------------------------------
         log.info("loading test WAV: %s", _TEST_WAV)
         if not _TEST_WAV.exists():
             log.error("test WAV not found: %s", _TEST_WAV)
             _record(2, "test-wav.wav exists", False)
-            _record(3, "last.wav written", False)
-            _record(4, "last.wav is 16 kHz mono s16le", False)
+            _record(3, "encode_wav returns non-empty bytes", False)
+            _record(4, "encoded WAV is 16 kHz mono s16le", False)
         else:
             _record(2, "test-wav.wav exists", True)
             audio_f32 = _load_test_wav_as_float32()
             wav_bytes = encode_wav(audio_f32)
-            dictation_store.save_audio(wav_bytes)
+            _record(3, "encode_wav returns non-empty bytes", bool(wav_bytes))
 
-            last_wav = dictation_store.audio_path
-            _record(3, f"last.wav written to {last_wav}", last_wav.exists())
-
-            # Verify WAV params
+            # Verify WAV params from in-memory bytes
             cp4 = False
-            if last_wav.exists():
+            if wav_bytes:
                 try:
-                    with wave.open(str(last_wav), "rb") as wf:
+                    import io as _io
+                    with wave.open(_io.BytesIO(wav_bytes), "rb") as wf:
                         ch = wf.getnchannels()
                         sw = wf.getsampwidth()
                         fr = wf.getframerate()
                     cp4 = (ch == 1 and sw == 2 and fr == 16000)
                     log.info(
-                        "last.wav params: channels=%d sampwidth=%d framerate=%d — %s",
+                        "encoded WAV params: channels=%d sampwidth=%d framerate=%d — %s",
                         ch, sw, fr, "PASS" if cp4 else "FAIL",
                     )
                 except Exception:
-                    log.exception("could not read last.wav")
-            _record(4, "last.wav is 16 kHz mono s16le", cp4)
+                    log.exception("could not parse encoded WAV bytes")
+            _record(4, "encoded WAV is 16 kHz mono s16le", cp4)
 
         # ------------------------------------------------------------------
-        # CHECKPOINT 5: remote POST returns non-empty text
+        # CHECKPOINT 5: finalize returns non-empty transcript via WebSocket stream
         # ------------------------------------------------------------------
         log.info("launching Notepad sink")
         try:
@@ -779,21 +779,23 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
             log.error("notepad launch failed: %s", e)
             notepad_hwnd = 0
 
-        # Call _finalize_dictation logic directly (no daemon needed)
-        # This exercises: encode → post_audio → save_text → paste_via_clipboard
+        # Finalize: the streaming path returns the transcript from
+        # DictationSession.finish().  When --stub-endpoint is active we use the
+        # fixed stub string; otherwise we skip this check (a live WebSocket
+        # server is required to produce a real transcript).
         log.info("running finalize pipeline")
-        try:
-            import voice_commander.dictation.remote as _remote_mod_ref
-
-            wav_bytes_for_post = dictation_store.read_audio()
-            assert wav_bytes_for_post, "audio must be on disk before POST"
-            transcription = _remote_mod_ref.post_audio(wav_bytes_for_post, "http://stub-or-live")
-        except Exception as exc:
-            log.error("post_audio failed: %s", exc)
+        if stub_endpoint:
+            transcription = _STUB_TRANSCRIPTION
+            log.info("--stub-endpoint: using fixed transcription %r", transcription)
+        else:
+            log.info(
+                "live endpoint mode: transcription comes from a real DictationSession;"
+                " skipping in-process finalize (use daemon + hotkey to exercise live path)"
+            )
             transcription = ""
 
         cp5 = bool(transcription)
-        _record(5, f"remote returned non-empty text: {transcription!r}", cp5)
+        _record(5, f"transcription available for paste test: {transcription!r}", cp5)
         if cp5:
             log.info("transcription: %r", transcription)
             dictation_store.save_text(transcription)
@@ -910,10 +912,6 @@ def run(stub_endpoint: bool) -> int:  # noqa: C901, PLR0912, PLR0915
             log.exception("clipboard restore in finally block failed")
 
         # Restore monkeypatched functions
-        if stub_endpoint:
-            import voice_commander.dictation.remote as _rm
-
-            _rm.post_audio = _original_post  # type: ignore[assignment]
         clipboard.paste_via_clipboard = _original_paste  # type: ignore[assignment]
 
         # Kill sprite
@@ -981,8 +979,8 @@ def main() -> int:
         "--stub-endpoint",
         action="store_true",
         help=(
-            "Monkeypatch voice_commander.dictation.remote.post_audio to return "
-            "a fixed string so the harness runs without a whisper.cpp host."
+            "Use a fixed stub transcription string for the paste/Notepad checkpoints "
+            "so the harness runs without a live WebSocket transcription server."
         ),
     )
     args = parser.parse_args()

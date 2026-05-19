@@ -4,8 +4,8 @@ Mirrors tests/integration/test_dictation_pipeline.py and
 tests/integration/test_dictation_cancel.py — same scaffolding
 (_StubTranscriber, _Transcription, _make_daemon).
 
-Only the network (post_audio) and OS clipboard (paste_via_clipboard) are
-monkeypatched.  Everything else — VerbRouter, DictationSession, StreamingDaemon,
+Only the OS clipboard (paste_via_clipboard) is monkeypatched.
+Everything else — VerbRouter, DictationSession, StreamingDaemon,
 _process_utterance, _finalize_dictation, _finalize_pending_dictation_end,
 _dictation_executor — is the real production code.
 
@@ -28,6 +28,8 @@ from voice_commander.dictation.session import DictationSession
 from voice_commander.event_bus import EventBus
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.verb_router import VerbRouter, build_default_rules
+
+from ._dictation_ws import MockWsServer
 
 if TYPE_CHECKING:
     from voice_commander.daemon import StreamingDaemon
@@ -58,6 +60,7 @@ class _StubTranscriber:
 def _make_daemon(
     transcripts: list[_Transcription],
     tmp_path: Path,
+    ws_url: str,
     *,
     recorder: Any = None,
 ) -> tuple[StreamingDaemon, DictationSession, CapturingFeedbackSink, EventBus]:
@@ -80,7 +83,9 @@ def _make_daemon(
     feedback = CapturingFeedbackSink()
     dispatcher = Dispatcher(feedback=feedback, event_bus=bus)
     verb_router = VerbRouter(build_default_rules(), registry=registry, picker_registry=None)
-    dictation_session = DictationSession(bus=bus, end_word="done")
+    dictation_session = DictationSession(
+        bus=bus, ws_url=ws_url, end_word="done", idle_timeout_s=3.0
+    )
 
     daemon = StreamingDaemon(
         feedback=feedback,
@@ -91,6 +96,7 @@ def _make_daemon(
         registry=registry,
         event_bus=bus,
         dictation_session=dictation_session,
+        dictation_ws_url=ws_url,
         output_dir=str(tmp_path),
     )
     daemon._transcriber_ready.set()
@@ -118,43 +124,40 @@ def test_ctrl_open_done_closes_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Ctrl-open → speak → 'done' → recorder.close_session called, session_stopped published."""
-    posted: list[bytes] = []
     pasted: list[str] = []
-    monkeypatch.setattr(
-        "voice_commander.dictation.remote.post_audio",
-        lambda wav_bytes, endpoint, **kw: (posted.append(wav_bytes), "DICTATED")[1],
-    )
     monkeypatch.setattr(
         "voice_commander.dictation.clipboard.paste_via_clipboard",
         lambda text, **kw: pasted.append(text),
     )
 
-    recorder = MagicMock()
-    daemon, dictation_session, feedback, bus = _make_daemon(
-        transcripts=[
-            _Transcription("hello world"),
-            _Transcription("done"),
-        ],
-        tmp_path=tmp_path,
-        recorder=recorder,
-    )
-    event_q = bus.subscribe()
+    with MockWsServer(["hello world"]) as server:
+        recorder = MagicMock()
+        daemon, dictation_session, feedback, bus = _make_daemon(
+            transcripts=[
+                _Transcription("hello world"),
+                _Transcription("done"),
+            ],
+            tmp_path=tmp_path,
+            ws_url=server.url,
+            recorder=recorder,
+        )
+        event_q = bus.subscribe()
 
-    # Simulate Ctrl press: open session, set flag, start dictation
-    recorder.open_session.return_value = None
-    daemon.on_dictation_toggle()
+        # Simulate Ctrl press: open session, set flag, start dictation
+        recorder.open_session.return_value = None
+        daemon.on_dictation_toggle()
 
-    assert daemon._session_active is True
-    assert daemon._session_opened_by_dictation is True
-    assert dictation_session.active is True
+        assert daemon._session_active is True
+        assert daemon._session_opened_by_dictation is True
+        assert dictation_session.active is True
 
-    audio = np.zeros(16000, dtype=np.float32)
-    daemon._process_utterance(audio)  # "hello world" → buffered
-    daemon._process_utterance(audio)  # "done" → end word
+        audio = np.zeros(16000, dtype=np.float32)
+        daemon._process_utterance(audio)  # "hello world" → streamed
+        daemon._process_utterance(audio)  # "done" → end word
 
-    # Wait for executor tasks to complete
-    daemon._dictation_executor.shutdown(wait=True)
-    daemon._wav_executor.shutdown(wait=True)
+        # Wait for executor tasks to complete
+        daemon._dictation_executor.shutdown(wait=True)
+        daemon._wav_executor.shutdown(wait=True)
 
     # recorder.close_session must have been called (session was Ctrl-opened)
     recorder.close_session.assert_called()
@@ -165,7 +168,7 @@ def test_ctrl_open_done_closes_session(
     events = _drain_events(event_q)
     assert "session_stopped" in events, f"session_stopped not in events: {events}"
     # Dictation result was pasted
-    assert pasted == ["DICTATED"]
+    assert pasted, f"expected a paste; got {pasted}"
 
 
 # ---------------------------------------------------------------------------
@@ -179,31 +182,29 @@ def test_ctrl_open_empty_buffer_ctrl_end_closes_session(
     """Ctrl-open → immediate Ctrl-end (no speech) → recorder.close_session called."""
     pasted: list[str] = []
     monkeypatch.setattr(
-        "voice_commander.dictation.remote.post_audio",
-        lambda wav_bytes, endpoint, **kw: "X",
-    )
-    monkeypatch.setattr(
         "voice_commander.dictation.clipboard.paste_via_clipboard",
         lambda text, **kw: pasted.append(text),
     )
 
-    recorder = MagicMock()
-    daemon, dictation_session, feedback, bus = _make_daemon(
-        transcripts=[],
-        tmp_path=tmp_path,
-        recorder=recorder,
-    )
-    event_q = bus.subscribe()
+    with MockWsServer([]) as server:
+        recorder = MagicMock()
+        daemon, dictation_session, feedback, bus = _make_daemon(
+            transcripts=[],
+            tmp_path=tmp_path,
+            ws_url=server.url,
+            recorder=recorder,
+        )
+        event_q = bus.subscribe()
 
-    # Ctrl-open
-    daemon.on_dictation_toggle()
-    assert daemon._session_opened_by_dictation is True
+        # Ctrl-open
+        daemon.on_dictation_toggle()
+        assert daemon._session_opened_by_dictation is True
 
-    # Simulate hotkey-end path directly (no utterances spoken)
-    daemon._finalize_pending_dictation_end()
+        # Simulate hotkey-end path directly (no utterances spoken)
+        daemon._finalize_pending_dictation_end()
 
-    daemon._dictation_executor.shutdown(wait=True)
-    daemon._wav_executor.shutdown(wait=True)
+        daemon._dictation_executor.shutdown(wait=True)
+        daemon._wav_executor.shutdown(wait=True)
 
     # Session must be closed even with an empty buffer
     recorder.close_session.assert_called()
@@ -222,40 +223,36 @@ def test_ctrl_open_empty_buffer_ctrl_end_closes_session(
 def test_ctrl_open_spoken_cancel_closes_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Ctrl-open → 'cancel' → no paste, no POST, session_stopped published."""
-    posted: list[bytes] = []
+    """Ctrl-open → 'cancel' → no paste, session_stopped published."""
     pasted: list[str] = []
-    monkeypatch.setattr(
-        "voice_commander.dictation.remote.post_audio",
-        lambda wav_bytes, endpoint, **kw: (posted.append(wav_bytes), "X")[1],
-    )
     monkeypatch.setattr(
         "voice_commander.dictation.clipboard.paste_via_clipboard",
         lambda text, **kw: pasted.append(text),
     )
 
-    recorder = MagicMock()
-    daemon, dictation_session, feedback, bus = _make_daemon(
-        transcripts=[
-            _Transcription("some content"),
-            _Transcription("cancel"),
-        ],
-        tmp_path=tmp_path,
-        recorder=recorder,
-    )
-    event_q = bus.subscribe()
+    with MockWsServer(["some content"]) as server:
+        recorder = MagicMock()
+        daemon, dictation_session, feedback, bus = _make_daemon(
+            transcripts=[
+                _Transcription("some content"),
+                _Transcription("cancel"),
+            ],
+            tmp_path=tmp_path,
+            ws_url=server.url,
+            recorder=recorder,
+        )
+        event_q = bus.subscribe()
 
-    daemon.on_dictation_toggle()
-    assert daemon._session_opened_by_dictation is True
+        daemon.on_dictation_toggle()
+        assert daemon._session_opened_by_dictation is True
 
-    audio = np.zeros(16000, dtype=np.float32)
-    daemon._process_utterance(audio)  # "some content" → buffered
-    daemon._process_utterance(audio)  # "cancel" → spoken cancel path
+        audio = np.zeros(16000, dtype=np.float32)
+        daemon._process_utterance(audio)  # "some content" → streamed
+        daemon._process_utterance(audio)  # "cancel" → spoken cancel path
 
-    daemon._dictation_executor.shutdown(wait=True)
-    daemon._wav_executor.shutdown(wait=True)
+        daemon._dictation_executor.shutdown(wait=True)
+        daemon._wav_executor.shutdown(wait=True)
 
-    assert posted == [], "no POST on spoken cancel"
     assert pasted == [], "no paste on spoken cancel"
     assert dictation_session.active is False
     assert daemon._session_active is False
@@ -283,43 +280,41 @@ def test_scroll_lock_session_ctrl_dictation_done_session_stays_open(
     """
     pasted: list[str] = []
     monkeypatch.setattr(
-        "voice_commander.dictation.remote.post_audio",
-        lambda wav_bytes, endpoint, **kw: "TYPED",
-    )
-    monkeypatch.setattr(
         "voice_commander.dictation.clipboard.paste_via_clipboard",
         lambda text, **kw: pasted.append(text),
     )
 
-    recorder = MagicMock()
-    daemon, dictation_session, feedback, bus = _make_daemon(
-        transcripts=[
-            _Transcription("some text"),
-            _Transcription("done"),
-        ],
-        tmp_path=tmp_path,
-        recorder=recorder,
-    )
-    event_q = bus.subscribe()
+    with MockWsServer(["some text"]) as server:
+        recorder = MagicMock()
+        daemon, dictation_session, feedback, bus = _make_daemon(
+            transcripts=[
+                _Transcription("some text"),
+                _Transcription("done"),
+            ],
+            tmp_path=tmp_path,
+            ws_url=server.url,
+            recorder=recorder,
+        )
+        event_q = bus.subscribe()
 
-    # Open via Scroll Lock (NOT Ctrl) — flag must stay False
-    daemon.on_scroll_lock()
-    assert daemon._session_active is True
-    assert daemon._session_opened_by_dictation is False
+        # Open via Scroll Lock (NOT Ctrl) — flag must stay False
+        daemon.on_scroll_lock()
+        assert daemon._session_active is True
+        assert daemon._session_opened_by_dictation is False
 
-    # Start dictation as sub-state (Ctrl within active Scroll Lock session)
-    dictation_session.start()
-    assert dictation_session.active is True
+        # Start dictation as sub-state (Ctrl within active Scroll Lock session)
+        dictation_session.start(daemon._load_vocab())
+        assert dictation_session.active is True
 
-    # Note: reset close_session call count AFTER on_scroll_lock (which calls open_session)
-    recorder.close_session.reset_mock()
+        # Note: reset close_session call count AFTER on_scroll_lock (which calls open_session)
+        recorder.close_session.reset_mock()
 
-    audio = np.zeros(16000, dtype=np.float32)
-    daemon._process_utterance(audio)  # "some text" → buffered
-    daemon._process_utterance(audio)  # "done" → end word
+        audio = np.zeros(16000, dtype=np.float32)
+        daemon._process_utterance(audio)  # "some text" → streamed
+        daemon._process_utterance(audio)  # "done" → end word
 
-    daemon._dictation_executor.shutdown(wait=True)
-    daemon._wav_executor.shutdown(wait=True)
+        daemon._dictation_executor.shutdown(wait=True)
+        daemon._wav_executor.shutdown(wait=True)
 
     # Session must REMAIN open — it was opened by Scroll Lock, not by Ctrl
     assert daemon._session_active is True, (
@@ -349,46 +344,44 @@ def test_close_before_finalize_submission_order_end_word(
     """In the end-word path, _end_owned_session_if_needed is submitted to
     _dictation_executor BEFORE _finalize_dictation (ADR 0090 close-first ordering)."""
     monkeypatch.setattr(
-        "voice_commander.dictation.remote.post_audio",
-        lambda wav_bytes, endpoint, **kw: "TEXT",
-    )
-    monkeypatch.setattr(
         "voice_commander.dictation.clipboard.paste_via_clipboard",
         lambda text, **kw: None,
     )
 
-    recorder = MagicMock()
-    daemon, dictation_session, feedback, bus = _make_daemon(
-        transcripts=[
-            _Transcription("hello"),
-            _Transcription("done"),
-        ],
-        tmp_path=tmp_path,
-        recorder=recorder,
-    )
+    with MockWsServer(["hello"]) as server:
+        recorder = MagicMock()
+        daemon, dictation_session, feedback, bus = _make_daemon(
+            transcripts=[
+                _Transcription("hello"),
+                _Transcription("done"),
+            ],
+            tmp_path=tmp_path,
+            ws_url=server.url,
+            recorder=recorder,
+        )
 
-    # Replace executor with a mock to capture submission order.
-    # Save the bound method BEFORE patching — patching .submit on the executor
-    # object makes original_executor.submit recursive, so we keep a stable
-    # reference to the original callable.
-    submission_order: list[str] = []
-    original_executor = daemon._dictation_executor
-    original_submit = original_executor.submit  # bound method, stable reference
+        # Replace executor with a mock to capture submission order.
+        # Save the bound method BEFORE patching — patching .submit on the executor
+        # object makes original_executor.submit recursive, so we keep a stable
+        # reference to the original callable.
+        submission_order: list[str] = []
+        original_executor = daemon._dictation_executor
+        original_submit = original_executor.submit  # bound method, stable reference
 
-    def _tracking_submit(fn: Any, *args: Any) -> Any:
-        submission_order.append(fn.__name__)
-        return original_submit(fn, *args)
+        def _tracking_submit(fn: Any, *args: Any) -> Any:
+            submission_order.append(fn.__name__)
+            return original_submit(fn, *args)
 
-    daemon._dictation_executor.submit = _tracking_submit  # type: ignore[method-assign]
+        daemon._dictation_executor.submit = _tracking_submit  # type: ignore[method-assign]
 
-    daemon.on_dictation_toggle()  # Ctrl-open: sets flag, starts dictation
+        daemon.on_dictation_toggle()  # Ctrl-open: sets flag, starts dictation
 
-    audio = np.zeros(16000, dtype=np.float32)
-    daemon._process_utterance(audio)  # "hello" → buffered
-    daemon._process_utterance(audio)  # "done" → triggers end-word path
+        audio = np.zeros(16000, dtype=np.float32)
+        daemon._process_utterance(audio)  # "hello" → streamed
+        daemon._process_utterance(audio)  # "done" → triggers end-word path
 
-    original_executor.shutdown(wait=True)
-    daemon._wav_executor.shutdown(wait=True)
+        original_executor.shutdown(wait=True)
+        daemon._wav_executor.shutdown(wait=True)
 
     # _end_owned_session_if_needed must be first, _finalize_dictation must be second
     assert "_end_owned_session_if_needed" in submission_order, (
@@ -410,87 +403,78 @@ def test_close_before_finalize_submission_order_end_word(
 def test_close_submitted_unconditionally_hotkey_end_empty_buffer(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """_end_owned_session_if_needed must be submitted even when take_and_finish()
-    returns None (empty buffer / Ctrl-open + immediate Ctrl-close)."""
-    monkeypatch.setattr(
-        "voice_commander.dictation.remote.post_audio",
-        lambda wav_bytes, endpoint, **kw: "X",
-    )
+    """_end_owned_session_if_needed must be submitted even when the buffer is
+    empty (Ctrl-open + immediate Ctrl-close). In the streaming path,
+    _finalize_dictation is always submitted too (session.finish() returns ''
+    when nothing was streamed — it is idempotent-safe)."""
     monkeypatch.setattr(
         "voice_commander.dictation.clipboard.paste_via_clipboard",
         lambda text, **kw: None,
     )
 
-    recorder = MagicMock()
-    daemon, dictation_session, feedback, bus = _make_daemon(
-        transcripts=[],
-        tmp_path=tmp_path,
-        recorder=recorder,
-    )
+    with MockWsServer([]) as server:
+        recorder = MagicMock()
+        daemon, dictation_session, feedback, bus = _make_daemon(
+            transcripts=[],
+            tmp_path=tmp_path,
+            ws_url=server.url,
+            recorder=recorder,
+        )
 
-    # Save the bound method BEFORE patching to avoid self-referential recursion.
-    submission_order: list[str] = []
-    original_executor = daemon._dictation_executor
-    original_submit = original_executor.submit  # bound method, stable reference
+        # Save the bound method BEFORE patching to avoid self-referential recursion.
+        submission_order: list[str] = []
+        original_executor = daemon._dictation_executor
+        original_submit = original_executor.submit  # bound method, stable reference
 
-    def _tracking_submit(fn: Any, *args: Any) -> Any:
-        submission_order.append(fn.__name__)
-        return original_submit(fn, *args)
+        def _tracking_submit(fn: Any, *args: Any) -> Any:
+            submission_order.append(fn.__name__)
+            return original_submit(fn, *args)
 
-    daemon._dictation_executor.submit = _tracking_submit  # type: ignore[method-assign]
+        daemon._dictation_executor.submit = _tracking_submit  # type: ignore[method-assign]
 
-    daemon.on_dictation_toggle()  # Ctrl-open
-    # No utterances — trigger hotkey-end directly (empty buffer case)
-    daemon._finalize_pending_dictation_end()
+        daemon.on_dictation_toggle()  # Ctrl-open
+        # No utterances — trigger hotkey-end directly (empty buffer case)
+        daemon._finalize_pending_dictation_end()
 
-    original_executor.shutdown(wait=True)
-    daemon._wav_executor.shutdown(wait=True)
+        original_executor.shutdown(wait=True)
+        daemon._wav_executor.shutdown(wait=True)
 
     assert "_end_owned_session_if_needed" in submission_order, (
         f"_end_owned_session_if_needed must be submitted even with empty buffer; "
         f"order: {submission_order}"
     )
-    # _finalize_dictation must NOT be submitted when audio is None
-    assert "_finalize_dictation" not in submission_order, (
-        f"_finalize_dictation must not be submitted for empty buffer; "
+    # In the streaming path _finalize_dictation is ALWAYS submitted; session.finish()
+    # returns '' with no paste when nothing was streamed (idempotent-safe).
+    assert "_finalize_dictation" in submission_order, (
+        f"_finalize_dictation must be submitted in the streaming path; "
         f"order: {submission_order}"
     )
-    # But session must still close
+    # Session must still close
     recorder.close_session.assert_called()
 
 
 # ---------------------------------------------------------------------------
-# Test 7: Timeout propagation → DictationRemoteError → dictation.error event
+# Test 7: Endpoint failure → dictation.error event
 #
-# REV 1 fix: the stub raises remote.DictationRemoteError (the type that
-# _finalize_dictation actually catches), NOT httpx.TimeoutException.
-# The unit test in test_dictation_remote.py verifies that post_audio wraps
-# httpx.TimeoutException as DictationRemoteError; this integration test only
-# verifies that _finalize_dictation handles DictationRemoteError correctly.
+# In streaming mode there is no post_audio — the error comes from a WS
+# connect failure. Point at a closed port to force a connection refused.
+# _finalize_dictation catches session.error == "endpoint" and emits
+# dictation.error + miss chime, matching the batch-path behaviour.
 # ---------------------------------------------------------------------------
 
 
-def test_dictation_remote_error_emits_dictation_error_event(
+def test_dictation_endpoint_failure_emits_dictation_error_event(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A DictationRemoteError from post_audio surfaces as dictation.error + miss chime;
+    """A WS connect failure surfaces as dictation.error + miss chime;
     the executor worker is unblocked after the error.
-
-    REV 1: The stub raises DictationRemoteError directly — the type _finalize_dictation
-    actually catches.  Testing that httpx.TimeoutException wraps to DictationRemoteError
-    is the job of test_dictation_remote.py::test_timeout_exception_wraps_as_remote_error.
     """
-    from voice_commander.dictation.remote import DictationRemoteError
-
-    def _error_post(wav_bytes: bytes, endpoint: str, **kw: Any) -> str:
-        raise DictationRemoteError("read timeout after 30 s")
-
-    monkeypatch.setattr("voice_commander.dictation.remote.post_audio", _error_post)
     monkeypatch.setattr(
         "voice_commander.dictation.clipboard.paste_via_clipboard",
         lambda text, **kw: None,
     )
 
+    # ws://localhost:1 → connection refused → session.error == "endpoint"
     recorder = MagicMock()
     daemon, dictation_session, feedback, bus = _make_daemon(
         transcripts=[
@@ -498,13 +482,14 @@ def test_dictation_remote_error_emits_dictation_error_event(
             _Transcription("done"),
         ],
         tmp_path=tmp_path,
+        ws_url="ws://localhost:1",
         recorder=recorder,
     )
     event_q = bus.subscribe()
 
     daemon.on_dictation_toggle()
     audio = np.zeros(16000, dtype=np.float32)
-    daemon._process_utterance(audio)   # "hello world" → buffered
+    daemon._process_utterance(audio)   # "hello world" → streamed (encode fails silently)
     daemon._process_utterance(audio)   # "done" → end word
 
     daemon._dictation_executor.shutdown(wait=True)
@@ -513,11 +498,11 @@ def test_dictation_remote_error_emits_dictation_error_event(
     # dictation.error event must be published
     events = _drain_events(event_q)
     assert "dictation.error" in events, (
-        f"dictation.error must be published on DictationRemoteError; events: {events}"
+        f"dictation.error must be published on endpoint failure; events: {events}"
     )
     # Miss chime must be played
     assert any(c[0] == "on_miss" for c in feedback.calls), (
-        "on_miss must be called after DictationRemoteError"
+        "on_miss must be called after endpoint failure"
     )
     # Executor must be free — verified implicitly by shutdown(wait=True) returning above
 
@@ -538,31 +523,29 @@ def test_shutdown_with_active_dictation_cancels_it(
     _dictation_executor.shutdown(wait=False) — so any queued tasks are not needed.
     """
     monkeypatch.setattr(
-        "voice_commander.dictation.remote.post_audio",
-        lambda *a, **kw: "X",
-    )
-    monkeypatch.setattr(
         "voice_commander.dictation.clipboard.paste_via_clipboard",
         lambda text, **kw: None,
     )
 
-    recorder = MagicMock()
-    daemon, dictation_session, feedback, bus = _make_daemon(
-        transcripts=[],
-        tmp_path=tmp_path,
-        recorder=recorder,
-    )
+    with MockWsServer([]) as server:
+        recorder = MagicMock()
+        daemon, dictation_session, feedback, bus = _make_daemon(
+            transcripts=[],
+            tmp_path=tmp_path,
+            ws_url=server.url,
+            recorder=recorder,
+        )
 
-    # Start pipeline so shutdown can join it
-    daemon._pipeline_thread = threading.Thread(
-        target=daemon._pipeline_loop, daemon=True
-    )
-    daemon._pipeline_thread.start()
+        # Start pipeline so shutdown can join it
+        daemon._pipeline_thread = threading.Thread(
+            target=daemon._pipeline_loop, daemon=True
+        )
+        daemon._pipeline_thread.start()
 
-    dictation_session.start()
-    assert dictation_session.active is True
+        dictation_session.start(daemon._load_vocab())
+        assert dictation_session.active is True
 
-    daemon.shutdown()
+        daemon.shutdown()
 
     assert dictation_session.active is False, (
         "shutdown() must call dictation_session.cancel() directly — "

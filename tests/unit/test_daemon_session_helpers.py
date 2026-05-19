@@ -18,6 +18,7 @@ import pytest
 
 from voice_commander.daemon import StreamingDaemon
 from voice_commander.dictation.session import DictationSession
+from voice_commander.dictation.vocab import Vocabulary
 from voice_commander.event_bus import EventBus
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.plan import Plan, ToolCall
@@ -208,17 +209,17 @@ def test_close_voice_session_bumps_audio_gen(tmp_path) -> None:
 
 
 def test_close_voice_session_cancels_active_dictation(tmp_path) -> None:
-    """_close_voice_session cancels active DictationSession."""
+    """_close_voice_session cancels active DictationSession (default cancel_dictation=True)."""
     bus = EventBus()
-    ds = DictationSession(bus=bus, end_word="done")
+    ds = DictationSession(bus=bus, ws_url="ws://localhost:1", end_word="done", idle_timeout_s=0.5)
     daemon, _, _ = _make_daemon(
         output_dir=str(tmp_path), event_bus=bus, dictation_session=ds
     )
     daemon._session_active = True
-    ds.start()
+    ds.start(Vocabulary())
     assert ds.active is True
 
-    daemon._close_voice_session()
+    daemon._close_voice_session()  # cancel_dictation=True by default
 
     assert ds.active is False
 
@@ -331,7 +332,7 @@ def test_end_owned_session_if_needed_is_noop_when_flag_false(tmp_path) -> None:
 def test_on_dictation_toggle_no_session_opens_and_starts_dictation(tmp_path) -> None:
     """on_dictation_toggle with no session: opens session, sets flag, starts dictation."""
     bus = EventBus()
-    ds = DictationSession(bus=bus, end_word="done")
+    ds = DictationSession(bus=bus, ws_url="ws://localhost:1", end_word="done", idle_timeout_s=0.5)
     daemon, feedback, recorder = _make_daemon(
         output_dir=str(tmp_path), event_bus=bus, dictation_session=ds
     )
@@ -339,37 +340,38 @@ def test_on_dictation_toggle_no_session_opens_and_starts_dictation(tmp_path) -> 
 
     daemon.on_dictation_toggle()
 
-    recorder.open_session.assert_called_once()
-    assert daemon._session_active is True
-    assert daemon._session_opened_by_dictation is True
-    assert ds.active is True
+    try:
+        recorder.open_session.assert_called_once()
+        assert daemon._session_active is True
+        assert daemon._session_opened_by_dictation is True
+        assert ds.active is True
+    finally:
+        ds.cancel()  # cleanup asyncio thread
 
 
 def test_on_dictation_toggle_no_session_plays_no_miss_chime(tmp_path) -> None:
-    """on_dictation_toggle with no session must NOT play a miss chime.
-
-    Red-phase prediction: this test FAILS against the current production code,
-    because the current code calls self._feedback.on_miss(...) in the idle branch.
-    It goes green in Task 3 when the idle branch is rewritten.
-    """
+    """on_dictation_toggle with no session must NOT play a miss chime."""
     bus = EventBus()
-    ds = DictationSession(bus=bus, end_word="done")
+    ds = DictationSession(bus=bus, ws_url="ws://localhost:1", end_word="done", idle_timeout_s=0.5)
     daemon, feedback, recorder = _make_daemon(
         output_dir=str(tmp_path), event_bus=bus, dictation_session=ds
     )
 
     daemon.on_dictation_toggle()
 
-    assert not any(c[0] == "on_miss" for c in feedback.calls), (
-        "on_dictation_toggle with no session must not play a miss chime; "
-        f"got: {feedback.calls}"
-    )
+    try:
+        assert not any(c[0] == "on_miss" for c in feedback.calls), (
+            "on_dictation_toggle with no session must not play a miss chime; "
+            f"got: {feedback.calls}"
+        )
+    finally:
+        ds.cancel()  # cleanup asyncio thread
 
 
 def test_on_dictation_toggle_no_session_recorder_failure_does_not_set_flag(tmp_path) -> None:
     """on_dictation_toggle: when _open_voice_session fails, flag stays False, dictation not started."""
     bus = EventBus()
-    ds = DictationSession(bus=bus, end_word="done")
+    ds = DictationSession(bus=bus, ws_url="ws://localhost:1", end_word="done", idle_timeout_s=0.5)
     daemon, feedback, recorder = _make_daemon(
         output_dir=str(tmp_path), event_bus=bus, dictation_session=ds
     )

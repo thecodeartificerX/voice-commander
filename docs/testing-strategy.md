@@ -61,7 +61,7 @@ Voice Commander uses a four-layer pyramid. Each layer has a distinct scope, spee
 - **Fixtures:** `tests/fixtures/audio/phrase_coverage/<tool>_<n>.wav` (see §4 for naming convention).
 - **Triggered by:** `uv run pytest` (includes integration); skip with `-m "not integration"` for fast local iteration.
 
-> **Note:** Some integration tests mock the network/OS layer instead of using fixture WAVs. For example, `tests/integration/test_dictation_vocab_pipeline.py` exercises the full `_finalize_dictation` pipeline (VocabStore load → build_prompt → post_audio → apply_corrections/commands → paste) with the remote endpoint and clipboard mocked — no audio model required.
+> **Note:** Some integration tests mock the network/OS layer instead of using fixture WAVs. For example, `tests/integration/test_dictation_vocab_pipeline.py` exercises the full `_finalize_dictation` pipeline (VocabStore load → `DictationSession.finish()` → `apply_corrections`/`apply_commands` → paste) with the WebSocket endpoint and clipboard mocked — no audio model required.
 
 ### Layer 3 — Hardware-in-the-loop (manual)
 

@@ -190,17 +190,17 @@ def test_factory_propagates_recorder_device_minus_one(base_cfg: Config) -> None:
 
 @pytest.mark.integration
 def test_factory_wires_dictation(base_cfg: Config) -> None:
-    """build_streaming_daemon constructs a DictationSession and wires the endpoint.
+    """build_streaming_daemon constructs a DictationSession and wires the ws_url.
 
     Asserts:
     - ``daemon._dictation_session`` is not None (session always constructed).
-    - ``daemon._dictation_endpoint`` matches ``cfg.dictation.endpoint``.
+    - ``daemon._dictation_ws_url`` matches ``cfg.dictation.ws_url``.
     """
-    custom_endpoint = "http://10.0.0.1:9999/inference"
+    custom_ws_url = "ws://10.0.0.1:9999/ws/transcribe"
     cfg = replace(
         base_cfg,
         dictation=DictationConfig(
-            endpoint=custom_endpoint,
+            ws_url=custom_ws_url,
             end_word="finish",
         ),
     )
@@ -210,9 +210,9 @@ def test_factory_wires_dictation(base_cfg: Config) -> None:
     assert daemon._dictation_session is not None, (
         "_dictation_session must be set by the factory"
     )
-    assert daemon._dictation_endpoint == custom_endpoint, (
-        f"Expected _dictation_endpoint={custom_endpoint!r}, "
-        f"got {daemon._dictation_endpoint!r}"
+    assert daemon._dictation_ws_url == custom_ws_url, (
+        f"Expected _dictation_ws_url={custom_ws_url!r}, "
+        f"got {daemon._dictation_ws_url!r}"
     )
     assert daemon._dictation_session._end_word == "finish", (
         "DictationSession end_word not propagated from cfg; "

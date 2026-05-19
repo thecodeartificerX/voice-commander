@@ -1,12 +1,17 @@
-"""Dictation mode — remote transcription pipeline (ADR 0086).
+"""Dictation mode — streaming WebSocket transcription pipeline (ADR 0092).
 
-Sub-packages:
+Sub-modules:
 
-* :mod:`session`   — ``DictationSession`` state machine (buffer, end-word and
-                     hotkey-end exit paths).
-* :mod:`remote`    — HTTP client for the whisper.cpp ``/inference`` endpoint.
-* :mod:`store`     — WAV encoding and single-slot on-disk persistence.
-* :mod:`clipboard` — Clipboard snapshot/paste/restore helper for result delivery.
-* :mod:`vocab`     — ``Vocabulary``/``Correction``/``Command`` dataclasses and
-                     ``VocabStore`` persistence for ``vocab.json``.
+* :mod:`session`        — ``DictationSession`` state machine; owns the
+                          WebSocket transport for one dictation.
+* :mod:`ws_client`      — async WebSocket client for the ``/ws/transcribe``
+                          streaming endpoint.
+* :mod:`local_agreement` — ``LocalAgreement`` word stabiliser (commits words
+                          confirmed stable across chunk boundaries).
+* :mod:`bridge`         — sync-queue → asyncio-queue pump.
+* :mod:`store`          — WAV chunk encoding and single-slot text persistence.
+* :mod:`clipboard`      — clipboard snapshot/paste/restore for result delivery.
+* :mod:`postprocess`    — prompt building + corrections/commands text passes.
+* :mod:`vocab`          — ``Vocabulary``/``Correction``/``Command`` dataclasses
+                          and ``VocabStore`` persistence for ``vocab.json``.
 """
