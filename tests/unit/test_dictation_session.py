@@ -1,9 +1,10 @@
-"""Unit + light-integration tests for the streaming DictationSession.
+"""Unit + light-integration tests for the simplified DictationSession (ADR 0096).
 
 A mock WebSocket server (websockets.asyncio.server.serve) stands in for the
-real /ws/transcribe endpoint. The session's own asyncio-loop thread connects
-to it. These tests exercise classification, the streaming round-trip, and the
-finish/cancel exit paths.
+real /ws/transcribe endpoint.  The session's own asyncio-loop thread connects
+to it.  These tests exercise the new raw-PCM protocol: utterances are pushed
+as float32 bytes; the server accumulates them and replies with one done frame.
+No partial frames, no config handshake, no LocalAgreement.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import pytest
 from websockets.asyncio.server import serve
 
 from voice_commander.dictation.session import DictationSession
-from voice_commander.dictation.vocab import Correction, Vocabulary
+from voice_commander.dictation.vocab import Vocabulary
 
 
 class _FakeBus:
@@ -30,50 +31,46 @@ class _FakeBus:
 
 
 def _audio(n: int = 8000) -> np.ndarray:
+    """Return a float32 ndarray representing n samples of audio."""
     return np.ones(n, dtype=np.float32)
 
 
 class _MockWsServer:
-    """Runs websockets.serve on a background asyncio loop thread.
+    """Minimal mock WebSocket server for ADR 0096 protocol.
 
-    Replies one ``partial`` frame per binary chunk; the partial text is the
-    next entry of *replies* (last entry repeats). After receiving the
-    ``{"type":"end"}`` frame it sends a ``done`` frame carrying *done_text*
-    (default: ``"done text"``), mirroring the proxy contract (ADR 0094).
-    Exposes the bound URL.
+    Accumulates raw binary frames into a bytearray.  On receipt of
+    ``{"type":"end"}`` sends ``{"type":"done","text":<done_text>}`` and closes.
+    Exposes ``bytes_received`` and ``chunk_count`` for assertions.
+    Does NOT send any partial frames; does NOT expect a config frame.
     """
 
-    def __init__(self, replies: list[str], done_text: str = "done text") -> None:
-        self._replies = replies
+    def __init__(self, done_text: str = "done text") -> None:
         self._done_text = done_text
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._ready = threading.Event()
         self.url = ""
-        self.configs: list[dict] = []
+        self._bytes_received: int = 0
+        self._chunk_count: int = 0
 
     def _run(self) -> None:
         asyncio.set_event_loop(self._loop)
         self._loop.run_until_complete(self._serve())
 
     async def _serve(self) -> None:
-        state = {"i": 0}
-
         async def handler(conn):
             async for message in conn:
-                if isinstance(message, str):
+                if isinstance(message, bytes):
+                    self._bytes_received += len(message)
+                    self._chunk_count += 1
+                elif isinstance(message, str):
                     data = json.loads(message)
-                    if data.get("type") == "config":
-                        self.configs.append(data)
-                    elif data.get("type") == "end":
-                        # Send the done frame, matching the proxy contract.
+                    if data.get("type") == "end":
                         await conn.send(
                             json.dumps({"type": "done", "text": self._done_text})
                         )
-                else:
-                    text = self._replies[min(state["i"], len(self._replies) - 1)]
-                    state["i"] += 1
-                    await conn.send(json.dumps({"type": "partial", "text": text, "segments": []}))
+                    # Any other JSON frame (unexpected) is ignored — no partial,
+                    # no config frame expected from the new daemon.
 
         server = await serve(handler, "localhost", 0)
         port = server.sockets[0].getsockname()[1]
@@ -86,8 +83,18 @@ class _MockWsServer:
         assert self._ready.wait(timeout=5.0), "mock WS server did not start"
         return self.url
 
+    @property
+    def bytes_received(self) -> int:
+        return self._bytes_received
 
-# --- classification (no server needed) ---
+    @property
+    def chunk_count(self) -> int:
+        return self._chunk_count
+
+
+# ---------------------------------------------------------------------------
+# Classification tests (no server needed)
+# ---------------------------------------------------------------------------
 
 
 def test_handle_utterance_when_inactive_is_buffered() -> None:
@@ -96,13 +103,22 @@ def test_handle_utterance_when_inactive_is_buffered() -> None:
 
 
 def test_end_word_returns_end_exact_standalone() -> None:
-    s = _MockWsServer([])
-    url = s.start()
+    server = _MockWsServer()
+    url = server.start()
     sess = DictationSession(_FakeBus(), ws_url=url, end_word="done")
     sess.start(Vocabulary())
     assert sess.handle_utterance(_audio(), "I am done with this") == "buffered"
     assert sess.handle_utterance(_audio(), "Done.") == "end"
     sess.finish()
+
+
+def test_handle_utterance_returns_cancel_for_cancel_word() -> None:
+    server = _MockWsServer()
+    url = server.start()
+    sess = DictationSession(_FakeBus(), ws_url=url, end_word="done", cancel_word="cancel")
+    sess.start(Vocabulary())
+    assert sess.handle_utterance(_audio(), "cancel") == "cancel"
+    sess.cancel()
 
 
 def test_cancel_word_collision_disables_cancel(caplog) -> None:
@@ -126,47 +142,112 @@ def test_cancel_word_empty_disables_cancel(caplog) -> None:
     assert sess._cancel_word is None
 
 
-# --- streaming round-trip (mock server) ---
+# ---------------------------------------------------------------------------
+# Audio byte enqueue tests (ADR 0096 D6)
+# ---------------------------------------------------------------------------
+
+
+def test_handle_utterance_pushes_audio_bytes_on_chunk_q_for_buffered() -> None:
+    """Buffered utterances place raw float32 PCM bytes on the chunk queue."""
+    server = _MockWsServer()
+    url = server.start()
+    sess = DictationSession(_FakeBus(), ws_url=url, end_word="stop", idle_timeout_s=2.0)
+    sess.start(Vocabulary())
+
+    audio = _audio(16000)  # 1 second of audio
+    kind = sess.handle_utterance(audio, "some speech")
+    assert kind == "buffered"
+
+    # chunk_q should have exactly one item: the raw PCM bytes
+    assert sess._chunk_q is not None
+    assert sess._chunk_q.qsize() == 1
+    item = sess._chunk_q.get_nowait()
+    assert item == audio.astype(np.float32).tobytes()
+    sess.cancel()
+
+
+def test_handle_utterance_end_word_does_not_push_bytes() -> None:
+    """End-word utterances are classification-only — no bytes on the queue."""
+    server = _MockWsServer()
+    url = server.start()
+    sess = DictationSession(_FakeBus(), ws_url=url, end_word="done", idle_timeout_s=2.0)
+    sess.start(Vocabulary())
+
+    kind = sess.handle_utterance(_audio(), "done")
+    assert kind == "end"
+    assert sess._chunk_q is not None and sess._chunk_q.qsize() == 0
+    sess.finish()
+
+
+def test_handle_utterance_cancel_word_does_not_push_bytes() -> None:
+    """Cancel-word utterances are classification-only — no bytes on the queue."""
+    server = _MockWsServer()
+    url = server.start()
+    sess = DictationSession(_FakeBus(), ws_url=url, end_word="done", cancel_word="cancel", idle_timeout_s=2.0)
+    sess.start(Vocabulary())
+
+    kind = sess.handle_utterance(_audio(), "cancel")
+    assert kind == "cancel"
+    assert sess._chunk_q is not None and sess._chunk_q.qsize() == 0
+    sess.cancel()
+
+
+# ---------------------------------------------------------------------------
+# Streaming round-trip (mock server)
+# ---------------------------------------------------------------------------
 
 
 def test_start_publishes_dictation_start() -> None:
     bus = _FakeBus()
-    url = _MockWsServer([]).start()
+    url = _MockWsServer().start()
     sess = DictationSession(bus, ws_url=url)
     sess.start(Vocabulary())
     assert ("dictation.start", {}) in bus.events
     sess.finish()
 
 
-def test_streamed_utterances_are_stabilised_by_finish() -> None:
-    """Two utterances → two partials → done frame → finish returns done.text (ADR 0094)."""
+def test_finish_returns_done_text_from_ws_client() -> None:
+    """finish() returns done.text from the server's done frame."""
     bus = _FakeBus()
-    server = _MockWsServer(["hello world", "world done"], done_text="Hello, world done.")
+    server = _MockWsServer(done_text="Hello, world.")
     url = server.start()
     sess = DictationSession(bus, ws_url=url, end_word="stop", idle_timeout_s=3.0)
     sess.start(Vocabulary())
-    assert sess.handle_utterance(_audio(), "hello world") == "buffered"
-    assert sess.handle_utterance(_audio(), "more speech") == "buffered"
+    sess.handle_utterance(_audio(), "hello world")
+    sess.handle_utterance(_audio(), "more speech")
     text = sess.finish()
-    # done frame carries LLM-cleaned text; LocalAgreement fallback not needed.
-    assert text == "Hello, world done."
+    assert text == "Hello, world."
     assert ("dictation.end", {"reason": "done"}) in bus.events
     assert not sess.active
 
 
-def test_finish_returns_empty_on_connect_failure() -> None:
-    """A bad ws_url → asyncio thread records error → finish() returns ''."""
+def test_finish_returns_empty_string_when_ws_client_returns_none() -> None:
+    """finish() returns '' (not None) when the WS never connected (ADR 0096)."""
     bus = _FakeBus()
     sess = DictationSession(bus, ws_url="ws://localhost:1", idle_timeout_s=2.0)
     sess.start(Vocabulary())
     text = sess.finish()
     assert text == ""
+    assert text is not None  # str, not None
     assert sess.error == "endpoint"
 
 
-def test_cancel_discards_and_publishes_cancel() -> None:
+def test_finish_returns_empty_string_on_empty_done_text() -> None:
+    """finish() returns '' when server's done.text is empty (silence/no speech)."""
     bus = _FakeBus()
-    server = _MockWsServer(["hello world"])
+    server = _MockWsServer(done_text="")
+    url = server.start()
+    sess = DictationSession(bus, ws_url=url, idle_timeout_s=3.0)
+    sess.start(Vocabulary())
+    text = sess.finish()
+    assert text == ""
+    assert text is not None
+
+
+def test_cancel_drains_and_returns_no_text() -> None:
+    """cancel() closes the WS, discards the transcript, publishes cancel event."""
+    bus = _FakeBus()
+    server = _MockWsServer(done_text="should not be returned")
     url = server.start()
     sess = DictationSession(bus, ws_url=url, idle_timeout_s=2.0)
     sess.start(Vocabulary())
@@ -178,265 +259,89 @@ def test_cancel_discards_and_publishes_cancel() -> None:
     assert sess.finish() == ""
 
 
-def test_config_frame_carries_prompt_from_vocab() -> None:
-    """build_prompt(vocab) is sent in the config handshake."""
-    server = _MockWsServer([])
+def test_request_end_then_finish_completes() -> None:
+    """request_end() sets pending_end; finish() clears it and returns transcript."""
+    server = _MockWsServer(done_text="speech text")
     url = server.start()
-    sess = DictationSession(_FakeBus(), ws_url=url, idle_timeout_s=2.0)
-    vocab = Vocabulary(vocab=("Supabase", "Postgres"))
-    sess.start(vocab)
-    sess.handle_utterance(_audio(), "filler")  # one chunk forces a config send
-    sess.finish()
-    assert server.configs, "server received no config frame"
-    cfg = server.configs[0]
-    # Field name confirmed in Phase 2 — adjust if Phase 2 found a different name.
-    assert cfg.get("initial_prompt") == "Supabase, Postgres"
-
-
-def test_request_end_sets_pending_end() -> None:
-    server = _MockWsServer([])
-    url = server.start()
-    sess = DictationSession(_FakeBus(), ws_url=url, idle_timeout_s=2.0)
+    sess = DictationSession(_FakeBus(), ws_url=url, idle_timeout_s=3.0)
     sess.start(Vocabulary())
     assert not sess.pending_end
     sess.request_end()
     assert sess.pending_end
-    sess.finish()
+    text = sess.finish()
+    assert text == "speech text"
     assert not sess.pending_end
 
 
-# --- done-frame / ADR 0094 tests ---
+def test_session_construction_without_recorder_works() -> None:
+    """DictationSession no longer requires set_recorder — construction is sufficient."""
+    sess = DictationSession(_FakeBus(), ws_url="ws://localhost:1")
+    # No set_recorder call — session must not have this method at all.
+    assert not hasattr(sess, "set_recorder"), (
+        "set_recorder must be removed; it was deleted in Phase 2 (ADR 0096)"
+    )
+    assert not hasattr(sess, "_recorder"), (
+        "_recorder field must be removed in Phase 2 (ADR 0096)"
+    )
 
 
-def test_finish_returns_done_text_when_done_frame_received() -> None:
-    """finish() returns the proxy's done.text when a done frame is received (ADR 0094)."""
-    bus = _FakeBus()
-    server = _MockWsServer(["raw whisper"], done_text="LLM-cleaned text.")
+def test_session_has_no_agreement_attribute() -> None:
+    """LocalAgreement fields must be gone (ADR 0096 D7)."""
+    sess = DictationSession(_FakeBus(), ws_url="ws://localhost:1")
+    assert not hasattr(sess, "_agreement"), "_agreement must be removed"
+    assert not hasattr(sess, "_agreement_lock"), "_agreement_lock must be removed"
+    assert not hasattr(sess, "_confirmed"), "_confirmed must be removed"
+
+
+def test_session_has_no_on_partial_method() -> None:
+    """_on_partial is deleted — it was the LocalAgreement callback (ADR 0096 D7)."""
+    sess = DictationSession(_FakeBus(), ws_url="ws://localhost:1")
+    assert not hasattr(sess, "_on_partial"), "_on_partial must be removed"
+
+
+def test_session_has_no_window_or_frame_tap_fields() -> None:
+    """Frame tap and DictationWindow fields must be gone (ADR 0096 D7)."""
+    sess = DictationSession(_FakeBus(), ws_url="ws://localhost:1")
+    assert not hasattr(sess, "_window"), "_window must be removed"
+    assert not hasattr(sess, "_warned_no_segments"), "_warned_no_segments must be removed"
+
+
+def test_bytes_sent_to_server_match_audio_input() -> None:
+    """Total bytes received by mock server equals sum of utterance pcm bytes."""
+    server = _MockWsServer(done_text="ok")
     url = server.start()
-    sess = DictationSession(bus, ws_url=url, idle_timeout_s=3.0)
+    sess = DictationSession(_FakeBus(), ws_url=url, idle_timeout_s=4.0)
     sess.start(Vocabulary())
-    sess.handle_utterance(_audio(), "something")
-    text = sess.finish()
-    assert text == "LLM-cleaned text."
 
-
-def test_finish_returns_empty_string_when_done_text_is_empty() -> None:
-    """finish() returns '' (not None) when done.text is empty — whisper heard nothing (ADR 0094)."""
-    bus = _FakeBus()
-    server = _MockWsServer([], done_text="")
-    url = server.start()
-    sess = DictationSession(bus, ws_url=url, idle_timeout_s=3.0)
-    sess.start(Vocabulary())
-    # No utterances streamed — server sends done frame with empty text.
-    text = sess.finish()
-    assert text == ""
-    assert text is not None  # empty string, not None
-
-
-def test_finish_falls_back_to_local_agreement_when_no_done_frame() -> None:
-    """finish() uses LocalAgreement output when _final_text is None (ADR 0094 fallback)."""
-    sess = DictationSession(_FakeBus(), ws_url="ws://localhost:1", idle_timeout_s=0.5)
-    # With a bad URL the asyncio thread raises OSError; _final_text stays None.
-    sess.start(Vocabulary())
-    text = sess.finish()
-    # No done frame → fallback; nothing confirmed → empty string.
-    assert text == ""
-    assert sess._final_text is None
-
-
-# --- ws_client done-frame tests (using _MockWsServer infrastructure) ---
-
-
-def test_ws_client_stream_transcribe_returns_done_text() -> None:
-    """stream_transcribe returns done.text when the server sends a done frame."""
-    from voice_commander.dictation.ws_client import stream_transcribe
-
-    server = _MockWsServer(["partial one"], done_text="LLM result")
-    url = server.start()
-
-    partials: list[str] = []
-    chunk_q: asyncio.Queue[bytes | None] = asyncio.Queue()
-
-    async def run() -> str | None:
-        # Push one WAV-like binary chunk then the end sentinel.
-        await chunk_q.put(b"\x00" * 16)
-        await chunk_q.put(None)
-        return await stream_transcribe(
-            url,
-            "en",
-            chunk_q,
-            lambda t, s: partials.append(t),
-            idle_timeout_s=3.0,
-            done_timeout_s=5.0,
-        )
-
-    result = asyncio.run(run())
-    assert result == "LLM result"
-    assert "partial one" in partials
-
-
-def test_ws_client_stream_transcribe_returns_none_on_timeout() -> None:
-    """stream_transcribe returns None when the server never sends a done frame."""
-    import json as _json
-
-    from websockets.asyncio.server import serve as _serve
-
-    from voice_commander.dictation.ws_client import stream_transcribe
-
-    # A server that replies to partials but never sends done after end.
-    loop = asyncio.new_event_loop()
-    ready = threading.Event()
-    url_holder: list[str] = []
-
-    def _run_server() -> None:
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(_serve_no_done())
-
-    async def _serve_no_done() -> None:
-        async def handler(conn) -> None:
-            async for message in conn:
-                if isinstance(message, bytes):
-                    await conn.send(_json.dumps({"type": "partial", "text": "w"}))
-                # Intentionally ignore "end" — no done frame sent.
-
-        server = await _serve(handler, "localhost", 0)
-        port = server.sockets[0].getsockname()[1]
-        url_holder.append(f"ws://localhost:{port}")
-        ready.set()
-        await asyncio.Future()
-
-    t = threading.Thread(target=_run_server, daemon=True)
-    t.start()
-    assert ready.wait(timeout=5.0)
-
-    chunk_q: asyncio.Queue[bytes | None] = asyncio.Queue()
-
-    async def run() -> str | None:
-        await chunk_q.put(b"\x00" * 16)
-        await chunk_q.put(None)
-        return await stream_transcribe(
-            url_holder[0],
-            "en",
-            chunk_q,
-            lambda _t, _s: None,
-            idle_timeout_s=3.0,
-            done_timeout_s=0.5,  # short timeout so the test is fast
-        )
-
-    result = asyncio.run(run())
-    assert result is None
-
-
-def test_ws_client_stream_transcribe_returns_empty_string_for_empty_done_text() -> None:
-    """stream_transcribe returns '' (not None) when done.text is an empty string."""
-    from voice_commander.dictation.ws_client import stream_transcribe
-
-    server = _MockWsServer([], done_text="")
-    url = server.start()
-
-    chunk_q: asyncio.Queue[bytes | None] = asyncio.Queue()
-
-    async def run() -> str | None:
-        await chunk_q.put(None)  # immediately end
-        return await stream_transcribe(
-            url,
-            "en",
-            chunk_q,
-            lambda _t, _s: None,
-            idle_timeout_s=3.0,
-            done_timeout_s=5.0,
-        )
-
-    result = asyncio.run(run())
-    assert result == ""
-    assert result is not None
-
-
-# ---------------------------------------------------------------------------
-# Task 7: _segments_to_timed_words helper
-# ---------------------------------------------------------------------------
-
-
-def test_segments_to_timed_words_applies_offset():
-    from voice_commander.dictation.session import _segments_to_timed_words
-
-    segments = [
-        {"start": 0.0, "end": 0.6, "text": "the quick"},
-        {"start": 0.6, "end": 1.2, "text": "brown fox"},
-    ]
-    words = _segments_to_timed_words(segments, committed_offset_s=2.0)
-    assert [w.text for w in words] == ["the", "quick", "brown", "fox"]
-    # window-relative end-times shifted by the committed offset
-    assert words[1].end_s == pytest.approx(2.6)   # 0.6 + 2.0
-    assert words[3].end_s == pytest.approx(3.2)   # 1.2 + 2.0
-
-
-def test_segments_to_timed_words_empty_when_no_segments():
-    from voice_commander.dictation.session import _segments_to_timed_words
-
-    assert _segments_to_timed_words([], committed_offset_s=0.0) == []
-
-
-# ---------------------------------------------------------------------------
-# Task 8: DictationSession — frame tap, window streaming, _on_partial LA-2
-# ---------------------------------------------------------------------------
-
-
-class _FakeRecorder:
-    """Minimal StreamingRecorder stand-in — records frame-tap set/clear."""
-
-    def __init__(self) -> None:
-        self.tap = None
-
-    def set_frame_tap(self, cb) -> None:
-        self.tap = cb
-
-
-def test_start_registers_frame_tap_finish_clears_it():
-    rec = _FakeRecorder()
-    bus = _FakeBus()
-    sess = DictationSession(bus=bus, ws_url="ws://localhost:1", idle_timeout_s=0.5)
-    sess.set_recorder(rec)
-    sess.start(Vocabulary())
-    assert rec.tap is not None
+    utterances = [_audio(4000), _audio(8000), _audio(2000)]
+    for utt in utterances:
+        sess.handle_utterance(utt, "some words")
     sess.finish()
-    assert rec.tap is None
+
+    expected_bytes = sum(utt.astype(np.float32).nbytes for utt in utterances)
+    assert server.bytes_received == expected_bytes
+    assert server.chunk_count == len(utterances)
 
 
-def test_cancel_clears_frame_tap():
-    rec = _FakeRecorder()
-    bus = _FakeBus()
-    sess = DictationSession(bus=bus, ws_url="ws://localhost:1", idle_timeout_s=0.5)
-    sess.set_recorder(rec)
-    sess.start(Vocabulary())
-    sess.cancel()
-    assert rec.tap is None
+# ---------------------------------------------------------------------------
+# Deleted-method / attribute existence guards (Phase 2 regression blockers)
+# ---------------------------------------------------------------------------
 
 
-def test_on_partial_publishes_committed_prefix_transcript():
-    """HUD transcript follows the committed prefix, not the raw hypothesis (OI-3)."""
-    bus = _FakeBus()
-    sess = DictationSession(bus=bus, ws_url="ws://localhost:1", idle_timeout_s=0.5)
-    sess.set_recorder(_FakeRecorder())
-    sess.start(Vocabulary())
-
-    seg1 = [{"start": 0.0, "end": 0.6, "text": "the quick"}]
-    sess._on_partial("the quick", seg1)
-    seg2 = [{"start": 0.0, "end": 0.9, "text": "the quick brown"}]
-    sess._on_partial("the quick brown", seg2)
-
-    transcripts = [d.get("text") for (t, d) in bus.events if t == "transcript"]
-    assert transcripts[-1] == "the quick"
-    sess.cancel()
+def test_build_raw_transcript_is_deleted() -> None:
+    """_build_raw_transcript was the raw_transcript_fn for ws_client — now gone."""
+    sess = DictationSession(_FakeBus(), ws_url="ws://localhost:1")
+    assert not hasattr(sess, "_build_raw_transcript")
 
 
-def test_handle_utterance_does_not_stream_buffered_audio():
-    """VAD is endpointing-only — buffered utterances are NOT pushed as chunks."""
-    sess = DictationSession(bus=_FakeBus(), ws_url="ws://localhost:1", idle_timeout_s=0.5)
-    sess.set_recorder(_FakeRecorder())
-    sess.start(Vocabulary())
-    audio = np.zeros(16000, dtype=np.float32)
-    kind = sess.handle_utterance(audio, "some words")
-    assert kind == "buffered"
-    assert sess._chunk_q is not None and sess._chunk_q.qsize() == 0
-    sess.cancel()
+def test_no_window_step_cap_fields() -> None:
+    """_window_step_ms and _window_cap_ms constructor params / fields are gone."""
+    sess = DictationSession(_FakeBus(), ws_url="ws://localhost:1")
+    assert not hasattr(sess, "_window_step_ms")
+    assert not hasattr(sess, "_window_cap_ms")
+
+
+def test_max_dictation_s_stored_correctly() -> None:
+    """max_dictation_s constructor param is stored as _max_dictation_s."""
+    sess = DictationSession(_FakeBus(), ws_url="ws://localhost:1", max_dictation_s=120.0)
+    assert sess._max_dictation_s == 120.0

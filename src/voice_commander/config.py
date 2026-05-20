@@ -24,22 +24,25 @@ class HotkeyConfig:
 
 @dataclass(frozen=True)
 class DictationConfig:
-    """Dictation mode — streaming WebSocket transcription (ADR 0092).
+    """Dictation mode — raw-PCM WebSocket transcription (ADR 0096).
 
-    ``ws_url`` points at the LLM-cleanup transcription proxy (ADR 0093): a
-    protocol-compatible WebSocket proxy that passes partial frames through
-    unchanged and LLM-cleans only the final transcript.
+    ``ws_url`` points at the server-side transcription endpoint.  The daemon
+    streams raw 16 kHz mono float32 PCM bytes per VAD utterance; the server
+    accumulates the full recording, runs one Whisper decode, LLM-cleans the
+    result, and returns a ``{"type":"done","text":...}`` frame.
     """
 
     ws_url: str = "ws://192.168.4.200:8767/ws/transcribe"
-    language: str = "en"
     end_word: str = "done"
     cancel_word: str = "cancel"  # say this word to abort dictation and discard the transcript
     idle_timeout_seconds: int = 30
-    # Streaming-window dictation (ADR 0095). The growing audio window is
-    # re-decoded every window_step_ms of accumulated audio. window_cap_ms
-    # bounds the uncommitted window: beyond it the oldest segment is
-    # force-committed so latency stays independent of dictation length.
+    # Daemon-side hard cap per dictation (seconds).  On timeout the daemon sends
+    # {"type":"end"} and enters the normal finalization path.  The server has its
+    # own 600 s cap — this is 2× headroom to avoid a race where the daemon closes
+    # first (ADR 0096 D4).
+    max_dictation_s: int = 300
+    # Kept for backward compatibility — setting these in config.toml will not
+    # error, but they are no longer read by the daemon (Phase 4 will delete them).
     window_step_ms: int = 1000
     window_cap_ms: int = 25000
 

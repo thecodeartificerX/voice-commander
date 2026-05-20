@@ -1435,16 +1435,14 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         mru_pump = Win32MruPump(tracker=mru_tracker)
         mru_pump.start()
 
-    # --- Dictation mode (ADR 0086, streaming since ADR 0092) ---
+    # --- Dictation mode (ADR 0086, raw-PCM streaming since ADR 0096) ---
     dictation_session = DictationSession(
         bus=event_bus,
         ws_url=cfg.dictation.ws_url,
-        language=cfg.dictation.language,
         idle_timeout_s=float(cfg.dictation.idle_timeout_seconds),
         end_word=cfg.dictation.end_word,
         cancel_word=cfg.dictation.cancel_word,
-        window_step_ms=cfg.dictation.window_step_ms,
-        window_cap_ms=cfg.dictation.window_cap_ms,
+        max_dictation_s=float(cfg.dictation.max_dictation_s),
     )
 
     # --- Elements mode (ADR 0087) ---
@@ -1545,7 +1543,6 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         picker_registry=picker_registry if cfg.picker.enabled else None,
         dictation_session=dictation_session,
         dictation_ws_url=cfg.dictation.ws_url,
-        dictation_language=cfg.dictation.language,
         dictation_idle_timeout_s=float(cfg.dictation.idle_timeout_seconds),
         elements_session=elements_session,
         elements_max_elements=cfg.elements.max_elements,
@@ -1567,10 +1564,6 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         utterance_sink=daemon._on_utterance,
         device_name=cfg.audio.device_name,
     )
-
-    # Streaming-window dictation (ADR 0095): give the session the recorder so
-    # it can register a per-frame audio tap on start() / clear it on finish().
-    dictation_session.set_recorder(daemon._recorder)
 
     # Audio self-test: open device for ~200 ms before hotkey becomes active.
     # On failure: log, emit banner with FAIL status, then exit with code 73.
