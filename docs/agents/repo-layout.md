@@ -66,8 +66,7 @@ voice-commander/
 │   ├── dictation/                  # dictation mode subsystem (ADR 0086 + 0088)
 │   │   ├── __init__.py             # package init; docstring lists sub-modules
 │   │   ├── session.py              # DictationSession state machine (active/pending-end)
-│   │   ├── ws_client.py            # stream_transcribe(): async WebSocket streaming to /ws/transcribe
-│   │   ├── local_agreement.py      # LocalAgreement: word stabilisation across WS partial replies
+│   │   ├── ws_client.py            # stream_transcribe(): raw-PCM WebSocket streaming to /ws/transcribe (ADR 0096)
 │   │   ├── bridge.py               # pump(): drain chunk queue into WS coroutine (asyncio ↔ thread bridge)
 │   │   ├── store.py                # DictationStore: save/load last.txt
 │   │   ├── clipboard.py            # paste_via_clipboard(): clipboard round-trip paste

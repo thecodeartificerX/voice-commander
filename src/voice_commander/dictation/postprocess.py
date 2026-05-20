@@ -77,8 +77,8 @@ def apply_commands(text: str, commands: Sequence[Command]) -> str:
 
     Assumes *text* contains no embedded newlines — the ``\s*`` whitespace
     consumption would otherwise silently eat them. ``ws_client.stream_transcribe``
-    guarantees this invariant: ``LocalAgreement`` accumulates confirmed words
-    joined by spaces, so the stabilised transcript contains no embedded newlines.
+    guarantees this invariant: the server returns the transcript as a single
+    line of space-separated words with no embedded newlines.
 
     Supported actions:
     - ``"newline"``   → ``"\n"``

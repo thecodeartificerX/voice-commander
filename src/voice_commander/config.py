@@ -41,10 +41,6 @@ class DictationConfig:
     # own 600 s cap — this is 2× headroom to avoid a race where the daemon closes
     # first (ADR 0096 D4).
     max_dictation_s: int = 300
-    # Kept for backward compatibility — setting these in config.toml will not
-    # error, but they are no longer read by the daemon (Phase 4 will delete them).
-    window_step_ms: int = 1000
-    window_cap_ms: int = 25000
 
 
 @dataclass(frozen=True)

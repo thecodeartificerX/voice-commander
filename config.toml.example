@@ -5,13 +5,11 @@ key = "scroll_lock"
 dictation_key = "ctrl_r"
 
 [dictation]
-ws_url               = "ws://192.168.4.200:8767/ws/transcribe"  # streaming transcription proxy (LLM-cleanup, ADR 0093)
-language             = "en"     # whisper decode language
+ws_url               = "ws://192.168.4.200:8767/ws/transcribe"  # server-side transcription endpoint (ADR 0096)
 end_word             = "done"   # say this word (standalone) to end dictation
 cancel_word          = "cancel" # say this word to abort dictation and discard the transcript
 idle_timeout_seconds = 30        # close the stream after this long with no audio
-window_step_ms       = 1000      # re-decode the growing audio window this often (ADR 0095)
-window_cap_ms        = 25000     # max uncommitted window length; older audio is force-committed
+max_dictation_s      = 300       # daemon-side hard cap per dictation; server cap is 600 s — belt-and-suspenders against the daemon hanging without an end frame
 
 [audio]
 device_name = ""

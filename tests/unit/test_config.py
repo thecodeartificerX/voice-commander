@@ -315,25 +315,26 @@ def test_stale_mute_key_warns_and_is_ignored(tmp_path, caplog):
     assert any("mute_key" in r.message for r in caplog.records)
 
 
-def test_dictation_window_keys_default(tmp_path):
+def test_dictation_max_dictation_s_default(tmp_path):
+    """DictationConfig.max_dictation_s defaults to 300 (ADR 0096 D4)."""
     from voice_commander.config import DictationConfig
 
     cfg = DictationConfig()
-    assert cfg.window_step_ms == 1000
-    assert cfg.window_cap_ms == 25000
+    assert cfg.max_dictation_s == 300
+    assert not hasattr(cfg, "window_step_ms")
+    assert not hasattr(cfg, "window_cap_ms")
 
 
-def test_dictation_window_keys_load_from_toml(tmp_path):
+def test_dictation_max_dictation_s_override(tmp_path):
+    """DictationConfig.max_dictation_s can be overridden via [dictation] section."""
     from voice_commander.config import Config
 
     toml = tmp_path / "config.toml"
     toml.write_text(
         "[dictation]\n"
         'ws_url = "ws://x/ws"\n'
-        "window_step_ms = 750\n"
-        "window_cap_ms = 18000\n",
+        "max_dictation_s = 120\n",
         encoding="utf-8",
     )
     cfg = Config.load(toml)
-    assert cfg.dictation.window_step_ms == 750
-    assert cfg.dictation.window_cap_ms == 18000
+    assert cfg.dictation.max_dictation_s == 120
