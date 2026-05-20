@@ -1,31 +1,22 @@
-"""WebSocket client for the streaming whisper transcription endpoint.
+"""WebSocket client for the server-side dictation endpoint (ADR 0096).
 
-Connects to the confirmed-live ``/ws/transcribe`` endpoint, sends a one-time
-JSON ``config`` handshake, streams binary WAV chunks, and routes the server's
-``partial`` / ``error`` JSON replies. The protocol is request/reply: one
-binary chunk out, one reply in. The config handshake carries an optional
-``initial_prompt`` field that biases the whisper decoder toward the user's
-custom vocabulary (built by ``postprocess.build_prompt``).
+Protocol (raw PCM, server-side accumulation):
 
-Partials carry both ``text`` and a ``segments`` array (ADR 0095): each segment
-has ``start``, ``end``, and ``text`` fields that let the session translate
-window-relative timestamps into absolute-stream timestamps for audio trimming.
-The ``on_partial`` callback receives ``(text, segments)`` — both arguments are
-always present; ``segments`` defaults to ``[]`` when the server omits the field.
+1. Connect to ``ws_url``. No config frame is sent.
+2. For each audio chunk dequeued from ``chunk_q``: send as a binary WebSocket
+   frame. Chunks are raw 16 kHz mono float32 PCM bytes — no WAV headers.
+3. On the END sentinel (``None``) or when ``cap_timeout_s`` expires: send
+   ``{"type":"end"}`` as a JSON text frame.
+4. Await exactly one reply frame within ``done_timeout_s``:
+   - ``{"type":"done","text":"<cleaned>"}`` — return ``done.text`` (str, may be "").
+   - ``{"type":"error","message":"..."}`` — log and return ``None``.
+   - Any other frame type — log and discard; keep waiting.
+   - ``ConnectionClosed`` or timeout — log and return ``None``.
 
-After the client sends the terminal ``{"type":"end"}`` frame (which also carries
-``raw_transcript`` when a ``raw_transcript_fn`` callable is supplied — ADR 0095),
-the proxy emits **exactly one** ``done`` frame:
-``{"type":"done","text":"<LLM-cleaned>","raw":"<raw-whisper>"}``.
-``stream_transcribe`` reads that frame and returns ``done.text`` (the LLM-cleaned
-transcript). The ``raw`` field is optional (the raw 8765 server omits it).
-An empty ``done.text`` is valid — whisper heard nothing. If no ``done`` frame
-arrives before *done_timeout_s* (e.g. timeout, connection closed, server error),
-``stream_transcribe`` returns ``None`` and the caller falls back to
-``LocalAgreement`` output.
+There are no partial frames, no config handshake, no segments, no
+``on_partial`` callback, no ``prompt``, and no ``raw_transcript_fn``.
 
-See `docs/references/websockets.md` for the library API and spec section 8 for
-the frame contract.
+See `docs/decisions/0096-server-side-dictation.md` for the full protocol spec.
 """
 
 from __future__ import annotations
@@ -33,111 +24,100 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Callable
 
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger(__name__)
 
-# Sentinel placed on the chunk queue to signal end-of-session.
+# Sentinel placed on the chunk queue to signal end-of-dictation.
 END: None = None
 
 
 async def stream_transcribe(
     ws_url: str,
-    language: str,
     chunk_q: "asyncio.Queue[bytes | None]",
-    on_partial: Callable[[str, list[dict]], None],
-    idle_timeout_s: float,
-    prompt: str = "",
-    done_timeout_s: float = 15.0,
-    raw_transcript_fn: Callable[[], str] | None = None,
+    cap_timeout_s: float = 300.0,
+    done_timeout_s: float = 60.0,
 ) -> str | None:
-    """Stream WAV chunks to the server; route partials to ``on_partial``.
+    """Stream raw PCM chunks to the server; return the server's cleaned transcript.
 
-    Returns when the ``END`` sentinel is dequeued, the idle timeout elapses, or
-    the server sends an ``error`` frame. Propagates any exception raised by
-    ``connect()`` itself (``OSError`` / ``InvalidURI`` / ``InvalidHandshake``)
-    if the initial connection fails.
+    Opens a WebSocket connection to ``ws_url`` and enters the upload loop.
+    Each item dequeued from ``chunk_q`` is sent as a binary frame unless it is
+    the ``END`` sentinel (``None``), which triggers the end-frame send. If the
+    daemon-side cap ``cap_timeout_s`` fires before the sentinel arrives, the
+    upload loop also breaks and the end frame is sent.
 
-    ``prompt`` (when non-empty) is sent in the config frame as the
-    ``initial_prompt`` field so the server biases its decoder toward the
-    user's custom vocabulary. An empty ``prompt`` omits the field entirely.
+    After the end frame is sent, the function waits up to ``done_timeout_s``
+    for the server's single ``done`` reply.
 
-    ``raw_transcript_fn`` (when not ``None``) is called once, just before the
-    terminal ``{"type":"end"}`` frame is sent, to obtain the raw
-    ``LocalAgreement``-stabilised transcript. The result is included in the
-    end frame as ``raw_transcript`` so the LLM-cleanup proxy can use it as
-    additional grounding context (ADR 0095).
+    Parameters
+    ----------
+    ws_url:
+        WebSocket URL of the transcription endpoint (e.g. ``ws://host:port/ws/transcribe``).
+    chunk_q:
+        Async queue of raw float32 PCM byte chunks. Push ``None`` to signal
+        end-of-dictation. Must be pre-populated or written concurrently.
+    cap_timeout_s:
+        Daemon-side hard cap on the upload phase. When ``chunk_q.get()`` has
+        not returned within this many seconds, the upload loop exits and the
+        end frame is sent. Default: 300 s (5 minutes). The server has its own
+        600 s cap.
+    done_timeout_s:
+        How long to wait for the server's ``done`` reply after sending the end
+        frame. Covers Whisper + LLM latency. Default: 60 s.
 
-    ``on_partial`` receives ``(text, segments)`` where ``segments`` is the
-    list of dicts from the server's partial frame (ADR 0095); it defaults to
-    ``[]`` when the server omits the field.
+    Returns
+    -------
+    str
+        ``done.text`` from the server's done frame. May be an empty string
+        when the server transcribed silence — this is a valid, non-error result.
+    None
+        Any failure path: connect error propagated by the caller, send error,
+        recv timeout, ``ConnectionClosed``, server error frame, or unexpected
+        frame type.
 
-    After sending the terminal ``{"type":"end"}`` frame, this function reads
-    frames until it receives the proxy's ``done`` frame, a server ``error``,
-    or the *done_timeout_s* deadline expires. Any stray trailing ``partial``
-    frames are forwarded through ``on_partial`` (defensive — the proxy promises
-    only a single ``done`` follows ``end``, but a last partial must not break us).
-
-    Return value:
-    - ``str`` — the LLM-cleaned transcript from ``done.text`` when a ``done``
-      frame arrived (may be an empty string if whisper heard nothing).
-    - ``None`` — no ``done`` frame was received (timeout, connection closed,
-      or server error); the caller should fall back to ``LocalAgreement`` output.
+    Raises
+    ------
+    OSError, websockets.exceptions.InvalidURI, websockets.exceptions.InvalidHandshake
+        Raised by ``connect()`` when the initial connection fails. The caller
+        is responsible for handling these (e.g. ``DictationSession._async_main``
+        catches ``OSError`` and records ``error="endpoint"``).
     """
     async with connect(ws_url) as ws:
-        config: dict[str, str] = {"type": "config", "language": language}
-        if prompt:
-            config["initial_prompt"] = prompt
-        await ws.send(json.dumps(config))
+        # --- upload loop ---
+        # Read chunks from the queue and forward as binary frames.
+        # Exit when: (a) END sentinel arrives, or (b) cap_timeout_s fires.
         while True:
             try:
-                chunk = await asyncio.wait_for(chunk_q.get(), timeout=idle_timeout_s)
+                chunk = await asyncio.wait_for(chunk_q.get(), timeout=cap_timeout_s)
             except asyncio.TimeoutError:
-                logger.info("stream_transcribe: idle %.1fs — ending session", idle_timeout_s)
+                logger.warning(
+                    "stream_transcribe: daemon cap %.1fs reached — sending end frame",
+                    cap_timeout_s,
+                )
                 break
             if chunk is END:
                 break
             try:
                 await ws.send(chunk)
             except ConnectionClosed:
-                logger.warning("stream_transcribe: connection closed before chunk send")
+                logger.warning("stream_transcribe: connection closed during chunk send")
                 return None
-            try:
-                reply = json.loads(await ws.recv())
-            except ConnectionClosed:
-                logger.warning("stream_transcribe: connection closed by server")
-                return None
-            kind = reply.get("type")
-            if kind == "partial":
-                try:
-                    on_partial(reply.get("text", ""), reply.get("segments", []) or [])
-                except Exception:  # noqa: BLE001 - a bad callback must not kill the stream
-                    logger.exception("stream_transcribe: on_partial callback raised — continuing")
-            elif kind == "error":
-                logger.error("stream_transcribe: server error — %s", reply.get("detail"))
-                break
-            else:
-                logger.warning("stream_transcribe: unexpected reply type %r", kind)
-        end_frame: dict[str, str] = {"type": "end"}
-        if raw_transcript_fn is not None:
-            end_frame["raw_transcript"] = raw_transcript_fn()
+
+        # --- end frame ---
         try:
-            await ws.send(json.dumps(end_frame))
+            await ws.send(json.dumps({"type": "end"}))
         except ConnectionClosed:
-            logger.warning("stream_transcribe: connection closed before end frame")
+            logger.warning("stream_transcribe: connection closed before end frame could be sent")
             return None
 
-        # Read frames until the proxy's single ``done`` reply arrives.
-        # Any stray trailing ``partial`` frames are forwarded defensively.
-        # Timeout is bounded separately from idle_timeout_s to cover LLM latency.
+        # --- done-wait loop ---
+        # The server sends exactly ONE reply frame: done or error.
+        # Any unexpected frame type is logged and discarded; we keep waiting.
         while True:
             try:
-                frame = json.loads(
-                    await asyncio.wait_for(ws.recv(), timeout=done_timeout_s)
-                )
+                raw = await asyncio.wait_for(ws.recv(), timeout=done_timeout_s)
             except asyncio.TimeoutError:
                 logger.warning(
                     "stream_transcribe: timed out waiting for done frame (%.1fs)",
@@ -147,25 +127,25 @@ async def stream_transcribe(
             except ConnectionClosed:
                 logger.warning("stream_transcribe: connection closed while waiting for done frame")
                 return None
+
+            try:
+                frame = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("stream_transcribe: non-JSON frame received while waiting for done")
+                return None
+
             kind = frame.get("type")
             if kind == "done":
                 return frame.get("text", "")
-            elif kind == "partial":
-                # Stray trailing partial — forward and keep waiting.
-                try:
-                    on_partial(frame.get("text", ""), frame.get("segments", []) or [])
-                except Exception:  # noqa: BLE001
-                    logger.exception(
-                        "stream_transcribe: on_partial callback raised on trailing partial — continuing"
-                    )
             elif kind == "error":
                 logger.error(
-                    "stream_transcribe: server error in done-read phase — %s",
-                    frame.get("detail"),
+                    "stream_transcribe: server error frame — %s",
+                    frame.get("message", frame.get("detail", "<no message>")),
                 )
                 return None
             else:
                 logger.warning(
-                    "stream_transcribe: unexpected frame type %r while waiting for done",
+                    "stream_transcribe: unexpected frame type %r while waiting for done — discarding",
                     kind,
                 )
+                # Keep waiting; the server may still send done after an unexpected frame.
