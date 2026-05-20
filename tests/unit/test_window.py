@@ -32,7 +32,9 @@ def _make_window(
     win._label = None
     win._badge_label = None
     win._cancel_badge_label = None
+    win._processing_badge_label = None  # ADR 0096 D5: processing state badge
     win._dictating = False
+    win._processing = False  # ADR 0096 D5: processing state flag
     win._cancelled_cue = False
     win._muted = False
     win._mute_color = (128, 128, 128)

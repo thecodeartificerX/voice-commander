@@ -345,3 +345,65 @@ def test_max_dictation_s_stored_correctly() -> None:
     """max_dictation_s constructor param is stored as _max_dictation_s."""
     sess = DictationSession(_FakeBus(), ws_url="ws://localhost:1", max_dictation_s=120.0)
     assert sess._max_dictation_s == 120.0
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: dictation.processing event tests (ADR 0096 D5)
+# ---------------------------------------------------------------------------
+
+
+def test_finish_publishes_processing_then_end_event() -> None:
+    """finish() publishes dictation.processing before dictation.end {reason: done}.
+
+    The processing event fires after the end sentinel is queued (recording
+    stops) and before loop_thread.join() returns — it marks the start of the
+    server Whisper+LLM wait window.  dictation.end fires after the join.
+    """
+    bus = _FakeBus()
+    server = _MockWsServer(done_text="hello world")
+    url = server.start()
+    sess = DictationSession(bus, ws_url=url, idle_timeout_s=3.0)
+    sess.start(Vocabulary())
+    sess.handle_utterance(_audio(), "some content")
+    text = sess.finish()
+    assert text == "hello world"
+
+    event_types = [evt[0] for evt in bus.events]
+    assert "dictation.processing" in event_types, (
+        "dictation.processing must be published by finish()"
+    )
+    assert "dictation.end" in event_types, (
+        "dictation.end must be published by finish()"
+    )
+    # Ordering: processing must come before end.
+    idx_processing = event_types.index("dictation.processing")
+    idx_end = event_types.index("dictation.end")
+    assert idx_processing < idx_end, (
+        f"dictation.processing (idx={idx_processing}) must precede "
+        f"dictation.end (idx={idx_end})"
+    )
+    # dictation.processing payload is empty dict.
+    processing_evt = next(e for e in bus.events if e[0] == "dictation.processing")
+    assert processing_evt[1] == {}
+
+
+def test_cancel_publishes_only_end_event_not_processing() -> None:
+    """cancel() publishes dictation.end {reason: cancel} but NOT dictation.processing.
+
+    The cancel path skips processing because the connection is closed
+    immediately — no server round-trip, no "waiting on server" window.
+    The cancel badge is the only visual feedback on this path.
+    """
+    bus = _FakeBus()
+    server = _MockWsServer(done_text="should not appear")
+    url = server.start()
+    sess = DictationSession(bus, ws_url=url, idle_timeout_s=2.0)
+    sess.start(Vocabulary())
+    sess.handle_utterance(_audio(), "some words")
+    sess.cancel()
+
+    event_types = [evt[0] for evt in bus.events]
+    assert "dictation.processing" not in event_types, (
+        "dictation.processing must NOT be published on the cancel path"
+    )
+    assert ("dictation.end", {"reason": "cancel"}) in bus.events

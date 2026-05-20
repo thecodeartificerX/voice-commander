@@ -21,6 +21,8 @@ def valid_toml(tmp_path):
         "[states.tool_error]\nrow = 7\nframes = 2\n\n"
         "[states.warmup]\nrow = 8\nframes = 2\n\n"
         "[states.crashed]\nrow = 9\nframes = 2\n\n"
+        # ADR 0096 D5: processing state — reuses idle row; badge is the visual cue.
+        "[states.processing]\nrow = 0\nframes = 2\n\n"
     )
     return toml
 
@@ -43,7 +45,7 @@ def test_load_charsheet_valid(valid_toml, valid_png):
     assert cs.frame_width == 64
     assert cs.frame_height == 64
     assert cs.fps == 12
-    assert len(cs.states) == 10
+    assert len(cs.states) == 11  # 10 original + PROCESSING (ADR 0096 D5)
 
 
 def test_load_charsheet_missing_state(tmp_path, valid_png):

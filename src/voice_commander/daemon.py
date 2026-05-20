@@ -719,10 +719,20 @@ class StreamingDaemon:
                 return
 
             self._feedback.on_transcript(result.text, result.confidence)
-            self._publish(
-                "transcript",
-                {"text": result.text, "confidence": result.confidence},
+            # Suppress the HUD `transcript` event during dictation (ADR 0096 D5).
+            # Under server-side dictation there are no partials to display — the
+            # HUD stays silent until paste.  The per-utterance LOG line below is
+            # preserved for end-word detection debugging.  The `transcript` event
+            # continues to fire in command mode (dictation_session not active).
+            _dictating_now = (
+                self._dictation_session is not None
+                and self._dictation_session.active
             )
+            if not _dictating_now:
+                self._publish(
+                    "transcript",
+                    {"text": result.text, "confidence": result.confidence},
+                )
 
             # Dictation sub-state (ADR 0086): while active, every utterance is
             # dictation content (buffered) or the end word — never a command.

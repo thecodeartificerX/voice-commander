@@ -252,6 +252,16 @@ class DictationSession:
 
         if chunk_q is not None:
             chunk_q.put(None)  # end sentinel — bridge.pump forwards it
+
+        # Signal the sprite that audio has been captured and the daemon is now
+        # waiting on the server's Whisper + LLM round-trip (ADR 0096 D5).
+        # Published AFTER the end sentinel is queued (so recording stops
+        # promptly) and BEFORE loop_thread.join() (so the sprite shows the
+        # processing badge during the server wait window, not after it).
+        # Cancel path does NOT publish this event — it calls cancel() instead
+        # of finish(), and the cancel badge is the only feedback on that path.
+        self._bus.publish("dictation.processing", {})
+
         if loop_thread is not None:
             loop_thread.join(timeout=self._idle_timeout_s + _JOIN_MARGIN_S)
             if loop_thread.is_alive():

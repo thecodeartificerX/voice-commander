@@ -38,6 +38,22 @@ def _should_reload(mtime_old: float, mtime_new: float, threshold: float = 0.0) -
 _CANCELLED_CUE_DURATION_S: float = 2.5
 
 
+def _apply_processing_state(
+    sm: Any,
+    window: Any,
+) -> None:
+    """Show or clear the processing badge on *window* based on *sm.processing*.
+
+    When ``sm.processing`` is ``True`` the badge is made visible.
+    When ``sm.processing`` is ``False`` the badge is hidden immediately.
+
+    This helper is module-level (not a closure) so it can be unit-tested
+    without spinning up a full pyglet window.  Mirrors the ``_apply_cancelled_cue``
+    pattern (ADR 0096 D5).
+    """
+    window.set_processing(sm.processing)
+
+
 def _apply_cancelled_cue(
     sm: Any,
     window: Any,
@@ -322,6 +338,9 @@ def main() -> None:
         window.set_muted(grey)
         renderer.set_muted(grey)
         window.set_dictating(sm.dictating)  # badge only; renderer uses grey above
+        # "PROCESSING…" badge: shown while awaiting the server Whisper+LLM
+        # round-trip after the end sentinel is sent (ADR 0096 D5).
+        _apply_processing_state(sm, window)
         # Transient "CANCELLED" badge: shown for _CANCELLED_CUE_DURATION_S after a
         # dictation.end {reason:"cancel"} event.  The badge is the user's ONLY
         # feedback that dictation was discarded (no chime on cancel).

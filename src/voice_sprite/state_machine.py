@@ -16,6 +16,7 @@ class SpriteState(Enum):
     TOOL_ERROR = "tool_error"
     WARMUP = "warmup"
     CRASHED = "crashed"
+    PROCESSING = "processing"  # dictation captured; awaiting server Whisper+LLM (ADR 0096 D5)
 
 
 # Event → target state mapping (pure data table).
@@ -65,6 +66,7 @@ class StateMachine:
         self.target_state = SpriteState.WARMUP
         self.muted = False
         self.dictating = False
+        self.processing = False  # True while awaiting server Whisper+LLM (ADR 0096 D5)
         self.cancelled_cue: bool = False  # True when last dictation.end had reason="cancel"
         self._heartbeat_timeout_s = heartbeat_timeout_ms / 1000.0
         self._last_heartbeat: float = 0.0
@@ -101,8 +103,18 @@ class StateMachine:
             self.cancelled_cue = False  # clear any prior cancel cue on new session
             return None
 
+        if event_type == "dictation.processing":
+            # Audio captured; daemon is waiting on server Whisper + LLM.
+            # Transition dictating → processing so the sprite shows a distinct
+            # "working" indicator until dictation.end arrives (ADR 0096 D5).
+            self.processing = True
+            self.target_state = SpriteState.PROCESSING
+            self.current_state = SpriteState.PROCESSING
+            return SpriteState.PROCESSING
+
         if event_type == "dictation.end":
             self.dictating = False
+            self.processing = False
             reason = data.get("reason")  # defensive: some publishers may omit "reason"
             # Surface a distinct cancelled visual when reason == "cancel".
             # This covers both spoken cancel AND scroll-lock cancel — both

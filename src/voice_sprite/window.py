@@ -158,7 +158,9 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._label: pyglet.text.Label | None = None
         self._badge_label: pyglet.text.Label | None = None
         self._cancel_badge_label: pyglet.text.Label | None = None
+        self._processing_badge_label: pyglet.text.Label | None = None
         self._dictating = False
+        self._processing = False
         self._cancelled_cue = False
         self._muted = False
         self._mute_color = (128, 128, 128)
@@ -193,6 +195,16 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
 
     def set_dictating(self, dictating: bool) -> None:
         self._dictating = dictating
+
+    def set_processing(self, processing: bool) -> None:
+        """Show (True) or hide (False) the 'PROCESSING…' badge.
+
+        Called by the main update loop when the sprite enters the
+        ``PROCESSING`` state (``dictation.processing`` SSE event received).
+        The badge indicates the daemon has captured audio and is awaiting
+        the server's Whisper + LLM round-trip (ADR 0096 D5).
+        """
+        self._processing = processing
 
     def set_cancelled_cue(self, cancelled: bool) -> None:
         """Show (True) or hide (False) the transient 'CANCELLED' badge.
@@ -296,6 +308,23 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
             # captured once at label creation goes stale mid-dictation.
             self._badge_label.x = self.width // 2
             self._badge_label.draw()
+
+        if self._processing:
+            if self._processing_badge_label is None:
+                self._processing_badge_label = pyglet.text.Label(
+                    "⏳ PROCESSING…",
+                    font_name="Segoe UI",
+                    font_size=9,
+                    weight="bold",
+                    x=self.width // 2,
+                    y=2,
+                    anchor_x="center",
+                    anchor_y="bottom",
+                    color=(100, 200, 255, 255),  # light-blue, distinct from DICTATING amber
+                )
+            # Re-centre every frame in case CursorDock resizes the window.
+            self._processing_badge_label.x = self.width // 2
+            self._processing_badge_label.draw()
 
         if self._cancelled_cue:
             if self._cancel_badge_label is None:

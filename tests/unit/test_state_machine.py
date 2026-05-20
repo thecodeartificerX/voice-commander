@@ -131,7 +131,12 @@ def test_force_crashed():
 def test_all_states_in_event_map():
     """Every non-crashed, non-muted state should be reachable via at least one event."""
     reachable = set(v for v in EVENT_STATE_MAP.values() if v is not None)
-    unreachable = {SpriteState.CRASHED}  # only reachable via heartbeat timeout
+    # States that are reached via bespoke event handling (not the EVENT_STATE_MAP
+    # lookup path) and therefore legitimately absent from the map:
+    # - CRASHED: reachable via heartbeat timeout in StateMachine.tick()
+    # - PROCESSING: reachable via dictation.processing event (ADR 0096 D5),
+    #   handled bespoke like dictation.start/dictation.end (not in the map).
+    unreachable = {SpriteState.CRASHED, SpriteState.PROCESSING}
     for state in SpriteState:
         if state not in unreachable:
             assert state in reachable, f"{state} not reachable via any event"

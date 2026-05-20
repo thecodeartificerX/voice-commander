@@ -75,5 +75,14 @@ row = 6
 frames = 10
 frame_width = 48
 
+# row 6 (reused) — daemon captured audio, awaiting server Whisper+LLM decode.
+# Visual distinction from IDLE comes from the "⏳ PROCESSING…" badge drawn by
+# SpriteWindow.on_draw() when StateMachine.processing is True (ADR 0096 D5).
+# The sprite itself uses the sleeping/idle pose — the badge is the cue.
+[states.processing]
+row = 6
+frames = 10
+frame_width = 48
+
 # -- Transitions ------------------------------------------------------------
 # No dedicated transition rows. States snap instantly.
