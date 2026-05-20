@@ -107,6 +107,38 @@ window-relative bookkeeping leaks into LA-2.
 committed prefix (only grows, never rewrites), not the raw hypothesis with its
 unstable tail. Stable, honest live view.
 
+## Bug fix — 2026-05-20
+
+**The bug.** `LocalAgreement.commit()` indexes into the hypothesis with
+`hypothesis[already:agreed]`, where `already = len(self._committed)` is an
+absolute committed-word count and `agreed` is the agreeing-prefix length of the
+**current** whole-window hypothesis. This arithmetic is valid only when every
+hypothesis is a whole-window decode starting at t=0 of the dictation — exactly
+what D1 guarantees. However, `DictationSession._on_partial` called
+`window.commit(end_s)` after each LA-2 commit (trimming the audio buffer), and
+`_on_frame` called `window.commit(forced)` when the cap was exceeded. After
+any trim the server's next hypothesis decodes only the post-trim sub-window — it
+does NOT start with the previously-committed words. `prev_words` (from the
+pre-trim hypothesis) and `new_words` (from the post-trim hypothesis) no longer
+share the committed prefix; `agreed` collapses to 0 or a small number; and the
+`hypothesis[already:agreed]` slice is nonsense. In a live test this produced an
+11-character paste (`"This is boy"`) instead of the full spoken sentence
+(`"This is a dictation test. And boy do we be dictating right now."`).
+
+**The fix.** After every `window.commit(...)` call — whether triggered by LA-2
+in `_on_partial` (segments branch) or by cap overflow in `_on_frame` — reset
+`self._agreement = LocalAgreement()`. The post-trim window is a fresh
+growing-window sub-session; LA-2 must start its prefix-agreement over from
+scratch. `self._confirmed` (the session-level word accumulator) is untouched by
+the reset and continues to accumulate committed words across resets, so the
+global transcript is preserved. The cap-trim reset is taken under
+`_agreement_lock` because `_on_partial` (asyncio-loop thread) is the only other
+writer.
+
+**Where the fix lives.** `session.py` only — `LocalAgreement`'s contract is
+correct as documented; the session was violating it by feeding post-trim
+hypotheses without resetting state.
+
 ## Consequences
 
 **Positive:**

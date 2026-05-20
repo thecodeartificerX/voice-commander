@@ -258,6 +258,10 @@ class DictationSession:
             return
         wav = window.append(frame)
         if wav is not None:
+            logger.info(
+                "dictation[debug]: emit window WAV %d bytes, uncommitted=%.2fs, committed_offset=%.2fs",
+                len(wav), window.uncommitted_seconds(), window.committed_offset_s,
+            )
             chunk_q.put(wav)
         if window.cap_exceeded():
             forced = (
@@ -266,6 +270,11 @@ class DictationSession:
                 - (self._window_cap_ms / 1000.0)
             )
             window.commit(forced)
+            # ADR 0095 fix: cap-trim drops oldest audio that LA-2 may still be
+            # tracking via _prev/_committed. Reset agreement state under the
+            # lock — _on_partial (loop thread) is the only other writer.
+            with self._agreement_lock:
+                self._agreement = LocalAgreement()
             logger.debug("dictation: window cap reached — force-committed to %.2fs", forced)
 
     def handle_utterance(
@@ -452,6 +461,10 @@ class DictationSession:
 
     def _on_partial(self, text: str, segments: list[dict]) -> None:
         """Fold one server partial into LocalAgreement-2. Runs on the loop thread."""
+        logger.info(
+            "dictation[debug]: partial recv text=%r segments=%d",
+            text, len(segments),
+        )
         window = self._window
         offset = window.committed_offset_s if window is not None else 0.0
         with self._agreement_lock:
@@ -462,6 +475,13 @@ class DictationSession:
                     self._confirmed.extend(committed)
                 if end_s is not None and window is not None:
                     window.commit(end_s)
+                    # ADR 0095 fix: after a trim, the post-trim window is a
+                    # fresh growing-window sub-session; the server's next
+                    # hypothesis no longer starts with the committed prefix,
+                    # so LA-2's index math (hypothesis[already:agreed]) becomes
+                    # invalid. Reset agreement state. self._confirmed keeps the
+                    # global committed transcript across resets.
+                    self._agreement = LocalAgreement()
             else:
                 if not self._warned_no_segments:
                     logger.warning(
@@ -476,5 +496,8 @@ class DictationSession:
                 committed, _ = self._agreement.commit(timed)
                 if committed:
                     self._confirmed.extend(committed)
-            hud_text = self._agreement.committed_text()
+            # HUD shows all globally committed words — self._confirmed is the
+            # session-level accumulator across LA-2 resets (post-trim), so it
+            # is always the complete picture (ADR 0095 fix).
+            hud_text = " ".join(self._confirmed)
         self._bus.publish("transcript", {"text": hud_text, "confidence": 1.0})
