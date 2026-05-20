@@ -105,7 +105,8 @@ def test_vocab_corrections_and_commands_applied(
 
     # Partials → LocalAgreement → raw "supa base new line then code".
     with MockWsServer(
-        ["supa base", "base new line", "new line then code"]
+        ["supa base", "base new line", "new line then code"],
+        done_text="supa base new line then code",
     ) as server:
         daemon, dictation_session, feedback, bus = _make_daemon(
             transcripts=[

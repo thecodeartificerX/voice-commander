@@ -28,10 +28,17 @@ class _FakeBus:
 
 
 class _MockWsServer:
-    """Replies one partial per binary chunk; partial texts taken from *replies*."""
+    """Replies one partial per binary chunk; partial texts taken from *replies*.
 
-    def __init__(self, replies: list[str]) -> None:
+    ``done_text`` is sent in the ``{"type":"done"}`` frame after the client
+    sends ``{"type":"end"}`` (ADR 0094). When the ``end`` frame carries
+    ``raw_transcript`` and ``done_text`` is empty, ``raw_transcript`` is used
+    instead (ADR 0095 Change B — LLM-clean is a no-op in tests).
+    """
+
+    def __init__(self, replies: list[str], done_text: str = "") -> None:
         self._replies = replies
+        self._done_text = done_text
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._ready = threading.Event()
@@ -50,6 +57,18 @@ class _MockWsServer:
                     text = self._replies[min(state["i"], len(self._replies) - 1)]
                     state["i"] += 1
                     await conn.send(json.dumps({"type": "partial", "text": text}))
+                elif isinstance(message, str):
+                    data = json.loads(message)
+                    if data.get("type") == "end":
+                        # ADR 0094: send done frame so finish() doesn't time out.
+                        # When the test supplies a non-empty done_text, use it.
+                        # Otherwise prefer raw_transcript from the end frame
+                        # (ADR 0095 Change B — LLM-clean is a no-op in tests).
+                        if self._done_text:
+                            done_text = self._done_text
+                        else:
+                            done_text = data.get("raw_transcript", "")
+                        await conn.send(json.dumps({"type": "done", "text": done_text}))
 
         server = await serve(handler, "localhost", 0)
         port = server.sockets[0].getsockname()[1]
@@ -69,9 +88,12 @@ def _audio(n: int = 8000) -> np.ndarray:
 
 def test_streaming_session_then_postprocessing() -> None:
     """Chunks streamed → stabilised → corrections + commands applied."""
-    # Partials chosen so LocalAgreement confirms "supa base new line then code".
+    # done_text is the transcript the proxy returns after LLM-clean (a no-op
+    # in tests). This matches what LocalAgreement would commit across these
+    # whole-window hypotheses given real growing-window audio (ADR 0094/0095).
     server = _MockWsServer(
-        ["supa base", "base new line", "new line then code"]
+        ["supa base", "base new line", "new line then code"],
+        done_text="supa base new line then code",
     )
     url = server.start()
     bus = _FakeBus()

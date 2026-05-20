@@ -18,10 +18,17 @@ class MockWsServer:
     Use as a context manager or call .start()/.stop(). ``url`` is the bound
     ws:// URL once started. ``replies`` is the list of partial texts returned
     one-per-chunk (the last entry repeats if more chunks arrive).
+
+    ``done_text`` is the text sent in the ``{"type":"done"}`` frame after the
+    client sends ``{"type":"end"}`` (ADR 0094). When the ``end`` frame carries
+    ``raw_transcript``, that value is used instead (ADR 0095 Change B) unless
+    ``done_text`` is explicitly provided (non-empty) by the test.
+    Defaults to ``""`` for sessions where no paste is expected.
     """
 
-    def __init__(self, replies: list[str]) -> None:
+    def __init__(self, replies: list[str], done_text: str = "") -> None:
         self._replies = replies
+        self._done_text = done_text
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._ready = threading.Event()
@@ -46,6 +53,17 @@ class MockWsServer:
                     data = json.loads(message)
                     if data.get("type") == "config":
                         self.configs.append(data)
+                    elif data.get("type") == "end":
+                        # ADR 0094: send done frame so finish() doesn't time out.
+                        # When the test supplies a non-empty done_text, use it
+                        # (explicit is better than implicit for test clarity).
+                        # Otherwise prefer raw_transcript from the end frame
+                        # (ADR 0095 Change B — LLM-clean is a no-op in tests).
+                        if self._done_text:
+                            done_text = self._done_text
+                        else:
+                            done_text = data.get("raw_transcript", "")
+                        await conn.send(json.dumps({"type": "done", "text": done_text}))
                 else:
                     self.chunk_count += 1
                     text = self._replies[min(state["i"], len(self._replies) - 1)]

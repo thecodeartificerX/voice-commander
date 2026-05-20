@@ -92,7 +92,7 @@ def test_dictation_enter_stream_finalize(
         lambda text, **kw: pasted.append(text),
     )
 
-    with MockWsServer(["hello world", "world done"]) as server:
+    with MockWsServer(["hello world", "world done"], done_text="hello world") as server:
         daemon, dictation_session, feedback, bus = _make_daemon(
             transcripts=[
                 _Transcription("dictate"),
@@ -166,7 +166,7 @@ def test_hotkey_end_with_in_flight_utterance(
         lambda text, **kw: pasted.append(text),
     )
 
-    with MockWsServer(["hello world", "world more", "more text"]) as server:
+    with MockWsServer(["hello world", "world more", "more text"], done_text="hello world more text") as server:
         daemon, dictation_session, feedback, bus = _make_daemon(
             transcripts=[
                 _Transcription("hello world"),
@@ -256,7 +256,7 @@ def test_pipeline_loop_drains_before_finalize(
         lambda text, **kw: pasted.append(text),
     )
 
-    with MockWsServer(["line one", "one line two", "line two end"]) as server:
+    with MockWsServer(["line one", "one line two", "line two end"], done_text="line one line two end") as server:
         daemon, dictation_session, feedback, bus = _make_daemon(
             transcripts=[
                 _Transcription("spoken line one"),
@@ -323,7 +323,7 @@ def test_hotkey_end_finalizes_without_trailing_utterance(
             processed.set()
             return result
 
-    with MockWsServer(["some dictated content"]) as server:
+    with MockWsServer(["some dictated content"], done_text="some dictated content") as server:
         from voice_commander.daemon import StreamingDaemon
         from voice_commander.dispatcher import Dispatcher
         from voice_commander.picker.registry import reset_global_picker_registry

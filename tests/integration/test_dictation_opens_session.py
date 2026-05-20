@@ -130,7 +130,7 @@ def test_ctrl_open_done_closes_session(
         lambda text, **kw: pasted.append(text),
     )
 
-    with MockWsServer(["hello world"]) as server:
+    with MockWsServer(["hello world"], done_text="hello world") as server:
         recorder = MagicMock()
         daemon, dictation_session, feedback, bus = _make_daemon(
             transcripts=[
