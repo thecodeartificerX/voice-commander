@@ -1,8 +1,8 @@
 # /ws/transcribe — Streaming Transcription Server Contract
 
-**Vendored:** 2026-05-19
-**Source:** Custom Python / FastAPI + faster-whisper proxy (separate repo)
-**Cited by:** `src/voice_commander/dictation/ws_client.py`, `src/voice_commander/dictation/postprocess.py`
+**Vendored:** 2026-05-20 (updated for ADR 0096 raw-PCM protocol)
+**Source:** Custom Python / FastAPI + faster-whisper VPS pipeline (separate repo)
+**Cited by:** `src/voice_commander/dictation/ws_client.py`
 
 ## Endpoint
 
@@ -10,30 +10,64 @@
 WebSocket /ws/transcribe
 ```
 
-## Frame protocol
+## Frame protocol (ADR 0096 D1–D2)
 
 ### Client → Server
 
 | Frame | Type | Description |
 |---|---|---|
-| Config | JSON | `{"type":"config","language":"en","initial_prompt":"..."}` — one-time handshake. `initial_prompt` biases the decoder toward custom vocabulary (optional). |
-| Audio chunk | Binary | WAV-encoded audio (16 kHz mono 16-bit PCM). Under the growing-window model (ADR 0095), this is the *whole window* re-sent each step. |
-| End | JSON | `{"type":"end"}` — signals end of session. Optionally carries `"raw_transcript":"..."` (the daemon's committed `LocalAgreement` text); when present, the proxy LLM-cleans this text directly. |
+| Audio chunk | Binary | Raw 16 kHz mono float32 PCM bytes — **no WAV header per message**, no config frame. Each binary frame is a direct `audio_ndarray.tobytes()` slice from one VAD utterance. |
+| End | JSON | `{"type":"end"}` — signals end-of-dictation. No `raw_transcript` field. No `initial_prompt` field. |
+
+**Dropped from old protocol (ADR 0091/0092/0095):**
+- `{"type":"config",...}` handshake frame — removed. Server hardcodes `language="en"`.
+- WAV encoding per message — removed. Raw float32 bytes only.
+- `raw_transcript` on the end frame — removed. Server does the only decode.
 
 ### Server → Client
 
 | Frame | Type | Description |
 |---|---|---|
-| Partial | JSON | `{"type":"partial","text":"...","accumulated":"...","segments":[{"start":0.0,"end":1.2,"text":"..."},...]}`  — `text` is the latest hypothesis. `accumulated` is unreliable under overlapping windows (daemon ignores it). `segments` (ADR 0095) carries per-segment timestamps, seconds relative to the sent WAV; absent on un-upgraded servers. |
-| Done | JSON | `{"type":"done","text":"...","raw":"..."}` — exactly one, after the client's `end` frame. `text` is the LLM-cleaned transcript (or raw whisper text if LLM unavailable). `raw` echoes the raw transcript (optional). |
-| Error | JSON | `{"type":"error","detail":"..."}` — server error; daemon logs and aborts session. |
+| Done | JSON | `{"type":"done","text":"...","raw":"..."}` — **exactly one**, sent after the client's `end` frame. `text` is the LLM-cleaned transcript (or raw whisper text if LLM unavailable). `raw` is the raw whisper transcript before LLM cleanup. |
+| Error | JSON | `{"type":"error","message":"..."}` — server error (e.g. `"max duration exceeded"`); daemon logs and aborts session. |
 
-## Token limit for `initial_prompt`
+**No partial frames. No segments. No accumulated field.** The server is silent until the `end` frame is received.
 
-Whisper's tokenizer uses a vocabulary where the average token is ~4 characters.
-The hard server-side cap is **224 tokens** (~896 characters). If the string exceeds
-this limit the server silently truncates it at a token boundary.
+## Server-side behaviour (ADR 0096 D2)
 
-Voice Commander's `postprocess.build_prompt` enforces `_PROMPT_CHAR_CAP = 800`
-characters by dropping whole trailing words, keeping the prompt safely under the
-server cap regardless of the user's vocabulary size.
+**Accumulate phase** (binary frames received):
+
+- Per-connection growing byte buffer. Append raw `float32` bytes on every binary frame.
+- No per-message decode. No partial responses.
+
+**End phase** (`{"type":"end"}` received):
+
+1. `audio = np.frombuffer(buf, np.float32)`
+2. `faster_whisper.WhisperModel.transcribe(audio, vad_filter=True)` — called **once per dictation**, on the final accumulated audio.
+3. Join segment texts into one raw transcript.
+4. `clean_transcript(raw)` — one LLM round-trip.
+5. Send `{"type":"done","text":<cleaned>,"raw":<raw>}` and close.
+
+**Edge cases (server):**
+
+- `WebSocketDisconnect` mid-accumulation: discard buffer. No response.
+- Empty or all-silence audio: `{"type":"done","text":"","raw":""}`.
+- Server-side max-dictation cap: **600 s**. On hit: `{"type":"error","message":"max duration exceeded"}` + close.
+
+## Daemon-side timeouts
+
+- `cap_timeout_s = 300` — daemon hard cap; fires `{"type":"end"}` and enters finalization.
+- `done_timeout_s = 60` — max wait after sending `{"type":"end"}` for the `done` frame (covers Whisper + LLM latency on long dictations).
+
+## `ws_client.stream_transcribe` signature (ADR 0096 D8)
+
+```python
+async def stream_transcribe(
+    ws_url: str,
+    chunk_q: asyncio.Queue[bytes | None],
+    cap_timeout_s: float = 300.0,
+    done_timeout_s: float = 60.0,
+) -> str | None:
+```
+
+Returns `done.text` (str, possibly `""`) or `None` on timeout / connection closed / error.

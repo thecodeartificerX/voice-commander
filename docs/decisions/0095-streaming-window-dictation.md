@@ -1,5 +1,7 @@
 # ADR 0095 — Streaming-Window Dictation
 
+**Status: SUPERSEDED by [ADR 0096](0096-server-side-dictation.md)** — growing-window streaming, LocalAgreement-2, segment-based trimming, and the frame tap have all been deleted. The 2026-05-20 bug-fix amendment that fixed LA-2 reset-on-trim is preserved here for historical record only — that code no longer exists.
+
 **Status:** Accepted
 **Date:** 2026-05-19
 **Amends:** [ADR 0092](0092-streaming-dictation-integration.md) (transport: per-chunk → whole-window streaming), [ADR 0091](0091-streaming-dictation-experiment.md) (LocalAgreement semantics corrected)

@@ -1,6 +1,7 @@
 # ADR 0094 — Consume the `done` Frame for LLM-Cleaned Transcripts
 
 **Status:** Accepted
+**Reaffirmed by [ADR 0096](0096-server-side-dictation.md)** — the daemon still consumes the proxy's single `done` frame to obtain the LLM-cleaned final transcript. The end-frame `raw_transcript` field is no longer sent (server now does the only decode), but the done-frame contract is unchanged.
 **Date:** 2026-05-19
 **Amends:** [ADR 0093](0093-transcription-proxy-endpoint.md) — corrects the "zero code change" claim; protocol and endpoint unchanged
 

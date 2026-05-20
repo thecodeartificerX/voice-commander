@@ -1,79 +1,57 @@
 # Streaming Dictation
 
 Dictation is a voice-session sub-state. Saying bare "dictate" or pressing Right
-Ctrl (`dictation_key`, default `ctrl_r`) enters dictation; a `StreamingRecorder`
-frame tap feeds raw audio into a growing `DictationWindow` buffer, which emits
-whole-window WAVs on a fixed cadence to a whisper WebSocket server. Words are
-stabilised progressively by `LocalAgreement-2` as whole-window partial transcripts
-arrive. When dictation ends the stabilised transcript is post-processed and pasted
-at the cursor.
+Ctrl (`dictation_key`, default `ctrl_r`) enters dictation. The daemon streams raw
+16 kHz mono float32 PCM over a WebSocket to the VPS pipeline. The server
+accumulates the raw bytes, decodes once on the final audio, LLM-cleans the
+result, and returns a single `done` frame. The daemon pastes the cleaned text at
+the cursor.
 
-**ADR:** [0092 — Streaming Dictation Integration](decisions/0092-streaming-dictation-integration.md)
-(supersedes the batch POST transport of ADR 0086/0090; promotes the experiment
-from ADR 0091). [ADR 0093](decisions/0093-transcription-proxy-endpoint.md) moved
-the endpoint to an LLM-cleanup proxy — see [Transcription proxy](#transcription-proxy) below.
-[ADR 0094](decisions/0094-consume-done-frame.md) corrects ADR 0093's "zero code change" claim:
-the daemon now consumes the proxy's `done` frame to receive the LLM-cleaned transcript.
-[ADR 0095](decisions/0095-streaming-window-dictation.md) replaces the per-chunk model with a
-growing-window model: the whole buffer is re-sent each step and `LocalAgreement-2` commits
-the longest agreeing prefix of consecutive whole-window hypotheses.
+**ADR:** [0096 — Server-Side Dictation (Major Pivot)](decisions/0096-server-side-dictation.md)
+— the authoritative architecture reference. Supersedes the streaming-window model
+of ADR 0095, the per-chunk integration of ADR 0092, and the LocalAgreement
+experiment of ADR 0091. [ADR 0093](decisions/0093-transcription-proxy-endpoint.md)
+established the LLM-cleanup proxy. [ADR 0094](decisions/0094-consume-done-frame.md)
+defines the `done`-frame contract (reaffirmed by ADR 0096). Daemon lifecycle wiring
+(ADR 0086/0089/0090) is unchanged.
 
-## Transcription proxy
+## Transcription server
 
-`[dictation] ws_url` points at a **WebSocket proxy** (`ws://192.168.4.200:8767/ws/transcribe`,
-ADR 0093), not the raw whisper server. The proxy is protocol-compatible — same
-config frame, audio-chunk frames, and `partial` / `done` / `error` replies.
+`[dictation] ws_url` points at a **WebSocket server** (`ws://192.168.4.200:8767/ws/transcribe`,
+ADR 0093/0096). The server accumulates raw PCM bytes sent by the daemon, performs
+a single Whisper decode on the full audio on receipt of the `end` frame, LLM-cleans
+the transcript, and returns `{"type":"done","text":<cleaned>,"raw":<raw>}`.
 
-- **Partial frames pass through unchanged** → `LocalAgreement-2` stabilisation and
-  the live HUD transcript feedback work exactly as before.
-- **The final `done` transcript is LLM-cleaned** by the proxy (punctuation,
-  casing, disfluency removal). After sending `{"type":"end","raw_transcript":"..."}`,
-  the daemon **reads the `done` frame** (`stream_transcribe` loops on `ws.recv()` until a
-  `{"type":"done","text":"..."}` frame arrives, bounded by `done_timeout_s=15 s`).
-  `DictationSession.finish()` returns the `done.text` value as the transcript
-  (ADR 0094).
-- If no `done` frame arrives (timeout, connection closed, or server error),
-  `finish()` **falls back to the `LocalAgreement-2`-stabilised transcript** built
-  from the accumulated `partial` frames — the pre-0093 behaviour, preserving
-  graceful degradation.
-- If the LLM is temporarily unavailable, the proxy **silently returns raw whisper
-  text in the `done` frame** — dictation still completes with the raw text.
-- When the server omits `segments` on `partial` frames (un-upgraded server), the
-  daemon degrades gracefully: trimming is bounded by `window_cap_ms` instead of
-  segment end-times (OI-1 fallback).
+- **No partial frames, no config frame, no segments.** The server is silent until
+  the `end` frame arrives. The HUD is quiet during dictation.
+- **The final transcript is LLM-cleaned** by the server before returning the `done`
+  frame. The daemon reads `done.text` (ADR 0094) and pastes it. If no `done` frame
+  arrives within `done_timeout_s` (60 s), `finish()` returns `None`; an empty string
+  is pasted with a miss chime.
+- **`vad_filter=True`** in `transcribe()` removes silence segments on the server;
+  the full audio is decoded with complete context, eliminating boundary word loss
+  and stray `...`.
 
-The cleanup is entirely server-side; the daemon stays local-first and contacts
-only the proxy.
+The cleanup is entirely server-side; the daemon stays local-first.
 
 ---
 
 ## Flow
 
 ```
-StreamingRecorder frame tap (raw 16 kHz float32 frames)
-    │
-    ▼ DictationWindow._on_frame()
-DictationWindow (growing 16 kHz float32 buffer)
-    │  every window_step_ms (default 1000 ms) emit whole-window WAV
-    │  push WAV onto sync chunk_q
-    │
-    ▼ (asyncio-loop thread)
-ws_client.stream_transcribe(ws)   ← sends whole-window WAV; receives partial transcripts
-    │  on_partial(text, segments)
-    ▼
-LocalAgreement-2.feed(words)      ← commits longest common prefix of two consecutive
-    │  whole-window hypotheses     whole-window hypotheses; carries TimedWord end-times
-    │  DictationWindow.commit(end_s) trims buffer at committed word's end-time
-    │  (lock-guarded accumulator; window_cap_ms bounds uncommitted buffer)
-    │
 VAD utterances → handle_utterance(audio, text) [endpointing-only]
     │  classifies: "end" | "cancel" | "buffered"
-    │  does NOT stream audio as chunks (audio flows via frame tap)
+    │  on "buffered": puts audio.tobytes() onto chunk_q (raw float32 PCM bytes)
+    │
+    ▼ (asyncio-loop thread)
+ws_client.stream_transcribe(ws)
+    │  binary frame: raw PCM bytes from chunk_q, no WAV headers
+    │  on END sentinel: sends {"type":"end"}
+    │  publishes "dictation.processing" SSE → sprite shows processing badge
+    │  reads server's done frame → returns done.text (LLM-cleaned)
     │
     ▼ finish() — end-word or hotkey-end
-DictationWindow flush + end sentinel pushed
-asyncio thread sends {"type":"end","raw_transcript":"..."}  (committed raw text via raw_transcript_fn)
-asyncio thread reads proxy's done frame → _final_text (LLM-cleaned done.text)
+DictationSession.finish() joins asyncio thread → returns done.text (or None on timeout)
     │
     ▼ _finalize_dictation (daemon, _dictation_executor thread)
 apply_corrections → apply_commands → paste_via_clipboard → DictationStore.save_text
@@ -85,48 +63,35 @@ apply_corrections → apply_commands → paste_via_clipboard → DictationStore.
 
 ### `DictationSession` (`src/voice_commander/dictation/session.py`)
 
-Owns the WebSocket transport and the `DictationWindow`. On `start(vocab)`:
+Owns the WebSocket transport. On `start(vocab)`:
 
 1. Loads `vocab.json`, builds `initial_prompt = build_prompt(vocab)`.
-2. Creates a `DictationWindow` instance (growing 16 kHz float32 buffer).
-3. Registers a frame tap on `StreamingRecorder` via `set_frame_tap()` — raw 16 kHz
-   float32 frames flow directly into `DictationWindow._on_frame()`.
-4. Spawns an asyncio-loop thread that runs `ws_client.stream_transcribe` — the
-   thread drains `_chunk_q` (whole-window WAVs emitted by `DictationWindow`) and
-   sends them to the server. `bridge.py` is no longer in the dictation pipeline.
-5. Sends the config frame `{language, initial_prompt}` to `/ws/transcribe`.
-6. Routes each partial `(text, segments)` to `LocalAgreement-2.feed` under a lock;
-   on commit, calls `DictationWindow.commit(end_s)` to trim the buffer.
-7. Publishes `dictation.start`.
+2. Creates a `chunk_q` (`asyncio.Queue[bytes | None]`).
+3. Spawns an asyncio-loop thread that runs `ws_client.stream_transcribe` — the
+   thread drains `chunk_q` and sends raw PCM bytes as binary frames to the server.
+4. Publishes `dictation.start`.
 
 On `handle_utterance(audio, text) -> "end" | "cancel" | "buffered"` (endpointing-only):
 
 - Classification only: end-word / cancel-word / accumulate.
-- On `"buffered"`: returns immediately — no audio encoding, no chunk push. Audio
-  is flowing continuously via the frame tap.
-- End-word and cancel-word VAD utterances trigger exit classification only.
+- On `"buffered"`: puts `audio.tobytes()` (raw float32 PCM) onto `chunk_q`.
+- End-word and cancel-word VAD utterances trigger exit classification only; their
+  audio is not sent.
 
-On `finish() -> str` (normal exit):
+On `finish() -> str | None` (normal exit):
 
-- Clears the frame tap (stops new audio flowing into `DictationWindow`).
-- Flushes the `DictationWindow` (emits the final partial window as WAV).
 - Pushes the `None` end sentinel to the chunk queue.
-- Joins the asyncio-loop thread (bounded by `idle_timeout_seconds` + margin).
-  During that thread, `stream_transcribe` sends `{"type":"end","raw_transcript":"..."}`
-  (the full committed raw text via `raw_transcript_fn`) then reads the proxy's
-  `done` frame, storing `done.text` in `_final_text` (ADR 0094).
-- Calls `LocalAgreement-2.finalize()` to flush the confirmed-word accumulator
-  (always, for the fallback path).
-- Returns `_final_text` (the proxy's LLM-cleaned `done.text`) when not `None`.
-  Falls back to the `LocalAgreement-2`-stabilised transcript when `_final_text is
-  None` (no `done` frame received — timeout / closed / error).
+- Joins the asyncio-loop thread (bounded by `done_timeout_s` + margin).
+  During that thread, `stream_transcribe` sends `{"type":"end"}`, publishes
+  `dictation.processing`, then reads the server's `done` frame, storing
+  `done.text` in `_final_text` (ADR 0094).
+- Returns `_final_text` (`str`, possibly `""`) when not `None`.
+  Returns `None` when no `done` frame arrived (timeout / closed / error).
 - Publishes `dictation.end {reason:"done"}`.
-- Returns `""` if the WebSocket never connected or produced no output.
 
 On `cancel()`:
 
-- Clears the frame tap.
-- Closes the WebSocket, discards the buffer.
+- Closes the WebSocket immediately. No `end` frame is sent.
 - Publishes `dictation.end {reason:"cancel"}`.
 
 `request_end()`, `pending_end`, and `active` are unchanged — they drive the
@@ -136,21 +101,19 @@ hotkey-end drain path (ADR 0089).
 
 | Module | Responsibility |
 |--------|----------------|
-| `ws_client.py` | `stream_transcribe` — async WebSocket client; sends whole-window WAVs, receives `partial{text, segments}` frames, reads `done` frame (ADR 0094); `on_partial` is 2-arg `(text, segments)` |
-| `window.py` | `DictationWindow` — growing 16 kHz float32 audio buffer with step-cadence emission and committed-offset trimming |
-| `local_agreement.py` | `LocalAgreement-2` — whole-window prefix word stabiliser; commits longest common prefix of two consecutive whole-window hypotheses; words carry absolute-stream end-times via `TimedWord(text, end_s)` |
-| `store.py` | `encode_wav`, `DictationStore.save_text` / `read_text` |
+| `ws_client.py` | `stream_transcribe` — async WebSocket client; sends raw PCM binary frames from `chunk_q`; on END sentinel sends `{"type":"end"}`; reads `done` frame (ADR 0094); returns `done.text` or `None` |
+| `store.py` | `DictationStore.save_text` / `read_text` |
 | `postprocess.py` | `apply_corrections`, `apply_commands`, `build_prompt` |
 
-> `bridge.py` (`pump` — sync-to-async queue bridge) is no longer used in the
-> dictation pipeline; the chunk queue is drained directly by `stream_transcribe`.
+> `local_agreement.py`, `window.py` — deleted (ADR 0096 D7). No client-side
+> transcript assembly. `bridge.py` was already unused.
 
 ### Daemon `_finalize_dictation`
 
 Runs on the `_dictation_executor` single-worker thread (FIFO, unchanged from
-ADR 0090). Reduced to five steps:
+ADR 0090). Five steps:
 
-1. `text = session.finish()`
+1. `text = session.finish()` — returns `done.text` or `None` (→ `""`)
 2. `apply_corrections(text, vocab.corrections)`
 3. `apply_commands(text, vocab.commands)`
 4. `paste_via_clipboard(text)`
@@ -160,8 +123,9 @@ Takes no arguments. The daemon's lifecycle wiring
 (`on_dictation_toggle`, `_end_owned_session_if_needed`, close-before-finalize
 ordering, `_DICTATION_WAKE` sentinel) is **unchanged** from ADR 0090.
 
-VAD is **endpointing-only** in the streaming-window model: `handle_utterance()`
-classifies end/cancel/buffered but no longer encodes or streams audio as chunks.
+VAD is **endpointing-only**: `handle_utterance()` classifies end/cancel/buffered
+and puts raw PCM bytes on `chunk_q` for buffered utterances. Audio does not flow
+through a frame tap or DictationWindow — those are deleted.
 
 ---
 
@@ -170,27 +134,23 @@ classifies end/cancel/buffered but no longer encodes or streams audio as chunks.
 ```toml
 [dictation]
 ws_url               = "ws://192.168.4.200:8767/ws/transcribe"
-language             = "en"
 end_word             = "done"
 cancel_word          = "cancel"
 idle_timeout_seconds = 30
-window_step_ms       = 1000
-window_cap_ms        = 25000
+max_dictation_s      = 300
 ```
 
 | Key | Description |
 |-----|-------------|
-| `ws_url` | WebSocket `/ws/transcribe` endpoint — the LLM-cleanup proxy (ADR 0093). Replaces the old `endpoint` HTTP URL |
-| `language` | BCP-47 language code sent in the config frame |
+| `ws_url` | WebSocket `/ws/transcribe` endpoint — the VPS LLM-cleanup server (ADR 0093/0096) |
 | `end_word` | Standalone spoken word that ends dictation and pastes |
 | `cancel_word` | Standalone spoken word that cancels dictation (no paste) |
 | `idle_timeout_seconds` | Max time the asyncio-loop thread waits for final words after the end sentinel |
-| `window_step_ms` | Cadence (ms) at which `DictationWindow` emits whole-window WAVs (default 1000) |
-| `window_cap_ms` | Maximum uncommitted buffer size in ms before cap-bounded trim (default 25000) |
+| `max_dictation_s` | Daemon-side hard cap per dictation (default 300 s); on hit, daemon sends `{"type":"end"}` and finalizes normally. Server cap is 600 s. |
 
-`DictationConfig` dataclass: `ws_url`, `language`, `idle_timeout_seconds`,
-`end_word`, `cancel_word`, `window_step_ms`, `window_cap_ms`. The old `endpoint`
-field is removed.
+`DictationConfig` dataclass: `ws_url`, `idle_timeout_seconds`, `end_word`,
+`cancel_word`, `max_dictation_s`. The old `window_step_ms`, `window_cap_ms`, and
+`language` fields are removed.
 
 ---
 
@@ -209,16 +169,33 @@ Managed via the `/page/dictation` web page (three editor sections,
 
 ---
 
+## Sprite states
+
+| State | Trigger | Visual |
+|-------|---------|--------|
+| `dictating` | `dictation.start` | `● DICTATING` badge |
+| `processing` | `dictation.processing` (after end frame sent) | light-blue processing badge |
+| idle / done | `dictation.end` (any reason) | badge clears |
+| cancelled | `dictation.end {reason:"cancel"}` | `✕ CANCELLED` badge (2.5 s, auto-clears) |
+
+The `processing` state is new in ADR 0096 — it bridges the gap between the end
+frame being sent and the Whisper + LLM round-trip completing (~0.5–25 s). The HUD
+is otherwise silent during dictation (no per-utterance transcript events from the
+dictation path).
+
+---
+
 ## Error handling
 
 | Failure | Behaviour |
 |---------|-----------|
-| WebSocket connect fails | asyncio thread records error; `finish()` returns `""`; `dictation.error {reason:"endpoint"}` + miss chime |
-| WebSocket drops mid-session | `stream_transcribe` returns early; already-committed words are pasted; `dictation.error {reason:"endpoint"}` if nothing committed |
-| `encode_wav` fails on a window | `dictation.error {reason:"encode"}` + miss chime |
+| WebSocket connect fails | asyncio thread records error; `finish()` returns `None`; `dictation.error {reason:"endpoint"}` + miss chime |
+| WebSocket drops mid-session | `stream_transcribe` returns `None`; empty paste + miss chime; `dictation.error {reason:"endpoint"}` |
+| `done` frame timeout (60 s) | `finish()` returns `None`; empty paste + miss chime |
+| Server error frame | Treated as no `done` frame; `finish()` returns `None` |
 | `paste_via_clipboard` fails | `dictation.error {reason:"clipboard"}` + miss chime |
-| Server omits `segments` on partials | Graceful degradation: cap-bounded trimming instead of segment-based trimming (OI-1) |
-| Spoken cancel | Buffer discarded; `dictation.end {reason:"cancel"}`; sprite shows cancelled-cue badge; no chime |
+| Spoken cancel | Connection closed (no end frame); `dictation.end {reason:"cancel"}`; sprite shows cancelled-cue badge; no chime |
+| Daemon cap hit (300 s) | `{"type":"end"}` sent; enters normal finalization; server decodes what it has |
 
 ---
 
@@ -230,8 +207,9 @@ Managed via the `/page/dictation` web page (three editor sections,
 | [0088](decisions/0088-dictation-postprocessing.md) | Custom vocabulary, post-processing pipeline |
 | [0089](decisions/0089-dictation-hotkey-sentinel-cancel-debounce.md) | Hotkey-end sentinel, 50 ms debounce, spoken cancel |
 | [0090](decisions/0090-dictation-hotkey-opens-session.md) | Right Ctrl opens own session, close-before-finalize ordering |
-| [0091](decisions/0091-streaming-dictation-experiment.md) | Original streaming experiment (promoted) |
-| [0092](decisions/0092-streaming-dictation-integration.md) | Integration decision — this document's primary ADR |
+| [0091](decisions/0091-streaming-dictation-experiment.md) | Original streaming experiment (superseded) |
+| [0092](decisions/0092-streaming-dictation-integration.md) | Per-chunk integration decision (superseded; lifecycle reaffirmed) |
 | [0093](decisions/0093-transcription-proxy-endpoint.md) | LLM-cleanup proxy endpoint |
-| [0094](decisions/0094-consume-done-frame.md) | Consume `done` frame; `finish()` returns LLM-cleaned text with `LocalAgreement` fallback |
-| [0095](decisions/0095-streaming-window-dictation.md) | Growing-window model; `DictationWindow`; `LocalAgreement-2`; VAD endpointing-only |
+| [0094](decisions/0094-consume-done-frame.md) | Consume `done` frame; reaffirmed by ADR 0096 |
+| [0095](decisions/0095-streaming-window-dictation.md) | Growing-window model (superseded) |
+| [0096](decisions/0096-server-side-dictation.md) | Server-side dictation pivot — current authoritative transport ADR |

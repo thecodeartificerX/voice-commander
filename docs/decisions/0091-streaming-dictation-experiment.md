@@ -1,5 +1,7 @@
 # ADR 0091 — Streaming Dictation Experiment (WebSocket + LocalAgreement)
 
+**Status: SUPERSEDED by [ADR 0096](0096-server-side-dictation.md)** — the streaming-window prototype and LocalAgreement experiment are deleted; the daemon no longer does client-side transcript assembly.
+
 **Status:** Experimental
 **Date:** 2026-05-18
 **Extends:** [ADR 0086](0086-dictation-mode.md) — an alternative transcription path, not yet wired into the daemon

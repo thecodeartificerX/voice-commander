@@ -1,5 +1,7 @@
 # ADR 0092 — Streaming Dictation Integration (Batch Path Removed)
 
+**Status: SUPERSEDED by [ADR 0096](0096-server-side-dictation.md)** — the streaming-dictation transport, ws_client, and DictationSession have been rewritten; per-chunk WAV streaming + partial-frame reassembly are gone. Some lifecycle decisions (close-before-finalize ordering, hotkey-end drain) remain valid and are reaffirmed by 0096.
+
 **Status:** Accepted
 **Date:** 2026-05-18
 **Supersedes (transcription path):** [ADR 0086](0086-dictation-mode.md), [ADR 0090](0090-dictation-hotkey-opens-session.md) (transport only; lifecycle wiring unchanged)

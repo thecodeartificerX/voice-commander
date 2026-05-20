@@ -22,4 +22,4 @@ Read in this order when joining the project:
 - Node-graph ADRs: 0062–0068 in [`decisions/`](decisions/)
 - **Transcription pipeline (end-to-end):** [`transcription-pipeline.md`](transcription-pipeline.md) — both paths (command + dictation) with ASCII flow diagrams, module references, and ADR cross-links
 - **Dictation custom vocabulary:** ADR [`decisions/0088-dictation-custom-vocabulary.md`](decisions/0088-dictation-custom-vocabulary.md) + streaming transcription server reference [`references/ws-transcribe-server.md`](references/ws-transcribe-server.md)
-- **Streaming dictation (experimental):** [`dictation-streaming.md`](dictation-streaming.md) — WebSocket + LocalAgreement experiment, ADR [`decisions/0091-streaming-dictation-experiment.md`](decisions/0091-streaming-dictation-experiment.md)
+- **Streaming dictation (server-side decode):** [`dictation-streaming.md`](dictation-streaming.md) — raw PCM transport, server accumulates and decodes once, ADR [`decisions/0096-server-side-dictation.md`](decisions/0096-server-side-dictation.md)
