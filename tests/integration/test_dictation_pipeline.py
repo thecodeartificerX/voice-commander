@@ -1,7 +1,7 @@
-"""Daemon pipeline integration tests for streaming dictation mode (ADR 0092).
+"""Daemon pipeline integration tests for streaming dictation mode (ADR 0096).
 
 Builds a real daemon; the DictationSession streams to an in-process mock
-WebSocket server. Only the OS clipboard (paste_via_clipboard) is monkeypatched.
+WebSocket server.  Only the OS clipboard (paste_via_clipboard) is monkeypatched.
 Everything else — VerbRouter, DictationSession, _process_utterance,
 _finalize_dictation, executor, DictationStore — is real production code.
 """
@@ -92,7 +92,7 @@ def test_dictation_enter_stream_finalize(
         lambda text, **kw: pasted.append(text),
     )
 
-    with MockWsServer(["hello world", "world done"], done_text="hello world") as server:
+    with MockWsServer(done_text="hello world") as server:
         daemon, dictation_session, feedback, bus = _make_daemon(
             transcripts=[
                 _Transcription("dictate"),
@@ -115,9 +115,6 @@ def test_dictation_enter_stream_finalize(
         daemon._wav_executor.shutdown(wait=True)
 
     assert dictation_session.active is False
-    # One content utterance "hello world" → one WS chunk → partial "hello world".
-    # commit("hello world") → hypothesis=["hello","world"], confirmed=[].
-    # finalize() → ["hello","world"]. Final transcript: "hello world".
     assert pasted == ["hello world"], f"unexpected paste: {pasted}"
     assert daemon._dictation_store.read_text() == "hello world"
 
@@ -166,7 +163,7 @@ def test_hotkey_end_with_in_flight_utterance(
         lambda text, **kw: pasted.append(text),
     )
 
-    with MockWsServer(["hello world", "world more", "more text"], done_text="hello world more text") as server:
+    with MockWsServer(done_text="hello world more text") as server:
         daemon, dictation_session, feedback, bus = _make_daemon(
             transcripts=[
                 _Transcription("hello world"),
@@ -200,7 +197,7 @@ def test_hotkey_end_empty_session_no_crash(
         lambda text, **kw: pasted.append(text),
     )
 
-    with MockWsServer([]) as server:
+    with MockWsServer() as server:
         daemon, dictation_session, feedback, bus = _make_daemon(
             transcripts=[], tmp_path=tmp_path, ws_url=server.url
         )
@@ -224,7 +221,7 @@ def test_scroll_lock_cancel_wins_the_race(
         lambda text, **kw: pasted.append(text),
     )
 
-    with MockWsServer([]) as server:
+    with MockWsServer() as server:
         daemon, dictation_session, feedback, bus = _make_daemon(
             transcripts=[], tmp_path=tmp_path, ws_url=server.url
         )
@@ -256,7 +253,7 @@ def test_pipeline_loop_drains_before_finalize(
         lambda text, **kw: pasted.append(text),
     )
 
-    with MockWsServer(["line one", "one line two", "line two end"], done_text="line one line two end") as server:
+    with MockWsServer(done_text="line one line two end") as server:
         daemon, dictation_session, feedback, bus = _make_daemon(
             transcripts=[
                 _Transcription("spoken line one"),
@@ -323,7 +320,7 @@ def test_hotkey_end_finalizes_without_trailing_utterance(
             processed.set()
             return result
 
-    with MockWsServer(["some dictated content"], done_text="some dictated content") as server:
+    with MockWsServer(done_text="some dictated content") as server:
         from voice_commander.daemon import StreamingDaemon
         from voice_commander.dispatcher import Dispatcher
         from voice_commander.picker.registry import reset_global_picker_registry

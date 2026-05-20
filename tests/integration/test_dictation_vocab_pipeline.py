@@ -1,8 +1,10 @@
 """Integration test: streaming _finalize_dictation with a populated vocab.json.
 
-vocab.json is loaded at DictationSession.start (the daemon's _load_vocab
-hot-reload); the snapshot drives both the WS config prompt and the
-corrections/commands applied in _finalize_dictation.
+vocab.json is loaded at DictationSession.start (the daemon _load_vocab
+hot-reload); the snapshot drives the corrections/commands applied in
+_finalize_dictation. Under ADR 0096, the daemon sends raw PCM bytes and
+receives a single done.text from the server -- no config frame prompt,
+no LocalAgreement, no partial frames.
 """
 
 from __future__ import annotations
@@ -47,7 +49,7 @@ def _make_daemon(
     transcripts: list[_Transcription],
     tmp_path: Path,
     ws_url: str,
-) -> tuple["StreamingDaemon", DictationSession, CapturingFeedbackSink, EventBus]:
+) -> "tuple[StreamingDaemon, DictationSession, CapturingFeedbackSink, EventBus]":
     from voice_commander.daemon import StreamingDaemon
     from voice_commander.dispatcher import Dispatcher
     from voice_commander.picker.registry import reset_global_picker_registry
@@ -82,8 +84,7 @@ def _make_daemon(
 def test_vocab_corrections_and_commands_applied(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A populated vocab.json shapes the streamed transcript before paste."""
-    # Write vocab.json BEFORE the daemon starts dictation.
+    """A populated vocab.json shapes the done.text transcript before paste."""
     vocab_dir = tmp_path / "dictation"
     vocab_dir.mkdir(parents=True)
     (vocab_dir / "vocab.json").write_text(
@@ -103,16 +104,14 @@ def test_vocab_corrections_and_commands_applied(
         lambda text, **kw: pasted.append(text),
     )
 
-    # Partials → LocalAgreement → raw "supa base new line then code".
-    with MockWsServer(
-        ["supa base", "base new line", "new line then code"],
-        done_text="supa base new line then code",
-    ) as server:
+    # Mock server returns the raw transcript that the real server would produce
+    # from the accumulated PCM audio. Corrections + commands are applied by the
+    # daemon after receiving done.text (ADR 0096 D3).
+    with MockWsServer(done_text="supa base new line then code") as server:
         daemon, dictation_session, feedback, bus = _make_daemon(
             transcripts=[
                 _Transcription("dictate"),
                 _Transcription("supa base"),
-                _Transcription("base new line"),
                 _Transcription("new line then code"),
                 _Transcription("done"),
             ],
@@ -120,10 +119,10 @@ def test_vocab_corrections_and_commands_applied(
             ws_url=server.url,
         )
         audio = np.zeros(16000, dtype=np.float32)
-        for _ in range(5):
+        for _ in range(4):
             daemon._process_utterance(audio)
         daemon._dictation_executor.shutdown(wait=True)
         daemon._wav_executor.shutdown(wait=True)
 
-    # corrections: "supa base" → "Supabase"; commands: "new line" → "\n".
+    # corrections: "supa base" -> "Supabase"; commands: "new line" -> "\n".
     assert pasted == ["Supabase\nthen code"], f"unexpected paste: {pasted}"
