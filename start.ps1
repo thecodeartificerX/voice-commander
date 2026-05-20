@@ -228,9 +228,11 @@ function Invoke-VoiceStaleProcessNuke {
     }
 }
 
-if (-not $NoNuke) {
-    Invoke-VoiceStaleProcessNuke
-}
+# NOTE: the actual invocation lives further down, AFTER the color-helper
+# functions are defined — Invoke-VoiceStaleProcessNuke calls Write-VoiceSecondary
+# on its last line, and PowerShell resolves function references at call time, not
+# parse time. Defining the helpers first prevents a CommandNotFoundException
+# under -NoNuke=false on a fresh PS session.
 
 # ---------------------------------------------------------------------------
 # Ctrl+C tree-kill guard
@@ -507,6 +509,21 @@ function Write-VoiceSecondary {
     #>
     param([string]$Text)
     Write-Host $Text -ForegroundColor DarkGray
+}
+
+# ---------------------------------------------------------------------------
+# Stale-process nuke (delayed invocation)
+# ---------------------------------------------------------------------------
+#
+# Runs as early as possible *while still respecting function-resolution order*:
+# Invoke-VoiceStaleProcessNuke is defined near the top of the file (so its big
+# implementation is alongside the related docs) but its terminal status line
+# uses Write-VoiceSecondary, which only exists after the color-helper block
+# above. Invoking here keeps the nuke before the banner, TUI, and any user-
+# visible output, while guaranteeing the helper exists when the nuke runs.
+
+if (-not $NoNuke) {
+    Invoke-VoiceStaleProcessNuke
 }
 
 # ---------------------------------------------------------------------------
