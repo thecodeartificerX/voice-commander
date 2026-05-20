@@ -6,13 +6,19 @@ commands.
 
 A missing or unparseable file is always treated as an empty ``Vocabulary``
 (all three lists empty). Dictation never fails because of ``vocab.json``.
+
+Command entry shapes (both are accepted; ``insert`` takes precedence over
+``action`` when both are present)::
+
+    {"phrase": "next line",   "action": "newline"}    # legacy — newline / paragraph
+    {"phrase": "full stop",   "insert": "."}          # arbitrary literal string
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -31,10 +37,20 @@ class Correction:
 
 @dataclass(frozen=True)
 class Command:
-    """A spoken phrase mapped to a formatting action."""
+    """A spoken phrase mapped to a formatting action or literal insert string.
+
+    Exactly one of *action* or *insert* is populated for a valid entry:
+
+    - ``action`` — one of ``"newline"`` or ``"paragraph"`` (legacy; still
+      supported for existing vocab.json files).
+    - ``insert`` — an arbitrary literal string to splice into the transcript
+      (e.g. ``"."`` for *full stop*, ``"/"`` for *backslash*).  When
+      ``insert`` is non-empty it takes precedence over ``action``.
+    """
 
     phrase: str
-    action: Literal["newline", "paragraph"]
+    action: Literal["newline", "paragraph", ""] = ""
+    insert: str = ""
 
 
 @dataclass(frozen=True)
@@ -103,7 +119,20 @@ class VocabStore:
             commands_raw = []
         commands: list[Command] = []
         for item in commands_raw:
-            if not (isinstance(item, dict) and "phrase" in item and "action" in item):
+            if not (isinstance(item, dict) and "phrase" in item):
+                continue
+            phrase = str(item["phrase"])
+
+            # ``insert`` takes precedence over ``action`` when present.
+            if "insert" in item:
+                commands.append(Command(phrase=phrase, insert=str(item["insert"])))
+                continue
+
+            if "action" not in item:
+                logger.warning(
+                    "vocab.json: command entry for %r has neither 'insert' nor 'action' — dropped",
+                    phrase,
+                )
                 continue
             action = str(item["action"])
             if action not in _VALID_ACTIONS:
@@ -113,7 +142,7 @@ class VocabStore:
                 continue
             commands.append(
                 Command(
-                    phrase=str(item["phrase"]),
+                    phrase=phrase,
                     action=action,  # type: ignore[arg-type]  # narrowed by _VALID_ACTIONS check above
                 )
             )
@@ -132,14 +161,17 @@ class VocabStore:
         leave a half-written (corrupt) ``vocab.json`` behind.
         """
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        def _serialise_command(cmd: Command) -> dict:
+            if cmd.insert:
+                return {"phrase": cmd.phrase, "insert": cmd.insert}
+            return {"phrase": cmd.phrase, "action": cmd.action}
+
         data = {
             "vocab": list(vocab.vocab),
             "corrections": [
                 {"wrong": c.wrong, "right": c.right} for c in vocab.corrections
             ],
-            "commands": [
-                {"phrase": cmd.phrase, "action": cmd.action} for cmd in vocab.commands
-            ],
+            "commands": [_serialise_command(cmd) for cmd in vocab.commands],
         }
         tmp = self._path.with_name(self._path.name + ".tmp")
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

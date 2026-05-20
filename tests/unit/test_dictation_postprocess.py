@@ -5,6 +5,7 @@ import pytest
 
 from voice_commander.dictation.postprocess import (
     _PROMPT_CHAR_CAP,
+    _SENTENCE_ENDERS,
     apply_commands,
     apply_corrections,
     build_prompt,
@@ -175,3 +176,120 @@ def test_apply_commands_phrase_at_start_produces_leading_newline():
     commands = (Command(phrase="next line", action="newline"),)
     result = apply_commands("next line world", commands)
     assert result == "\nworld"
+
+
+# ---------------------------------------------------------------------------
+# apply_commands — insert mode (arbitrary literal strings, ADR 0088 amendment)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_commands_insert_joiner_consumes_both_spaces():
+    # Joiner chars (/ - _) consume surrounding spaces so words bind together.
+    commands = (Command(phrase="dash", insert="-"),)
+    result = apply_commands("picked dash up dash in dash flight", commands)
+    assert result == "picked-up-in-flight"
+
+
+def test_apply_commands_insert_slash_joins_path_segments():
+    commands = (Command(phrase="backslash", insert="/"),)
+    result = apply_commands("kizen-OS backslash memory backslash handover.md", commands)
+    assert result == "kizen-OS/memory/handover.md"
+
+
+def test_apply_commands_insert_sentence_ender_preserves_trailing_space():
+    # Sentence-ending punctuation keeps trailing space so next word is not run-together.
+    commands = (Command(phrase="full stop", insert="."),)
+    result = apply_commands("handover.md full stop 151 lines", commands)
+    assert result == "handover.md. 151 lines"
+
+
+def test_apply_commands_insert_comma_preserves_trailing_space():
+    commands = (Command(phrase="comma", insert=","),)
+    result = apply_commands("151 lines comma status", commands)
+    assert result == "151 lines, status"
+
+
+def test_apply_commands_insert_colon_preserves_trailing_space():
+    commands = (Command(phrase="colon", insert=":"),)
+    result = apply_commands("status colon value", commands)
+    assert result == "status: value"
+
+
+def test_apply_commands_insert_spacer_phrase_consumes_both_sides():
+    # " - " has its own surrounding spaces; original surrounding spaces eaten.
+    commands = (Command(phrase="space dash space", insert=" - "),)
+    result = apply_commands("no tbd space dash space full state", commands)
+    assert result == "no tbd - full state"
+
+
+def test_apply_commands_insert_newline_consumes_both_spaces():
+    # Newline is not a sentence-ender; both spaces consumed, no padding.
+    commands = (Command(phrase="new line", insert="\n"),)
+    result = apply_commands("hello new line world", commands)
+    assert result == "hello\nworld"
+
+
+def test_apply_commands_insert_case_insensitive():
+    commands = (Command(phrase="full stop", insert="."),)
+    result = apply_commands("hello FULL STOP world", commands)
+    assert result == "hello. world"
+
+
+def test_apply_commands_insert_word_boundary_no_mid_word_hit():
+    # "dash" must not match inside "eyelash"
+    commands = (Command(phrase="dash", insert="-"),)
+    result = apply_commands("the eyelash and dash here", commands)
+    assert "eyelash" in result
+    assert result == "the eyelash and-here"
+
+
+def test_apply_commands_insert_empty_string_is_skipped():
+    # An entry with insert="" and no action should not modify text.
+    commands = (Command(phrase="full stop", insert=""),)
+    text = "no change full stop here"
+    assert apply_commands(text, commands) == text
+
+
+def test_apply_commands_insert_takes_precedence_over_action():
+    # When both insert and action are set, insert wins.
+    commands = (Command(phrase="separator", insert="/", action="newline"),)
+    result = apply_commands("a separator b", commands)
+    assert result == "a/b"
+
+
+def test_apply_commands_insert_open_bracket_consumes_both_spaces():
+    # Opening brackets are not sentence-enders; they bind to the following word.
+    commands = (
+        Command(phrase="open bracket", insert="("),
+        Command(phrase="close bracket", insert=")"),
+    )
+    result = apply_commands("open bracket arg close bracket", commands)
+    assert result == "(arg)"
+
+
+def test_apply_commands_insert_full_pipeline_smoke():
+    """Simulate the live-transcript scenario from ADR 0088 task spec."""
+    raw = (
+        "kizen-OS backslash kizen-OS backslash memory backslash handover.md "
+        "full stop 151 lines comma status picked dash up dash in dash flight "
+        "full stop no tbd space dash space full state captured full stop."
+    )
+    commands = (
+        Command(phrase="space dash space", insert=" - "),
+        Command(phrase="backslash", insert="/"),
+        Command(phrase="full stop", insert="."),
+        Command(phrase="comma", insert=","),
+        Command(phrase="dash", insert="-"),
+    )
+    result = apply_commands(raw, commands)
+    # Path segments joined, sentence-enders spaced correctly, dashes joined.
+    assert "kizen-OS/kizen-OS/memory/handover.md." in result
+    assert "151 lines," in result
+    assert "picked-up-in-flight." in result
+    assert "no tbd - full state captured" in result
+
+
+def test_apply_commands_sentence_enders_constant_is_frozenset():
+    assert isinstance(_SENTENCE_ENDERS, frozenset)
+    assert "." in _SENTENCE_ENDERS
+    assert "," in _SENTENCE_ENDERS

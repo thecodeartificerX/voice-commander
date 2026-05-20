@@ -1,6 +1,6 @@
 # ADR 0088 — Dictation Custom Vocabulary, Corrections, and Formatting Commands
 
-**Status:** Accepted
+**Status:** Accepted (amended 2026-05-20 — see D11, D12)
 **Date:** 2026-05-17
 
 ## Context
@@ -34,12 +34,21 @@ is treated as empty vocabulary; dictation never fails because of it.
 {
   "vocab": ["n8n", "Supabase"],
   "corrections": [{"wrong": "supa base", "right": "Supabase"}],
-  "commands": [{"phrase": "next line", "action": "newline"}]
+  "commands": [
+    {"phrase": "next line",  "action": "newline"},
+    {"phrase": "full stop",  "insert": "."},
+    {"phrase": "backslash",  "insert": "/"}
+  ]
 }
 ```
 
 `action` ∈ `{"newline", "paragraph"}`. Unknown actions are dropped on load with a
 WARNING log; they do not crash or block dictation.
+
+**`insert` field (added D11):** commands may also carry `"insert": "<literal>"` in
+place of `"action"`. When `insert` is present it takes precedence over `action`.
+This allows mapping any spoken phrase to an arbitrary literal string (punctuation,
+path separators, bracket characters, etc.) without extending `_ACTION_CHARS`.
 
 ### D3 — New modules
 
@@ -120,6 +129,41 @@ would not naturally speak in prose.
 
 - Corrections are literal phrase matches only; no regex/wildcard support (non-goal).
 
+### D11 — `insert` field for arbitrary literal string injection (amendment 2026-05-20)
+
+The original `action`-only design required extending `_ACTION_CHARS` in Python code
+to add any new character mapping. A live-transcript test showed users need a large
+set of spoken-symbol → literal-char mappings (path separators, brackets, dashes,
+punctuation) that are user-configured, not hard-coded. Adding `insert` to `Command`
+(alongside `action`) allows this entirely from `vocab.json` without touching code.
+
+`vocab.json` ships with a default commands list covering ~35 common spoken-control
+phrases (see `outputs/dictation/vocab.json`). Legacy `action`-only entries are
+still loaded and respected for backward compatibility.
+
+### D12 — Whitespace-aware splicing for `insert` entries (amendment 2026-05-20)
+
+The original `\s*\b<phrase>\b\s*` pattern consumed surrounding spaces on both sides.
+This is correct for joiner chars (`-`, `/`) but wrong for sentence-ending punctuation
+(`.`, `,`, `;`, `:`, `!`, `?`) which in English prose are followed by a space before
+the next word. A `_SENTENCE_ENDERS` frozenset drives per-entry trim behaviour:
+
+- **Insert is a sentence-ender single char:** pattern is `\s*\b<phrase>\b` — leading
+  space consumed, trailing space preserved.  Result: `"word. Next"`, not `"word.Next"`.
+- **All other inserts (joiners, spacers like ` - `, newlines):** pattern is
+  `\s*\b<phrase>\b\s*` — both spaces consumed.  Result: `"a/b"`, `"a-b"`.
+
+`action`-based entries (`newline`, `paragraph`) continue to consume both sides.
+
+Known limitation: when Whisper auto-punctuates the final word of an utterance with a
+period (e.g. transcribes `"full stop."` rather than `"full stop"`), applying `full stop
+→ .` on the `\s*\bfull stop\b` pattern leaves the whisper-appended `.` in place,
+yielding `"captured.."` instead of `"captured."`.  Work-around: add a correction
+entry `{"wrong": "full stop.", "right": "full stop"}` before the command fires
+(corrections run first per D6). This is not done automatically because not every user
+wants that correction. Documented here; not fixed in code (non-trivial to fix cleanly
+without altering the Correction `\b` boundary logic).
+
 ## Alternatives considered
 
 1. **Per-VAD-segment command detection** — rejected: dictation buffers all audio as
@@ -128,6 +172,9 @@ would not naturally speak in prose.
    are simpler to validate and explain.
 3. **Per-session vocabulary (not persisted)** — rejected: users need jargon available
    on every dictation without re-entering it.
+4. **`trim: both|left|none` field per command entry** — rejected in favour of the
+   `_SENTENCE_ENDERS` heuristic: same outcome, zero extra vocab.json fields for the
+   vast majority of cases, and the heuristic matches standard English typography rules.
 
 ## References
 
