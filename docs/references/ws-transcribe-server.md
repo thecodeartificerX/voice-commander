@@ -46,7 +46,8 @@ WebSocket /ws/transcribe
 2. `faster_whisper.WhisperModel.transcribe(audio, vad_filter=True)` — called **once per dictation**, on the final accumulated audio.
 3. Join segment texts into one raw transcript.
 4. `clean_transcript(raw)` — one LLM round-trip.
-5. Send `{"type":"done","text":<cleaned>,"raw":<raw>}` and close.
+5. `structural_format(cleaned)` — regex post-processor: spoken list markers → numbered list with blank-line separators, greeting/structure-cue/short-opening sentences isolated on their own paragraphs. Closing-sentence isolation and topic-shift restructuring are NOT in this regex (require semantic judgement — deferred to LLM fine-tune).
+6. Send `{"type":"done","text":<formatted>,"raw":<raw>}` and close.
 
 **Edge cases (server):**
 

@@ -90,3 +90,6 @@ config.toml
 
 # Personal Claude skills (private tooling, not for contributors)
 .claude/skills/kaizenos-cli/
+
+# Unsloth compile cache (created when running training scripts cwd here)
+unsloth_compiled_cache/
