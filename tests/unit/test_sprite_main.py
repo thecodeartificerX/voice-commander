@@ -7,6 +7,7 @@ import pytest
 from voice_sprite.__main__ import (
     _CANCELLED_CUE_DURATION_S,
     _apply_cancelled_cue,
+    _apply_dim,
     _make_parser,
     _should_reload,
 )
@@ -156,3 +157,61 @@ class TestMakeParser:
     def test_unknown_flag_raises_system_exit(self) -> None:
         with pytest.raises(SystemExit):
             _make_parser().parse_args(["--unknown-flag"])
+
+
+def test_apply_dim_bright_when_listening():
+    from types import SimpleNamespace
+
+    from voice_sprite.state_machine import SpriteState
+
+    for state in (
+        SpriteState.LISTENING,
+        SpriteState.HEARING_SPEECH,
+        SpriteState.THINKING,
+        SpriteState.LLM_THINKING,
+        SpriteState.SUCCESS,
+        SpriteState.MISS,
+        SpriteState.TOOL_ERROR,
+    ):
+        window = MagicMock()
+        _apply_dim(SimpleNamespace(target_state=state, processing=False), window)
+        window.set_dim.assert_called_once_with(False)
+
+
+def test_apply_dim_dark_when_not_listening():
+    from types import SimpleNamespace
+
+    from voice_sprite.state_machine import SpriteState
+
+    for state in (
+        SpriteState.IDLE,
+        SpriteState.WARMUP,
+        SpriteState.CRASHED,
+        SpriteState.PROCESSING,
+    ):
+        window = MagicMock()
+        _apply_dim(SimpleNamespace(target_state=state, processing=False), window)
+        window.set_dim.assert_called_once_with(True)
+
+
+def test_apply_dim_processing_forces_dim_even_when_listening():
+    from types import SimpleNamespace
+
+    from voice_sprite.state_machine import SpriteState
+
+    window = MagicMock()
+    _apply_dim(SimpleNamespace(target_state=SpriteState.LISTENING, processing=True), window)
+    window.set_dim.assert_called_once_with(True)
+
+
+def test_apply_dim_uses_target_state_not_current_state():
+    """Regression for the IDLE→LISTENING animated-transition bug: the dim
+    decision must read target_state. A SimpleNamespace with NO current_state
+    attribute proves current_state is never consulted (would AttributeError)."""
+    from types import SimpleNamespace
+
+    from voice_sprite.state_machine import SpriteState
+
+    window = MagicMock()
+    _apply_dim(SimpleNamespace(target_state=SpriteState.LISTENING, processing=False), window)
+    window.set_dim.assert_called_once_with(False)

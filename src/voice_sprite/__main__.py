@@ -85,6 +85,28 @@ def _apply_cancelled_cue(
         window.set_cancelled_cue(False)
 
 
+def _apply_dim(sm: Any, window: Any) -> None:
+    """Dim the sprite whenever it is NOT listening (ADR 0097).
+
+    Bright (full brightness) for any in-session listening pose; dim for no
+    active session (IDLE/WARMUP/CRASHED) or the dictation decode wait
+    (``processing``). Dictation *capture* carries a session state with
+    ``processing=False`` so the cat stays bright while the mic is hot.
+
+    Uses ``sm.target_state`` (the intended semantic state), NOT
+    ``sm.current_state``: the latter can lag on an ``ANIMATED_TRANSITIONS``
+    pair (e.g. IDLE→LISTENING) because ``complete_transition()`` is never
+    called, so it would hold the dim source state during the play-once
+    animation. The renderer is likewise driven by the target state.
+
+    Module-level (not a closure) so it can be unit-tested without a pyglet
+    window — mirrors ``_apply_processing_state`` / ``_apply_cancelled_cue``.
+    """
+    from .state_machine import is_dim
+
+    window.set_dim(is_dim(sm.target_state, sm.processing))
+
+
 def _make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="voice-sprite",
@@ -117,7 +139,7 @@ def main() -> None:
     from .event_client import SSEClient
     from .speech_bubble import SpeechBubble
     from .sprite_renderer import SpriteRenderer
-    from .state_machine import SpriteState, StateMachine, is_dim
+    from .state_machine import SpriteState, StateMachine
 
     # Load config
     config_path = Path(args.config)
@@ -334,11 +356,8 @@ def main() -> None:
         if result is not None:
             renderer.set_state(result)
             logger.info("State → %s", result.value)
-        # Dim the cat whenever it is NOT listening: no active session
-        # (IDLE/WARMUP/CRASHED) or the dictation decode wait (processing).
-        # Dictation *capture* carries a session state with processing=False,
-        # so the cat stays bright while the mic is hot. ADR 0097.
-        window.set_dim(is_dim(sm.current_state, sm.processing))
+        # Dim when not listening (ADR 0097) — see _apply_dim.
+        _apply_dim(sm, window)
         window.set_dictating(sm.dictating)  # amber DICTATING badge during capture
         # "PROCESSING…" badge: shown while awaiting the server Whisper+LLM
         # round-trip after the end sentinel is sent (ADR 0096 D5).
@@ -359,6 +378,7 @@ def main() -> None:
     def on_disconnect() -> None:
         sm.force_crashed()
         renderer.set_state(SpriteState.CRASHED)
+        _apply_dim(sm, window)
         logger.warning("SSE disconnected — sprite entering CRASHED state")
 
     # Start SSE client
@@ -374,6 +394,7 @@ def main() -> None:
         changed = sm.tick(dt)
         if changed:
             renderer.set_state(sm.current_state)
+            _apply_dim(sm, window)
         renderer.tick(dt)
         bubble.tick(dt)
         chat_log.tick(time.monotonic())
