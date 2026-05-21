@@ -102,6 +102,8 @@ def _apply_dim(sm: Any, window: Any) -> None:
     Module-level (not a closure) so it can be unit-tested without a pyglet
     window — mirrors ``_apply_processing_state`` / ``_apply_cancelled_cue``.
     """
+    # Deferred like all voice_sprite submodule imports (see main()): keeps module
+    # import side-effect-free. state_machine has no pyglet dep, so this is safe here.
     from .state_machine import is_dim
 
     window.set_dim(is_dim(sm.target_state, sm.processing))

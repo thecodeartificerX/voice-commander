@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -11,6 +12,7 @@ from voice_sprite.__main__ import (
     _make_parser,
     _should_reload,
 )
+from voice_sprite.state_machine import SpriteState
 
 
 class TestShouldReload:
@@ -159,12 +161,9 @@ class TestMakeParser:
             _make_parser().parse_args(["--unknown-flag"])
 
 
-def test_apply_dim_bright_when_listening():
-    from types import SimpleNamespace
-
-    from voice_sprite.state_machine import SpriteState
-
-    for state in (
+@pytest.mark.parametrize(
+    "state",
+    [
         SpriteState.LISTENING,
         SpriteState.HEARING_SPEECH,
         SpriteState.THINKING,
@@ -172,26 +171,27 @@ def test_apply_dim_bright_when_listening():
         SpriteState.SUCCESS,
         SpriteState.MISS,
         SpriteState.TOOL_ERROR,
-    ):
-        window = MagicMock()
-        _apply_dim(SimpleNamespace(target_state=state, processing=False), window)
-        window.set_dim.assert_called_once_with(False)
+    ],
+)
+def test_apply_dim_bright_when_listening(state):
+    window = MagicMock()
+    _apply_dim(SimpleNamespace(target_state=state, processing=False), window)
+    window.set_dim.assert_called_once_with(False)
 
 
-def test_apply_dim_dark_when_not_listening():
-    from types import SimpleNamespace
-
-    from voice_sprite.state_machine import SpriteState
-
-    for state in (
+@pytest.mark.parametrize(
+    "state",
+    [
         SpriteState.IDLE,
         SpriteState.WARMUP,
         SpriteState.CRASHED,
         SpriteState.PROCESSING,
-    ):
-        window = MagicMock()
-        _apply_dim(SimpleNamespace(target_state=state, processing=False), window)
-        window.set_dim.assert_called_once_with(True)
+    ],
+)
+def test_apply_dim_dark_when_not_listening(state):
+    window = MagicMock()
+    _apply_dim(SimpleNamespace(target_state=state, processing=False), window)
+    window.set_dim.assert_called_once_with(True)
 
 
 def test_apply_dim_processing_forces_dim_even_when_listening():
