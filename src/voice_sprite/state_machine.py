@@ -85,7 +85,6 @@ class StateMachine:
     def __init__(self, heartbeat_timeout_ms: int = 3000) -> None:
         self.current_state = SpriteState.WARMUP
         self.target_state = SpriteState.WARMUP
-        self.muted = False
         self.dictating = False
         self.processing = False  # True while awaiting server Whisper+LLM (ADR 0096 D5)
         self.cancelled_cue: bool = False  # True when last dictation.end had reason="cancel"
@@ -109,14 +108,6 @@ class StateMachine:
             self._last_heartbeat = time.monotonic()
             if self.current_state == SpriteState.CRASHED:
                 self.target_state = SpriteState.IDLE
-            return None
-
-        if event_type == "muted":
-            self.muted = True
-            return None
-
-        if event_type == "unmuted":
-            self.muted = False
             return None
 
         if event_type == "dictation.start":

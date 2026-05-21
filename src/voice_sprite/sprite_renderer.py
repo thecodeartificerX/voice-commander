@@ -24,17 +24,7 @@ class SpriteRenderer:
         self._state = SpriteState.WARMUP
         self._transition_anim: AnimInfo | None = None
         self._transition_done = False
-        # When muted, we render the IDLE pose (alt sitting = disengaged)
-        # regardless of logical state, so the cat reads as "not listening".
-        # Grey tint applied by the window on top is a secondary cue.
-        self._muted = False
         self._set_anim(charsheet.get_state_anim(SpriteState.WARMUP))
-
-    def set_muted(self, muted: bool) -> None:
-        """Toggle muted rendering. When muted, frame_region always resolves
-        to the IDLE animation regardless of the current state — visually
-        communicates that the cat is not processing input."""
-        self._muted = muted
 
     def _set_anim(self, anim: AnimInfo) -> None:
         self._current_anim = anim
@@ -82,16 +72,10 @@ class SpriteRenderer:
         is 48-wide while sitting poses on row 0 are 32-wide.
         """
         anim = self._current_anim
-        if self._muted:
-            # Override to IDLE anim (disengaged pose) regardless of state.
-            anim = self._cs.get_state_anim(SpriteState.IDLE)
         if anim is None:
             return (0, 0, self._cs.frame_width, self._cs.frame_height)
         fw = anim.frame_width or self._cs.frame_width
         fh = anim.frame_height or self._cs.frame_height
-        # Frame index loops within the mute-override anim's frame count so
-        # the IDLE animation cycles cleanly even if the underlying state's
-        # frame count is different.
         frame_idx = self._frame_index % anim.frames
         x = frame_idx * fw
         y = anim.row * fh

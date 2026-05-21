@@ -122,21 +122,20 @@ class TestApplyCancelledCue:
         schedule_fn.assert_not_called()
 
     def test_cancel_badge_distinct_from_dictating_badge(self) -> None:
-        """The cancelled cue must NOT affect sm.dictating or sm.muted.
+        """The cancelled cue must NOT affect sm.dictating.
 
         This confirms the two badges are fully independent.
         """
         sm = self._make_sm(True)
         sm.dictating = False
-        sm.muted = False
         window = MagicMock()
         schedule_fn = MagicMock()
 
         _apply_cancelled_cue(sm, window, schedule_fn)
 
-        # Only set_cancelled_cue should be called — NOT set_dictating / set_muted
+        # Only set_cancelled_cue should be called — NOT set_dictating / set_dim
         window.set_dictating.assert_not_called()
-        window.set_muted.assert_not_called()
+        window.set_dim.assert_not_called()
 
 
 class TestMakeParser:

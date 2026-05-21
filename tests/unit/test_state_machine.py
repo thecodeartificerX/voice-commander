@@ -59,21 +59,6 @@ def test_miss_transitions_to_miss():
     assert sm.target_state == SpriteState.MISS
 
 
-def test_muted_sets_overlay():
-    sm = StateMachine()
-    sm.on_event("muted", {})
-    assert sm.muted is True
-    sm.on_event("unmuted", {})
-    assert sm.muted is False
-
-
-def test_muted_does_not_change_state():
-    sm = StateMachine()
-    sm.current_state = SpriteState.LISTENING
-    sm.on_event("muted", {})
-    assert sm.current_state == SpriteState.LISTENING
-
-
 def test_heartbeat_resets_timer():
     sm = StateMachine()
     sm.on_event("daemon_heartbeat", {})
@@ -129,7 +114,7 @@ def test_force_crashed():
 
 
 def test_all_states_in_event_map():
-    """Every non-crashed, non-muted state should be reachable via at least one event."""
+    """Every non-crashed, non-processing state should be reachable via at least one event."""
     reachable = set(v for v in EVENT_STATE_MAP.values() if v is not None)
     # States that are reached via bespoke event handling (not the EVENT_STATE_MAP
     # lookup path) and therefore legitimately absent from the map:

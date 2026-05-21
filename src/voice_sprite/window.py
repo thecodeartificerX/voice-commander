@@ -91,6 +91,7 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         render_scale: float = 1.0,
         y_nudge_px: int = 0,
         *,
+        dim_brightness: float = 0.4,
         hud_renderer: ChatLogRenderer | None = None,
         sprite_region_x: int = 0,
         sprite_region_w: int | None = None,
@@ -162,8 +163,11 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._dictating = False
         self._processing = False
         self._cancelled_cue = False
-        self._muted = False
-        self._mute_color = (128, 128, 128)
+        # Not-listening dim tint: multiply the sprite toward black by
+        # dim_brightness. self._dim is toggled by set_dim() each frame. ADR 0097.
+        self._dim = False
+        _b = round(255 * dim_brightness)
+        self._dim_color = (_b, _b, _b)
 
         # Cache the current frame region so get_region() runs only when the
         # renderer advances to a new frame (every 125 ms at 8 fps, not every
@@ -190,8 +194,10 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._cached_region = None
         self._sprite = None
 
-    def set_muted(self, muted: bool) -> None:
-        self._muted = muted
+    def set_dim(self, dim: bool) -> None:
+        """Toggle the not-listening dim tint. True → sprite is multiplied toward
+        black by ``dim_brightness``; False → full brightness. See ADR 0097."""
+        self._dim = dim
 
     def set_dictating(self, dictating: bool) -> None:
         self._dictating = dictating
@@ -265,7 +271,7 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._sprite.x = sprite_x
         self._sprite.y = sprite_y
         self._sprite.scale = final_scale
-        self._sprite.color = self._mute_color if self._muted else (255, 255, 255)
+        self._sprite.color = self._dim_color if self._dim else (255, 255, 255)
         self._sprite.draw()
 
         if self._hud_renderer is not None:

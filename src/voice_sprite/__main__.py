@@ -117,7 +117,7 @@ def main() -> None:
     from .event_client import SSEClient
     from .speech_bubble import SpeechBubble
     from .sprite_renderer import SpriteRenderer
-    from .state_machine import SpriteState, StateMachine
+    from .state_machine import SpriteState, StateMachine, is_dim
 
     # Load config
     config_path = Path(args.config)
@@ -217,6 +217,7 @@ def main() -> None:
         renderer=renderer,
         bubble=bubble,
         render_scale=cfg.render_scale,
+        dim_brightness=cfg.dim_brightness,
         y_nudge_px=cfg.y_nudge_px,
         sprite_region_x=sprite_region_x,
         sprite_region_w=sprite_region_w,
@@ -333,11 +334,12 @@ def main() -> None:
         if result is not None:
             renderer.set_state(result)
             logger.info("State → %s", result.value)
-        # Grey tint + IDLE-animation freeze apply whenever muted OR dictating.
-        grey = sm.muted or sm.dictating
-        window.set_muted(grey)
-        renderer.set_muted(grey)
-        window.set_dictating(sm.dictating)  # badge only; renderer uses grey above
+        # Dim the cat whenever it is NOT listening: no active session
+        # (IDLE/WARMUP/CRASHED) or the dictation decode wait (processing).
+        # Dictation *capture* carries a session state with processing=False,
+        # so the cat stays bright while the mic is hot. ADR 0097.
+        window.set_dim(is_dim(sm.current_state, sm.processing))
+        window.set_dictating(sm.dictating)  # amber DICTATING badge during capture
         # "PROCESSING…" badge: shown while awaiting the server Whisper+LLM
         # round-trip after the end sentinel is sent (ADR 0096 D5).
         _apply_processing_state(sm, window)

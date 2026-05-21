@@ -36,8 +36,8 @@ def _make_window(
     win._dictating = False
     win._processing = False  # ADR 0096 D5: processing state flag
     win._cancelled_cue = False
-    win._muted = False
-    win._mute_color = (128, 128, 128)
+    win._dim = False
+    win._dim_color = (102, 102, 102)
     win._cached_frame_key = None
     win._cached_region = None
     win._render_scale = 1.0
@@ -107,16 +107,16 @@ def test_on_draw_skips_hud_when_hud_renderer_none():
         win.on_draw()  # must not raise
 
 
-def test_set_muted_toggles_flag():
+def test_set_dim_toggles_flag():
     renderer = MagicMock()
     bubble = MagicMock()
     win = _make_window(renderer, bubble)
 
-    assert win._muted is False
-    win.set_muted(True)
-    assert win._muted is True
-    win.set_muted(False)
-    assert win._muted is False
+    assert win._dim is False
+    win.set_dim(True)
+    assert win._dim is True
+    win.set_dim(False)
+    assert win._dim is False
 
 
 # ---------------------------------------------------------------------------
@@ -301,8 +301,8 @@ def test_on_draw_sprite_update_when_image_changes():
     assert existing_sprite.image is new_region
 
 
-def test_on_draw_muted_color():
-    """on_draw sets sprite color to mute_color when _muted=True."""
+def test_on_draw_dim_color():
+    """on_draw sets sprite color to dim_color when _dim=True."""
     renderer = MagicMock()
     renderer.frame_region = (0, 0, 32, 48)
     bubble = MagicMock()
@@ -317,11 +317,11 @@ def test_on_draw_muted_color():
         pg.sprite.Sprite.return_value = fake_sprite
 
         win = _make_window(renderer, bubble, image=fake_image)
-        win._muted = True
+        win._dim = True
         win.clear = MagicMock()
         win.on_draw()
 
-    assert fake_sprite.color == (128, 128, 128)
+    assert fake_sprite.color == (102, 102, 102)
 
 
 def test_on_draw_dictating_draws_badge():
