@@ -95,9 +95,9 @@ def _apply_dim(sm: Any, window: Any) -> None:
 
     Uses ``sm.target_state`` (the intended semantic state), NOT
     ``sm.current_state``: the latter can lag on an ``ANIMATED_TRANSITIONS``
-    pair (e.g. IDLE→LISTENING) because ``complete_transition()`` is never
-    called, so it would hold the dim source state during the play-once
-    animation. The renderer is likewise driven by the target state.
+    pair (e.g. IDLE→LISTENING) — nothing advances ``current_state`` past the
+    play-once animation, so it would hold the dim source state. The renderer
+    is likewise driven by the target state.
 
     Module-level (not a closure) so it can be unit-tested without a pyglet
     window — mirrors ``_apply_processing_state`` / ``_apply_cancelled_cue``.

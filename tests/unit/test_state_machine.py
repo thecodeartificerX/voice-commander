@@ -127,18 +127,6 @@ def test_all_states_in_event_map():
             assert state in reachable, f"{state} not reachable via any event"
 
 
-def test_complete_transition_updates_current_state():
-    sm = StateMachine()
-    sm.current_state = SpriteState.LISTENING
-    # LISTENING → IDLE is an animated transition
-    sm.on_event("session_stopped", {})
-    assert sm._transitioning is True
-    assert sm.current_state == SpriteState.LISTENING  # not yet updated
-    assert sm.target_state == SpriteState.IDLE
-    sm.complete_transition()
-    assert sm.current_state == SpriteState.IDLE
-    assert sm._transitioning is False
-
 
 def test_hold_timer_returns_to_idle_after_session_stop():
     sm = StateMachine()

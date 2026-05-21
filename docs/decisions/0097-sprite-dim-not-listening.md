@@ -32,9 +32,8 @@ CANCELLED) draw at full opacity on top, regardless of dim.
 
 The predicate is fed the StateMachine's **`target_state`**, not `current_state`:
 `current_state` lags on an `ANIMATED_TRANSITIONS` pair (e.g. IDLE→LISTENING)
-because `complete_transition()` is never called, so it would hold the dim source
-state through the play-once animation; the renderer is likewise driven by the
-target state. The decision is applied through a small module-level helper
+because nothing advances it past the play-once animation, so it would hold the
+dim source state; the renderer is likewise driven by the target state. The decision is applied through a small module-level helper
 `_apply_dim(sm, window)` (mirroring `_apply_processing_state` /
 `_apply_cancelled_cue`, so it is unit-testable without a pyglet window), invoked
 in three places: the `on_event` SSE handler, the `update()` frame loop (for
@@ -60,9 +59,8 @@ out-of-range raises `SpriteConfigError`. `1.0` disables dimming.
   not-listening phases are measurably darker — the harness passed at a
   brightness ratio of 0.386 against a 0.6 guard, and it was the harness that
   surfaced the `current_state`-lag bug described above.
-- `complete_transition()` in `StateMachine` is now confirmed dead (never called);
-  using `target_state` sidesteps it. A future cleanup may wire or remove it
-  (tracked as a follow-up, out of scope here).
+- The dead `complete_transition()` method (never called by the renderer) has been
+  removed; `target_state` is the single source of the intended state.
 
 ## References
 

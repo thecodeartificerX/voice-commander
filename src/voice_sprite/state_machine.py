@@ -181,12 +181,6 @@ class StateMachine:
 
         return False
 
-    def complete_transition(self) -> None:
-        """Called when the renderer finishes a play-once transition animation."""
-        if self._transitioning:
-            self.current_state = self.target_state
-            self._transitioning = False
-
     def force_crashed(self) -> None:
         """Force CRASHED state (used when SSE connection drops)."""
         self.current_state = SpriteState.CRASHED
