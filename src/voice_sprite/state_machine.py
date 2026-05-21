@@ -19,6 +19,27 @@ class SpriteState(Enum):
     PROCESSING = "processing"  # dictation captured; awaiting server Whisper+LLM (ADR 0096 D5)
 
 
+def is_dim(state: SpriteState, processing: bool) -> bool:
+    """Return True when the cat is NOT listening and should render dimmed.
+
+    Dim = no active voice session (IDLE / WARMUP / CRASHED) or the dictation
+    decode wait (``processing``). Every in-session pose — including dictation
+    *capture*, which carries a session state with ``processing=False`` — renders
+    bright. ``PROCESSING`` is listed defensively; at runtime it always coincides
+    with ``processing=True``. See ADR 0097.
+    """
+    return (
+        state
+        in (
+            SpriteState.IDLE,
+            SpriteState.WARMUP,
+            SpriteState.CRASHED,
+            SpriteState.PROCESSING,
+        )
+        or processing
+    )
+
+
 # Event → target state mapping (pure data table).
 # None means "no state change" (e.g. heartbeat just resets timer).
 EVENT_STATE_MAP: dict[str, SpriteState | None] = {
