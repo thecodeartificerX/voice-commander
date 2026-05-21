@@ -46,6 +46,7 @@ class SpriteAppConfig:
     - bubble_fade_ms: int >= 0 (0 = no fade)
     - heartbeat_timeout_ms: int >= 1
     - render_scale: float > 0.0 (0 = invisible sprite)
+    - dim_brightness: float in [0.0, 1.0] inclusive (brightness multiplier for not-listening states)
     - follow_poll_hz: int in [1, 60] (> 60 wastes CPU, < 1 breaks polling)
     - margin_x, margin_y: int >= 0
     - follow_cursor: strict bool
@@ -62,6 +63,7 @@ class SpriteAppConfig:
     bubble_fade_ms: int = 2000
     heartbeat_timeout_ms: int = 3000
     render_scale: float = 0.75
+    dim_brightness: float = 0.4  # brightness multiplier (0.0–1.0) for not-listening states (ADR 0097)
     y_nudge_px: int = 16
     # Cursor-follow
     follow_cursor: bool = True
@@ -100,6 +102,8 @@ def _require_float(
     raw: Any,
     *,
     min_exclusive: float | None = None,
+    min_inclusive: float | None = None,
+    max_inclusive: float | None = None,
 ) -> float:
     # bool subclasses int (and int → float); reject it so TOML `true` doesn't coerce to 1.0.
     if isinstance(raw, bool):
@@ -110,8 +114,13 @@ def _require_float(
         raise SpriteConfigError(
             f"[{table}] {key}: expected float, got {type(raw).__name__} {raw!r}"
         ) from exc
+    # min_exclusive and min_inclusive are mutually exclusive — callers pass at most one.
     if min_exclusive is not None and val <= min_exclusive:
         raise SpriteConfigError(f"[{table}] {key}: must be > {min_exclusive}, got {val}")
+    if min_inclusive is not None and val < min_inclusive:
+        raise SpriteConfigError(f"[{table}] {key}: must be >= {min_inclusive}, got {val}")
+    if max_inclusive is not None and val > max_inclusive:
+        raise SpriteConfigError(f"[{table}] {key}: must be <= {max_inclusive}, got {val}")
     return val
 
 
@@ -142,8 +151,19 @@ def _opt_float(
     default: float,
     *,
     min_exclusive: float | None = None,
+    min_inclusive: float | None = None,
+    max_inclusive: float | None = None,
 ) -> float:
-    return _require_float(table, key, d[key], min_exclusive=min_exclusive) if key in d else default
+    if key not in d:
+        return default
+    return _require_float(
+        table,
+        key,
+        d[key],
+        min_exclusive=min_exclusive,
+        min_inclusive=min_inclusive,
+        max_inclusive=max_inclusive,
+    )
 
 
 def _opt_bool(table: str, d: dict[str, Any], key: str, default: bool) -> bool:
@@ -208,6 +228,9 @@ def load_sprite_config(config_path: Path) -> SpriteAppConfig:
             "sprite", sprite_raw, "heartbeat_timeout_ms", 3000, min_val=1
         ),
         render_scale=_opt_float("sprite", sprite_raw, "render_scale", 0.75, min_exclusive=0.0),
+        dim_brightness=_opt_float(
+            "sprite", sprite_raw, "dim_brightness", 0.4, min_inclusive=0.0, max_inclusive=1.0
+        ),
         y_nudge_px=_opt_int("sprite", sprite_raw, "y_nudge_px", 16),
         follow_cursor=_opt_bool("sprite", sprite_raw, "follow_cursor", True),
         follow_poll_hz=_opt_int("sprite", sprite_raw, "follow_poll_hz", 30, min_val=1, max_val=60),

@@ -60,6 +60,7 @@ asset_path = "assets/sprite"
 bubble_fade_ms = 2000
 heartbeat_timeout_ms = 3000
 render_scale = 0.75
+dim_brightness = 0.4   # 0.0–1.0 brightness multiplier for not-listening (dimmed) states; 1.0 = never dim
 y_nudge_px = 16
 follow_cursor = true
 follow_poll_hz = 30

@@ -210,3 +210,54 @@ def test_error_message_contains_field_name(tmp_path):
     cfg_file.write_text('[hud]\nmax_lines = "five"\n', encoding="utf-8")
     with pytest.raises(SpriteConfigError, match=r"\[hud\].*max_lines"):
         load_sprite_config(cfg_file)
+
+
+def test_dim_brightness_default(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("[sprite]\nbase_size_px = 128\n", encoding="utf-8")
+    cfg = load_sprite_config(cfg_path)
+    assert cfg.dim_brightness == 0.4
+
+
+def test_dim_brightness_override(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("[sprite]\ndim_brightness = 0.6\n", encoding="utf-8")
+    cfg = load_sprite_config(cfg_path)
+    assert cfg.dim_brightness == 0.6
+
+
+def test_dim_brightness_above_one_raises(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("[sprite]\ndim_brightness = 1.5\n", encoding="utf-8")
+    with pytest.raises(SpriteConfigError):
+        load_sprite_config(cfg_path)
+
+
+def test_dim_brightness_negative_raises(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("[sprite]\ndim_brightness = -0.1\n", encoding="utf-8")
+    with pytest.raises(SpriteConfigError):
+        load_sprite_config(cfg_path)
+
+
+def test_dim_brightness_bool_rejected(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("[sprite]\ndim_brightness = true\n", encoding="utf-8")
+    with pytest.raises(SpriteConfigError):
+        load_sprite_config(cfg_path)
+
+
+def test_dim_brightness_zero_accepted(tmp_path):
+    """Exact lower bound 0.0 must be valid (fully dark)."""
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("[sprite]\ndim_brightness = 0.0\n", encoding="utf-8")
+    cfg = load_sprite_config(cfg_path)
+    assert cfg.dim_brightness == 0.0
+
+
+def test_dim_brightness_one_accepted(tmp_path):
+    """Exact upper bound 1.0 must be valid (never dim)."""
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("[sprite]\ndim_brightness = 1.0\n", encoding="utf-8")
+    cfg = load_sprite_config(cfg_path)
+    assert cfg.dim_brightness == 1.0
