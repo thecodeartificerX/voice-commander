@@ -44,7 +44,6 @@ Spawning an `ffmpeg` subprocess for microphone capture (`ffmpeg -f dshow -i audi
 
 ## References
 
-- Spec: [../superpowers/specs/2026-04-19-voice-commander-design.md](../superpowers/specs/2026-04-19-voice-commander-design.md)
 - sounddevice documentation: https://python-sounddevice.readthedocs.io/
 - sounddevice PyPI: https://pypi.org/project/sounddevice/
 - soundfile PyPI: https://pypi.org/project/soundfile/

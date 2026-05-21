@@ -77,7 +77,6 @@ This relationship is important for future tool authors: `settle_ms` is not a sub
 
 ## References
 
-- Spec §Architecture (Dispatcher.run_plan, ToolEntry, primitive toolset), §Risks (chain race conditions) — `docs/superpowers/specs/2026-04-21-llm-router-design.md`
 - R6 — pyautogui limitations and settle time rationale for keystroke primitives
 - R7 — focus window latency on Windows 11 (`SetForegroundWindow` settle)
 - ADR 0032 — one-shot plan execution; `run_plan` step loop

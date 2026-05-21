@@ -2,7 +2,6 @@
 
 **Date:** 2026-04-19
 **Status:** Authoritative
-**Source spec:** [superpowers/specs/2026-04-19-voice-commander-design.md](superpowers/specs/2026-04-19-voice-commander-design.md)
 
 This document is the canonical reference for Voice Commander's subsystem design and component contracts. It expands Sections 2 and 3 of the design spec into a standalone, agent-readable form. All type stubs in Section 3 are normative — implementations must match these signatures exactly.
 
@@ -992,7 +991,6 @@ exclude_self = true                  # filter daemon + sprite + modal windows
 ## 9. See Also
 
 - [`../CLAUDE.md`](../CLAUDE.md) — project-wide durable context for agents and contributors
-- [`superpowers/specs/2026-04-19-voice-commander-design.md`](superpowers/specs/2026-04-19-voice-commander-design.md) — original design spec (source of truth for this document)
 - ADRs in [`decisions/`](decisions/):
   - [`decisions/0001-scroll-lock-hotkey.md`](decisions/0001-scroll-lock-hotkey.md)
   - [`decisions/0002-pynput-over-keyboard.md`](decisions/0002-pynput-over-keyboard.md)

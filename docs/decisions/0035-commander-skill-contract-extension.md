@@ -75,7 +75,6 @@ Rejected. Moving the source of truth into Python-only (with post-hoc schema gene
 
 ## References
 
-- Spec §Commander skill contract extension — `docs/superpowers/specs/2026-04-21-llm-router-design.md`
 - ADR 0034 — Python sig + TOML as single source of truth
 - ADR 0036 — startup validator; what the post-write `--validate` checks
 - ADR 0021 — sidecar TOML per tool (original skill contract)

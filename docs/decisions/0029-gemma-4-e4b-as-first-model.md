@@ -67,7 +67,6 @@ Rejected. A missing default forces every user to read documentation before the f
 
 ## References
 
-- Spec §Architecture, §Config, §Risks — `docs/superpowers/specs/2026-04-21-llm-router-design.md`
 - R2 — Gemma 4 E4B deep-dive (full reference doc)
 - R3 — Backup MoE candidates comparison matrix (full reference doc)
 - ADR 0026 — hybrid routing design

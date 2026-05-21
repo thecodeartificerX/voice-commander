@@ -203,7 +203,6 @@ Preserved events: `dictation.start`, `dictation.end {reason}`, `dictation.error 
 - [ADR 0089](0089-dictation-hotkey-sentinel-cancel-debounce.md) — hotkey-end sentinel + spoken cancel
 - [ADR 0090](0090-dictation-hotkey-opens-session.md) — Right Ctrl opens session (transport superseded; lifecycle unchanged)
 - [ADR 0091](0091-streaming-dictation-experiment.md) — streaming experiment (promoted)
-- `docs/superpowers/specs/2026-05-18-streaming-dictation-integration-design.md` — design spec
 - `src/voice_commander/dictation/session.py` — streaming `DictationSession`
 - `src/voice_commander/dictation/ws_client.py`, `local_agreement.py`, `bridge.py` — promoted transport
 - `docs/references/websockets.md` — WebSocket library reference

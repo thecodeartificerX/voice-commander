@@ -5,7 +5,7 @@
 
 ## Context
 
-The spec at `docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design.md` Section 3 called for a few-shot system prompt that teaches the model how to compose the nine-verb catalog (ADR 0043) into multi-step plans. Earlier iterations of the LLM router shipped a prompt that (a) referenced tool names from the pre-catalog era (`focus_browser`, `new_tab`, `type_text`, `press_keys`) and (b) hard-coded "chrome" as the browser. Both were regressions against the spec and caused the LLM to emit invalid tool calls or route web intents to the wrong browser.
+A few-shot system prompt teaches the model how to compose the nine-verb catalog (ADR 0043) into multi-step plans. Earlier iterations of the LLM router shipped a prompt that (a) referenced tool names from the pre-catalog era (`focus_browser`, `new_tab`, `type_text`, `press_keys`) and (b) hard-coded "chrome" as the browser. Both were regressions against the spec and caused the LLM to emit invalid tool calls or route web intents to the wrong browser.
 
 The spec assigned this decision to ADR 0043, but the catalog ADR already covers the verb inventory. Splitting the system-prompt design into its own ADR avoids overloading 0043 and keeps the prompt's evolution tracked separately.
 

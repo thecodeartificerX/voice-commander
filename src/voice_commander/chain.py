@@ -17,8 +17,8 @@ Forbidden tokens (whole utterance rejected, miss-chime):
   * ``tabs`` — picker-only
   * ``chain`` — no recursion
 
-See ``docs/superpowers/specs/2026-05-15-chain-primitive-design.md`` for the
-full design rationale.
+See ADR 0085 (``docs/decisions/0085-chain-primitive.md``) for the full
+design rationale.
 """
 
 from __future__ import annotations

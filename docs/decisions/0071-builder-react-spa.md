@@ -76,4 +76,3 @@ Big-bang cutover in a single PR: no `/v2` route, no parallel old-builder fallbac
 - ADR 0067 — `llm_visible` flag (toolbar toggle)
 - ADR 0069 — Builder visual taxonomy (CSS vars carried over to `globals.css`)
 - ADR 0070 — Observability span tree (schema v1 → v2 extends this)
-- Spec: `docs/superpowers/specs/2026-04-28-builder-react-spa-runs-panel-design.md`

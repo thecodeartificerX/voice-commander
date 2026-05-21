@@ -2,7 +2,6 @@
 
 **Status:** Accepted
 **Date:** 2026-05-15
-**Spec:** `docs/superpowers/specs/2026-05-15-chain-primitive-design.md`
 
 ## Context
 

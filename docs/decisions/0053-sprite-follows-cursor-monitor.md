@@ -2,7 +2,6 @@
 
 **Status:** Accepted
 **Date:** 2026-04-22
-**Spec:** [superpowers/specs/2026-04-22-command-hud-design.md](../superpowers/specs/2026-04-22-command-hud-design.md)
 
 ## Context
 

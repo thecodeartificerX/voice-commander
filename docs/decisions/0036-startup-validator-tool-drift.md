@@ -71,7 +71,6 @@ Rejected. Pydantic is not a current dependency. Adding it for validation alone w
 
 ## References
 
-- Spec §Startup validation rules, §Architecture (Startup validator row), §Commander skill §Post-write steps — `docs/superpowers/specs/2026-04-21-llm-router-design.md`
 - R5 — Python sig introspection; type-walking approach used by the validator
 - ADR 0034 — Python sig + TOML as single source of truth; defines what "drift" means
 - ADR 0035 — commander skill; post-write `--validate` usage

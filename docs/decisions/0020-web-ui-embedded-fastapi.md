@@ -51,7 +51,6 @@ Simpler than FastAPI but synchronous by default. Rejected: FastAPI's async suppo
 A full Chromium + Node.js bundle. Rejected: no meaningful capability gained over a browser tab; adds ~150 MB and a Node build pipeline. The target user already has a browser.
 
 ## References
-- `docs/superpowers/specs/web-ui-design.md` — UI design spec
 - ADR 0010: threading model
 - FastAPI docs: https://fastapi.tiangolo.com/
 - uvicorn programmatic usage: https://www.uvicorn.org/#usage

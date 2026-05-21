@@ -62,7 +62,6 @@ Write `fetch` calls in `<script>` blocks, update the DOM manually. Viable but mo
 
 ## References
 - ADR 0020: FastAPI embedded server
-- `docs/superpowers/specs/web-ui-design.md` — UI design spec
 - HTMX docs: https://htmx.org/docs/
 - Jinja2 docs: https://jinja.palletsprojects.com/
 - Tailwind CSS CDN: https://tailwindcss.com/docs/installation/play-cdn

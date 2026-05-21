@@ -40,7 +40,6 @@ Each tool phrase could be expressed as a regular expression (e.g. `r"open\s+(the
 Semantic embedding models (e.g. `all-MiniLM-L6-v2`) would handle paraphrasing and synonym variation elegantly. For a vocabulary of ~50 phrases, however, this is significant overkill: the model adds hundreds of megabytes to the install, requires a GPU or multi-millisecond CPU inference per command, and introduces a second neural-network dependency with its own CUDA DLL requirements. The benefit — handling true semantic paraphrasing — is not needed for a structured command vocabulary where users speak known phrases.
 
 ## References
-- Spec: [../superpowers/specs/2026-04-19-voice-commander-design.md](../superpowers/specs/2026-04-19-voice-commander-design.md)
 - rapidfuzz documentation: https://rapidfuzz.github.io/RapidFuzz/
 - rapidfuzz GitHub: https://github.com/rapidfuzz/RapidFuzz
 - WRatio scorer explanation: https://rapidfuzz.github.io/RapidFuzz/Usage/fuzz.html#rapidfuzz.fuzz.WRatio

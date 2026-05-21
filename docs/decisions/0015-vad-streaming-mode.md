@@ -52,7 +52,6 @@ Keep two-keypress model but add VAD to auto-trim silence from the WAV before tra
 Replace Scroll Lock with a wake word ("commander"). Rejected for MVP: requires always-on audio and a wake-word detector (another model), no offline-capable option with <5 ms latency is trivially available. Tagged for Phase 6+.
 
 ## References
-- Design spec: `docs/superpowers/specs/2026-04-20-vad-streaming-brainstorm.md`
 - silero-vad: https://github.com/snakers4/silero-vad
 - ADR 0010 (threading model): `0010-threading-model.md`
 - ADR 0016 (silero-vad selection): `0016-silero-vad-over-webrtcvad.md`

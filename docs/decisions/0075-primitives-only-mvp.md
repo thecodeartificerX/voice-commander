@@ -51,7 +51,3 @@ Speak-mode, the Right-Ctrl mute hotkey, RemoteTranscriber, and the HUD summarize
 - Migrating user-authored graphs that depended on deleted tools — explicitly rejected ("boil the ocean"; user re-authors).
 - Keeping the rule-table summarizer — rejected as dead weight given the absence of an LLM fallback.
 
-## References
-
-- Spec: `docs/superpowers/specs/2026-05-08-primitives-only-mvp-design.md`
-- Plan: `docs/superpowers/plans/2026-05-08-primitives-only-mvp.md`

@@ -65,7 +65,6 @@ Rejected. Prompt grows without bound over a long session. Latency becomes unpred
 
 ## References
 
-- Spec §Non-goals, §LLM path, §Latency model — `docs/superpowers/specs/2026-04-21-llm-router-design.md`
 - R1 §5 — LM Studio prefix KV cache reuse: limitations and practical impact
 - ADR 0026 — hybrid routing; LLM path description
 - ADR 0028 — LM Studio endpoint; warmup ping rationale

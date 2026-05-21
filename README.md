@@ -198,7 +198,7 @@ All runtime settings live in [`config.toml`](config.toml) — single source of t
 | `[sprite]` | `follow_cursor` | `true` | Sprite tracks cursor across monitors |
 | `[sprite]` | `follow_poll_hz` | `30` | Cursor-poll rate in Hz |
 
-Full schema + rationale: [`docs/superpowers/specs/2026-04-19-voice-commander-design.md`](docs/superpowers/specs/2026-04-19-voice-commander-design.md) §5.
+Full schema + rationale: [`config.toml.example`](config.toml.example) — every key documented inline.
 
 ---
 
@@ -227,7 +227,7 @@ open_fuzzy_threshold   = 70
 
 > **Fuzzy thresholds.** The resolver's `focus_fuzzy_threshold` / `open_fuzzy_threshold` knobs control how tolerant `focus(target)` and `open(target)` are when mapping the LLM's `target` string onto a visible window / Start-Menu entry. Lower (e.g. 60) = more permissive, accepts looser phonetic matches; higher (e.g. 80) = stricter, fewer false positives but more misses. Defaults of 70 were validated against a 20-utterance live-test script.
 
-Full design: [`docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design.md`](docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design.md). Routing architecture decisions: [ADR 0040](docs/decisions/0040-llm-only-routing-replaces-hybrid.md), [ADR 0041](docs/decisions/0041-rapidfuzz-for-parameter-resolution.md), [ADR 0042](docs/decisions/0042-resolver-module-design.md), [ADR 0043](docs/decisions/0043-nine-verb-primitive-catalog.md), [ADR 0044](docs/decisions/0044-few-shot-system-prompt.md), [ADR 0075](docs/decisions/0075-eleven-primitive-catalog.md).
+Routing architecture decisions: [ADR 0040](docs/decisions/0040-llm-only-routing-replaces-hybrid.md), [ADR 0041](docs/decisions/0041-rapidfuzz-for-parameter-resolution.md), [ADR 0042](docs/decisions/0042-resolver-module-design.md), [ADR 0043](docs/decisions/0043-nine-verb-primitive-catalog.md), [ADR 0044](docs/decisions/0044-few-shot-system-prompt.md), [ADR 0075](docs/decisions/0075-eleven-primitive-catalog.md).
 
 > **`press()` combo format.** `press()` accepts permissive combo strings — `+`, `-`, whitespace, commas, and `and` all work as separators. Examples: `"Ctrl V"`, `"Ctrl-C"`, `"ctrl and shift t"`, `"ctrl+c"` are all valid. Common aliases: `control`→`ctrl`, `windows`→`win`, `option`→`alt`, `return`→`enter`, `escape`→`esc`, `spacebar`→`space`.
 

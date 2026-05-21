@@ -62,7 +62,6 @@ Rejected. No standard confidence score is available in the OpenAI `tool_calls` r
 
 ## References
 
-- Spec §LLM path (steps 5, 7), §Primitive toolset, §Startup validation rules (rule 7) — `docs/superpowers/specs/2026-04-21-llm-router-design.md`
 - R1 §2 — `tool_choice="required"` support across models and backends
 - R2 §3 — Gemma 4 tool-choice behaviour (system-prompt enforcement)
 - ADR 0032 — one-shot plan execution; `no_match` short-circuit

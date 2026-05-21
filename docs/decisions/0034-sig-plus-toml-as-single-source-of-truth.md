@@ -87,7 +87,6 @@ Rejected. Would be a third file per tool, guaranteed to drift from the Python si
 
 ## References
 
-- Spec §Tool contract — single source of truth, §Startup validation rules (rules 1–7) — `docs/superpowers/specs/2026-04-21-llm-router-design.md`
 - R5 — Python sig → JSON schema research; approach B recommendation (full reference doc)
 - ADR 0021 — sidecar TOML per tool (existing design this extends)
 - ADR 0035 — commander skill as sole tool author

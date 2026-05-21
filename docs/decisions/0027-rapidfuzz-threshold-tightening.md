@@ -50,6 +50,5 @@ Rejected. Two thresholds on the same routing decision are confusing. The spec ex
 
 ## References
 
-- Spec §Architecture (Matcher row), §Config — `docs/superpowers/specs/2026-04-21-llm-router-design.md`
 - ADR 0026 — hybrid routing design; explains why the split point matters
 - ADR 0005 — original rapidfuzz threshold decision

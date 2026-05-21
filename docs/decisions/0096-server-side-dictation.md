@@ -273,4 +273,3 @@ async def stream_transcribe(
 - [ADR 0095](0095-streaming-window-dictation.md) — superseded
 - `src/voice_commander/dictation/session.py` — `DictationSession` (to be simplified)
 - `src/voice_commander/dictation/ws_client.py` — `stream_transcribe` (to be rewritten)
-- `docs/superpowers/plans/2026-05-20-server-side-dictation.md` — implementation plan

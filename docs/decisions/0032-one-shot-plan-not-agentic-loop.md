@@ -51,7 +51,6 @@ Rejected. Streaming tool calls arrive token-by-token (R1 §3 streaming notes). E
 
 ## References
 
-- Spec §Non-goals, §LLM path, §Architecture (Dispatcher.run_plan) — `docs/superpowers/specs/2026-04-21-llm-router-design.md`
 - R1 §3 — multiple tool calls in a single LM Studio response
 - ADR 0026 — hybrid routing; pipeline structure
 - ADR 0033 — per-tool `settle_ms` and `wait` primitive for chain pacing

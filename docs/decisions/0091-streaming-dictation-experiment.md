@@ -90,8 +90,6 @@ external USB condenser) is often not the OS default capture device.
 ## References
 
 - [ADR 0086](0086-dictation-mode.md) — shipped batch dictation
-- `docs/superpowers/specs/2026-05-18-streaming-dictation-design.md` — design spec
-- `docs/superpowers/plans/2026-05-18-streaming-dictation.md` — implementation plan
 - `docs/dictation-streaming.md` — subsystem overview
 - `src/voice_commander/dictation_stream/` — implementation
 - `docs/references/websockets.md` — WebSocket library reference

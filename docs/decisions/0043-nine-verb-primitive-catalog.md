@@ -5,7 +5,7 @@
 
 ## Context
 
-With LLM-only routing (ADR 0040), the tools array sent to LM Studio is the sole surface the model can compose from. A sprawling catalog hurts small-MoE accuracy; a threadbare one forces the LLM to work around missing verbs (or emit `no_match`). The spec at `docs/superpowers/specs/2026-04-21-llm-default-no-rapidfuzz-design.md` Section 2 locked a minimal, orthogonal set of **nine** primitives as the catalog the LLM sees.
+With LLM-only routing (ADR 0040), the tools array sent to LM Studio is the sole surface the model can compose from. A sprawling catalog hurts small-MoE accuracy; a threadbare one forces the LLM to work around missing verbs (or emit `no_match`). This decision locks a minimal, orthogonal set of **nine** primitives as the catalog the LLM sees.
 
 Two of the spec's verb names collide with Python builtins (`type`, `open`). A previous draft of this ADR listed invented verbs such as `press_keys(*keys)`, `hscroll`, `focus_window`, and `open_url` — names that were never implemented. This rewrite documents the catalog as it actually ships.
 

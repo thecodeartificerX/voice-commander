@@ -37,7 +37,6 @@ The original reference implementation from OpenAI. It produces identical transcr
 An excellent C/C++ port of Whisper with competitive performance and very low memory usage. However, using it from Python requires either a pre-built wheel (not always available for the exact CUDA/Windows combination) or compiling with MSVC, which adds significant developer friction and CI complexity. `faster-whisper` delivers comparable speed with a pure-Python install story.
 
 ## References
-- Spec: [../superpowers/specs/2026-04-19-voice-commander-design.md](../superpowers/specs/2026-04-19-voice-commander-design.md)
 - faster-whisper GitHub: https://github.com/SYSTRAN/faster-whisper
 - CTranslate2 docs: https://opennmt.net/CTranslate2/
 - NVIDIA cuDNN installation guide: https://docs.nvidia.com/deeplearning/cudnn/install-guide/index.html

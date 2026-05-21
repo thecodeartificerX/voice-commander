@@ -37,6 +37,5 @@ Each tool ships a companion `<tool_name>.yaml` file declaring its phrases, and a
 A single `voice_commander/registry.yaml` maps phrase strings to fully-qualified Python callable paths. This is a common pattern in plugin systems but has two drawbacks for this project: it becomes a merge-conflict hotspot as multiple tools are added in parallel, and phrases inevitably drift from the function signatures they reference because changes require editing two separate files. The decorator approach eliminates both problems by making phrase registration a property of the function itself.
 
 ## References
-- Spec: [../superpowers/specs/2026-04-19-voice-commander-design.md](../superpowers/specs/2026-04-19-voice-commander-design.md)
 - Python `importlib` documentation: https://docs.python.org/3/library/importlib.html
 - PEP 318 — Decorators for Functions and Methods: https://peps.python.org/pep-0318/

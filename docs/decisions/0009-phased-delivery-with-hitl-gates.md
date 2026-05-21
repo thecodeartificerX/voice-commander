@@ -59,5 +59,4 @@ Replace the human gate with a fully automated integration test suite that runs o
 
 ## References
 
-- Spec: [../superpowers/specs/2026-04-19-voice-commander-design.md](../superpowers/specs/2026-04-19-voice-commander-design.md)
 - Phase checklists: [../testing-strategy.md](../testing-strategy.md) §3

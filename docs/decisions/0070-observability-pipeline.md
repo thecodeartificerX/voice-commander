@@ -2,8 +2,6 @@
 
 **Date:** 2026-04-27
 **Status:** Accepted
-**Spec:** `docs/superpowers/specs/2026-04-27-observability-pipeline-design.md`
-**Plan:** `docs/superpowers/plans/2026-04-27-observability-pipeline.md`
 
 ## Context
 

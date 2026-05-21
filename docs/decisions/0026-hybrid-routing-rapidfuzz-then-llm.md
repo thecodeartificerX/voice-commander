@@ -56,7 +56,6 @@ Rejected. Running both paths in parallel and picking the first result would requ
 
 ## References
 
-- Spec §Architecture, §Routing behaviour — `docs/superpowers/specs/2026-04-21-llm-router-design.md`
 - ADR 0010 — threading model (pipeline worker serialises per utterance)
 - ADR 0027 — threshold tightening when LLM router is enabled
 - R1 §5 — LM Studio prefix KV cache and latency expectations

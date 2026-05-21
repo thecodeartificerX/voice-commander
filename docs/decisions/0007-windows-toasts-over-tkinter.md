@@ -53,7 +53,6 @@ Cross-platform notification library. On Windows it falls back to `win10toast`, w
 
 ## References
 
-- Spec: [../superpowers/specs/2026-04-19-voice-commander-design.md](../superpowers/specs/2026-04-19-voice-commander-design.md)
 - `windows_toasts` library: https://github.com/DatGuy1/Windows-Toasts
 - WinRT Toast Notifications (Microsoft Docs): https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/toast-notifications-overview
 - Python `tkinter` thread safety caveat: https://docs.python.org/3/library/tkinter.html#threading-model

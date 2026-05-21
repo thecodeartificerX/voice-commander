@@ -69,7 +69,6 @@ Spawn a new `threading.Thread` for each recording, run inference inside it, and 
 
 ## References
 
-- Spec: [../superpowers/specs/2026-04-19-voice-commander-design.md](../superpowers/specs/2026-04-19-voice-commander-design.md)
 - Python `threading` module: https://docs.python.org/3/library/threading.html
 - Python `queue.Queue`: https://docs.python.org/3/library/queue.html
 - pynput threading notes: https://pynput.readthedocs.io/en/latest/keyboard.html#monitoring-the-keyboard

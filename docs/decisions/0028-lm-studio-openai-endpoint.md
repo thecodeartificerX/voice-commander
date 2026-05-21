@@ -53,7 +53,6 @@ Rejected for local Windows deployment. vLLM targets Linux GPU servers. No native
 
 ## References
 
-- Spec §Architecture (LLMRouter row), §Config, §Failure modes — `docs/superpowers/specs/2026-04-21-llm-router-design.md`
 - R1 — LM Studio tool-calling endpoint research (full reference doc)
 - R4 — httpx sync client patterns
 - ADR 0026 — hybrid routing design

@@ -66,6 +66,5 @@ Using `win32com` to invoke the Windows Speech API for spoken feedback ("Recordin
 
 ## References
 
-- Spec: [../superpowers/specs/2026-04-19-voice-commander-design.md](../superpowers/specs/2026-04-19-voice-commander-design.md)
 - Python `winsound` stdlib docs: https://docs.python.org/3/library/winsound.html
 - Windows Multimedia `PlaySound` function: https://learn.microsoft.com/en-us/previous-versions/dd743680(v=vs.85)

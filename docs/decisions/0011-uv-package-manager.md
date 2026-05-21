@@ -66,7 +66,6 @@ Conda environments can manage both Python packages and system-level CUDA toolkit
 
 ## References
 
-- Spec: [../superpowers/specs/2026-04-19-voice-commander-design.md](../superpowers/specs/2026-04-19-voice-commander-design.md)
 - uv documentation: https://docs.astral.sh/uv/
 - uv lockfile reference: https://docs.astral.sh/uv/concepts/resolution/
 - PEP 517 (build system interface): https://peps.python.org/pep-0517/

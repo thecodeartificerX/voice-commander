@@ -41,6 +41,5 @@ Calling `SetWindowsHookEx` directly via `ctypes` would eliminate the `pynput` de
 
 ## References
 
-- Spec: [../superpowers/specs/2026-04-19-voice-commander-design.md](../superpowers/specs/2026-04-19-voice-commander-design.md)
 - pynput documentation: https://pynput.readthedocs.io/
 - pynput PyPI: https://pypi.org/project/pynput/

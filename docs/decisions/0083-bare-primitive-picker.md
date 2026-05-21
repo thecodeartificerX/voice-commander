@@ -2,7 +2,6 @@
 
 **Status:** Accepted
 **Date:** 2026-05-13
-**Spec:** `docs/superpowers/specs/2026-05-13-bare-primitive-picker-design.md`
 
 ## Context
 
@@ -54,8 +53,3 @@ rather than the ``VerbRouter``.
   daemon invariant.
 - **Hardcoded focus-only branch.** Fastest to ship; future pickers would
   duplicate the modal + coerce path. Rejected — boils-the-ocean principle.
-
-## References
-
-- Spec: `docs/superpowers/specs/2026-05-13-bare-primitive-picker-design.md`
-- Plan: `docs/superpowers/plans/2026-05-13-bare-primitive-picker.md`

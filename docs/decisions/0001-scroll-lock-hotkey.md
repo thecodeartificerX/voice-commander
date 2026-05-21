@@ -44,5 +44,4 @@ Push-to-talk is familiar from gaming and conferencing software and eliminates ac
 
 ## References
 
-- Spec: [../superpowers/specs/2026-04-19-voice-commander-design.md](../superpowers/specs/2026-04-19-voice-commander-design.md)
 - pynput documentation: https://pynput.readthedocs.io/
