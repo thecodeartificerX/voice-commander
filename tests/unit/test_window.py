@@ -192,7 +192,7 @@ def test_compute_label_color_zero_opacity():
 
 
 # ---------------------------------------------------------------------------
-# on_draw() branch coverage — bubble, cached region, sprite update, muted
+# on_draw() branch coverage — bubble, cached region, sprite update, dim
 # ---------------------------------------------------------------------------
 
 
