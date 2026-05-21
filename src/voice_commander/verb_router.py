@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .plan import Plan, ToolCall
+from .repeat import expand_repeat, parse_repeat_suffix
 
 # Whisper occasionally renders short spoken words as initialisms with
 # embedded periods (e.g. "paste" → "P.A.C.T."). Normalise transcripts by
@@ -55,9 +56,9 @@ class VerbRouter:
     def __init__(
         self,
         rules: tuple[VerbRule, ...],
-        registry: "ToolRegistry | None" = None,
-        picker_registry: "BarePickerRegistry | None" = None,
-        chain_parser: "ChainParser | None" = None,
+        registry: ToolRegistry | None = None,
+        picker_registry: BarePickerRegistry | None = None,
+        chain_parser: ChainParser | None = None,
     ) -> None:
         self._rules = {rule.name: rule for rule in rules}
         self._alias_map: dict[str, str] = {}
@@ -96,6 +97,20 @@ class VerbRouter:
         registered = self._match_registered_command(text)
         if registered is not None:
             return registered
+
+        # 1b. Repeat-count modifier — "<base> twice|thrice|N times" (ADR 0098).
+        #     Strip the trailing modifier, recursively route the base phrase,
+        #     then fan the resulting plan into N executions interleaved with
+        #     synthetic HUD-suppressed wait separators (mirrors the chain
+        #     expansion). Placed *after* the registered full-text match so a
+        #     command literally named with a trailing count word still wins, and
+        #     *before* primitive routing so "scroll down twice" repeats the
+        #     scroll primitive. A base that misses, is empty, or resolves to a
+        #     synthetic intercept (picker / dictation) yields None → miss-chime.
+        repeat = parse_repeat_suffix(text)
+        if repeat is not None:
+            base_text, count = repeat
+            return expand_repeat(self.route(base_text), count)
 
         head, _, tail = text.partition(" ")
         head = head.strip().lower()
