@@ -26,8 +26,8 @@ This document is the canonical reference for Voice Commander's subsystem design 
                           ┌──────────────────────────────────────────────────────┐
                           │              StreamingDaemon pipeline worker         │
                           │                                                      │
-                          │  Transcriber ──text──▶ gates ──▶ spoken Merlin toggle? ──▶ VerbRouter | LLMRouter ──▶ Dispatcher │
-                          │  (faster-whisper)       (conf)   (httpx→LM)   (run_plan)  │
+                          │  Transcriber ──text──▶ gates ──▶ VerbRouter ──▶ Dispatcher │
+                          │  (faster-whisper)       (conf)   (sole router) (run_plan)  │
                           │                                    │                 │
                           │                                    └─ resolver.* (per-step param grounding) │
                           │                                                      │
@@ -41,7 +41,7 @@ This document is the canonical reference for Voice Commander's subsystem design 
 |---|---|---|
 | PortAudio callback thread | `sd.InputStream` callback | `indata.copy()` + `raw_q.put_nowait()` — no blocking, no allocation |
 | VAD worker thread | `Resampler` + `VADGate` | Drains `raw_q`; resamples 48k→16k; runs silero-vad; emits complete utterances to `utt_q` |
-| Pipeline worker thread | `Transcriber` + `VerbRouter` + `LLMRouter` + `Dispatcher` | Drains `utt_q`; runs transcribe → gates → `VerbRouter.route()` (normal mode) or `LLMRouter.route()` (Merlin mode) → `Dispatcher.run_plan()` |
+| Pipeline worker thread | `Transcriber` + `VerbRouter` + `Dispatcher` | Drains `utt_q`; runs transcribe → gates → `VerbRouter.route()` → `Dispatcher.run_plan()` |
 
 **Session model:** Scroll Lock opens a session; a second press closes it. While a session is open, VAD auto-segments the audio stream. Each detected utterance fires the pipeline worker immediately — no keypresses required between commands.
 
@@ -58,12 +58,11 @@ Subsystems are connected by the `StreamingDaemon` orchestrator. Each is independ
 | `VADGate` | Detect speech onset/offset; accumulate utterance ndarrays with pre-roll | `silero-vad`, `onnxruntime` |
 | `StreamingRecorder` | Own `sd.InputStream` + VAD worker thread; call `utterance_sink` on speech-end | `sounddevice`, `Resampler`, `VADGate` |
 | `Transcriber` | ndarray (or WAV path) → text using preloaded model | `faster-whisper` (CUDA) |
-| `VerbRouter` | Route transcripts in normal (non-Merlin) mode: match against registered command/workflow names and synonyms first (longest token-count match wins, underscore→space, punct-stripped, case-insensitive), then fall back to primitive verb rules (click/scroll/focus X/open X/type X/press X/wait N). Returns `Plan \| None`. | (no external) |
+| `VerbRouter` | The sole routing path (ADR 0082): match transcripts against registered command/workflow names and synonyms first (longest token-count match wins, underscore→space, punct-stripped, case-insensitive), then fall back to primitive verb rules (click/scroll/focus X/open X/type X/press X/wait N). Also handles chain meta-verb (ADR 0085), bare-primitive picker (ADR 0083), and repeat-count modifier (ADR 0098). Returns `Plan \| None`. | (no external) |
 | `ToolRegistry` | Register/discover `@tool`-decorated functions; supports `@tool(name=...)` override for builtin-shadowing names (`type`, `open`) | stdlib (`importlib`) |
 | `resolver` (module) | Ground `focus(target)` / `open(target)` parameters onto hwnds / launch tokens via rapidfuzz scoring | `rapidfuzz`, `pywin32`, `win32com` |
 | `Dispatcher` | Execute a multi-step plan step-by-step; emit per-step INFO log; report plan start/complete/error | (no external) |
 | `FeedbackSink` | Chimes + log | `winsound` |
-| `LLMRouter` | Route all transcripts to local LM Studio for tool-call planning | `httpx` |
 | `Validator` | Startup checks: sig/TOML drift, type support, range checks | stdlib (`inspect`, `typing`) |
 
 ---
@@ -89,7 +88,7 @@ Four long-lived threads plus the main thread:
 2. **Hotkey listener thread** — owned by `pynput`. Fires `on_scroll_lock()` as a callback on this thread. The callback only calls `StreamingRecorder.open_session()` or `close_session()` — no blocking work.
 3. **PortAudio callback thread** — owned by `sounddevice`. The `sd.InputStream` callback does `indata.copy()` + `raw_q.put_nowait()` only. No allocation, no blocking, no GIL-contested work. See `gotchas.md` §11.
 4. **VAD worker thread** — drains `raw_q`; passes each chunk through `Resampler.process()` (48k→16k); slices into 512-sample frames; feeds each frame to `VADGate.process()`; when `VADGate` returns a complete utterance ndarray, calls `utterance_sink` which enqueues it on `utt_q`.
-5. **Pipeline worker thread** — drains `queue.Queue[ndarray]` (`utt_q`), runs `Transcriber.transcribe() → confidence/word-count gates → LLMRouter.route() → Dispatcher.run_plan()` sequentially. One utterance at a time; if the VAD worker emits the next utterance before the previous pipeline run finishes, it queues up. A `None` return from `LLMRouter.route()` (timeout, connection error, malformed response, or `no_match` sentinel) fires `FeedbackSink.on_miss()` directly and loops back.
+5. **Pipeline worker thread** — drains `queue.Queue[ndarray]` (`utt_q`), runs `Transcriber.transcribe() → confidence/word-count gates → VerbRouter.route() → Dispatcher.run_plan()` sequentially. One utterance at a time; if the VAD worker emits the next utterance before the previous pipeline run finishes, it queues up. A `None` return from `VerbRouter.route()` fires `FeedbackSink.on_miss()` directly and loops back.
 
 Queue topology:
 
@@ -247,20 +246,22 @@ class ToolEntry:
     module: str           # e.g. "voice_commander.tools.clipboard"
     docstring: str | None
     settle_ms: int            # ms to sleep after execution
-    llm_only: bool            # True → tool has parameters; not phrase-matchable
-    params_schema: dict | None  # OpenAI tool JSON schema (built by tool_schema)
-    internal: bool            # True → hidden from LLM tool list; still dispatchable
-    system: bool              # True → infrastructure tool (e.g. no_match); hidden from Builder palette and LLM tool list
+    llm_only: bool            # True → not phrase-matchable (requires explicit kwargs; validated by Validator rule 7)
+    params_schema: dict | None  # JSON schema (built by tool_schema)
+    internal: bool            # True → hidden from web UI tool list; still dispatchable
+    system: bool              # True → infrastructure tool; hidden from Builder palette and web UI tool list
     origin: Literal["primitive", "command", "workflow"]  # source of entry
     args_meta: dict[str, ArgMetadata]  # per-param schema for web UI guided kwargs form (ADR 0057)
 
 class ToolRegistry:
     def register(self, entry: ToolEntry) -> None: ...
     def all(self) -> list[ToolEntry]: ...
+    def all_enabled(self) -> list[ToolEntry]: ...  # only enabled entries
     def by_name(self, name: str) -> ToolEntry | None: ...
-    def all_llm_visible(self) -> list[ToolEntry]: ...
-        # All enabled tools visible to the LLM router. Excludes entries with system=True
-        # (e.g. no_match) — distinct from internal=True which governs LLM visibility only.
+    def by_origin(self, origin: Origin) -> list[ToolEntry]: ...  # filtered by "primitive"/"command"/"workflow"
+    def remove(self, name: str) -> bool: ...  # hot-reload drop
+    def bind_metadata(self, store: ToolMetadataStore) -> None: ...
+    def reload_metadata(self, store: ToolMetadataStore) -> None: ...
 
 def tool() -> Callable[[Callable], Callable]:
     """Decorator. Registers the function on the module-global registry."""
@@ -271,7 +272,7 @@ def discover(package: str = "voice_commander.tools") -> ToolRegistry:
 
 **What it does:** Maintains a name-keyed dictionary of `ToolEntry` records. The `@tool` decorator registers the decorated function on the module-global `ToolRegistry` singleton at import time. `discover()` uses `importlib` to import every submodule under `voice_commander.tools`, which triggers all `@tool` decorators as a side effect. Re-registering the same `name` raises `DuplicateToolError` to catch accidental duplicates early. The `phrases` field is populated from TOML when phrases keys are present; it is used by `VerbRouter` to match registered command/workflow names and their Whisper-friendly synonyms against transcripts (e.g. `['p a c t']` for `'paste'`).
 
-**Who calls it:** `build_streaming_daemon()` factory calls `discover()` to populate the registry at startup. `LLMRouter` calls `all_llm_visible()` to build the tools array for each chat completion request. `Dispatcher.run_plan()` calls `by_name()` to look up tool functions during plan execution.
+**Who calls it:** `build_streaming_daemon()` factory calls `discover()` to populate the registry at startup. `Dispatcher.run_plan()` calls `by_name()` to look up tool functions during plan execution. `VerbRouter._match_registered_command()` calls `all()` to find user-authored command/workflow entries.
 
 **Who it calls:** `importlib.import_module` (inside `discover()`). No external libraries.
 
@@ -287,14 +288,14 @@ def discover(package: str = "voice_commander.tools") -> ToolRegistry:
 def resolve_window(target: str) -> int: ...       # returns hwnd; raises FocusWindowError
 def resolve_app(target: str) -> str: ...          # returns launch token; raises OpenResolveError
 
-def _set_config(config: LLMConfig) -> None: ...   # daemon startup hook
+def _set_config(config: Any) -> None: ...         # daemon startup hook — receives the whole Config object
 ```
 
-**What it does:** Two pure functions that ground fuzzy `target` strings emitted by the LLM onto concrete OS objects, plus a one-shot config-injection hook.
+**What it does:** Two pure functions that ground fuzzy `target` strings onto concrete OS objects, plus a one-shot config-injection hook.
 
 - `resolve_window(target)` enumerates visible titled windows via `win32gui.EnumWindows`, reads each owner process name via `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) + GetModuleBaseName`, and scores every candidate as `max(WRatio(target, proc_name), WRatio(target, title))`. The top score wins above `focus_fuzzy_threshold` (default 70). Below → `FocusWindowError` with top-3 `(proc_name, title, score)` for diagnostics.
 - `resolve_app(target)` branches: URI (scheme regex) → return verbatim; existing path → return resolved absolute path; otherwise rapidfuzz-score against a cached `(display_name, launch_token)` list of Start Menu `.lnk` stems (recursive `rglob` under `%ProgramData%` and `%APPDATA%`) plus `shell:AppsFolder` COM enumeration. Argmax above `open_fuzzy_threshold` (default 70) wins; below → `OpenResolveError`. Cache populated lazily on first call; never invalidated during daemon uptime.
-- `_set_config(cfg.llm)` is called exactly once by `daemon.build_streaming_daemon()` at startup. It parks the `LLMConfig` on a module-level `_config_ref` slot so the threshold accessors can read `focus_fuzzy_threshold` / `open_fuzzy_threshold` without the primitives having to thread config through every call. The functions remain pure per call; the slot is set once and never mutated afterward.
+- `_set_config(cfg)` is called exactly once by `daemon.build_streaming_daemon()` at startup. It parks the entire `Config` object on a module-level `_config_ref` slot. The threshold accessors (`_focus_threshold()` / `_open_threshold()`) read `focus_fuzzy_threshold` / `open_fuzzy_threshold` via `hasattr` — these attributes do not exist on the current `Config` dataclass, so both thresholds always fall back to 70 unless a future config field is added with those names. The slot is set once and never mutated afterward.
 
 Both functions are called directly from `tools/primitives.py` — `focus(target)` calls `resolve_window(target)` then runs the AttachThreadInput foreground workaround; `open(target)` calls `resolve_app(target)` then blocklist-checks the resolved token before `os.startfile`. `rapidfuzz` is the only external dependency; `pywin32` / `win32com` are imported lazily inside the functions so unit tests can monkeypatch them.
 
@@ -316,11 +317,11 @@ class Dispatcher:
     def run_plan(self, transcript: str, plan: Plan, registry: ToolRegistry) -> None: ...
 ```
 
-**What it does:** The final step in the pipeline. `run_plan()` executes a multi-step `Plan` from the LLM router. It calls `feedback.on_plan_start()`, iterates through plan steps looking up each tool by name in the registry, emits a per-step `INFO` log of the form `plan step <i>/<total>: <name>(<kwargs>)`, invokes `tool.func(**step.kwargs)`, sleeps `settle_ms` between steps, and calls `feedback.on_plan_complete()`. If a step fails or a tool is unknown, `on_error` fires and the chain stops (when `plan.strict` is `True`, the default) or continues to the next step (when `plan.strict` is `False`). Only the first failure is recorded in the plan outcome regardless of mode. Tool functions run on the worker thread and must complete in a few hundred milliseconds (they perform keystroke sends via `pyautogui`).
+**What it does:** The final step in the pipeline. `run_plan()` executes a multi-step `Plan` produced by `VerbRouter`. It calls `feedback.on_plan_start()`, iterates through plan steps looking up each tool by name in the registry, emits a per-step `INFO` log of the form `plan step <i>/<total>: <name>(<kwargs>)`, invokes `tool.func(**step.kwargs)`, sleeps `settle_ms` between steps, and calls `feedback.on_plan_complete()`. If a step fails or a tool is unknown, `on_error` fires and the chain stops (when `plan.strict` is `True`, the default) or continues to the next step (when `plan.strict` is `False`). Only the first failure is recorded in the plan outcome regardless of mode. Tool functions run on the worker thread and must complete in a few hundred milliseconds (they perform keystroke sends via `pyautogui`).
 
-Miss handling is owned by the pipeline worker (`StreamingDaemon._process_utterance` calls `FeedbackSink.on_miss()` directly when `LLMRouter.route()` returns `None`). `Dispatcher` only receives valid `Plan` objects.
+Miss handling is owned by the pipeline worker (`StreamingDaemon._process_utterance` calls `FeedbackSink.on_miss()` directly when `VerbRouter.route()` returns `None`). `Dispatcher` only receives valid `Plan` objects.
 
-**Who calls it:** The worker thread in `StreamingDaemon`, after `LLMRouter.route()` returns a non-None `Plan`.
+**Who calls it:** The worker thread in `StreamingDaemon`, after `VerbRouter.route()` returns a non-None `Plan`.
 
 **Who it calls:** `FeedbackSink` callbacks and each `ToolEntry.func` callable in the plan.
 
@@ -365,22 +366,29 @@ class StreamingDaemon:
         feedback: FeedbackSink,
         recorder: StreamingRecorder | None,
         transcriber: Transcriber,
-        llm_router: LLMRouter,
         dispatcher: Dispatcher,
+        verb_router: VerbRouter,
         *,
         registry: ToolRegistry | None = None,
+        picker_session: PickerSession | None = None,
+        picker_registry: BarePickerRegistry | None = None,
+        dictation_session: DictationSession | None = None,
+        elements_session: ElementsSession | None = None,
         min_confidence: float = 0.30,
         min_word_count: int = 1,
         max_no_speech_prob: float = 0.6,
         output_dir: str = "outputs",
         web_server: WebServer | None = None,
+        event_bus: EventBus | None = None,
+        tracer: Tracer | None = None,
+        store: Store | None = None,
     ) -> None: ...
     def run(self, hotkey_key: str) -> None: ...  # blocks until shutdown
     def shutdown(self) -> None: ...
     def on_scroll_lock(self) -> None: ...        # scroll-lock hotkey callback
 ```
 
-**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems, including a one-shot `resolver._set_config(cfg.llm)` to inject fuzzy-threshold config into the parameter resolver. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_scroll_lock()` is the scroll-lock hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → VerbRouter.route() | LLMRouter.route() → Dispatcher.run_plan()`. Async WAV write (`outputs/last_utterance.wav`) and JSON plan dump (`outputs/last_plan.json`) are submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` handles `--validate` mode (runs `validate_or_die()` then exits), acquires a single-instance OS-level lock to prevent duplicate daemon processes, configures logging, logs environment diagnostics, installs a crash reporter, and then calls `build_streaming_daemon(Config.load()).run(cfg.hotkey.key)`. The pipeline worker first checks if the transcript is exactly `Merlin` (case-insensitive, stripped punctuation). If so, it toggles `_merlin_mode` and returns. Otherwise, if `_merlin_mode` is True, it calls `LLMRouter.route(transcript)`. If False, it calls `VerbRouter.route(transcript)`. `VerbRouter` first tries to match the transcript against registered command/workflow names and their `entry.phrases` synonyms (longest token-count match wins, underscore→space normalization, punctuation-stripped, case-insensitive); on miss it falls back to primitive verb rules (click/scroll/focus X/open X/type X/press X/wait N). Both routers return `Plan | None`; a None result fires `FeedbackSink.on_miss()`.
+**What it does:** The top-level orchestrator. `build_streaming_daemon(cfg)` factory constructs and wires all concrete subsystems, including a one-shot `resolver._set_config(cfg)` to inject config into the parameter resolver. `run()` calls `Transcriber.load()` (blocking model preload), starts the pipeline worker thread, starts the hotkey listener, installs SIGINT handler, and blocks on `threading.Event.wait(0.5)` (polled to allow Ctrl+C on Windows — see `gotchas.md` §9). `on_scroll_lock()` is the scroll-lock hotkey callback: calls `StreamingRecorder.open_session()` or `close_session()` depending on current session state. The pipeline worker drains `utt_q` and runs `transcribe → word-count gate → no_speech_prob gate → confidence gate → VerbRouter.route() → Dispatcher.run_plan()`. `VerbRouter` is the sole router (LLM routing was removed by ADR 0082): it first tries to match the transcript against registered command/workflow names and their `entry.phrases` synonyms (longest token-count match wins, underscore→space normalization, punctuation-stripped, case-insensitive); then handles the chain meta-verb, repeat-count modifier, and bare-primitive picker; finally falls back to primitive verb rules (click/scroll/focus X/open X/type X/press X/wait N). `VerbRouter.route()` returns `Plan | None`; a `None` result fires `FeedbackSink.on_miss()`. Async WAV write (`outputs/last_utterance.wav`) and JSON plan dump (`outputs/last_plan.json`) are submitted to a single-threaded `ThreadPoolExecutor` after every utterance for post-mortem debugging. `shutdown()` is idempotent — multiple calls are safe. `__main__.py` handles `--validate` mode (runs `validate_or_die()` then exits), acquires a single-instance OS-level lock to prevent duplicate daemon processes, configures logging, logs environment diagnostics, installs a crash reporter, and then calls `build_streaming_daemon(Config.load()).run(cfg.hotkey.key)`.
 
 **Who calls it:** `__main__.py` (the process entry point), signal handlers, and `on_scroll_lock` (hotkey-listener thread).
 
@@ -390,37 +398,14 @@ class StreamingDaemon:
 
 ---
 
-### 4.9 `LLMRouter`
-
-```python
-class LLMRouter:
-    def __init__(self, config: LLMRouterConfig, registry: ToolRegistry, reload_lock: threading.Lock) -> None: ...
-    def route(self, transcript: str, env_context: str | None = None) -> Plan | None: ...
-    def reload_prompt(self) -> None: ...
-    def composed_prompt_data(self) -> dict[str, Any]: ...
-    def warmup(self) -> bool: ...
-    def close(self) -> None: ...
-    @property
-    def metrics(self) -> dict[str, Any]: ...
-```
-
-**What it does:** One-shot tool-call planner via local LM Studio. `route()` sends the transcript to the configured LM Studio endpoint as an OpenAI-compatible chat completion with `tool_choice="required"`. It parses the response into a `Plan` of `ToolCall` steps. Returns `None` on timeout, connection error, HTTP error, malformed response, no tool_calls in response, or if the LLM calls `no_match`. `warmup()` posts a real chat-completion request with a synthetic transcript and `max_tokens=1` to prefill LM Studio's KV cache before the first real utterance. Returns `True` on success, `False` on any error. `close()` shuts down the underlying `httpx.Client`. Tracks simple metrics (total calls, timeouts, errors, avg latency). `reload_prompt()` re-reads the external template file and rebuilds the cached system prompt — called by the web layer under `reload_lock` after a template save. `composed_prompt_data()` returns structured data (raw template, resolved template, placeholders, tools array, model/endpoint info) for the Prompt Inspector UI.
-
-**Who calls it:** `StreamingDaemon._process_utterance()` directly, on every utterance that passes the confidence/word-count gates.
-
-**Who it calls:** `httpx.Client` for HTTP, `ToolRegistry.all_llm_visible()` to build the tools array.
-
-**How it is tested:** Unit tests with `httpx`-mocked responses covering: happy path single/multi-step plans, timeout, connection error, HTTP errors, malformed JSON, no tool_calls, no_match sentinel, max_plan_steps cap, metrics counters.
-
----
-
-### 4.10 `Plan` / `ToolCall`
+### 4.9 `Plan` / `ToolCall`
 
 ```python
 @dataclass(frozen=True)
 class ToolCall:
     name: str
     kwargs: dict[str, Any]
+    internal: bool = False  # True → Dispatcher executes but suppresses from HUD/EventBus
 
 @dataclass(frozen=True)
 class Plan:
@@ -429,7 +414,7 @@ class Plan:
     strict: bool = True   # halt on first step failure (True) or continue-on-error (False)
 ```
 
-**What it does:** Immutable value objects representing the LLM router's output. `Plan` holds an ordered tuple of `ToolCall` steps and a `strict` flag (default `True`) that controls whether `Dispatcher.run_plan()` halts on the first step failure or continues executing remaining steps. `raw_response` preserves the full LLM JSON for debugging.
+**What it does:** Immutable value objects representing `VerbRouter`'s output. `Plan` holds an ordered tuple of `ToolCall` steps and a `strict` flag (default `True`) that controls whether `Dispatcher.run_plan()` halts on the first step failure or continues executing remaining steps. `raw_response` holds router metadata for debugging — e.g. `{"router": "verb", "verb": "scroll", "tail": "down"}` or `{"router": "chain", ...}` or `{"router": "repeat", ...}`. `ToolCall.internal=True` marks synthetic steps (e.g. the 255 ms `wait` separators inserted by the chain parser) that the Dispatcher executes but must not surface to the FeedbackSink, EventBus, or HUD.
 
 ---
 
@@ -440,7 +425,7 @@ def validate(registry: ToolRegistry, store: ToolMetadataStore) -> list[str]: ...
 def validate_or_die(registry: ToolRegistry, store: ToolMetadataStore) -> None: ...
 ```
 
-**What it does:** Startup validator catching drift between Python tool signatures and TOML metadata. Seven rules: (1) every tool has TOML, (2) every sig param has TOML arg description, (3) no orphan TOML args, (4) all params use supported types, (5) settle_ms in [0, 5000], (6) llm_only tools have no phrases, (7) required primitives (no_match, wait) are registered and llm_only. `validate_or_die()` prints errors and exits if any fail.
+**What it does:** Startup validator catching drift between Python tool signatures and TOML metadata. Six rules: (1) every registered tool has TOML metadata, (2) every sig param has a TOML arg description (non-empty), (3) no orphan TOML args without a matching sig param, (4) all params use supported types (scalar or `Optional[scalar]`), (5) `settle_ms` in [0, 5000], (7) `wait` is registered and `llm_only=True` when the primitives module is discovered (rule 6 was removed with the LLM routing path — ADR 0082). `validate_or_die()` prints errors and exits if any fail.
 
 **Who calls it:** `build_streaming_daemon()` factory at startup, after discovery and metadata binding.
 
@@ -466,7 +451,7 @@ def validate_or_die(registry: ToolRegistry, store: ToolMetadataStore) -> None: .
 11. Word-count gate: drop if fewer than `min_word_count` words.
 12. `no_speech_prob` gate: drop if above `max_no_speech_prob`.
 13. Confidence gate: `on_miss()` if below `min_confidence`.
-14. `VerbRouter.route(result.text)` (normal mode) or `LLMRouter.route(result.text)` (Merlin mode) → `Plan | None`. In normal mode, VerbRouter first matches against registered command/workflow names and `entry.phrases` synonyms (longest token-count match wins; underscore↔space normalized, punctuation stripped, case-insensitive), then falls back to primitive verb rules.
+14. `VerbRouter.route(result.text)` → `Plan | None`. VerbRouter first matches against registered command/workflow names and `entry.phrases` synonyms (longest token-count match wins; underscore↔space normalized, punctuation stripped, case-insensitive), then checks chain meta-verb / repeat-count modifier, then falls back to primitive verb rules.
 14a. If `None` returned: pipeline worker calls `FeedbackSink.on_miss(text, ())` directly and loops back to `utt_q`.
 14b. If `Plan` returned: `Dispatcher.run_plan(text, plan, registry)` executes multi-step plan (per-step INFO log; `resolver.resolve_window` / `resolve_app` called inside `focus` / `open` as needed).
 15. Pipeline worker loops back to `utt_q`.
@@ -508,7 +493,7 @@ reload_lock                                    shares ToolRegistry   uses reload
 5. Acquires per-tool file lock → atomic TOML write → release.
 6. Acquires `reload_lock` → `registry.reload_metadata()` → release.
 7. Returns updated card fragment → HTMX swaps form back to card.
-8. `LLMRouter`'s next `route()` call uses the updated registry metadata via `ToolRegistry.all_llm_visible()`.
+8. `VerbRouter`'s next `_match_registered_command()` call sees the updated metadata because the registry reference is shared and queried lazily on every utterance.
 
 ---
 
@@ -589,12 +574,9 @@ HotkeyCtrl ──▶ VADGate ──▶ Dispatcher         httpx SSE client
 
 - **`PlanOutcome`** (daemon — `src/voice_commander/plan.py`) — frozen
   dataclass carrying the full outcome of one command cycle.
-- **`handle_plan_outcome`** (sprite — `src/voice_sprite/plan_outcome_handler.py`) — parses the `plan_outcome` SSE event dict, calls `Summarizer.summarize()`, and appends a `ChatLogEntry` directly from the SSE thread. Parse failures are swallowed; summarizer exceptions fall back to the raw transcript.
-- **`Summarizer`** (sprite — `src/voice_sprite/summarizer.py`) — routes
-  rule → chain-detector → LLM fallback → raw fallback.
-- **`RULES` + `CHAIN_DETECTORS`** (sprite — `summary_rules.py`).
-- **`LLMSummaryClient`** (sprite — `llm_summary_client.py`) — httpx client
-  for LM Studio; 800 ms deadline; returns None on any failure.
+- **`handle_plan_outcome`** (sprite — `src/voice_sprite/plan_outcome_handler.py`) — parses the `plan_outcome` SSE event dict and appends a `ChatLogEntry` directly from the SSE thread. `status="miss"` → `"no match"`; `status="error"` → `"<tool> failed"`; `status="ok"` suppressed (per-step `tool_fired` lines already populated the HUD). Parse failures are logged and skipped.
+- **`handle_tool_fired`** (sprite — `src/voice_sprite/plan_outcome_handler.py`) — appends the raw tool name on every `tool_fired` SSE event.
+- **`handle_transcript`** (sprite — `src/voice_sprite/plan_outcome_handler.py`) — appends the recognised transcript as a quoted info line before routing/execution.
 - **`ChatLog`** (sprite — `chat_log.py`) — ring buffer + fade curve. `append()` is called from the SSE thread (not deferred to the pyglet main thread).
 - **`ChatLogRenderer`** (sprite — `chat_log_renderer.py`) — pyglet labels.
 
@@ -697,8 +679,7 @@ the runtime resolve cross-store references (e.g. a workflow calling a command gr
 path: it builds a shared `GraphRuntime` that knows about both command and workflow graphs
 (so cross-graph calls work).
 
-`Graph.llm_visible = False` sets `ToolEntry.internal = True`, excluding the tool from
-`LLMRouter.all_llm_visible()` without removing it from dispatch.
+`Graph.llm_visible` is retained in the graph JSON schema for backward compatibility with existing `commands.json`/`workflows.json` files, but is **ignored by the registrar** — `_build_entry` always passes `internal=False` regardless of the flag's value (ADR 0082).
 
 **Module:** `src/voice_commander/commands/registrar.py`
 
@@ -754,7 +735,7 @@ class Graph:
     edges: tuple[Edge, ...]
     inputs: tuple[GraphInput, ...]
     outputs: tuple[PortRef, ...]
-    llm_visible: bool = True
+    llm_visible: bool = True  # retained for backward compat; ignored by registrar — ADR 0082
     enabled: bool = True
 ```
 
@@ -803,8 +784,8 @@ class GraphRuntime:
 Returns a `PlanOutcome` (same wire format as linear plans — see §10) and a
 `dict[output_port → value]` of the graph's declared output ports.
 
-**The `LLMRouter.route()` and `Dispatcher.run_plan()` interfaces are unchanged.**
-Graphs are registered as `ToolEntry` closures; the LLM sees them as flat tool calls.
+**The `VerbRouter.route()` and `Dispatcher.run_plan()` interfaces are unchanged.**
+Graphs are registered as `ToolEntry` closures and matched by `VerbRouter._match_registered_command()` by name and synonym.
 
 ### Validation — `commands/graph_validator.py`
 
@@ -870,7 +851,7 @@ The React SPA node-graph canvas served at `/page/builder`. See ADRs 0071 (React 
 
 Returns JSON with six top-level keys: `pipeline` (action primitives), `perception` (observation primitives, partitioned by `PERCEPTION_PRIMITIVE_NAMES` from `tool_schema.py`), `commands`, `workflows`, `control`, `value`.
 
-**Filter rules:** a tool entry appears in the palette when `origin == "primitive" and enabled and not system`. The `internal` flag governs LLM visibility only, not Builder palette visibility. `no_match` carries `system=True` and is hidden.
+**Filter rules:** a tool entry appears in the palette when `origin == "primitive" and enabled and not system`. The `internal` flag governs visibility in other web-UI surfaces but not the Builder palette. Any tool carrying `system=True` (infrastructure-only tools) is hidden from the palette.
 
 **Section render order in the SPA palette:** Commands → Workflows → Primitives → Control → Perception.
 
@@ -922,7 +903,7 @@ inside a running asyncio loop (e.g., from a FastAPI route), it dispatches to a
 ### Invariants
 
 - All four primitives are decorated with `@tool` and registered via sidecar TOML.
-- All are `llm_visible = True` by default; can be hidden per ADR 0067.
+- All have `internal = False` by default (visible to all dispatch surfaces); can be marked `internal = True` via TOML to hide from certain UI surfaces.
 - Pure reads — no state mutations, no `settle_ms`.
 - `pywin32` is a hard dependency for `read_clipboard`, `get_active_window_title`, `get_cursor_pos`.
 - `winrt-*` and `tesseract` are optional; `OcrEngineUnavailable` raised if absent.
@@ -1027,7 +1008,7 @@ exclude_self = true                  # filter daemon + sprite + modal windows
 
 ## Observability
 
-`observability/` (Tracer + Store + REST + CLI + replay) — see ADR 0070. The Tracer is constructed once in `build_streaming_daemon`, threaded into `LLMRouter`, `Dispatcher`, and `GraphRuntime`. Spans are written async via a single SQLite writer thread. Live trace events fan out over the existing EventBus under `trace.*`; the sprite ignores them.
+`observability/` (Tracer + Store + REST + CLI + replay) — see ADR 0070. The Tracer is constructed once in `build_streaming_daemon`, threaded into `Dispatcher` and `GraphRuntime`. Spans are written async via a single SQLite writer thread. Live trace events fan out over the existing EventBus under `trace.*`; the sprite ignores them.
 
 Every utterance persists as a span tree to `outputs/runs.db`. Surfaces:
 - `/api/runs/*` REST router + `/api/runs/stream` SSE
@@ -1059,7 +1040,7 @@ class Tracer:
 
 **What it does:** Brackets every utterance execution in a `run()` context and every logical operation in a `span()` context. Uses `contextvars` for automatic parent-child span nesting. Publishes `trace.*` events to `EventBus` for live streaming. Writes all records asynchronously to `Store`. Logs a one-line summary per run with status, duration, and step count.
 
-**Who calls it:** `Daemon` creates a single instance at startup. `LLMRouter.route()` opens a `run()`. `Dispatcher.run_plan()`, `GraphRuntime.run()`, and individual tool functions open `span()` contexts.
+**Who calls it:** `StreamingDaemon` creates a single instance at startup (via `build_streaming_daemon`). The pipeline worker opens a `run()` context per utterance. `Dispatcher.run_plan()`, `GraphRuntime.run()`, and individual tool functions open `span()` contexts.
 
 **Who it calls:** `Store.write_run_start()`, `write_run_end()`, `write_span()` for persistence. `EventBus.publish()` for live trace events. No external services.
 
@@ -1121,7 +1102,7 @@ class RunHandle:
 
 **What it does:** `Span` is a mutable row object holding timing, status, error info, and attributes for a single traced operation. `RunHandle` is yielded by `Tracer.run()` and allows callers to override the run's final status or inspect the run ID for transcript updates. The step counter on `RunHandle` tracks tool-call span count per run without shared mutable state.
 
-**Who calls it:** `Tracer.span()` creates `Span` instances internally. `Tracer.run()` yields `RunHandle` to `Dispatcher` and `LLMRouter`.
+**Who calls it:** `Tracer.span()` creates `Span` instances internally. `Tracer.run()` yields `RunHandle` to the pipeline worker and `Dispatcher`.
 
 **Who it calls:** Nothing — pure data objects.
 
@@ -1131,7 +1112,7 @@ class RunHandle:
 
 **Data flow:**
 ```
-LLMRouter / Dispatcher / GraphRuntime
+Pipeline worker / Dispatcher / GraphRuntime
     → Tracer.run() yields RunHandle
         → Tracer.span() creates Span
             → Store.write_span() (async queue)
