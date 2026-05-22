@@ -78,6 +78,27 @@ base would be empty (`twice` alone), or `<word> time(s)` has no number before it
 (`end times`), it returns `None` and `route()` falls through to route the full
 original text unchanged — so no existing utterance regresses.
 
+### Punctuation tolerance
+
+Whisper routinely glues commas and periods onto spoken words ("go down, twice",
+"scroll, down", "chain, copy paste"). The registered-command path already
+normalised these away, but **primitive verb-head matching, subcommand matching,
+and the chain-head intercept did not** — an attached comma made the head token
+(`"scroll,"`, `"chain,"`) miss its alias and the whole utterance miss-chimed.
+This was a long-standing chain papercut surfaced while testing repeat (the repeat
+base is re-routed through the same primitive path).
+
+`VerbRouter.route()` now normalises the head token and the subcommand comparison
+through the existing `_normalize_spoken` (strips every non-alphanumeric run):
+
+- chain-head check: `_normalize_spoken("chain,")` → `"chain"`;
+- primitive head: `_normalize_spoken("scroll,")` → `"scroll"`;
+- subcommand: `_normalize_spoken("down,")` → `"down"`.
+
+The **raw tail is left untouched**, so `type Hello, world` still types the comma
+and `type Hello, world twice` repeats it verbatim. This fix benefits chain and
+plain primitives directly, not just the repeat modifier.
+
 ### Scope / limitations
 
 - `chain … twice` is **not** supported: the chain head intercept (step 1) wins
@@ -109,7 +130,11 @@ and the sibling feature set the precedent.
   digits, non-matches, MAX cap), `expand_repeat` (separators, multi-step blocks,
   metadata, strict inheritance, synthetic-step + empty-plan rejection), and
   `VerbRouter.route` integration (primitives, registered commands, underscore
-  names, picker/dictation rejection, literal-name precedence).
+  names, picker/dictation rejection, literal-name precedence, and comma
+  tolerance — `scroll, down twice`, `scroll up, thrice`, `type Hello, world
+  twice` keeps its comma). `tests/unit/test_verb_router.py` adds head/subcommand
+  punctuation cases (`scroll, down`, `click.`, `scroll up,`, `type, Hello,
+  world`, `chain, click click`).
 - `tests/integration/test_repeat_routing.py` — end-to-end through the **real**
   `Dispatcher`: `scroll down twice` invokes the counting `scroll` tool exactly
   2× (4× for "four times"), `go down thrice` invokes the registered command 3×,

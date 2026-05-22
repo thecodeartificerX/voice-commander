@@ -1,7 +1,6 @@
 """Unit tests for the primitives-only VerbRouter rule set."""
 
-import pytest
-from voice_commander.plan import Plan, ToolCall
+from voice_commander.plan import ToolCall
 from voice_commander.verb_router import VerbRouter, build_default_rules
 
 
@@ -321,7 +320,6 @@ def test_bare_focus_with_no_picker_still_misses():
 
 def test_bare_focus_with_picker_registry_routes_to_picker_open():
     from voice_commander.picker.registry import BarePickerRegistry
-    from voice_commander.picker.types import PickerItem
 
     reg = BarePickerRegistry()
     reg.register("focus", lambda: [])
@@ -465,3 +463,42 @@ def test_type_with_tail_still_routes_to_type_primitive():
     assert plan is not None
     assert plan.steps[0].name == "type"
     assert plan.steps[0].kwargs == {"text": "hello world"}
+
+
+# ---------------------------------------------------------------------------
+# Punctuation tolerance — Whisper attaches commas/periods to spoken words
+# ---------------------------------------------------------------------------
+
+
+def test_primitive_head_with_attached_comma_routes():
+    """'scroll, down' must route despite the comma glued to the verb head."""
+    plan = _router().route("scroll, down")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="scroll", kwargs={"direction": "down"}),)
+
+
+def test_primitive_head_with_attached_period_routes():
+    plan = _router().route("click.")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="click", kwargs={}),)
+
+
+def test_subcommand_with_attached_comma_routes():
+    plan = _router().route("scroll up,")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="scroll", kwargs={"direction": "up"}),)
+
+
+def test_raw_tail_preserves_internal_punctuation():
+    """Head punctuation is stripped, but the typed literal keeps its comma."""
+    plan = _router().route("type, Hello, world")
+    assert plan is not None
+    assert plan.steps == (ToolCall(name="type", kwargs={"text": "Hello, world"}),)
+
+
+def test_chain_head_with_attached_comma_routes():
+    """'chain, click click' — the comma on the chain head must not defeat the
+    head intercept (a long-standing chain papercut)."""
+    plan = _router_with_chain().route("chain, click click")
+    assert plan is not None
+    assert [s.name for s in plan.steps] == ["click", "wait", "click"]

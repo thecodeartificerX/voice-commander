@@ -83,7 +83,10 @@ class VerbRouter:
         #    to avoid a circular import: chain.py imports VerbRule from this
         #    module, so a module-level import here would catch verb_router
         #    mid-initialisation before VerbRule is defined.
-        head_lower = text.split(" ", 1)[0].lower()
+        # Normalize the head token so Whisper-attached punctuation ("chain,",
+        # "scroll,") does not defeat head matching. _normalize_spoken strips
+        # every non-alphanumeric run, so "chain," -> "chain".
+        head_lower = _normalize_spoken(text.split(" ", 1)[0])
         if self._chain_parser is not None:
             from .chain import _HEAD_ALIASES as _CHAIN_HEADS  # noqa: PLC0415
             if head_lower in _CHAIN_HEADS:
@@ -113,7 +116,10 @@ class VerbRouter:
             return expand_repeat(self.route(base_text), count)
 
         head, _, tail = text.partition(" ")
-        head = head.strip().lower()
+        # Strip punctuation Whisper attaches to the verb ("scroll," / "click.")
+        # before alias lookup; the raw tail keeps its content untouched so
+        # `type Hello, world` still types the comma.
+        head = _normalize_spoken(head)
         tail = tail.strip().rstrip(".,!?")
 
         verb_name = self._alias_map.get(head)
@@ -153,8 +159,11 @@ class VerbRouter:
                 )
 
         if tail:
+            # Match subcommands ("scroll up" / "scroll down,") punctuation-
+            # tolerantly too — the comma in "down," must not block the alias.
+            tail_norm = _normalize_spoken(tail)
             for sub in verb.subcommands:
-                if tail.lower() in sub.aliases:
+                if tail_norm in sub.aliases:
                     return self._plan_for(sub.target, verb.name, tail)
 
         if tail and verb.raw_tail_tool and verb.raw_tail_arg:

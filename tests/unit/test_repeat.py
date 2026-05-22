@@ -256,6 +256,35 @@ def test_route_underscore_command_thrice():
     assert [s.name for s in plan.steps].count("go_down") == 3
 
 
+# ---------------------------------------------------------------------------
+# Punctuation tolerance — Whisper sprinkles commas between spoken words
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "utterance, n",
+    [
+        ("scroll, down twice", 2),  # comma attached to verb head
+        ("scroll up, thrice", 3),  # comma before the modifier
+        ("scroll down, four times", 4),  # comma before "<n> times"
+        ("scroll down twice,", 2),  # trailing comma on the whole utterance
+    ],
+)
+def test_route_repeat_tolerates_commas(utterance, n):
+    plan = _router().route(utterance)
+    assert plan is not None, utterance
+    assert [s.name for s in plan.steps].count("scroll") == n
+
+
+def test_route_repeat_preserves_comma_in_type_text():
+    # The repeat suffix must not strip punctuation from a `type` literal.
+    plan = _router().route("type Hello, world twice")
+    assert plan is not None
+    typed = [s for s in plan.steps if s.name == "type"]
+    assert len(typed) == 2
+    assert all(s.kwargs == {"text": "Hello, world"} for s in typed)
+
+
 def test_literal_command_named_with_count_word_wins_over_repeat():
     # A command literally named "go down twice" must beat the repeat
     # interpretation, because the full-text registered match runs first.

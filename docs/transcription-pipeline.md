@@ -201,9 +201,11 @@ The first two gates treat the utterance as infrastructure noise (e.g. brief sile
 
 **Step 8 — VerbRouter**
 
-`VerbRouter.route(text)` matches the transcript against:
-1. Registered command/workflow names and synonyms (longest-token-count match wins; underscore→space, punctuation-stripped, case-insensitive).
-2. Fallback primitive verb rules (click/scroll/focus/open/type/press/wait).
+`VerbRouter.route(text)` matches the transcript against, in order:
+1. `chain` meta-verb head intercept (`chain`/`chained`/`chains`) → `ChainParser` (ADR 0085).
+2. Registered command/workflow names and synonyms (longest-token-count match wins; underscore→space, punctuation-stripped, case-insensitive).
+3. Repeat-count modifier (`twice`/`thrice`/`once` or `<N> time(s)`) → strips the trailing modifier, recursively routes the base phrase, and fans the resulting plan into N executions interleaved with synthetic `wait(ms=255)` `internal=True` separators (ADR 0098). Placed after the registered full-text match (a command literally named with a count word still wins) and before primitive routing.
+4. Fallback primitive verb rules (click/scroll/focus/open/type/press/wait), incl. the bare-primitive picker `__picker.open` and `dictate` → `__dictation.start` synthetic steps.
 
 Returns `Plan | None`. `None` fires a miss chime + `plan_outcome(miss)`.
 
@@ -236,6 +238,8 @@ remote_timeout_ms   = 5000
 | `StreamingDaemon._pipeline_loop()` | `src/voice_commander/daemon.py` |
 | `StreamingDaemon._write_utterance_async()` | `src/voice_commander/daemon.py` |
 | `VerbRouter` | `src/voice_commander/verb_router.py` |
+| `parse_repeat_suffix` / `expand_repeat` | `src/voice_commander/repeat.py` |
+| `ChainParser` | `src/voice_commander/chain.py` |
 | `Dispatcher` | `src/voice_commander/dispatcher.py` |
 
 ### 3.5 Governing ADRs
