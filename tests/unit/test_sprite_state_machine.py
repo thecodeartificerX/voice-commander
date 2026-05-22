@@ -1,4 +1,4 @@
-from voice_sprite.state_machine import StateMachine
+from voice_sprite.state_machine import SpriteState, StateMachine
 
 
 def test_dictation_start_sets_flag_no_state_change():
@@ -13,14 +13,16 @@ def test_dictation_end_clears_flag():
     sm = StateMachine()
     sm.on_event("dictation.start", {})
     result = sm.on_event("dictation.end", {})
-    assert result is None
+    # ADR 0099: dictation.end restores the pre-dictation pose so the cat leaves
+    # the dimmed PROCESSING state. No session was opened here → IDLE.
+    assert result == SpriteState.IDLE
     assert sm.dictating is False
 
 
 def test_dictation_end_without_prior_start_is_idempotent():
     sm = StateMachine()
     result = sm.on_event("dictation.end", {})
-    assert result is None
+    assert result == SpriteState.IDLE  # ADR 0099: restores to IDLE (no open session)
     assert sm.dictating is False
 
 

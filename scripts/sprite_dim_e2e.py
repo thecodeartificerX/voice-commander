@@ -10,6 +10,7 @@ Phases captured:
   LISTENING   (session open)      -> bright
   dictation capture               -> bright
   dictation processing (decode)   -> dim
+  post-end    (session still open)-> bright   (ADR 0099 regression)
 
 Outputs:
   outputs/sprite_dim_*.png  -- per-phase screenshots
@@ -248,12 +249,23 @@ def main() -> int:
     port = _free_port()
     srv = _start_sse_server(port)
     cfg = _write_temp_config(port)
+    # Force the subprocess to import voice_sprite from THIS checkout's src/,
+    # not whatever path the editable install points at. Without this, a sprite
+    # launched from a git worktree silently runs the main working copy's code
+    # (the editable .pth is absolute), so the harness would validate the wrong
+    # source. Prepending src/ to PYTHONPATH makes the local tree win.
+    env = dict(os.environ)
+    src_dir = str(ROOT / "src")
+    env["PYTHONPATH"] = (
+        src_dir + os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else src_dir
+    )
     proc = subprocess.Popen(
         [sys.executable, "-m", "voice_sprite", "--config", str(cfg)],
         cwd=str(ROOT),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+        env=env,
     )
     log.info("sprite pid=%d", proc.pid)
     ok = False
@@ -289,20 +301,41 @@ def main() -> int:
         time.sleep(1.0)
         metrics["processing"] = _capture_phase(hwnd, "processing")
 
+        # --- Phase: post-end (server done; session still open -> bright) ---
+        # ADR 0099 regression: dictation.end must restore the cat to bright
+        # LISTENING when the session is still open — not leave it parked in the
+        # dim PROCESSING pose.
+        _emit(srv, "dictation.end", {"reason": "done"})
+        time.sleep(1.0)
+        metrics["post_end"] = _capture_phase(hwnd, "post_end")
+
         if any(v < 0 for v in metrics.values()):
             log.error("a capture failed; metrics=%s", metrics)
             return 1
 
-        # Assertions: listening phases must be clearly brighter than dim phases.
+        # Assertions: bright phases must be clearly brighter than dim phases.
         # Use a 0.6 ratio guard (dim is ~0.4x of bright; 0.6 leaves margin).
-        bright = min(metrics["listening"], metrics["capture"])
+        # post_end is a BRIGHT phase: the session is still listening after the
+        # server round-trip, so the cat must have left the dim PROCESSING pose.
+        bright = min(metrics["listening"], metrics["capture"], metrics["post_end"])
         dim = max(metrics["idle"], metrics["processing"])
-        log.info("bright(min listening/capture)=%.1f  dim(max idle/processing)=%.1f", bright, dim)
+        log.info(
+            "bright(min listening/capture/post_end)=%.1f  dim(max idle/processing)=%.1f",
+            bright,
+            dim,
+        )
         if dim <= 0:
             log.error("dim cat not visible at all (metric<=0) — should be dimmed, not gone")
             return 1
         if dim >= bright * 0.6:
             log.error("dim phases not measurably darker than bright phases")
+            return 1
+        if metrics["post_end"] < max(metrics["idle"], metrics["processing"]) / 0.6:
+            log.error(
+                "post-end cat not bright (metric=%.1f) — stuck in dim PROCESSING "
+                "pose after dictation.end (ADR 0099 regression)",
+                metrics["post_end"],
+            )
             return 1
         ok = True
         return 0

@@ -87,6 +87,10 @@ class StateMachine:
         self.target_state = SpriteState.WARMUP
         self.dictating = False
         self.processing = False  # True while awaiting server Whisper+LLM (ADR 0096 D5)
+        # True between session_started and session_stopped. Drives where
+        # dictation.end restores to: LISTENING (bright) if a session is still
+        # open, IDLE (dim) once it has closed (ADR 0099).
+        self.session_active = False
         self.cancelled_cue: bool = False  # True when last dictation.end had reason="cancel"
         self._heartbeat_timeout_s = heartbeat_timeout_ms / 1000.0
         self._last_heartbeat: float = 0.0
@@ -109,6 +113,14 @@ class StateMachine:
             if self.current_state == SpriteState.CRASHED:
                 self.target_state = SpriteState.IDLE
             return None
+
+        # Track session liveness so dictation.end knows whether to restore to
+        # LISTENING (bright) or IDLE (dim). These events also fall through to
+        # EVENT_STATE_MAP below for their state transition (ADR 0099).
+        if event_type == "session_started":
+            self.session_active = True
+        elif event_type == "session_stopped":
+            self.session_active = False
 
         if event_type == "dictation.start":
             self.dictating = True
@@ -134,7 +146,16 @@ class StateMachine:
             # Renderer (voice_sprite/__main__.py or equivalent) reads
             # self.cancelled_cue to show a brief "cancelled" text badge.
             self.cancelled_cue = reason == "cancel"
-            return None
+            # Leave the PROCESSING pose: restore to the pre-dictation visual so
+            # the cat un-dims when the session is still listening (ADR 0099).
+            # The dictation.processing handler parks both states at PROCESSING (a
+            # dim state); without this the cat would stay dimmed after the server
+            # round-trip even though the mic is hot again. Returning the restored
+            # state lets the renderer leave the frozen PROCESSING pose.
+            restored = SpriteState.LISTENING if self.session_active else SpriteState.IDLE
+            self.target_state = restored
+            self.current_state = restored
+            return restored
 
         # vad_speech only triggers on active=true
         if event_type == "vad_speech" and not data.get("active", False):
