@@ -62,3 +62,25 @@ def test_empty_phrases_rejected(tmp_path: Path) -> None:
     p = _write(tmp_path, "v.toml", '[[command]]\nphrases=[]\naction="press a"\n')
     with pytest.raises(ModeLoadError, match="phrases"):
         parse_mode_file(p, build_base_primitive_router())
+
+
+def test_missing_action_rejected(tmp_path: Path) -> None:
+    p = _write(tmp_path, "v.toml", '[[command]]\nphrases=["x"]\n')
+    with pytest.raises(ModeLoadError, match="action"):
+        parse_mode_file(p, build_base_primitive_router())
+
+
+def test_empty_end_phrase_rejected(tmp_path: Path) -> None:
+    p = _write(
+        tmp_path,
+        "v.toml",
+        '[mode]\nend_phrase = "  "\n\n[[command]]\nphrases=["x"]\naction="press a"\n',
+    )
+    with pytest.raises(ModeLoadError, match="end_phrase"):
+        parse_mode_file(p, build_base_primitive_router())
+
+
+def test_empty_string_phrase_rejected(tmp_path: Path) -> None:
+    p = _write(tmp_path, "v.toml", '[[command]]\nphrases=[""]\naction="press a"\n')
+    with pytest.raises(ModeLoadError, match="phrase"):
+        parse_mode_file(p, build_base_primitive_router())

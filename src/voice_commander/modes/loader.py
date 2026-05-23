@@ -15,6 +15,11 @@ class ModeLoadError(ValueError):
 
 
 def _reserved_triggers() -> set[str]:
+    """Normalized head-words that cannot be used as mode triggers.
+
+    Covers primitive verb names (build_default_rules), chain heads
+    (_CHAIN_HEADS), elements entry words (ENTRY_WORDS), and 'dictate'.
+    """
     reserved = {r.name for r in build_default_rules()}
     reserved |= set(_CHAIN_HEADS)
     reserved |= set(_ELEMENTS_WORDS)
@@ -44,6 +49,8 @@ def parse_mode_file(path: Path, base_router: VerbRouter) -> ModeDefinition:
     if trigger in _reserved_triggers():
         raise ModeLoadError(f"{path.name}: trigger {trigger!r} is reserved")
     end_phrase = _normalize_spoken(str(meta.get("end_phrase", f"{trigger} end")))
+    if not end_phrase:
+        raise ModeLoadError(f"{path.name}: end_phrase normalizes to empty")
     badge = str(meta.get("badge", trigger.upper()))
 
     cmds_raw = raw.get("command", [])
@@ -57,6 +64,11 @@ def parse_mode_file(path: Path, base_router: VerbRouter) -> ModeDefinition:
         phrases = c.get("phrases", [])
         if not isinstance(phrases, list) or not phrases:
             raise ModeLoadError(f"{path.name}: command #{i} needs a non-empty phrases list")
+        for j, ph in enumerate(phrases):
+            if not isinstance(ph, str) or not ph.strip():
+                raise ModeLoadError(
+                    f"{path.name}: command #{i} phrase #{j} must be a non-empty string"
+                )
         action = c.get("action")
         if not isinstance(action, str) or not action.strip():
             raise ModeLoadError(f"{path.name}: command #{i} needs a string action")
