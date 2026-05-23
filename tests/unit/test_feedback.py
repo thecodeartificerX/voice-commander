@@ -11,6 +11,8 @@ def test_null_sink_all_methods_noop():
     sink.on_match("copy", "copy", 100.0)
     sink.on_miss("huh", ())
     sink.on_error("x", RuntimeError("y"))
+    sink.on_mode_enter()
+    sink.on_mode_exit()
 
 
 def test_capturing_sink_records_calls():
