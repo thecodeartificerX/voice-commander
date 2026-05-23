@@ -23,6 +23,8 @@ class FeedbackSink(Protocol):
     def on_error(self, subsystem: str, err: BaseException) -> None: ...
     def on_plan_start(self, transcript: str, step_count: int) -> None: ...
     def on_plan_complete(self, transcript: str, steps_executed: int) -> None: ...
+    def on_mode_enter(self) -> None: ...
+    def on_mode_exit(self) -> None: ...
 
 
 class NullFeedbackSink:
@@ -48,6 +50,12 @@ class NullFeedbackSink:
         pass
 
     def on_plan_complete(self, transcript: str, steps_executed: int) -> None:
+        pass
+
+    def on_mode_enter(self) -> None:
+        pass
+
+    def on_mode_exit(self) -> None:
         pass
 
 
@@ -78,6 +86,12 @@ class CapturingFeedbackSink:
 
     def on_plan_complete(self, transcript: str, steps_executed: int) -> None:
         self.calls.append(("on_plan_complete", (transcript, steps_executed)))
+
+    def on_mode_enter(self) -> None:
+        self.calls.append(("on_mode_enter", ()))
+
+    def on_mode_exit(self) -> None:
+        self.calls.append(("on_mode_exit", ()))
 
 
 class WindowsFeedbackSink:
@@ -128,3 +142,9 @@ class WindowsFeedbackSink:
 
     def on_plan_complete(self, transcript: str, steps_executed: int) -> None:
         logger.info("PLAN_COMPLETE '%s' steps_executed=%d", transcript, steps_executed)
+
+    def on_mode_enter(self) -> None:
+        self._play(self._start)
+
+    def on_mode_exit(self) -> None:
+        self._play(self._stop)
