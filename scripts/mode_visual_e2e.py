@@ -6,7 +6,7 @@ picker_visual_e2e.py and sprite_dim_e2e.py.
 
 Phases:
   1. Emit warmup_done + session_started to settle the sprite into LISTENING.
-  2. Emit mode.enter {"name":"video","badge":"VIDEO MODE"} — badge must appear
+  2. Emit mode.enter {"name":"video","badge":"🎬 VIDEO"} — badge must appear
      in green (120, 220, 140) at the top-centre of the sprite window.
   3. Capture outputs/mode_badge_on.png — assert green pixels present.
   4. Emit mode.exit {"name":"video","reason":"end_phrase"} — badge must clear.
@@ -106,7 +106,7 @@ def _has_badge_pixels(png_path: Path, *, top_fraction: float = 0.35) -> bool:
             ):
                 hits += 1
     log.info("badge pixel hits in top %.0f%% of %s: %d", top_fraction * 100, png_path.name, hits)
-    return hits > 0
+    return hits > 5
 
 
 # ---------------------------------------------------------------------------
@@ -121,12 +121,8 @@ def _has_badge_pixels(png_path: Path, *, top_fraction: float = 0.35) -> bool:
 
 
 def _get_child_pids(parent_pid: int) -> set[int]:
-    """Return the set of direct child PIDs of *parent_pid* via WMI."""
+    """Return the set of direct child PIDs of *parent_pid* via the Toolhelp32 snapshot API."""
     try:
-        import win32api  # type: ignore
-        import win32con  # type: ignore
-        import win32process  # noqa — ensure pywin32 is present
-
         # Use a snapshot via TH32CS_SNAPPROCESS to enumerate children.
         import ctypes
         TH32CS_SNAPPROCESS = 0x00000002
@@ -266,8 +262,8 @@ def main() -> int:
         # ----------------------------------------------------------------
         # Phase 1 — emit mode.enter, capture badge-ON screenshot
         # ----------------------------------------------------------------
-        log.info("emitting mode.enter {name:video, badge:'VIDEO MODE'}")
-        _emit(srv, "mode.enter", {"name": "video", "badge": "VIDEO MODE"})
+        log.info("emitting mode.enter {name:video, badge:'🎬 VIDEO'}")
+        _emit(srv, "mode.enter", {"name": "video", "badge": "🎬 VIDEO"})
         time.sleep(1.2)  # allow pyglet to render the new label
 
         if not _capture_window(hwnd, BADGE_ON_PNG):
