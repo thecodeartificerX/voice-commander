@@ -33,6 +33,6 @@ def compile_action(router: VerbRouter, action: str) -> Plan:
     plan = router.route(action)
     if plan is None:
         raise ValueError(f"action could not be routed: {action!r}")
-    if plan.steps and plan.steps[0].name.startswith("__"):
+    if any(step.name.startswith("__") for step in plan.steps):
         raise ValueError(f"action resolves to a synthetic intercept (not allowed): {action!r}")
     return plan
