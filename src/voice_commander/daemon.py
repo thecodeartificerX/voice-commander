@@ -34,6 +34,8 @@ from .elements.uia import uia_available
 from .event_bus import EventBus
 from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
+from .modes.registry import ModeRegistry
+from .modes.session import ModeSession
 from .observability import Store, Tracer
 from .observability.errors import classify as _classify_error
 from .picker.registry import BarePickerRegistry
@@ -114,10 +116,7 @@ def _provenance_banner(cfg: Config, result: SelfTestResult) -> list[str]:
         first_error_line = (result.error or "unknown error").splitlines()[0]
         status = f"FAIL: {first_error_line}"
 
-    line1 = (
-        f"=== voice_commander | pid={os.getpid()} | git={short_sha}"
-        f" | config={short_hash} ==="
-    )
+    line1 = f"=== voice_commander | pid={os.getpid()} | git={short_sha} | config={short_hash} ==="
     line2 = (
         f"=== audio: name='{device_name}' -> {hostapi_idx_str}"
         f" @ {result.native_rate}Hz | {status} ==="
@@ -165,6 +164,7 @@ class StreamingDaemon:
         dictation_language: str = "en",
         dictation_idle_timeout_s: float = 30.0,
         elements_session: ElementsSession | None = None,
+        mode_session: ModeSession | None = None,
         elements_max_elements: int = 200,
         elements_scan_timeout_s: float = 3.0,
         min_confidence: float = 0.30,
@@ -274,6 +274,8 @@ class StreamingDaemon:
         )
         # --- Elements mode (ADR 0087) ---
         self._elements_session = elements_session
+        # --- Named modes (ADR 0100) ---
+        self._mode_session = mode_session
         self._elements_max_elements = elements_max_elements
         self._elements_scan_timeout_s = elements_scan_timeout_s
         self._elements_executor = concurrent.futures.ThreadPoolExecutor(
@@ -439,6 +441,8 @@ class StreamingDaemon:
                 self._dictation_session.cancel()
         if self._elements_session is not None and self._elements_session.active:
             self._elements_session.cancel()
+        if self._mode_session is not None and self._mode_session.active:
+            self._mode_session.reset()
         self._feedback.on_recording_stop()
         self._publish("muted")
         self._publish("session_stopped")
@@ -535,8 +539,7 @@ class StreamingDaemon:
                 self._utt_q.put_nowait(_DICTATION_WAKE)
             except queue.Full:
                 logger.warning(
-                    "dictation: _utt_q full — sentinel not needed; "
-                    "pipeline already active"
+                    "dictation: _utt_q full — sentinel not needed; pipeline already active"
                 )
             logger.info("dictation: hotkey-end requested; pipeline will drain and finalize")
         else:
@@ -564,10 +567,7 @@ class StreamingDaemon:
             # can detect a drained queue and finalise without waiting indefinitely
             # for audio that will never arrive.  Non-dictation path is unchanged:
             # a plain blocking get() so no spurious CPU spin.
-            pending = (
-                self._dictation_session is not None
-                and self._dictation_session.pending_end
-            )
+            pending = self._dictation_session is not None and self._dictation_session.pending_end
             try:
                 if pending:
                     item = self._utt_q.get(timeout=_DICTATION_DRAIN_TIMEOUT_S)
@@ -724,10 +724,7 @@ class StreamingDaemon:
             # HUD stays silent until paste.  The per-utterance LOG line below is
             # preserved for end-word detection debugging.  The `transcript` event
             # continues to fire in command mode (dictation_session not active).
-            _dictating_now = (
-                self._dictation_session is not None
-                and self._dictation_session.active
-            )
+            _dictating_now = self._dictation_session is not None and self._dictation_session.active
             if not _dictating_now:
                 self._publish(
                     "transcript",
@@ -799,6 +796,37 @@ class StreamingDaemon:
                     run.set_status("miss")
                     self._feedback.on_miss(result.text, ())
                     _publish_miss(result.text)
+                    return
+
+            # Mode sub-state (named modes, ADR 0100): while a mode is active,
+            # utterances route against that mode's catalog + primitives only;
+            # the end phrase exits. A miss stays in the mode (chime, no route).
+            if self._mode_session is not None and self._mode_session.active:
+                mode_outcome = self._mode_session.handle_utterance(result.text)
+                if mode_outcome.kind == "exit":
+                    self._feedback.on_mode_exit()
+                    run.set_status("ok")
+                    return
+                if mode_outcome.kind == "plan" and mode_outcome.plan is not None:
+                    if self._registry is None:
+                        logger.error(
+                            "Registry not set — cannot run mode plan for '%s'", result.text
+                        )
+                        return
+                    self._dispatcher.run_plan(result.text, mode_outcome.plan, self._registry)
+                    return
+                # "miss" — stay in mode, chime once.
+                run.set_status("miss")
+                self._feedback.on_miss(result.text, ())
+                _publish_miss(result.text)
+                return
+
+            # Mode-trigger intercept (normal mode only): a trigger word enters a mode.
+            if self._mode_session is not None:
+                entered = self._mode_session.try_enter(result.text)
+                if entered is not None:
+                    self._feedback.on_mode_enter()
+                    run.set_status("ok")
                     return
 
             # Gate: word-count  (infrastructure noise — no plan_outcome)
@@ -1176,7 +1204,8 @@ class StreamingDaemon:
                 if dictation_key == hotkey_key:
                     logger.warning(
                         "dictation_key %r equals hotkey %r; dictation binding ignored",
-                        dictation_key, hotkey_key,
+                        dictation_key,
+                        hotkey_key,
                     )
                 else:
                     bindings[dictation_key] = self.on_dictation_toggle
@@ -1322,6 +1351,20 @@ class StreamingDaemon:
             logger.exception("Error unloading transcriber")
 
 
+def build_mode_session(cfg: Config, bus: EventBus) -> ModeSession | None:
+    """Build a ModeSession from config (None when modes are disabled).
+
+    Extracted as a module-level helper so integration tests can exercise mode
+    wiring without constructing the full audio/transcription stack.
+    """
+    if not cfg.modes.enabled:
+        return None
+    registry = ModeRegistry(Path(cfg.modes.dir))
+    registry.load_all()
+    logger.info("modes: loaded %d mode(s) from %s", len(registry.all()), cfg.modes.dir)
+    return ModeSession(bus, registry)
+
+
 def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> StreamingDaemon:
     """Factory: wire all subsystems into a StreamingDaemon.
 
@@ -1461,9 +1504,13 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         hint_timeout_s=cfg.elements.hint_timeout_s,
     )
 
+    # --- Named modes (ADR 0100) ---
+    mode_session = build_mode_session(cfg, event_bus)
+
     # Backend keyboard recorder for the Builder UI's `press` combo capture.
     # Single instance, lazy listener (one record session at a time).
     from voice_commander.recorder import KeyRecorder
+
     key_recorder = KeyRecorder(event_bus)
 
     # Load user-defined commands + workflows (first-run seeding + registration).
@@ -1555,6 +1602,7 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         dictation_ws_url=cfg.dictation.ws_url,
         dictation_idle_timeout_s=float(cfg.dictation.idle_timeout_seconds),
         elements_session=elements_session,
+        mode_session=mode_session,
         elements_max_elements=cfg.elements.max_elements,
         elements_scan_timeout_s=cfg.elements.scan_timeout_s,
         min_confidence=cfg.transcription.min_confidence,
