@@ -160,6 +160,8 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         self._badge_label: pyglet.text.Label | None = None
         self._cancel_badge_label: pyglet.text.Label | None = None
         self._processing_badge_label: pyglet.text.Label | None = None
+        self._mode_badge_label: pyglet.text.Label | None = None
+        self._active_mode_badge: str | None = None
         self._dictating = False
         self._processing = False
         self._cancelled_cue = False
@@ -223,6 +225,16 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
         2.5 s via ``pyglet.clock.schedule_once``).
         """
         self._cancelled_cue = cancelled
+
+    def set_mode_badge(self, text: str | None) -> None:
+        """Show (str) or hide (None) the persistent named-mode badge.
+
+        The badge renders at the top-centre of the sprite window so it never
+        overlaps the bottom-centre DICTATING / PROCESSING / CANCELLED badges.
+        The colour (120, 220, 140) — green — is asserted by the E2E harness
+        (Task 13); do not change it without updating that harness.
+        """
+        self._active_mode_badge = text
 
     def on_draw(self) -> None:
         # Re-assert transparent clear color every frame. Canonical Windows
@@ -348,6 +360,28 @@ class SpriteWindow(pyglet.window.Window):  # type: ignore[misc]
             # Re-centre every frame in case CursorDock resizes the window.
             self._cancel_badge_label.x = self.width // 2
             self._cancel_badge_label.draw()
+
+        if self._active_mode_badge:
+            if self._mode_badge_label is None:
+                self._mode_badge_label = pyglet.text.Label(
+                    self._active_mode_badge,
+                    font_name="Segoe UI",
+                    font_size=9,
+                    weight="bold",
+                    x=self.width // 2,
+                    y=self.height - 2,
+                    anchor_x="center",
+                    anchor_y="top",
+                    color=(120, 220, 140, 255),  # green — Task 13 E2E asserts this RGB
+                )
+            else:
+                self._mode_badge_label.text = self._active_mode_badge
+            # Re-centre + re-top every frame: CursorDock resizes the window when
+            # the sprite crosses a monitor with a different DPI, so coordinates
+            # captured once at label creation go stale mid-session.
+            self._mode_badge_label.x = self.width // 2
+            self._mode_badge_label.y = self.height - 2
+            self._mode_badge_label.draw()
 
     def apply_win32_flags(self) -> None:
         """Apply click-through, topmost, no-taskbar flags (Windows only).

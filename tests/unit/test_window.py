@@ -33,6 +33,8 @@ def _make_window(
     win._badge_label = None
     win._cancel_badge_label = None
     win._processing_badge_label = None  # ADR 0096 D5: processing state badge
+    win._mode_badge_label = None  # named-mode persistent badge
+    win._active_mode_badge = None  # named-mode badge text (None = hidden)
     win._dictating = False
     win._processing = False  # ADR 0096 D5: processing state flag
     win._cancelled_cue = False

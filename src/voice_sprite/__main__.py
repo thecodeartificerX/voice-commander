@@ -85,6 +85,17 @@ def _apply_cancelled_cue(
         window.set_cancelled_cue(False)
 
 
+def _apply_mode_badge(sm: Any, window: Any) -> None:
+    """Push the persistent mode badge (or clear it) onto *window*.
+
+    When ``sm.active_mode_badge`` is a non-empty string the badge is shown.
+    When it is ``None`` the badge is hidden.  Module-level (not a closure) so
+    it can be unit-tested without spinning up a full pyglet window — mirrors
+    the ``_apply_cancelled_cue`` / ``_apply_processing_state`` pattern.
+    """
+    window.set_mode_badge(sm.active_mode_badge)
+
+
 def _apply_dim(sm: Any, window: Any) -> None:
     """Dim the sprite whenever it is NOT listening (ADR 0097).
 
@@ -368,6 +379,7 @@ def main() -> None:
         # dictation.end {reason:"cancel"} event.  The badge is the user's ONLY
         # feedback that dictation was discarded (no chime on cancel).
         _apply_cancelled_cue(sm, window, pyglet.clock.schedule_once)
+        _apply_mode_badge(sm, window)
         if event_type == "tool_fired":
             handle_tool_fired(data, chat_log)
             if "name" in data:

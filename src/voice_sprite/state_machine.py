@@ -92,6 +92,7 @@ class StateMachine:
         # open, IDLE (dim) once it has closed (ADR 0099).
         self.session_active = False
         self.cancelled_cue: bool = False  # True when last dictation.end had reason="cancel"
+        self.active_mode_badge: str | None = None  # badge text while a named mode is active
         self._heartbeat_timeout_s = heartbeat_timeout_ms / 1000.0
         self._last_heartbeat: float = 0.0
         self._hold_timer: float | None = None
@@ -156,6 +157,14 @@ class StateMachine:
             self.target_state = restored
             self.current_state = restored
             return restored
+
+        if event_type == "mode.enter":
+            badge = data.get("badge") or str(data.get("name", "")).upper()
+            self.active_mode_badge = badge
+            return None
+        if event_type == "mode.exit":
+            self.active_mode_badge = None
+            return None
 
         # vad_speech only triggers on active=true
         if event_type == "vad_speech" and not data.get("active", False):
