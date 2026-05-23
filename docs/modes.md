@@ -97,7 +97,7 @@ Bad actions log a WARNING and the file is skipped; the daemon still starts.
 
 **Entering a mode:** in a normal (non-mode) voice session, say the trigger
 word on its own. The daemon intercepts the utterance before routing, enters
-the mode, plays the recording-START chime, and shows the sprite badge.
+the mode, shows the sprite badge, and plays the recording-START chime.
 
 ```
 (session active, normal mode)
@@ -129,7 +129,8 @@ badge is cleared; no exit chime is played on session close.
 While a mode is active, each utterance is matched in this order:
 
 1. **Mode phrases** — longest-token-count exact match against the mode's
-   phrase map (normalized: lowercase, punctuation stripped, underscore→space).
+   phrase map (transcript normalized: lowercase, punctuation-stripped;
+   phrase keys with underscores are also matched as spoken words).
 2. **Primitive fallthrough** — if no phrase matches, the utterance is routed
    through the base-primitives router: single primitives, `chain`, and
    repeat-count all work.
@@ -193,8 +194,10 @@ Source: [`docs/references/davinci-resolve-shortcuts.md`](references/davinci-reso
    `phrases` list and an `action` primitive transcript.
 
 4. **Save the file.** The hot-reload watcher picks up changes within ~500 ms
-   with no daemon restart. If the file has errors, a WARNING is logged and the
-   old catalog is preserved (no crash).
+   with no daemon restart. If a file has errors, a WARNING is logged and that
+   file is **skipped** — it is dropped from the active registry until fixed,
+   while all other valid mode files keep working. The daemon never crashes on
+   a malformed catalog.
 
 5. **Test in a session.** Open a voice session (Scroll Lock), say the trigger
    word, check the badge, say a command, say the end phrase.
@@ -204,7 +207,7 @@ Source: [`docs/references/davinci-resolve-shortcuts.md`](references/davinci-reso
 The following normalized words cannot be used as mode triggers (they are
 claimed by primitives, chain, elements, or dictation):
 
-`focus`, `type`, `open`, `press`, `wait`, `click`, `scroll`,
+`focus`, `type`, `open`, `press`, `wait`, `click`, `scroll`, `tabs`,
 `chain`, `chained`, `chains`, `element`, `elements`, `dictate`
 
 A file whose trigger normalizes to a reserved word is skipped with a WARNING.

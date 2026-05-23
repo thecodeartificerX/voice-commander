@@ -59,7 +59,9 @@ fail to route, or that resolve to a synthetic intercept (`__dictation.start`,
 `ModeRouter` wraps one `ModeDefinition` and a base-primitives `VerbRouter`.
 For each utterance:
 
-1. Normalize the transcript (lowercase, punctuation-stripped, underscore→space).
+1. Normalize the transcript (lowercase, punctuation-stripped). Phrase keys
+   with underscores are pre-converted to spaces at build time so they match
+   spoken words.
 2. Match against the mode's phrase→Plan map, longest token-count first, exact.
 3. If no phrase matches, fall through to the base-primitives router (so raw
    primitives, chain, and repeat-count still work in-mode).
