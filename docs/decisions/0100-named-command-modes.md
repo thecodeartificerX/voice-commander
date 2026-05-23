@@ -193,7 +193,7 @@ necessary without a clear benefit.
 - Bare-primitive pickers: ADR 0083
 - Dictation sub-state: ADR 0086
 - Sprite badge rendering: `src/voice_sprite/window.py`, `src/voice_sprite/__main__.py`
-- Visual E2E harness: `scripts/mode_badge_e2e.py`
+- Visual E2E harness: `scripts/mode_visual_e2e.py`
 - Starter catalog: `modes/video.toml`
 - DaVinci shortcut reference: `docs/references/davinci-resolve-shortcuts.md`
 - Implementation: `src/voice_commander/modes/`
