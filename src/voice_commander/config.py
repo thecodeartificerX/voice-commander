@@ -110,7 +110,6 @@ class WebConfig:
     auto_open_browser: bool = True
 
 
-
 @dataclass(frozen=True)
 class SpriteConfig:
     # Fields are consumed by the voice_sprite process; daemon carries them
@@ -167,6 +166,18 @@ class PickerConfig:
 
 
 @dataclass(frozen=True)
+class ModesConfig:
+    """Named command modes (scoped, voice-switchable catalogs).
+
+    ``dir`` is resolved relative to the repo root and scanned for
+    ``*.toml`` mode catalogs.  See ``docs/modes.md``.
+    """
+
+    enabled: bool = True
+    dir: str = "modes"
+
+
+@dataclass(frozen=True)
 class Config:
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
@@ -181,6 +192,7 @@ class Config:
     picker: PickerConfig = field(default_factory=PickerConfig)
     dictation: DictationConfig = field(default_factory=DictationConfig)
     elements: ElementsConfig = field(default_factory=ElementsConfig)
+    modes: ModesConfig = field(default_factory=ModesConfig)
 
     @classmethod
     def load(cls, path: Path) -> Config:
@@ -237,6 +249,7 @@ class Config:
             ),
             dictation=_section(DictationConfig, raw.get("dictation", {})),
             elements=_section(ElementsConfig, raw.get("elements", {})),
+            modes=_section(ModesConfig, raw.get("modes", {})),
         )
 
 
@@ -245,14 +258,9 @@ class Config:
 # ---------------------------------------------------------------------------
 
 
-
-
-
-
 def _check_type(value: Any, expected: Any, label: str) -> None:
     if not _type_ok(value, expected):
         raise TypeError(f"Config {label} expected {expected}, got {type(value).__name__}")
-
 
 
 # ---------------------------------------------------------------------------

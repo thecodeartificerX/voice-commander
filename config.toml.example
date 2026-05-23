@@ -97,3 +97,10 @@ exclude_self = true      # filter daemon + sprite + modal windows
 max_elements = 200      # cap on hint tags drawn (bounds scan cost + clutter)
 scan_timeout_s = 3.0    # hard cap on the UIA tree walk
 hint_timeout_s = 8.0    # overlay auto-dismisses after this many seconds of silence
+
+[modes]
+# Named command modes (scoped, voice-switchable catalogs). Say a mode's
+# trigger word (e.g. "video") inside a session to match only that mode's
+# commands plus the global primitives; say "<trigger> end" to leave.
+enabled = true     # master switch for the named-modes subsystem
+dir     = "modes"  # directory (relative to repo root) of <name>.toml catalogs
