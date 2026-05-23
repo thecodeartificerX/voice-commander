@@ -57,7 +57,7 @@ log = logging.getLogger("mode_visual_e2e")
 # ---------------------------------------------------------------------------
 
 sys.path.insert(0, str(ROOT / "scripts"))
-from picker_visual_e2e import (  # type: ignore[import]
+from picker_visual_e2e import (  # type: ignore[import]  # noqa: E402
     _capture_window,
     _emit,
     _start_sse_server,
@@ -125,6 +125,7 @@ def _get_child_pids(parent_pid: int) -> set[int]:
     try:
         # Use a snapshot via TH32CS_SNAPPROCESS to enumerate children.
         import ctypes
+
         TH32CS_SNAPPROCESS = 0x00000002
 
         class PROCESSENTRY32(ctypes.Structure):
@@ -175,7 +176,7 @@ def _find_window_by_pid(pid: int, timeout_s: float = 10.0) -> int:
         # Rebuild the PID set each sweep so we catch children that spawn late.
         pid_set = {pid} | _get_child_pids(pid)
 
-        def _cb(hwnd: int, _: Any) -> bool:
+        def _cb(hwnd: int, _: Any, pid_set: set[int] = pid_set) -> bool:
             if not win32gui.IsWindowVisible(hwnd):
                 return True
             _, wpid = win32process.GetWindowThreadProcessId(hwnd)
