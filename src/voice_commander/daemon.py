@@ -36,6 +36,7 @@ from .feedback import FeedbackSink, WindowsFeedbackSink
 from .hotkey import HotkeyController
 from .modes.registry import ModeRegistry
 from .modes.session import ModeSession
+from .modes.watcher import ModesWatcher
 from .observability import Store, Tracer
 from .observability.errors import classify as _classify_error
 from .picker.registry import BarePickerRegistry
@@ -1521,13 +1522,9 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
     # enabled so the registry stays fresh without a daemon restart.
     _modes_watcher: Any = None
     if mode_session is not None:
-        from pathlib import Path as _Path
-
-        from .modes.watcher import ModesWatcher as _ModesWatcher
-
         _mode_registry = mode_session._registry
 
-        def _on_modes_changed(_path: _Path) -> None:
+        def _on_modes_changed(_path: Path) -> None:
             try:
                 _mode_registry.reload()
                 event_bus.publish("modes_reloaded", {"count": len(_mode_registry.all())})
@@ -1535,7 +1532,7 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
             except Exception:
                 logger.exception("modes hot-reload failed")
 
-        _modes_watcher = _ModesWatcher(_Path(cfg.modes.dir), _on_modes_changed)
+        _modes_watcher = ModesWatcher(Path(cfg.modes.dir), _on_modes_changed)
         _modes_watcher.start()
 
     # Backend keyboard recorder for the Builder UI's `press` combo capture.
