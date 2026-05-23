@@ -295,6 +295,8 @@ class StreamingDaemon:
         self._cfg: Config | None = None
         # Config file watcher — set by build_streaming_daemon; stopped in shutdown().
         self._config_watcher: Any = None
+        # Modes hot-reload watcher — set by build_streaming_daemon; stopped in shutdown().
+        self._modes_watcher: Any = None
         self._mru_pump: Any = None
 
     def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
@@ -1329,6 +1331,14 @@ class StreamingDaemon:
                 logger.exception("Error stopping config watcher")
             self._config_watcher = None
 
+        # Stop modes hot-reload watcher.
+        if self._modes_watcher is not None:
+            try:
+                self._modes_watcher.stop()
+            except Exception:
+                logger.exception("Error stopping modes watcher")
+            self._modes_watcher = None
+
         # Stop MRU pump (ADR 0083 — picker framework).
         if self._mru_pump is not None:
             try:
@@ -1507,6 +1517,27 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
     # --- Named modes (ADR 0100) ---
     mode_session = build_mode_session(cfg, event_bus)
 
+    # Hot-reload watcher for modes/*.toml — built and started when modes are
+    # enabled so the registry stays fresh without a daemon restart.
+    _modes_watcher: Any = None
+    if mode_session is not None:
+        from pathlib import Path as _Path
+
+        from .modes.watcher import ModesWatcher as _ModesWatcher
+
+        _mode_registry = mode_session._registry
+
+        def _on_modes_changed(_path: _Path) -> None:
+            try:
+                _mode_registry.reload()
+                event_bus.publish("modes_reloaded", {"count": len(_mode_registry.all())})
+                logger.info("modes hot-reload: %d mode(s)", len(_mode_registry.all()))
+            except Exception:
+                logger.exception("modes hot-reload failed")
+
+        _modes_watcher = _ModesWatcher(_Path(cfg.modes.dir), _on_modes_changed)
+        _modes_watcher.start()
+
     # Backend keyboard recorder for the Builder UI's `press` combo capture.
     # Single instance, lazy listener (one record session at a time).
     from voice_commander.recorder import KeyRecorder
@@ -1615,6 +1646,7 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
         store=_obs_store,
     )
     daemon._mru_pump = mru_pump
+    daemon._modes_watcher = _modes_watcher
     daemon._recorder = StreamingRecorder(
         device=cfg.audio.device if cfg.audio.device >= 0 else None,
         channels=cfg.audio.channels,
