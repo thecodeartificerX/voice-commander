@@ -35,8 +35,9 @@ def test_primitive_fallthrough_still_works() -> None:
 
 def test_unknown_phrase_misses() -> None:
     r = ModeRouter(_video(), build_base_primitive_router())
-    assert r.route("open spotify by name foobar baz") is None or r.route("kerfuffle") is None
+    # Neither a mode phrase nor a routable primitive -> genuine miss.
     assert r.route("kerfuffle") is None
+    assert r.route("flibbertigibbet wozzle") is None
 
 
 def test_synthetic_intercept_is_a_miss_in_mode() -> None:
