@@ -73,7 +73,7 @@ def test_unknown_in_mode_is_miss_and_stays(tmp_path: Path) -> None:
     assert s.active is True  # stays in mode on a miss
 
 
-def test_reset_exits_silently_with_event(tmp_path: Path) -> None:
+def test_reset_publishes_session_ended_event(tmp_path: Path) -> None:
     bus = _FakeBus()
     s = ModeSession(bus, _registry(tmp_path))
     s.try_enter("video")
@@ -81,3 +81,20 @@ def test_reset_exits_silently_with_event(tmp_path: Path) -> None:
     assert s.active is False
     assert bus.events[-1][0] == "mode.exit"
     assert bus.events[-1][1] == {"name": "video", "reason": "session_ended"}
+
+
+def test_exit_when_inactive_emits_nothing(tmp_path: Path) -> None:
+    bus = _FakeBus()
+    s = ModeSession(bus, _registry(tmp_path))
+    s.exit("whatever")
+    assert s.active is False
+    assert bus.events == []
+
+
+def test_try_enter_while_active_returns_none_no_second_event(tmp_path: Path) -> None:
+    bus = _FakeBus()
+    s = ModeSession(bus, _registry(tmp_path))
+    s.try_enter("video")
+    assert s.try_enter("video") is None  # must-end-first
+    enters = [e for e in bus.events if e[0] == "mode.enter"]
+    assert len(enters) == 1
