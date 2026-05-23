@@ -1,0 +1,51 @@
+[mode]
+trigger    = "video"
+end_phrase = "video end"
+badge      = "🎬 VIDEO"
+
+# DaVinci Resolve — Edit page, default Windows shortcuts.
+# See docs/references/davinci-resolve-shortcuts.md for the source mapping.
+
+[[command]]
+phrases = ["split", "blade", "razor", "cut clip"]
+action  = "press ctrl+b"
+
+[[command]]
+phrases = ["undo"]
+action  = "press ctrl+z"
+
+[[command]]
+phrases = ["redo"]
+action  = "press ctrl+shift+z"
+
+[[command]]
+phrases = ["one"]
+action  = "press 1"
+
+[[command]]
+phrases = ["two"]
+action  = "press 2"
+
+[[command]]
+phrases = ["three"]
+action  = "press 3"
+
+[[command]]
+phrases = ["ripple", "ripple delete"]
+action  = "press delete"
+
+[[command]]
+phrases = ["back", "previous", "last cut"]
+action  = "press up"
+
+[[command]]
+phrases = ["forward", "next", "next cut"]
+action  = "press down"
+
+[[command]]
+phrases = ["play"]
+action  = "press space"
+
+[[command]]
+phrases = ["pause", "stop"]
+action  = "press space"
