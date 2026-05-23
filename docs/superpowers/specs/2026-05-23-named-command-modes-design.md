@@ -168,27 +168,21 @@ Resolve **Edit page, default Windows** shortcuts (research vendored to
 | split / blade / razor / cut clip | `press ctrl+b` | Split clip at playhead (all tracks)      |
 | undo                        | `press ctrl+z`    | Undo                                     |
 | redo                        | `press ctrl+shift+z` | Redo (Resolve uses Ctrl+Shift+Z, not Ctrl+Y) |
-| one                         | `press 1`         | Literal "1" key — see caveat ①           |
-| two                         | `press 2`         | Literal "2" key — see caveat ①           |
-| three                       | `press 3`         | Literal "3" key — see caveat ①           |
+| one                         | `press 1`         | Literal "1" key (user has bound 1/2/3 to custom shortcuts) |
+| two                         | `press 2`         | Literal "2" key                          |
+| three                       | `press 3`         | Literal "3" key                          |
 | ripple / ripple delete      | `press delete`    | Ripple delete (Windows forward-Delete closes the gap) |
 | back / previous / last cut  | `press up`        | Move playhead to previous edit point     |
 | forward / next / next cut   | `press down`      | Move playhead to next edit point         |
-| play                        | `press l`         | JKL transport: L = play forward — caveat ② |
-| pause / stop                | `press k`         | JKL transport: K = stop — caveat ②       |
+| play                        | `press space`     | Spacebar play/pause toggle               |
+| pause / stop                | `press space`     | Spacebar play/pause toggle               |
 
-### Caveats to confirm in review
+### Resolved (2026-05-23 review)
 
-- **① Number keys 1/2/3.** The user asked for "one → number 1", etc. These map to
-  the literal `press 1/2/3` keys. Note: in current DaVinci Edit page, **bare**
-  number keys have no default action; `Ctrl+1/2/3` focus the Source viewer /
-  Timeline viewer / Timeline. If the intent is viewer focus, change these to
-  `press ctrl+1` / `ctrl+2` / `ctrl+3`. Default kept as the literal request.
-- **② Play / pause.** DaVinci's Spacebar is a single play/pause **toggle**.
-  Because the user wants distinct `"play"` and `"pause"` words, this spec maps
-  them to the JKL transport (`L` = play forward, `K` = stop) so each word is
-  deterministic regardless of current state. Alternative: map both to
-  `press space` (toggle).
+- **Number keys 1/2/3** → literal `press 1/2/3`. The user has bound custom
+  shortcuts to the bare number keys in DaVinci, so the literal press is correct.
+- **Play / pause** → both map to `press space` (DaVinci's single play/pause
+  toggle). Both spoken words drive the same Spacebar toggle.
 
 All combo strings above are valid pyautogui keynames accepted by the `press`
 primitive (verified against `tools/keyboard_combo.py`: `+` separator; arrows are
@@ -237,5 +231,5 @@ primitive (verified against `tools/keyboard_combo.py`: `+` separator; arrows are
 
 ## Open questions for review
 
-- Caveat ① (literal `press 1/2/3` vs `ctrl+1/2/3` viewer focus).
-- Caveat ② (JKL `l`/`k` vs spacebar toggle for play/pause).
+None outstanding. Both shortcut caveats resolved in the 2026-05-23 review
+(see § 5): `1/2/3` literal, play/pause both `press space`.
