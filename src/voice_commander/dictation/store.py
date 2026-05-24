@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import io
+import json
+import logging
 import wave
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
+
+logger = logging.getLogger(__name__)
 
 _SAMPLE_RATE = 16000
 
@@ -47,3 +52,28 @@ class DictationStore:
         if not self.text_path.exists():
             return None
         return self.text_path.read_text(encoding="utf-8")
+
+    @property
+    def timings_path(self) -> Path:
+        """Per-phase latency record for the most recent dictation (ADR 0101)."""
+        return self._base / "last_timings.json"
+
+    def save_timings(self, record: dict[str, Any]) -> None:
+        """Overwrite ``last_timings.json`` with the latest dictation timing record.
+
+        Single-writer (the daemon's ``_dictation_executor``), so no lock is needed —
+        same contract as :meth:`save_text`.
+        """
+        self.timings_path.write_text(
+            json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def read_timings(self) -> dict[str, Any] | None:
+        """Return the last timing record, or ``None`` when absent/unreadable."""
+        if not self.timings_path.exists():
+            return None
+        try:
+            return json.loads(self.timings_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            logger.warning("dictation: could not read %s", self.timings_path)
+            return None

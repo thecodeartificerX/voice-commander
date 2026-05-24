@@ -19,6 +19,10 @@
     {% endif %}
   </div>
 
+  <!-- Last dictation timing -->
+  <h2 class="text-base font-medium text-neutral-200 mb-2">Last dictation timing</h2>
+  {% include "_dictation_timing.html" %}
+
   <!-- Vocabulary editor -->
   <form id="vocab-form" hx-post="/dictation/vocab" hx-target="#vocab-result" hx-swap="outerHTML"
         hx-headers='{"HX-Request": "true"}' class="mt-8">

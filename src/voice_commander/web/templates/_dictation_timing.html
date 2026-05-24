@@ -1,0 +1,180 @@
+{# _dictation_timing.html — per-phase latency breakdown panel (ADR 0101).
+   Root element keeps id="dictation-timing" so SSE reloadSection (outerHTML swap) works. #}
+<div id="dictation-timing" class="bg-neutral-900 border border-neutral-800 rounded-lg p-4 mb-8">
+{% if not timings %}
+  {# ── State A: no record yet ─────────────────────────────────────────── #}
+  <p class="text-sm text-neutral-500 italic">No timing recorded yet.</p>
+
+{% elif timings.server %}
+  {# ── State B: full record with server-side breakdown ─────────────────── #}
+  {# ---- helpers -------------------------------------------------------- #}
+  {# Render a ms value as "NNN ms" or "N.NN s" #}
+  {% set total = timings.total_ms | float %}
+  {# structural_format is absent in some server pipelines (reports 0.0) — hide its
+     row + legend dot when there's nothing to show (ADR 0101). #}
+  {% set has_format = (timings.server.format_ms | default(0) | float) > 0 %}
+
+  {# header #}
+  <div class="flex items-baseline justify-between mb-3">
+    <h3 class="text-sm font-medium text-neutral-200">Phase breakdown</h3>
+    <span class="text-sm text-neutral-400">
+      Total:
+      <span class="text-neutral-100 font-mono">
+        {% if total >= 1000 %}{{ "%.2f"|format(total / 1000) }} s{% else %}{{ total | int }} ms{% endif %}
+      </span>
+    </span>
+  </div>
+
+  {# ---- stacked bar ---------------------------------------------------- #}
+  {# segment widths are percentages of total_ms; clamp each to ≥0 #}
+  {% set seg_transcribe = [0, (timings.server.transcribe_ms | default(0) | float)]|max %}
+  {% set seg_clean      = [0, (timings.server.clean_ms      | default(0) | float)]|max %}
+  {% set seg_format     = [0, (timings.server.format_ms     | default(0) | float)]|max %}
+  {% set seg_network    = [0, (timings.network_ms           | default(0) | float)]|max %}
+  {% set seg_postproc   = [0, (timings.postprocess_ms       | default(0) | float)]|max %}
+  {% set seg_paste      = [0, (timings.paste_ms             | default(0) | float)]|max %}
+
+  {% macro pct(val) %}{{ "%.1f"|format([0.5, (val / total * 100 if total > 0 else 0)]|max) }}{% endmacro %}
+
+  <div class="flex h-3 rounded overflow-hidden mb-4 gap-px bg-neutral-800">
+    {% if seg_transcribe > 0 %}
+    <div class="bg-violet-500 rounded-l" style="width:{{ pct(seg_transcribe) }}%" title="Transcription {{ seg_transcribe | int }} ms"></div>
+    {% endif %}
+    {% if seg_clean > 0 %}
+    <div class="bg-indigo-500" style="width:{{ pct(seg_clean) }}%" title="AI clean {{ seg_clean | int }} ms"></div>
+    {% endif %}
+    {% if seg_format > 0 %}
+    <div class="bg-sky-500" style="width:{{ pct(seg_format) }}%" title="Structural format {{ seg_format | int }} ms"></div>
+    {% endif %}
+    {% if seg_network > 0 %}
+    <div class="bg-amber-500" style="width:{{ pct(seg_network) }}%" title="Network {{ seg_network | int }} ms"></div>
+    {% endif %}
+    {% if seg_postproc > 0 %}
+    <div class="bg-emerald-600" style="width:{{ pct(seg_postproc) }}%" title="Post-process {{ seg_postproc | int }} ms"></div>
+    {% endif %}
+    {% if seg_paste > 0 %}
+    <div class="bg-emerald-400 rounded-r" style="width:{{ pct(seg_paste) }}%" title="Paste {{ seg_paste | int }} ms"></div>
+    {% endif %}
+  </div>
+
+  {# ---- legend dots ---------------------------------------------------- #}
+  <div class="flex flex-wrap gap-x-4 gap-y-1 mb-4">
+    <span class="flex items-center gap-1 text-xs text-neutral-400"><span class="inline-block w-2.5 h-2.5 rounded-sm bg-violet-500"></span>Transcription (Whisper)</span>
+    <span class="flex items-center gap-1 text-xs text-neutral-400"><span class="inline-block w-2.5 h-2.5 rounded-sm bg-indigo-500"></span>AI clean (LLM)</span>
+    {% if has_format %}<span class="flex items-center gap-1 text-xs text-neutral-400"><span class="inline-block w-2.5 h-2.5 rounded-sm bg-sky-500"></span>Structural format</span>{% endif %}
+    <span class="flex items-center gap-1 text-xs text-neutral-400"><span class="inline-block w-2.5 h-2.5 rounded-sm bg-amber-500"></span>Network / transport</span>
+    <span class="flex items-center gap-1 text-xs text-neutral-400"><span class="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-600"></span>Post-process</span>
+    <span class="flex items-center gap-1 text-xs text-neutral-400"><span class="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-400"></span>Paste</span>
+  </div>
+
+  {# ---- detail table --------------------------------------------------- #}
+  <table class="w-full text-xs text-neutral-400 border-collapse">
+    <colgroup>
+      <col class="w-2/3">
+      <col class="w-1/3">
+    </colgroup>
+    <tbody class="divide-y divide-neutral-800">
+
+      <tr>
+        <td class="py-1 pr-2">Transcription <span class="text-neutral-600">(Whisper, before AI)</span></td>
+        <td class="py-1 font-mono text-right text-neutral-200">
+          {% if timings.server.transcribe_ms is not none and timings.server.transcribe_ms != "" %}{{ timings.server.transcribe_ms | int }} ms{% else %}—{% endif %}
+        </td>
+      </tr>
+
+      <tr>
+        <td class="py-1 pr-2">AI clean <span class="text-neutral-600">(LLM)</span></td>
+        <td class="py-1 font-mono text-right text-neutral-200">
+          {% if timings.server.clean_ms is not none and timings.server.clean_ms != "" %}{{ timings.server.clean_ms | int }} ms{% else %}—{% endif %}
+        </td>
+      </tr>
+
+      {% if has_format %}
+      <tr>
+        <td class="py-1 pr-2">Structural format</td>
+        <td class="py-1 font-mono text-right text-neutral-200">
+          {{ timings.server.format_ms | int }} ms
+        </td>
+      </tr>
+      {% endif %}
+
+      <tr>
+        <td class="py-1 pr-2">
+          Network / transport
+          <span class="block text-neutral-600 text-xs leading-tight mt-0.5">
+            round-trip minus server compute — both legs, approximate; no client/server clock sync
+          </span>
+        </td>
+        <td class="py-1 font-mono text-right text-neutral-200 align-top">
+          {% if timings.network_ms is not none and timings.network_ms != "" %}{{ timings.network_ms | int }} ms{% else %}—{% endif %}
+        </td>
+      </tr>
+
+      <tr>
+        <td class="py-1 pr-2">Post-process</td>
+        <td class="py-1 font-mono text-right text-neutral-200">
+          {% if timings.postprocess_ms is not none and timings.postprocess_ms != "" %}{{ timings.postprocess_ms | int }} ms{% else %}—{% endif %}
+        </td>
+      </tr>
+
+      <tr>
+        <td class="py-1 pr-2">Paste</td>
+        <td class="py-1 font-mono text-right text-neutral-200">
+          {% if timings.paste_ms is not none and timings.paste_ms != "" %}{{ timings.paste_ms | int }} ms{% else %}—{% endif %}
+        </td>
+      </tr>
+
+    </tbody>
+  </table>
+
+{% else %}
+  {# ── State C: record present but server breakdown absent ─────────────── #}
+  {% set total = timings.total_ms | float %}
+
+  <div class="flex items-baseline justify-between mb-3">
+    <h3 class="text-sm font-medium text-neutral-200">Phase breakdown</h3>
+    <span class="text-sm text-neutral-400">
+      Total:
+      <span class="text-neutral-100 font-mono">
+        {% if total >= 1000 %}{{ "%.2f"|format(total / 1000) }} s{% else %}{{ total | int }} ms{% endif %}
+      </span>
+    </span>
+  </div>
+
+  <p class="text-xs text-neutral-500 italic mb-3">
+    Server breakdown unavailable (server not reporting per-phase timings yet).
+  </p>
+
+  <table class="w-full text-xs text-neutral-400 border-collapse">
+    <colgroup>
+      <col class="w-2/3">
+      <col class="w-1/3">
+    </colgroup>
+    <tbody class="divide-y divide-neutral-800">
+
+      <tr>
+        <td class="py-1 pr-2">Round-trip <span class="text-neutral-600">(client end → done)</span></td>
+        <td class="py-1 font-mono text-right text-neutral-200">
+          {% if timings.roundtrip_ms is not none and timings.roundtrip_ms != "" %}{{ timings.roundtrip_ms | int }} ms{% else %}—{% endif %}
+        </td>
+      </tr>
+
+      <tr>
+        <td class="py-1 pr-2">Post-process</td>
+        <td class="py-1 font-mono text-right text-neutral-200">
+          {% if timings.postprocess_ms is not none and timings.postprocess_ms != "" %}{{ timings.postprocess_ms | int }} ms{% else %}—{% endif %}
+        </td>
+      </tr>
+
+      <tr>
+        <td class="py-1 pr-2">Paste</td>
+        <td class="py-1 font-mono text-right text-neutral-200">
+          {% if timings.paste_ms is not none and timings.paste_ms != "" %}{{ timings.paste_ms | int }} ms{% else %}—{% endif %}
+        </td>
+      </tr>
+
+    </tbody>
+  </table>
+
+{% endif %}
+</div>

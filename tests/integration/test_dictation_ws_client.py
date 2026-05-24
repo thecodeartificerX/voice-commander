@@ -24,7 +24,7 @@ import asyncio
 import numpy as np
 import pytest
 
-from voice_commander.dictation.ws_client import END, stream_transcribe
+from voice_commander.dictation.ws_client import END, TranscribeResult, stream_transcribe
 
 from ._dictation_ws import MockWsServer
 
@@ -63,7 +63,8 @@ def test_chunks_arrive_in_order() -> None:
 
         result = _run(_drive())
 
-    assert result == "ok"
+    assert isinstance(result, TranscribeResult)
+    assert result.text == "ok"
     assert len(srv.chunks_received) == 2
     assert srv.chunks_received[0] == chunk_a
     assert srv.chunks_received[1] == chunk_b
@@ -93,7 +94,7 @@ def test_end_frame_terminates_stream() -> None:
 
 
 def test_done_text_returned_to_caller() -> None:
-    """Full round-trip: server returns done.text, stream_transcribe returns it."""
+    """Full round-trip: server returns done.text, result.text equals it."""
     with MockWsServer(done_text="Hello, world.") as srv:
 
         async def _drive():
@@ -102,7 +103,8 @@ def test_done_text_returned_to_caller() -> None:
 
         result = _run(_drive())
 
-    assert result == "Hello, world."
+    assert isinstance(result, TranscribeResult)
+    assert result.text == "Hello, world."
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +113,7 @@ def test_done_text_returned_to_caller() -> None:
 
 
 def test_empty_done_text_returned_as_empty_string() -> None:
-    """silence → done.text="" → stream_transcribe returns "" (not None)."""
+    """silence → done.text="" → result.text is "" and result is not None."""
     with MockWsServer(done_text="") as srv:
 
         async def _drive():
@@ -120,7 +122,8 @@ def test_empty_done_text_returned_as_empty_string() -> None:
 
         result = _run(_drive())
 
-    assert result == ""
+    assert isinstance(result, TranscribeResult)
+    assert result.text == ""
     assert result is not None
 
 
@@ -201,7 +204,8 @@ def test_cap_timeout_fires_end_frame() -> None:
 
         result = _run(_drive())
 
-    assert result == "capped"
+    assert isinstance(result, TranscribeResult)
+    assert result.text == "capped"
     assert srv.end_received is True
 
 
@@ -246,11 +250,13 @@ def test_disconnect_mid_stream_does_not_crash_daemon() -> None:
         stopper.cancel()
         return result
 
-    # Must not raise; return value is None or "" depending on timing
+    # Must not raise; return value is None or a TranscribeResult with empty text
     try:
         result = _run(_drive())
-        assert result is None or result == "", (
-            f"Expected None or empty string on mid-stream disconnect; got {result!r}"
+        # On mid-stream disconnect the server never sends a done frame, so None is
+        # expected.  In rare timing where the server does reply, text is empty.
+        assert result is None or (isinstance(result, TranscribeResult) and result.text == ""), (
+            f"Expected None or TranscribeResult('') on mid-stream disconnect; got {result!r}"
         )
     except OSError:
         pass  # acceptable — server gone before connect completes in rare timing
@@ -274,7 +280,52 @@ def test_done_with_empty_text_silence_path() -> None:
         result = _run(_drive())
 
     # Empty string is the valid result; daemon checks for "" to skip paste
-    assert result == ""
+    assert isinstance(result, TranscribeResult)
+    assert result.text == ""
     assert result is not None
     assert srv.end_received is True
     assert len(srv.chunks_received) == 1
+
+
+# ---------------------------------------------------------------------------
+# ADR 0101 timing tests: real TCP connection with timings injection
+# ---------------------------------------------------------------------------
+
+
+def test_done_with_timings_populates_server_timings_real_tcp() -> None:
+    """Real TCP round-trip: server includes timings → result.server_timings populated."""
+    server_timings = {
+        "transcribe_ms": 500.0,
+        "clean_ms": 80.0,
+        "format_ms": 20.0,
+        "server_total_ms": 600.0,
+    }
+
+    with MockWsServer(done_text="timed text", timings=server_timings) as srv:
+
+        async def _drive():
+            q = _make_queue(END)
+            return await stream_transcribe(srv.ws_url, q, cap_timeout_s=5.0)
+
+        result = _run(_drive())
+
+    assert isinstance(result, TranscribeResult)
+    assert result.text == "timed text"
+    assert result.server_timings == server_timings
+    assert result.roundtrip_ms > 0
+
+
+def test_done_without_timings_back_compat_real_tcp() -> None:
+    """Real TCP round-trip: older server (no timings key) → server_timings={}."""
+    with MockWsServer(done_text="no timings") as srv:  # timings=None → key omitted
+
+        async def _drive():
+            q = _make_queue(END)
+            return await stream_transcribe(srv.ws_url, q, cap_timeout_s=5.0)
+
+        result = _run(_drive())
+
+    assert isinstance(result, TranscribeResult)
+    assert result.text == "no timings"
+    assert result.server_timings == {}
+    assert result.roundtrip_ms > 0

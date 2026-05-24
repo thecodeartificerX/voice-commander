@@ -53,12 +53,17 @@ class MockWsServer:
         error_message: str | None = None,
         drop_after_end: bool = False,
         delay_done_s: float = 0.0,
+        timings: "dict | None" = None,
     ) -> None:
         self._done_text = done_text
         self._raw_text = raw_text if raw_text is not None else done_text
         self._error_message = error_message
         self._drop_after_end = drop_after_end
         self._delay_done_s = delay_done_s
+        # Optional per-phase timing dict to include in the done frame (ADR 0101).
+        # When None (default), the 'timings' key is omitted — simulates an older
+        # server that does not report timing data.
+        self._timings = timings
 
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -109,13 +114,14 @@ class MockWsServer:
                                 {"type": "error", "message": self._error_message}
                             )
                         else:
-                            reply = json.dumps(
-                                {
-                                    "type": "done",
-                                    "text": self._done_text,
-                                    "raw": self._raw_text,
-                                }
-                            )
+                            done_frame: dict = {
+                                "type": "done",
+                                "text": self._done_text,
+                                "raw": self._raw_text,
+                            }
+                            if self._timings is not None:
+                                done_frame["timings"] = self._timings
+                            reply = json.dumps(done_frame)
                         await conn.send(reply)
                         # Server closes after sending the single reply
                         break

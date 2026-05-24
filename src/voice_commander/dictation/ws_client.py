@@ -8,7 +8,8 @@ Protocol (raw PCM, server-side accumulation):
 3. On the END sentinel (``None``) or when ``cap_timeout_s`` expires: send
    ``{"type":"end"}`` as a JSON text frame.
 4. Await exactly one reply frame within ``done_timeout_s``:
-   - ``{"type":"done","text":"<cleaned>"}`` — return ``done.text`` (str, may be "").
+   - ``{"type":"done","text":"<cleaned>","timings":{...}}`` — return
+     ``TranscribeResult`` (timings key is optional; absent on older servers).
    - ``{"type":"error","message":"..."}`` — log and return ``None``.
    - Any other frame type — log and discard; keep waiting.
    - ``ConnectionClosed`` or timeout — log and return ``None``.
@@ -17,6 +18,7 @@ There are no partial frames, no config handshake, no segments, no
 ``on_partial`` callback, no ``prompt``, and no ``raw_transcript_fn``.
 
 See `docs/decisions/0096-server-side-dictation.md` for the full protocol spec.
+Per-phase timing observability added in ADR 0101.
 """
 
 from __future__ import annotations
@@ -24,6 +26,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from dataclasses import dataclass
 
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
@@ -34,13 +38,39 @@ logger = logging.getLogger(__name__)
 END: None = None
 
 
+@dataclass(frozen=True)
+class TranscribeResult:
+    """Return value of :func:`stream_transcribe` on success (ADR 0101).
+
+    Attributes
+    ----------
+    text:
+        The server's cleaned transcript (``done.text``). May be an empty
+        string when the server transcribed silence — this is a valid,
+        non-error result.
+    server_timings:
+        Per-phase latency dict from the server's optional ``timings`` key
+        (keys: ``transcribe_ms``, ``clean_ms``, ``format_ms``,
+        ``server_total_ms``). Empty dict ``{}`` when the server did not
+        include timing data (older server versions).
+    roundtrip_ms:
+        Client-measured wall time in milliseconds from end-frame-sent to
+        done-frame-received. Always populated — present even when the server
+        sends no ``timings``.
+    """
+
+    text: str
+    server_timings: dict[str, float]
+    roundtrip_ms: float
+
+
 async def stream_transcribe(
     ws_url: str,
     chunk_q: "asyncio.Queue[bytes | None]",
     cap_timeout_s: float = 300.0,
     done_timeout_s: float = 60.0,
-) -> str | None:
-    """Stream raw PCM chunks to the server; return the server's cleaned transcript.
+) -> TranscribeResult | None:
+    """Stream raw PCM chunks to the server; return transcript + timing on success.
 
     Opens a WebSocket connection to ``ws_url`` and enters the upload loop.
     Each item dequeued from ``chunk_q`` is sent as a binary frame unless it is
@@ -69,9 +99,11 @@ async def stream_transcribe(
 
     Returns
     -------
-    str
-        ``done.text`` from the server's done frame. May be an empty string
-        when the server transcribed silence — this is a valid, non-error result.
+    TranscribeResult
+        On success: ``text`` is ``done.text`` from the server's done frame;
+        ``server_timings`` is the optional ``timings`` dict from the frame
+        (empty dict ``{}`` when absent — older servers); ``roundtrip_ms`` is
+        the client-side wall time from end-frame-sent to done-frame-received.
     None
         Any failure path: connect error propagated by the caller, send error,
         recv timeout, ``ConnectionClosed``, server error frame, or unexpected
@@ -108,6 +140,7 @@ async def stream_transcribe(
         # --- end frame ---
         try:
             await ws.send(json.dumps({"type": "end"}))
+            t_end = time.monotonic()
         except ConnectionClosed:
             logger.warning("stream_transcribe: connection closed before end frame could be sent")
             return None
@@ -136,7 +169,13 @@ async def stream_transcribe(
 
             kind = frame.get("type")
             if kind == "done":
-                return frame.get("text", "")
+                t_done = time.monotonic()
+                roundtrip_ms = (t_done - t_end) * 1000.0
+                return TranscribeResult(
+                    text=frame.get("text", ""),
+                    server_timings=frame.get("timings", {}) or {},
+                    roundtrip_ms=roundtrip_ms,
+                )
             elif kind == "error":
                 logger.error(
                     "stream_transcribe: server error frame — %s",

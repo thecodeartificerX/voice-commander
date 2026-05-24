@@ -26,13 +26,17 @@ from ADR 0086/0089/0090):
     configured cancel word and returns ``"cancel"``; the pipeline thread calls
     :meth:`cancel`, which closes the WebSocket and discards the transcript.
 
-Threading: ``_final_text`` is written by the asyncio-loop thread (via
-``_async_main``) and read by :meth:`finish` after ``loop_thread.join()``; the
-join provides the happens-before edge so no lock is needed.
+Threading: ``_final_text``, ``_final_timings``, and ``_roundtrip_ms`` are
+written by the asyncio-loop thread (via ``_async_main``) and read by
+:meth:`finish` / :meth:`get_timings` after ``loop_thread.join()``; the join
+provides the happens-before edge so no lock is needed.
 
 A connect failure inside the asyncio thread is recorded on :attr:`error`;
 :meth:`finish` then returns ``""`` and the daemon emits ``dictation.error``
 when ``error`` is set.
+
+Per-phase timing observability (ADR 0101): call :meth:`get_timings` after
+:meth:`finish` to retrieve server-reported latencies and client roundtrip_ms.
 """
 
 from __future__ import annotations
@@ -111,6 +115,10 @@ class DictationSession:
         # provides the happens-before edge; no lock needed.  None means no done
         # frame arrived; str (possibly empty) is the server's transcript (ADR 0094).
         self._final_text: str | None = None
+        # Per-phase timing fields from stream_transcribe (ADR 0101).
+        # Written by the asyncio-loop thread; read after loop_thread.join().
+        self._final_timings: dict[str, float] | None = None
+        self._roundtrip_ms: float | None = None
 
         # Validate cancel_word against end_word and emptiness.
         normalized_cancel = _normalize_spoken(cancel_word)
@@ -178,6 +186,8 @@ class DictationSession:
             self._vocab = vocab
             self.error = None
             self._final_text = None
+            self._final_timings = None
+            self._roundtrip_ms = None
             self._chunk_q = queue.Queue()
             self._pending_end.clear()
             self._active = True
@@ -284,6 +294,33 @@ class DictationSession:
         logger.info("dictation: finished (raw-PCM streaming) — %d chars", len(text))
         return text
 
+    def get_timings(self) -> dict:
+        """Return per-phase timing data captured by the asyncio-loop thread (ADR 0101).
+
+        Must be called AFTER :meth:`finish` — the ``loop_thread.join()`` inside
+        ``finish()`` is the happens-before barrier that guarantees
+        ``_final_timings`` and ``_roundtrip_ms`` are visible to the caller
+        (same pattern as ``_final_text``).
+
+        Returns
+        -------
+        dict
+            ``{"server": dict[str, float], "roundtrip_ms": float | None}``
+
+            ``server`` is the server's optional ``timings`` dict from the done
+            frame (keys: ``transcribe_ms``, ``clean_ms``, ``format_ms``,
+            ``server_total_ms``); empty dict ``{}`` when the server did not
+            include timing data (older servers or no done frame).
+
+            ``roundtrip_ms`` is the client-side wall time in milliseconds from
+            end-frame-sent to done-frame-received, or ``None`` when no done
+            frame arrived.
+        """
+        return {
+            "server": self._final_timings or {},
+            "roundtrip_ms": self._roundtrip_ms,
+        }
+
     def cancel(self) -> None:
         """Abort dictation; close the WebSocket and discard the transcript.
 
@@ -332,15 +369,19 @@ class DictationSession:
         async_q: asyncio.Queue[bytes | None] = asyncio.Queue()
         bridge_task = asyncio.create_task(pump(chunk_q, async_q))
         try:
-            # Capture stream_transcribe's return: the server's done.text (str,
-            # possibly empty) or None when no done frame arrived.  Written
-            # here; read by finish() after loop_thread.join() — the join is
-            # the happens-before edge (same pattern as self.error).
-            self._final_text = await stream_transcribe(
+            # Capture stream_transcribe's TranscribeResult (or None on failure).
+            # Written here; read by finish() / get_timings() after
+            # loop_thread.join() — the join is the happens-before edge (same
+            # pattern as self.error).
+            result = await stream_transcribe(
                 self._ws_url,
                 async_q,
                 cap_timeout_s=self._max_dictation_s,
             )
+            if result is not None:
+                self._final_text = result.text
+                self._final_timings = result.server_timings
+                self._roundtrip_ms = result.roundtrip_ms
         finally:
             # Cancel the bridge pump.  asyncio.run() cleanup (Python >= 3.11)
             # drains the cancelled task and shuts down the default executor

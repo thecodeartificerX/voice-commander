@@ -6,6 +6,9 @@ raw_transcript_fn. A mock WebSocket is patched in-memory; no network required.
 
 Tests are written to FAIL against the old implementation (pre-rewrite) and PASS
 after the rewrite.
+
+ADR 0101: stream_transcribe now returns TranscribeResult | None instead of
+str | None.  Tests updated accordingly — access result.text for the transcript.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from contextlib import asynccontextmanager
 import pytest
 
 from voice_commander.dictation import ws_client
+from voice_commander.dictation.ws_client import TranscribeResult
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +125,7 @@ def test_sends_raw_pcm_chunks_then_end_frame(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_returns_done_text_on_done_frame(monkeypatch):
-    """Server replies {"type":"done","text":"hello"} → function returns "hello"."""
+    """Server replies {"type":"done","text":"hello"} → result.text is "hello"."""
     fake = _FakeWS([{"type": "done", "text": "hello"}])
     _patch_connect(monkeypatch, fake)
 
@@ -130,7 +134,8 @@ def test_returns_done_text_on_done_frame(monkeypatch):
         return await ws_client.stream_transcribe("ws://x/ws", q, cap_timeout_s=5.0)
 
     result = _run(_drive())
-    assert result == "hello"
+    assert isinstance(result, TranscribeResult)
+    assert result.text == "hello"
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +143,7 @@ def test_returns_done_text_on_done_frame(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_returns_empty_string_for_silence_done(monkeypatch):
-    """Server replies {"type":"done","text":""} for silence → returns "" not None."""
+    """Server replies {"type":"done","text":""} for silence → result.text is "" not None."""
     fake = _FakeWS([{"type": "done", "text": ""}])
     _patch_connect(monkeypatch, fake)
 
@@ -147,7 +152,8 @@ def test_returns_empty_string_for_silence_done(monkeypatch):
         return await ws_client.stream_transcribe("ws://x/ws", q, cap_timeout_s=5.0)
 
     result = _run(_drive())
-    assert result == ""
+    assert isinstance(result, TranscribeResult)
+    assert result.text == ""
     assert result is not None
 
 
@@ -263,8 +269,9 @@ def test_cap_timeout_triggers_end_frame(monkeypatch):
         for s in fake.sent
     ), f"No end frame found in sent frames: {fake.sent}"
 
-    # And since the server replied with done, the result should be the done text
-    assert result == "capped"
+    # And since the server replied with done, the result should be a TranscribeResult
+    assert isinstance(result, TranscribeResult)
+    assert result.text == "capped"
 
 
 # ---------------------------------------------------------------------------
@@ -335,4 +342,5 @@ def test_unexpected_frame_discarded_done_still_returned(monkeypatch):
         )
 
     result = _run(_drive())
-    assert result == "final"
+    assert isinstance(result, TranscribeResult)
+    assert result.text == "final"

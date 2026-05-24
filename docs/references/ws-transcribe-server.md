@@ -1,6 +1,6 @@
 # /ws/transcribe — Streaming Transcription Server Contract
 
-**Vendored:** 2026-05-20 (updated for ADR 0096 raw-PCM protocol)
+**Vendored:** 2026-05-20 (updated 2026-05-24 for ADR 0101 optional `timings` key)
 **Source:** Custom Python / FastAPI + faster-whisper VPS pipeline (separate repo)
 **Cited by:** `src/voice_commander/dictation/ws_client.py`
 
@@ -28,10 +28,47 @@ WebSocket /ws/transcribe
 
 | Frame | Type | Description |
 |---|---|---|
-| Done | JSON | `{"type":"done","text":"...","raw":"..."}` — **exactly one**, sent after the client's `end` frame. `text` is the LLM-cleaned transcript (or raw whisper text if LLM unavailable). `raw` is the raw whisper transcript before LLM cleanup. |
+| Done | JSON | `{"type":"done","text":"...","raw":"..."}` — **exactly one**, sent after the client's `end` frame. `text` is the LLM-cleaned transcript (or raw whisper text if LLM unavailable). `raw` is the raw whisper transcript before LLM cleanup. Optional `timings` key — see below. |
 | Error | JSON | `{"type":"error","message":"..."}` — server error (e.g. `"max duration exceeded"`); daemon logs and aborts session. |
 
 **No partial frames. No segments. No accumulated field.** The server is silent until the `end` frame is received.
+
+#### Optional `timings` key on the `done` frame (ADR 0101)
+
+Servers that implement timing observability include a `timings` object in the
+`done` frame.  The key is **absent** (not null) on servers that do not
+implement it — the daemon reads it via `.get("timings")` and degrades
+gracefully (server cells in the `/page/dictation` panel render as "—").
+
+```json
+{
+  "type": "done",
+  "text": "...",
+  "raw": "...",
+  "timings": {
+    "transcribe_ms": 1842.3,
+    "clean_ms": 412.6,
+    "format_ms": 3.1,
+    "server_total_ms": 2261.8
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `transcribe_ms` | Wall time of `WhisperModel.transcribe()` alone — Whisper inference, before AI cleanup. |
+| `clean_ms` | Wall time of the `clean_transcript()` LLM round-trip (one AI call). |
+| `format_ms` | Wall time of `structural_format()` regex post-processing. Reported as `0.0` when the server pipeline has no structural-format step; the client panel then omits the Structural-format row + legend dot. |
+| `server_total_ms` | Total from receiving `{"type":"end"}` to just before sending the `done` frame (≥ `transcribe_ms + clean_ms + format_ms`; includes any internal scheduling overhead). |
+
+**Monotonic-clock rule:** all four fields MUST be measured with
+`time.monotonic()` (or equivalent per-process monotonic clock) on the server.
+No wall-clock sync with the client is required — these are purely
+server-internal durations.
+
+All values are **float milliseconds**.  The `timings` key is additive: adding
+it to an existing server implementation does not change the daemon's text
+output or session lifecycle in any way.
 
 ## Server-side behaviour (ADR 0096 D2)
 
@@ -60,15 +97,31 @@ WebSocket /ws/transcribe
 - `cap_timeout_s = 300` — daemon hard cap; fires `{"type":"end"}` and enters finalization.
 - `done_timeout_s = 60` — max wait after sending `{"type":"end"}` for the `done` frame (covers Whisper + LLM latency on long dictations).
 
-## `ws_client.stream_transcribe` signature (ADR 0096 D8)
+## `ws_client.stream_transcribe` signature (ADR 0096 D8, amended ADR 0101)
 
 ```python
+@dataclass
+class TranscribeResult:
+    text: str               # done.text (may be empty string)
+    server_timings: dict    # done.timings or {} when absent
+    roundtrip_ms: float     # monotonic wall time: send {"type":"end"} → receive done frame
+
 async def stream_transcribe(
     ws_url: str,
     chunk_q: asyncio.Queue[bytes | None],
     cap_timeout_s: float = 300.0,
     done_timeout_s: float = 60.0,
-) -> str | None:
+) -> TranscribeResult | None:
 ```
 
-Returns `done.text` (str, possibly `""`) or `None` on timeout / connection closed / error.
+Returns a `TranscribeResult` on success (`.text` may be `""`) or `None` on
+timeout / connection closed / error (unchanged from ADR 0096).
+
+`roundtrip_ms` is measured on the asyncio-loop thread: the clock starts
+immediately after writing `{"type":"end"}` to the WebSocket and stops when
+the `done` frame is fully received.
+
+`DictationSession.finish()` signature is **unchanged** (returns `str | None`).
+Timing data is accessed via `DictationSession.get_timings()` after `finish()`
+returns (the `loop_thread.join()` inside `finish()` is the happens-before
+barrier).

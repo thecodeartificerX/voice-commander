@@ -959,8 +959,11 @@ class StreamingDaemon:
         phrase can be repaired into its canonical form before command matching
         (ADR 0088, carried over).
         """
+        import time as _time
+
         from .dictation import clipboard
         from .dictation.postprocess import apply_commands, apply_corrections
+        from .dictation.timing import build_timing_record
 
         if self._dictation_session is None:
             return
@@ -991,11 +994,14 @@ class StreamingDaemon:
             return
 
         # Post-process: corrections then commands (ADR 0088).
+        _t0_pp = _time.monotonic()
         text = apply_corrections(text, vocab.corrections)
         text = apply_commands(text, vocab.commands)
+        postprocess_ms = (_time.monotonic() - _t0_pp) * 1000.0
 
         self._dictation_store.save_text(text)
 
+        _t0_paste = _time.monotonic()
         try:
             clipboard.paste_via_clipboard(text)
         except Exception:
@@ -1003,6 +1009,27 @@ class StreamingDaemon:
             self._publish("dictation.error", {"reason": "clipboard"})
             self._feedback.on_miss("(dictation: clipboard error)", ())
             return
+        paste_ms = (_time.monotonic() - _t0_paste) * 1000.0
+
+        # Record per-phase timing for the successful paste path (ADR 0101).
+        # get_timings() is safe here — finish() above joined the asyncio thread.
+        _ws_timings = self._dictation_session.get_timings()
+        record = build_timing_record(
+            text=text,
+            server_timings=_ws_timings["server"],
+            roundtrip_ms=_ws_timings["roundtrip_ms"],
+            postprocess_ms=postprocess_ms,
+            paste_ms=paste_ms,
+        )
+        self._dictation_store.save_timings(record)
+        self._publish("dictation.timings", record)
+        logger.info(
+            "dictation timing: total %.0fms (rt %.0f post %.0f paste %.0f)",
+            record["total_ms"],
+            record["roundtrip_ms"] or 0.0,
+            postprocess_ms,
+            paste_ms,
+        )
 
         self._publish("transcript", {"text": text, "confidence": 1.0})
         self._publish("dictation.result", {"text": text})

@@ -173,15 +173,17 @@ def create_app(
         from ..dictation.store import DictationStore
         from ..dictation.vocab import Vocabulary, VocabStore
 
-        def _read() -> tuple[str, Vocabulary]:
-            last_text = DictationStore(Path(_DICTATION_DIR.as_posix())).read_text() or ""
+        def _read() -> tuple[str, Vocabulary, dict | None]:
+            store = DictationStore(Path(_DICTATION_DIR.as_posix()))
+            last_text = store.read_text() or ""
+            timings = store.read_timings()
             vocab = VocabStore(
                 Path(_DICTATION_DIR.as_posix()) / "vocab.json"
             ).load()
-            return last_text, vocab
+            return last_text, vocab, timings
 
         loop = asyncio.get_running_loop()
-        last_text, vocab = await loop.run_in_executor(None, _read)
+        last_text, vocab, timings = await loop.run_in_executor(None, _read)
         estimated_tokens = len(build_prompt(vocab)) // 4
         return templates.TemplateResponse(
             request,
@@ -191,7 +193,26 @@ def create_app(
                 "vocab": vocab,
                 "estimated_tokens": estimated_tokens,
                 "token_limit": WHISPER_TOKEN_LIMIT,
+                "timings": timings,
             },
+        )
+
+    @app.get("/page/dictation/timing", response_class=HTMLResponse)
+    async def page_dictation_timing(request: Request) -> HTMLResponse:  # noqa: ARG001
+        """``GET /page/dictation/timing`` — timing breakdown fragment for SSE live-refresh.
+
+        Returns only the ``_dictation_timing.html`` partial so the SSE listener
+        can swap ``#dictation-timing`` via ``reloadSection`` without a full page reload.
+        """
+        from ..dictation.store import DictationStore
+
+        def _read_timings() -> dict | None:
+            return DictationStore(Path(_DICTATION_DIR.as_posix())).read_timings()
+
+        loop = asyncio.get_running_loop()
+        timings = await loop.run_in_executor(None, _read_timings)
+        return HTMLResponse(
+            templates.get_template("_dictation_timing.html").render({"timings": timings})
         )
 
     @app.post("/dictation/vocab", response_class=HTMLResponse)

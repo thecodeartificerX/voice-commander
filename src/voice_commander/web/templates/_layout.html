@@ -123,6 +123,7 @@
         es.addEventListener("command_deleted", () => reloadSection("#commands-list", "/commands"));
         es.addEventListener("workflow_saved", () => reloadSection("#workflows-list", "/workflows"));
         es.addEventListener("workflow_deleted", () => reloadSection("#workflows-list", "/workflows"));
+        es.addEventListener("dictation.timings", () => reloadSection("#dictation-timing", "/page/dictation/timing"));
     })();
     </script>
     {% block scripts %}{% endblock %}
