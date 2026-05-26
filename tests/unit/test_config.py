@@ -373,10 +373,14 @@ def test_dictation_backend_unknown_value_warns_and_falls_back(tmp_path, caplog) 
     assert any("backend" in r.message and "internal" in r.message for r in caplog.records)
 
 
-def test_dictation_backend_empty_string_falls_back(tmp_path) -> None:
+def test_dictation_backend_empty_string_falls_back(tmp_path, caplog) -> None:
+    import logging
+
     from voice_commander.config import Config
 
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text('[dictation]\nbackend = ""\n', encoding="utf-8")
-    cfg = Config.load(cfg_file)
+    with caplog.at_level(logging.WARNING, logger="voice_commander.config"):
+        cfg = Config.load(cfg_file)
     assert cfg.dictation.backend == "internal"
+    assert any("backend" in r.message and "internal" in r.message for r in caplog.records)
