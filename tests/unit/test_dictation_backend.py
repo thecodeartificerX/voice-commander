@@ -142,3 +142,29 @@ def test_external_enter_aborts_when_recorder_open_fails() -> None:
 
     assert daemon._passthrough_active is False
     assert daemon._session_active is False
+
+
+def test_hot_reload_backend_change_warns_and_does_not_apply(caplog) -> None:
+    """ADR 0102 — backend is cached at startup; a config reload must WARN and
+    keep the running backend, not silently swap it.
+    """
+    import logging
+    from dataclasses import replace
+
+    from voice_commander.config import DictationConfig
+
+    daemon, _, _ = _make_daemon(backend="internal")
+    # Seed _cfg so _apply_config_diff has something to diff against.  Build a
+    # minimal Config snapshot using whatever the daemon constructor expects.
+    from voice_commander.config import Config
+
+    daemon._cfg = Config()  # internal-default everything
+    new_cfg = replace(daemon._cfg, dictation=DictationConfig(backend="external"))
+
+    with caplog.at_level(logging.WARNING, logger="voice_commander.daemon"):
+        daemon._apply_config_diff(new_cfg)
+
+    assert daemon._dictation_backend == "internal", "backend must NOT change at runtime"
+    assert any(
+        "backend" in r.message and "restart" in r.message for r in caplog.records
+    ), f"expected restart-required warning; got {[r.message for r in caplog.records]}"

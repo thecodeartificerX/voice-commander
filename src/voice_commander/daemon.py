@@ -346,6 +346,17 @@ class StreamingDaemon:
                 # there is no observable race.
                 self._recorder._device_name = new_cfg.audio.device_name
 
+        # ADR 0102: backend is cached at startup; a runtime change requires a
+        # restart.  Tell the user instead of silently no-op'ing the reload.
+        if new_cfg.dictation.backend != self._dictation_backend:
+            logger.warning(
+                "config hot-reload: [dictation] backend changed (%r -> %r); "
+                "restart required — the running daemon keeps the current backend %r",
+                self._dictation_backend,
+                new_cfg.dictation.backend,
+                self._dictation_backend,
+            )
+
     def _on_config_changed(self, path: Path) -> None:
         """Callback invoked by :class:`ConfigWatcher` when config.toml changes.
 
