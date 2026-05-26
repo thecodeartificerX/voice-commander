@@ -142,6 +142,7 @@ through a frame tap or DictationWindow — those are deleted.
 
 ```toml
 [dictation]
+backend              = "internal"  # "internal" = record→WS→paste (default); "external" = passthrough (an external tool e.g. Wispr Flow does dictation)
 ws_url               = "ws://192.168.4.200:8767/ws/transcribe"
 end_word             = "done"
 cancel_word          = "cancel"

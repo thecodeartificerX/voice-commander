@@ -19,5 +19,5 @@ Read in this order when joining the project:
 - Node-graph ADRs: 0062–0068 in [`decisions/`](decisions/)
 - **Transcription pipeline (end-to-end):** [`transcription-pipeline.md`](transcription-pipeline.md) — both paths (command + dictation) with ASCII flow diagrams, module references, and ADR cross-links
 - **Dictation custom vocabulary:** ADR [`decisions/0088-dictation-custom-vocabulary.md`](decisions/0088-dictation-custom-vocabulary.md) + streaming transcription server reference [`references/ws-transcribe-server.md`](references/ws-transcribe-server.md)
-- **Streaming dictation (server-side decode):** [`dictation-streaming.md`](dictation-streaming.md) — raw PCM transport, server accumulates and decodes once, ADR [`decisions/0096-server-side-dictation.md`](decisions/0096-server-side-dictation.md)
+- **Streaming dictation (server-side decode):** [`dictation-streaming.md`](dictation-streaming.md) — raw PCM transport, server accumulates and decodes once, ADR [`decisions/0096-server-side-dictation.md`](decisions/0096-server-side-dictation.md) + backend selector (ADR 0102)
 - **Named command modes:** [`modes.md`](modes.md) — scoped, voice-switchable command catalogs; `modes/<name>.toml` format, enter/exit lifecycle, action grammar, hot-reload; ADR [`decisions/0100-named-command-modes.md`](decisions/0100-named-command-modes.md)
