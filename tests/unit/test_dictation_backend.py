@@ -276,3 +276,30 @@ def test_passthrough_inactive_processes_normally() -> None:
     daemon._process_utterance(np.zeros(16000, dtype=np.float32))
 
     daemon._transcriber.transcribe.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Task 6: _close_voice_session clears _passthrough_active (ADR 0102)
+# ---------------------------------------------------------------------------
+
+
+def test_close_voice_session_clears_passthrough_flag() -> None:
+    daemon, _, _ = _make_daemon(backend="external")
+    daemon._session_active = True
+    daemon._passthrough_active = True
+
+    daemon._close_voice_session()
+
+    assert daemon._passthrough_active is False
+
+
+def test_scroll_lock_close_clears_passthrough_flag() -> None:
+    # on_scroll_lock -> _close_voice_session must tear down a dangling mute.
+    daemon, _, _ = _make_daemon(backend="external")
+    daemon._session_active = True
+    daemon._passthrough_active = True
+
+    daemon.on_scroll_lock()  # session active -> closes it
+
+    assert daemon._passthrough_active is False
+    assert daemon._session_active is False

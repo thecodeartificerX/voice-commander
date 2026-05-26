@@ -450,6 +450,7 @@ class StreamingDaemon:
         if self._recorder is None:
             self._session_active = False
             self._session_opened_by_dictation = False
+            self._passthrough_active = False
             return
         self._audio_gen += 1
         try:
@@ -459,6 +460,9 @@ class StreamingDaemon:
         self._drain_utt_q()
         self._session_active = False
         self._session_opened_by_dictation = False
+        # ADR 0102: tearing down a session must clear any external-passthrough
+        # mute so a closed session never leaves a dangling muted pipeline.
+        self._passthrough_active = False
         if cancel_dictation:
             if self._dictation_session is not None and self._dictation_session.active:
                 self._dictation_session.cancel()
