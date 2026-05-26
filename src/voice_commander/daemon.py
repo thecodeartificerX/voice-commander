@@ -568,7 +568,9 @@ class StreamingDaemon:
                 # restores pose (ADR 0099) before session_stopped dims it.
                 self._exit_passthrough()
                 if self._session_opened_by_dictation:
-                    self._close_voice_session()  # also clears _passthrough_active
+                    # ADR 0099 ordering: dictation.end already published above;
+                    # close now fires muted + session_stopped so the sprite dims.
+                    self._close_voice_session()
                 # Case 2: Scroll Lock session stays open; no extra chime (matches
                 # internal mode entering/leaving dictation inside an open session).
             return

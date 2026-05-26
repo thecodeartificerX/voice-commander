@@ -7,6 +7,8 @@ dictation.
 """
 from __future__ import annotations
 
+import queue
+
 from unittest.mock import MagicMock
 
 from voice_commander.daemon import StreamingDaemon
@@ -51,10 +53,13 @@ def _make_daemon(
     return daemon, feedback, recorder
 
 
-def _drain(q) -> list[str]:
+def _drain(q: queue.Queue) -> list[str]:
     out = []
-    while not q.empty():
-        out.append(q.get_nowait().type)
+    try:
+        while True:
+            out.append(q.get_nowait().type)
+    except queue.Empty:
+        pass
     return out
 
 
@@ -90,6 +95,8 @@ def test_external_exit_from_idle_closes_owned_session_and_clears_flag() -> None:
     events = _drain(q)
     assert "dictation.end" in events
     assert "session_stopped" in events
+    # ADR 0099: pose restore must precede dim.
+    assert events.index("dictation.end") < events.index("session_stopped")
 
 
 def test_external_enter_with_session_open_does_not_open_session() -> None:
