@@ -959,7 +959,13 @@ class StreamingDaemon:
                 _publish_picker_ok(result.text)
                 return
             if len(plan.steps) == 1 and plan.steps[0].name == "__dictation.start":
-                if self._dictation_session is not None:
+                if self._dictation_backend == "external":
+                    # ADR 0102: spoken "dictate" in external mode enters
+                    # passthrough (mute + animate), not a DictationSession.
+                    # Reachable only with a Scroll Lock session already open, so
+                    # no session is opened here (case 2).
+                    self._enter_passthrough()
+                elif self._dictation_session is not None:
                     self._dictation_session.start(self._load_vocab())
                 run.set_status("ok")
                 self._feedback.on_plan_complete(result.text, 0)

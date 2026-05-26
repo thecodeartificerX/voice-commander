@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import queue
 
+import numpy as np
 from unittest.mock import MagicMock
 
 from voice_commander.daemon import StreamingDaemon
 from voice_commander.event_bus import EventBus
 from voice_commander.feedback import CapturingFeedbackSink
 from voice_commander.plan import Plan, ToolCall
+from voice_commander.transcriber import TranscriptionResult
 from voice_commander.verb_router import VerbRouter
 
 
@@ -168,3 +170,79 @@ def test_hot_reload_backend_change_warns_and_does_not_apply(caplog) -> None:
     assert any(
         "backend" in r.message and "restart" in r.message for r in caplog.records
     ), f"expected restart-required warning; got {[r.message for r in caplog.records]}"
+
+
+# ---------------------------------------------------------------------------
+# Task 4: __dictation.start intercept external branch (ADR 0102)
+# ---------------------------------------------------------------------------
+
+
+def _make_daemon_with_session(
+    *,
+    backend: str,
+    event_bus: EventBus,
+) -> tuple[StreamingDaemon, MagicMock]:
+    """Return (daemon, dictation_session) with transcriber wired to return 'dictate'.
+
+    The dictation_session mock has .active = False so that the already-in-dictation
+    branch (line ~809 of daemon.py) is skipped, letting the __dictation.start
+    intercept be reached.
+    """
+    feedback = CapturingFeedbackSink()
+    recorder = MagicMock()
+    recorder.is_open = True
+    transcriber = MagicMock()
+    transcriber.transcribe.return_value = TranscriptionResult(
+        text="dictate",
+        language="en",
+        duration_ms=500,
+        confidence=1.0,
+    )
+    dispatcher = MagicMock()
+    verb_router = MagicMock(spec=VerbRouter)
+    verb_router.route.return_value = Plan(
+        steps=(ToolCall(name="__dictation.start", kwargs={}),),
+        raw_response={"router": "intercept"},
+    )
+    dictation_session = MagicMock()
+    # Must be inactive so the "already dictating" guard at ~line 809 is skipped.
+    dictation_session.active = False
+    daemon = StreamingDaemon(
+        feedback=feedback,
+        recorder=recorder,
+        transcriber=transcriber,
+        dispatcher=dispatcher,
+        verb_router=verb_router,
+        registry=MagicMock(),
+        output_dir="outputs",
+        event_bus=event_bus,
+        dictation_session=dictation_session,
+    )
+    daemon._transcriber_ready.set()
+    daemon._dictation_backend = backend
+    daemon._session_active = True
+    return daemon, dictation_session
+
+
+def test_dictate_intercept_external_enters_passthrough_not_session() -> None:
+    """Spoken 'dictate' in external mode must enter passthrough, not start a DictationSession."""
+    bus = EventBus()
+    q = bus.subscribe()
+    daemon, dictation_session = _make_daemon_with_session(backend="external", event_bus=bus)
+
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32))
+
+    dictation_session.start.assert_not_called()
+    assert daemon._passthrough_active is True
+    assert "dictation.start" in _drain(q)
+
+
+def test_dictate_intercept_internal_starts_session() -> None:
+    """Spoken 'dictate' in internal mode must start the DictationSession (existing behaviour)."""
+    bus = EventBus()
+    daemon, dictation_session = _make_daemon_with_session(backend="internal", event_bus=bus)
+
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32))
+
+    dictation_session.start.assert_called_once()
+    assert daemon._passthrough_active is False
