@@ -251,6 +251,15 @@ class StreamingDaemon:
         )
         self._session_active: bool = False
         self._session_opened_by_dictation: bool = False
+        # External dictation backend (ADR 0102).  When True, VC is muted and an
+        # external tool (e.g. Wispr Flow) drives dictation; this flag gates every
+        # new passthrough branch.  Only ever True when _dictation_backend ==
+        # "external", and mutually exclusive with an active DictationSession.
+        self._passthrough_active: bool = False
+        # Cached at startup from cfg.dictation.backend by build_streaming_daemon;
+        # intentionally NOT updated on config hot-reload (ADR 0102 — a backend
+        # change needs a daemon restart).
+        self._dictation_backend: str = "internal"
         # Audio-generation counter. Bumped on every state transition that
         # ends audio capture (scroll-lock close) or restarts it
         # (scroll-lock open). Each utterance is tagged with the
@@ -503,6 +512,28 @@ class StreamingDaemon:
         else:
             self._open_voice_session()
 
+    def _enter_passthrough(self) -> None:
+        """External-backend dictation ENTER (ADR 0102): mute + animate, no capture.
+
+        Sets the mute flag and publishes ``dictation.start`` (same payload as
+        the internal path) so the sprite shows the DICTATING badge + bright cat.
+        Caller is responsible for opening a voice session first if none is open.
+        """
+        self._passthrough_active = True
+        self._publish("dictation.start", {})
+        logger.info("dictation: entered external passthrough (mic muted)")
+
+    def _exit_passthrough(self) -> None:
+        """External-backend dictation EXIT (ADR 0102): unmute + restore pose.
+
+        Clears the mute flag and publishes ``dictation.end {reason: "done"}``
+        (same payload as the internal finish path) so the sprite restores its
+        pre-dictation pose per ADR 0099.  Caller closes any owned session after.
+        """
+        self._passthrough_active = False
+        self._publish("dictation.end", {"reason": "done"})
+        logger.info("dictation: exited external passthrough (mic unmuted)")
+
     def on_dictation_toggle(self) -> None:
         """Right-control callback: toggle dictation mode.
 
@@ -514,7 +545,33 @@ class StreamingDaemon:
         When a session is already open (``_session_active == True``):
         press once to start dictation, press again to end it (an alternative to
         saying the end word). Behaviour is unchanged from ADR 0086.
+
+        External backend (ADR 0102): a passthrough toggle — enter/exit mute +
+        animation only, no DictationSession, no capture.  Right Ctrl is the only
+        exit (VC transcribes nothing in this mode, so spoken "done"/cancel can't
+        be heard).
         """
+        if self._dictation_backend == "external":
+            if not self._passthrough_active:
+                # ENTER
+                if not self._session_active:
+                    # Case 1: no session open — open an owned one (so brightness,
+                    # _session_active, and Scroll Lock toggling stay consistent).
+                    if not self._open_voice_session():
+                        return  # recorder failed; error already surfaced
+                    self._session_opened_by_dictation = True
+                # Case 2: a Scroll Lock session is already open — enter as a
+                # sub-state, leaving the session untouched.
+                self._enter_passthrough()
+            else:
+                # EXIT — publish dictation.end BEFORE closing so the sprite
+                # restores pose (ADR 0099) before session_stopped dims it.
+                self._exit_passthrough()
+                if self._session_opened_by_dictation:
+                    self._close_voice_session()  # also clears _passthrough_active
+                # Case 2: Scroll Lock session stays open; no extra chime (matches
+                # internal mode entering/leaving dictation inside an open session).
+            return
         if not self._session_active:
             # Right Ctrl with no open session → open one and enter dictation immediately.
             # (ADR 0090) The session is self-contained: when dictation ends, the
