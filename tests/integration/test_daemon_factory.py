@@ -297,3 +297,25 @@ def test_daemon_factory_event_bus_passed_to_dispatcher(base_cfg: Config) -> None
     with _full_patches(**_base_patch_kwargs()):
         daemon = build_streaming_daemon(base_cfg)
     assert daemon._dispatcher._event_bus is daemon._event_bus
+
+
+# ---------------------------------------------------------------------------
+# Backend selector wiring (ADR 0102)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_build_streaming_daemon_wires_external_backend(base_cfg: Config) -> None:
+    """build_streaming_daemon sets _dictation_backend from cfg.dictation.backend."""
+    cfg = replace(base_cfg, dictation=DictationConfig(backend="external"))
+    with _full_patches(**_base_patch_kwargs()):
+        daemon = build_streaming_daemon(cfg)
+    assert daemon._dictation_backend == "external"
+
+
+@pytest.mark.integration
+def test_build_streaming_daemon_defaults_backend_internal(base_cfg: Config) -> None:
+    """build_streaming_daemon sets _dictation_backend to 'internal' by default."""
+    with _full_patches(**_base_patch_kwargs()):
+        daemon = build_streaming_daemon(base_cfg)
+    assert daemon._dictation_backend == "internal"

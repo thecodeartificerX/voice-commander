@@ -1755,6 +1755,9 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
 
     # Store live config snapshot so _on_config_changed can diff against it.
     daemon._cfg = cfg
+    # Cache the dictation backend at startup (ADR 0102).  Read once here rather
+    # than on every toggle; a backend change requires a daemon restart.
+    daemon._dictation_backend = cfg.dictation.backend
 
     # Wire config hot-reload watcher.  Resolves config_path relative to cwd
     # when not supplied explicitly (matches how __main__.py loads Config).
