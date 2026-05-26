@@ -337,6 +337,9 @@ def test_invalid_backend_in_config_file_degrades_to_internal(base_cfg, tmp_path,
     with caplog.at_level(logging.WARNING, logger="voice_commander.config"):
         cfg = Config.load(cfg_file)
     assert cfg.dictation.backend == "internal"
+    assert any(
+        "bogus" in r.message for r in caplog.records if r.levelno == logging.WARNING
+    ), f"expected WARNING with 'bogus' in message; got {[r.message for r in caplog.records]}"
 
     with _full_patches(**_base_patch_kwargs()):
         daemon = build_streaming_daemon(cfg)
