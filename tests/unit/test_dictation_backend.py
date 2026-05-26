@@ -246,3 +246,33 @@ def test_dictate_intercept_internal_starts_session() -> None:
 
     dictation_session.start.assert_called_once()
     assert daemon._passthrough_active is False
+
+
+# ---------------------------------------------------------------------------
+# Task 5: mute early-return — _process_utterance drops utterance when
+# passthrough is active (ADR 0102)
+# ---------------------------------------------------------------------------
+
+
+def test_passthrough_active_drops_utterance_no_transcribe_no_route() -> None:
+    daemon, _, _ = _make_daemon(backend="external")
+    daemon._session_active = True
+    daemon._passthrough_active = True
+
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32))
+
+    daemon._transcriber.transcribe.assert_not_called()
+    daemon._verb_router.route.assert_not_called()
+
+
+def test_passthrough_inactive_processes_normally() -> None:
+    daemon, _, _ = _make_daemon(backend="external")
+    daemon._session_active = True
+    daemon._passthrough_active = False
+    daemon._transcriber.transcribe.return_value = TranscriptionResult(
+        text="copy", language="en", duration_ms=500, confidence=1.0
+    )
+
+    daemon._process_utterance(np.zeros(16000, dtype=np.float32))
+
+    daemon._transcriber.transcribe.assert_called_once()

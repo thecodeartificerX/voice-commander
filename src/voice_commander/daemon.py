@@ -714,6 +714,13 @@ class StreamingDaemon:
         Does not raise: all exceptions are caught by :meth:`_pipeline_loop` and
         routed to ``feedback.on_error``.
         """
+        # External dictation backend (ADR 0102): while passthrough is active VC
+        # is muted — an external tool (e.g. Wispr Flow) does the dictation.  Drop
+        # the utterance before the debug-WAV write and before transcribe(), so
+        # there is no Whisper CPU, no transcript event, no routing, no fire.
+        if self._passthrough_active:
+            return
+
         # Async write for post-mortem debugging
         self._write_utterance_async(utterance)
 
