@@ -338,3 +338,45 @@ def test_dictation_max_dictation_s_override(tmp_path):
     )
     cfg = Config.load(toml)
     assert cfg.dictation.max_dictation_s == 120
+
+
+# ---------------------------------------------------------------------------
+# [dictation] backend selector (ADR 0102)
+# ---------------------------------------------------------------------------
+
+
+def test_dictation_backend_defaults_to_internal() -> None:
+    from voice_commander.config import DictationConfig
+
+    assert DictationConfig().backend == "internal"
+
+
+def test_dictation_backend_parses_external(tmp_path) -> None:
+    from voice_commander.config import Config
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[dictation]\nbackend = "external"\n', encoding="utf-8")
+    cfg = Config.load(cfg_file)
+    assert cfg.dictation.backend == "external"
+
+
+def test_dictation_backend_unknown_value_warns_and_falls_back(tmp_path, caplog) -> None:
+    import logging
+
+    from voice_commander.config import Config
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[dictation]\nbackend = "wispr"\n', encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="voice_commander.config"):
+        cfg = Config.load(cfg_file)
+    assert cfg.dictation.backend == "internal"
+    assert any("backend" in r.message and "internal" in r.message for r in caplog.records)
+
+
+def test_dictation_backend_empty_string_falls_back(tmp_path) -> None:
+    from voice_commander.config import Config
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[dictation]\nbackend = ""\n', encoding="utf-8")
+    cfg = Config.load(cfg_file)
+    assert cfg.dictation.backend == "internal"
