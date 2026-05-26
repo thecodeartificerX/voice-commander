@@ -319,3 +319,25 @@ def test_build_streaming_daemon_defaults_backend_internal(base_cfg: Config) -> N
     with _full_patches(**_base_patch_kwargs()):
         daemon = build_streaming_daemon(base_cfg)
     assert daemon._dictation_backend == "internal"
+
+
+@pytest.mark.integration
+def test_invalid_backend_in_config_file_degrades_to_internal(base_cfg, tmp_path, caplog) -> None:
+    """ADR 0102 end-to-end: a bogus backend in config.toml goes through
+    Config.load() validation (WARNING + fallback to 'internal'), and the
+    daemon factory wires the validated value onto the daemon.
+    """
+    import logging
+
+    from voice_commander.config import Config
+    from voice_commander.daemon import build_streaming_daemon
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[dictation]\nbackend = "bogus"\n', encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="voice_commander.config"):
+        cfg = Config.load(cfg_file)
+    assert cfg.dictation.backend == "internal"
+
+    with _full_patches(**_base_patch_kwargs()):
+        daemon = build_streaming_daemon(cfg)
+    assert daemon._dictation_backend == "internal"

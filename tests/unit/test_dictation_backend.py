@@ -303,3 +303,22 @@ def test_scroll_lock_close_clears_passthrough_flag() -> None:
 
     assert daemon._passthrough_active is False
     assert daemon._session_active is False
+
+
+# ---------------------------------------------------------------------------
+# Task 7: Internal-mode regression guard (ADR 0102)
+# ---------------------------------------------------------------------------
+
+
+def test_internal_backend_never_sets_passthrough_on_toggle() -> None:
+    # Default backend = internal: the external branch must be inert.  Toggle from
+    # idle should follow the ADR 0090 owned-session path and leave the
+    # passthrough flag False throughout.
+    daemon, _, recorder = _make_daemon(backend="internal")
+    # No dictation_session wired -> internal toggle opens session then returns
+    # at the `if self._dictation_session is None: return` guard (ADR 0090).
+    daemon.on_dictation_toggle()
+
+    assert daemon._passthrough_active is False
+    assert daemon._dictation_backend == "internal"
+    recorder.open_session.assert_called_once()
