@@ -160,7 +160,7 @@ max_dictation_s      = 300
 | `max_dictation_s` | Daemon-side hard cap per dictation (default 300 s); on hit, daemon sends `{"type":"end"}` and finalizes normally. Server cap is 600 s. |
 
 `DictationConfig` dataclass: `ws_url`, `idle_timeout_seconds`, `end_word`,
-`cancel_word`, `max_dictation_s`. The old `window_step_ms`, `window_cap_ms`, and
+`cancel_word`, `max_dictation_s`, `backend`. The old `window_step_ms`, `window_cap_ms`, and
 `language` fields are removed.
 
 ---
