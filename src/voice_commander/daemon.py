@@ -700,6 +700,8 @@ class StreamingDaemon:
 
         Gate chain (in order):
 
+        0. **passthrough** — ``_passthrough_active`` → silent drop (no debug-WAV
+           write, no transcribe, no routing). External dictation backend (ADR 0102).
         1. **word-count** — below ``_min_word_count`` → silent drop (no ``plan_outcome``).
         2. **no_speech_prob** — above ``_max_no_speech_prob`` → silent drop.
         3. **confidence** — below ``_min_confidence`` → miss chime +
