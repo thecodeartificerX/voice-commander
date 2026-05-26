@@ -5,6 +5,7 @@ key = "scroll_lock"
 dictation_key = "ctrl_r"
 
 [dictation]
+backend              = "internal"  # "internal" = our record→WS→paste pipeline (default); "external" = passthrough — VC mutes + animates only, an external tool (e.g. Wispr Flow bound to the same Right Ctrl) does the real dictation
 ws_url               = "ws://192.168.4.200:8767/ws/transcribe"  # server-side transcription endpoint (ADR 0096)
 end_word             = "done"   # say this word (standalone) to end dictation
 cancel_word          = "cancel" # say this word to abort dictation and discard the transcript
