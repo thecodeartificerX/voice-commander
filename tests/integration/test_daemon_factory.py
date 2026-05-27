@@ -297,3 +297,50 @@ def test_daemon_factory_event_bus_passed_to_dispatcher(base_cfg: Config) -> None
     with _full_patches(**_base_patch_kwargs()):
         daemon = build_streaming_daemon(base_cfg)
     assert daemon._dispatcher._event_bus is daemon._event_bus
+
+
+# ---------------------------------------------------------------------------
+# Backend selector wiring (ADR 0102)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_build_streaming_daemon_wires_external_backend(base_cfg: Config) -> None:
+    """build_streaming_daemon sets _dictation_backend from cfg.dictation.backend."""
+    cfg = replace(base_cfg, dictation=DictationConfig(backend="external"))
+    with _full_patches(**_base_patch_kwargs()):
+        daemon = build_streaming_daemon(cfg)
+    assert daemon._dictation_backend == "external"
+
+
+@pytest.mark.integration
+def test_build_streaming_daemon_defaults_backend_internal(base_cfg: Config) -> None:
+    """build_streaming_daemon sets _dictation_backend to 'internal' by default."""
+    with _full_patches(**_base_patch_kwargs()):
+        daemon = build_streaming_daemon(base_cfg)
+    assert daemon._dictation_backend == "internal"
+
+
+@pytest.mark.integration
+def test_invalid_backend_in_config_file_degrades_to_internal(base_cfg, tmp_path, caplog) -> None:
+    """ADR 0102 end-to-end: a bogus backend in config.toml goes through
+    Config.load() validation (WARNING + fallback to 'internal'), and the
+    daemon factory wires the validated value onto the daemon.
+    """
+    import logging
+
+    from voice_commander.config import Config
+    from voice_commander.daemon import build_streaming_daemon
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[dictation]\nbackend = "bogus"\n', encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="voice_commander.config"):
+        cfg = Config.load(cfg_file)
+    assert cfg.dictation.backend == "internal"
+    assert any(
+        "bogus" in r.message for r in caplog.records if r.levelno == logging.WARNING
+    ), f"expected WARNING with 'bogus' in message; got {[r.message for r in caplog.records]}"
+
+    with _full_patches(**_base_patch_kwargs()):
+        daemon = build_streaming_daemon(cfg)
+    assert daemon._dictation_backend == "internal"

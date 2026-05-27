@@ -127,12 +127,22 @@ VAD is **endpointing-only**: `handle_utterance()` classifies end/cancel/buffered
 and puts raw PCM bytes on `chunk_q` for buffered utterances. Audio does not flow
 through a frame tap or DictationWindow — those are deleted.
 
+### Backend selection — internal vs external (ADR 0102)
+
+`[dictation] backend` selects the dictation engine:
+
+- **`internal`** (default) — everything described above: record VAD-segmented PCM → stream to the WS server → paste the cleaned transcript.
+- **`external`** — a *passthrough* sub-state. Right Ctrl / spoken "dictate" plays the same start chime and shows the same DICTATING badge + bright cat, but VC records nothing, transcribes nothing, sends nothing, and pastes nothing; its own command routing is muted while active (`_process_utterance` returns early on the `_passthrough_active` flag). An external tool — e.g. **Wispr Flow, bound by the user to the same Right Ctrl key** — performs the actual dictation. VC does not suppress Right Ctrl (the pynput listener has no `suppress`), so one press reaches both apps. A second Right Ctrl press exits and restores the prior state. External mode publishes the existing `dictation.start`/`dictation.end` events but **never** `dictation.processing` (no server round-trip), so no PROCESSING badge appears and no `last_timings.json` is written. There is no spoken exit in external mode (VC transcribes nothing); Right Ctrl is the only way out. The backend is cached at daemon startup — a change requires a restart.
+
+**Wispr Flow setup:** bind Wispr Flow's dictation toggle to Right Ctrl (`ctrl_r`, VC's default `dictation_key`), set `backend = "external"` in `[dictation]`, and restart the daemon.
+
 ---
 
 ## Configuration (`[dictation]` section in `config.toml`)
 
 ```toml
 [dictation]
+backend              = "internal"  # "internal" = record→WS→paste (default); "external" = passthrough (an external tool e.g. Wispr Flow does dictation)
 ws_url               = "ws://192.168.4.200:8767/ws/transcribe"
 end_word             = "done"
 cancel_word          = "cancel"
@@ -142,6 +152,7 @@ max_dictation_s      = 300
 
 | Key | Description |
 |-----|-------------|
+| `backend` | `"internal"` = local record→WS→paste pipeline; `"external"` = passthrough (mute + animate only; an external tool does the dictation). Unknown value → WARNING + `"internal"`. Restart to change. |
 | `ws_url` | WebSocket `/ws/transcribe` endpoint — the VPS LLM-cleanup server (ADR 0093/0096) |
 | `end_word` | Standalone spoken word that ends dictation and pastes |
 | `cancel_word` | Standalone spoken word that cancels dictation (no paste) |
@@ -149,7 +160,7 @@ max_dictation_s      = 300
 | `max_dictation_s` | Daemon-side hard cap per dictation (default 300 s); on hit, daemon sends `{"type":"end"}` and finalizes normally. Server cap is 600 s. |
 
 `DictationConfig` dataclass: `ws_url`, `idle_timeout_seconds`, `end_word`,
-`cancel_word`, `max_dictation_s`. The old `window_step_ms`, `window_cap_ms`, and
+`cancel_word`, `max_dictation_s`, `backend`. The old `window_step_ms`, `window_cap_ms`, and
 `language` fields are removed.
 
 ---

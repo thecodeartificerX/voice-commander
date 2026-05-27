@@ -251,6 +251,15 @@ class StreamingDaemon:
         )
         self._session_active: bool = False
         self._session_opened_by_dictation: bool = False
+        # External dictation backend (ADR 0102).  When True, VC is muted and an
+        # external tool (e.g. Wispr Flow) drives dictation; this flag gates every
+        # new passthrough branch.  Only ever True when _dictation_backend ==
+        # "external", and mutually exclusive with an active DictationSession.
+        self._passthrough_active: bool = False
+        # Cached at startup from cfg.dictation.backend by build_streaming_daemon;
+        # intentionally NOT updated on config hot-reload (ADR 0102 — a backend
+        # change needs a daemon restart).
+        self._dictation_backend: str = "internal"
         # Audio-generation counter. Bumped on every state transition that
         # ends audio capture (scroll-lock close) or restarts it
         # (scroll-lock open). Each utterance is tagged with the
@@ -336,6 +345,17 @@ class StreamingDaemon:
                 # _device_name inside open_session() under _state_lock, so
                 # there is no observable race.
                 self._recorder._device_name = new_cfg.audio.device_name
+
+        # ADR 0102: backend is cached at startup; a runtime change requires a
+        # restart.  Tell the user instead of silently no-op'ing the reload.
+        if new_cfg.dictation.backend != self._dictation_backend:
+            logger.warning(
+                "config hot-reload: [dictation] backend changed (%r -> %r); "
+                "restart required — the running daemon keeps the current backend %r",
+                self._dictation_backend,
+                new_cfg.dictation.backend,
+                self._dictation_backend,
+            )
 
     def _on_config_changed(self, path: Path) -> None:
         """Callback invoked by :class:`ConfigWatcher` when config.toml changes.
@@ -430,6 +450,7 @@ class StreamingDaemon:
         if self._recorder is None:
             self._session_active = False
             self._session_opened_by_dictation = False
+            self._passthrough_active = False
             return
         self._audio_gen += 1
         try:
@@ -439,6 +460,9 @@ class StreamingDaemon:
         self._drain_utt_q()
         self._session_active = False
         self._session_opened_by_dictation = False
+        # ADR 0102: tearing down a session must clear any external-passthrough
+        # mute so a closed session never leaves a dangling muted pipeline.
+        self._passthrough_active = False
         if cancel_dictation:
             if self._dictation_session is not None and self._dictation_session.active:
                 self._dictation_session.cancel()
@@ -503,6 +527,28 @@ class StreamingDaemon:
         else:
             self._open_voice_session()
 
+    def _enter_passthrough(self) -> None:
+        """External-backend dictation ENTER (ADR 0102): mute + animate, no capture.
+
+        Sets the mute flag and publishes ``dictation.start`` (same payload as
+        the internal path) so the sprite shows the DICTATING badge + bright cat.
+        Caller is responsible for opening a voice session first if none is open.
+        """
+        self._passthrough_active = True
+        self._publish("dictation.start", {})
+        logger.info("dictation: entered external passthrough (mic muted)")
+
+    def _exit_passthrough(self) -> None:
+        """External-backend dictation EXIT (ADR 0102): unmute + restore pose.
+
+        Clears the mute flag and publishes ``dictation.end {reason: "done"}``
+        (same payload as the internal finish path) so the sprite restores its
+        pre-dictation pose per ADR 0099.  Caller closes any owned session after.
+        """
+        self._passthrough_active = False
+        self._publish("dictation.end", {"reason": "done"})
+        logger.info("dictation: exited external passthrough (mic unmuted)")
+
     def on_dictation_toggle(self) -> None:
         """Right-control callback: toggle dictation mode.
 
@@ -514,7 +560,35 @@ class StreamingDaemon:
         When a session is already open (``_session_active == True``):
         press once to start dictation, press again to end it (an alternative to
         saying the end word). Behaviour is unchanged from ADR 0086.
+
+        External backend (ADR 0102): a passthrough toggle — enter/exit mute +
+        animation only, no DictationSession, no capture.  Right Ctrl is the only
+        exit (VC transcribes nothing in this mode, so spoken "done"/cancel can't
+        be heard).
         """
+        if self._dictation_backend == "external":
+            if not self._passthrough_active:
+                # ENTER
+                if not self._session_active:
+                    # Case 1: no session open — open an owned one (so brightness,
+                    # _session_active, and Scroll Lock toggling stay consistent).
+                    if not self._open_voice_session():
+                        return  # recorder failed; error already surfaced
+                    self._session_opened_by_dictation = True
+                # Case 2: a Scroll Lock session is already open — enter as a
+                # sub-state, leaving the session untouched.
+                self._enter_passthrough()
+            else:
+                # EXIT — publish dictation.end BEFORE closing so the sprite
+                # restores pose (ADR 0099) before session_stopped dims it.
+                self._exit_passthrough()
+                if self._session_opened_by_dictation:
+                    # ADR 0099 ordering: dictation.end already published above;
+                    # close now fires muted + session_stopped so the sprite dims.
+                    self._close_voice_session()
+                # Case 2: Scroll Lock session stays open; no extra chime (matches
+                # internal mode entering/leaving dictation inside an open session).
+            return
         if not self._session_active:
             # Right Ctrl with no open session → open one and enter dictation immediately.
             # (ADR 0090) The session is self-contained: when dictation ends, the
@@ -630,6 +704,8 @@ class StreamingDaemon:
 
         Gate chain (in order):
 
+        0. **passthrough** — ``_passthrough_active`` → silent drop (no debug-WAV
+           write, no transcribe, no routing). External dictation backend (ADR 0102).
         1. **word-count** — below ``_min_word_count`` → silent drop (no ``plan_outcome``).
         2. **no_speech_prob** — above ``_max_no_speech_prob`` → silent drop.
         3. **confidence** — below ``_min_confidence`` → miss chime +
@@ -644,6 +720,13 @@ class StreamingDaemon:
         Does not raise: all exceptions are caught by :meth:`_pipeline_loop` and
         routed to ``feedback.on_error``.
         """
+        # External dictation backend (ADR 0102): while passthrough is active VC
+        # is muted — an external tool (e.g. Wispr Flow) does the dictation.  Drop
+        # the utterance before the debug-WAV write and before transcribe(), so
+        # there is no Whisper CPU, no transcript event, no routing, no fire.
+        if self._passthrough_active:
+            return
+
         # Async write for post-mortem debugging
         self._write_utterance_async(utterance)
 
@@ -889,7 +972,13 @@ class StreamingDaemon:
                 _publish_picker_ok(result.text)
                 return
             if len(plan.steps) == 1 and plan.steps[0].name == "__dictation.start":
-                if self._dictation_session is not None:
+                if self._dictation_backend == "external":
+                    # ADR 0102: spoken "dictate" in external mode enters
+                    # passthrough (mute + animate), not a DictationSession.
+                    # Reachable only with a Scroll Lock session already open, so
+                    # no session is opened here (case 2).
+                    self._enter_passthrough()
+                elif self._dictation_session is not None:
                     self._dictation_session.start(self._load_vocab())
                 run.set_status("ok")
                 self._feedback.on_plan_complete(result.text, 0)
@@ -1696,6 +1785,9 @@ def build_streaming_daemon(cfg: Config, config_path: Path | None = None) -> Stre
 
     # Store live config snapshot so _on_config_changed can diff against it.
     daemon._cfg = cfg
+    # Cache the dictation backend at startup (ADR 0102).  Read once here rather
+    # than on every toggle; a backend change requires a daemon restart.
+    daemon._dictation_backend = cfg.dictation.backend
 
     # Wire config hot-reload watcher.  Resolves config_path relative to cwd
     # when not supplied explicitly (matches how __main__.py loads Config).

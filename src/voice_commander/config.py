@@ -41,6 +41,14 @@ class DictationConfig:
     # own 600 s cap — this is 2× headroom to avoid a race where the daemon closes
     # first (ADR 0096 D4).
     max_dictation_s: int = 300
+    # Dictation backend selector (ADR 0102).  "internal" = our record->WS->paste
+    # pipeline (default).  "external" = passthrough: VC mutes + animates only,
+    # an external tool (e.g. Wispr Flow, bound to the same Right Ctrl) does the
+    # real dictation.  Validated in Config.load(); an unknown/empty value
+    # degrades to "internal" with a WARNING.  Kept as a plain ``str`` (not
+    # ``Literal``) because the generic _section parser raises on type mismatch
+    # and we want degrade-not-block.
+    backend: str = "internal"
 
 
 @dataclass(frozen=True)
@@ -228,6 +236,20 @@ class Config:
             )
             hotkey_raw.pop("mute_key")
 
+        # [dictation] backend selector (ADR 0102) — degrade, never block.  An
+        # unknown/empty value falls back to "internal" with a WARNING, matching
+        # the repo's "bad config degrades" convention (same as [llm]/mute_key
+        # handling above).  Copy the table so we never mutate the parsed raw.
+        dictation_raw = dict(raw.get("dictation", {}))
+        backend = dictation_raw.get("backend", "internal")
+        if backend not in ("internal", "external"):
+            logger.warning(
+                "[dictation] backend=%r is not 'internal' or 'external'; "
+                "falling back to 'internal'",
+                backend,
+            )
+            dictation_raw["backend"] = "internal"
+
         return cls(
             hotkey=_section(HotkeyConfig, hotkey_raw),
             audio=_section(AudioConfig, raw.get("audio", {})),
@@ -247,7 +269,7 @@ class Config:
                     "tabs": _section(PickerTabsConfig, tabs_raw),
                 },
             ),
-            dictation=_section(DictationConfig, raw.get("dictation", {})),
+            dictation=_section(DictationConfig, dictation_raw),
             elements=_section(ElementsConfig, raw.get("elements", {})),
             modes=_section(ModesConfig, raw.get("modes", {})),
         )
