@@ -2,6 +2,10 @@
 
 > Press a key. Say the command. Ship.
 
+## What it looks like
+
+![Voice Commander Builder UI showing the minimize command as a three-node press-wait-press graph, with the Primitives sidebar and Graph Settings pane](docs/assets/builder-ui.png)
+
 A **local-first, GPU-accelerated voice-command launcher for Windows.** You say the actual command — "copy", "new tab", "focus browser", "click" — and Voice Commander fires the matching keystroke or action instantly. No cloud. No latency. No wake word. No memorizing cryptic shortcuts.
 
 It is to Talon Voice what a utility knife is to a Swiss Army knife: smaller, sharper, and entirely yours to reshape.
